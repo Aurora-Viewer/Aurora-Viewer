@@ -151,7 +151,8 @@ pub struct PreparedSource {
     /// Immutable import input, shared with a draft when Upload is selected.
     pub scene: Arc<Scene>,
     /// A hash of what Blender sent for this source (its encoded batches,
-    /// colours, name and link), made on the transport thread: the window
+    /// colours, materials and texture ids, name and link), made on the
+    /// transport thread: the window
     /// tells which object a revision changed (`Live::changed`).
     pub digest: u64,
 }
