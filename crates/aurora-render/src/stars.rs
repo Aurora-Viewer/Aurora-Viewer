@@ -49,9 +49,12 @@ const NO_COLOUR: i16 = 32767;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuStar {
-    /// Unit direction in the catalogue's frame, peak intensity (linear).
+    /// Unit direction in the catalogue's frame, then the brightness: for
+    /// the real sky the point's light summed over its pixels (`flux`), for
+    /// the Legacy Viewer's stars the peak intensity.
     pub pos: [f32; 4],
-    /// Linear colour (luminance 1), size of the point in pixels (sigma).
+    /// Linear colour (luminance 1), then the point's size (sigma): in
+    /// pixels for the real sky, an angle in the sky for the Legacy stars.
     pub color: [f32; 4],
 }
 
@@ -174,25 +177,38 @@ pub fn equatorial(ra: f32, dec: f32) -> Vec3 {
     Vec3::new(dec.cos() * ra.cos(), dec.cos() * ra.sin(), dec.sin())
 }
 
-/// Peak intensity (linear) of a star of this visual magnitude. The real
-/// range (Sirius is 1,500 times brighter than a magnitude 6.5 star) is
-/// compressed to about 1 to 100, so that the faintest stars just show over
-/// the night sky and the constellations' bright stars stand out, as the eye
-/// sees them.
-pub fn intensity(magnitude: f32) -> f32 {
-    (2.0 * 10f32.powf(-0.4 * 0.75 * magnitude)).min(3.0)
+/// Light of a magnitude 6.5 star's point (linear, summed over its pixels):
+/// the faintest stars just show over a dark night sky.
+const FAINT_FLUX: f32 = 0.05;
+/// How much of the real brightness range is kept: 1 would be the whole of
+/// it (Sirius 1,500 times a magnitude 6.5 star), 0.85 about 500 times. The
+/// bright stars' cores go white past the tone mapping either way; what tells
+/// them apart is the size of their glow (`sky_stars` in env.wgsl), which
+/// grows with this light.
+const FLUX_RANGE: f32 = 0.85;
+
+/// Light (linear, summed over the point) of a star of this visual
+/// magnitude.
+pub fn flux(magnitude: f32) -> f32 {
+    FAINT_FLUX * 10f32.powf(-0.4 * FLUX_RANGE * (magnitude - 6.5))
 }
 
-/// Size of a star's point, in pixels (sigma of its Gaussian): the brightest
-/// stars are a little larger.
-pub fn point_size(magnitude: f32) -> f32 {
-    0.6 + 0.6 * ((3.0 - magnitude) / 4.0).clamp(0.0, 1.0)
+/// Size of every real star's sharp core, in pixels (sigma of its
+/// Gaussian): a point source, the same for all; the bright stars look
+/// larger by their glow, not by a wider core.
+pub const CORE_SIGMA: f32 = 0.55;
+
+/// Share of its colour a star shows (0 grey, 1 its black body colour) at
+/// this magnitude: the eye sees no colour in the faint stars (rod vision)
+/// and clear colour in the brightest (Betelgeuse orange, Rigel blue-white).
+pub fn saturation(magnitude: f32) -> f32 {
+    (0.75 - 0.12 * (magnitude - 1.0)).clamp(0.2, 0.75)
 }
 
-/// Colour (linear, luminance 1) of a star of this B-V index. Temperature
-/// from Ballesteros (2012), black body colour from Tanner Helland's fit,
-/// then half desaturated: the eye sees little colour in starlight.
-pub fn colour(bv: Option<f32>) -> Vec3 {
+/// Colour (linear, luminance 1) of a star of this B-V index and magnitude.
+/// Temperature from Ballesteros (2012), black body colour from Tanner
+/// Helland's fit, then desaturated by `saturation`.
+pub fn colour(bv: Option<f32>, magnitude: f32) -> Vec3 {
     let Some(bv) = bv else {
         return Vec3::ONE;
     };
@@ -216,7 +232,8 @@ pub fn colour(bv: Option<f32>) -> Vec3 {
     let linear = srgb.powf(2.2);
     let luma = linear.dot(Vec3::new(0.2126, 0.7152, 0.0722)).max(1e-4);
     let c = linear / luma;
-    (c * 0.5 + Vec3::splat(0.5)).min(Vec3::splat(2.0))
+    let s = saturation(magnitude);
+    (c * s + Vec3::splat(1.0 - s)).min(Vec3::splat(2.0))
 }
 
 /// The real sky's stars, brightest first.
@@ -232,10 +249,10 @@ pub fn real_stars() -> Vec<GpuStar> {
         .iter()
         .map(|s| {
             let d = equatorial(s.ra, s.dec);
-            let c = colour(s.bv);
+            let c = colour(s.bv, s.magnitude);
             GpuStar {
-                pos: [d.x, d.y, d.z, intensity(s.magnitude)],
-                color: [c.x, c.y, c.z, point_size(s.magnitude)],
+                pos: [d.x, d.y, d.z, flux(s.magnitude)],
+                color: [c.x, c.y, c.z, CORE_SIGMA],
             }
         })
         .collect()
@@ -440,21 +457,39 @@ mod tests {
 
     #[test]
     fn colours_go_from_blue_to_orange() {
-        let rigel = colour(Some(-0.03));
-        let sun = colour(Some(0.65));
-        let betelgeuse = colour(Some(1.85));
+        let rigel = colour(Some(-0.03), 0.13);
+        let sun = colour(Some(0.65), 0.13);
+        let betelgeuse = colour(Some(1.85), 0.13);
         assert!(rigel.z > rigel.x, "{rigel}");
         assert!(betelgeuse.x > betelgeuse.z, "{betelgeuse}");
         assert!(sun.x > sun.z && sun.x - sun.z < betelgeuse.x - betelgeuse.z);
-        assert_eq!(colour(None), Vec3::ONE);
+        assert_eq!(colour(None, 0.0), Vec3::ONE);
     }
 
+    /// The same orange star: clearly coloured when bright, nearly grey when
+    /// faint, as the eye sees them.
     #[test]
-    fn brighter_stars_are_brighter_and_larger() {
-        assert!(intensity(-1.46) > intensity(1.0));
-        assert!(intensity(1.0) > intensity(6.5));
-        assert!(intensity(6.5) > 0.015);
-        assert!(point_size(-1.0) > point_size(5.0));
+    fn faint_stars_show_less_colour() {
+        let warmth = |m: f32| {
+            let c = colour(Some(1.6), m);
+            c.x - c.z
+        };
+        assert!(warmth(0.5) > 2.0 * warmth(6.0), "{} {}", warmth(0.5), warmth(6.0));
+        assert!(warmth(6.0) > 0.0);
+        assert_eq!(saturation(-1.5), saturation(1.0));
+        assert_eq!(saturation(6.5), saturation(9.0));
+    }
+
+    /// Each magnitude is the same factor brighter than the next, over the
+    /// whole catalogue: no cap that would make Sirius and Vega alike.
+    #[test]
+    fn brighter_stars_carry_more_light_without_a_cap() {
+        let step = flux(0.0) / flux(1.0);
+        assert!((flux(-1.46) / flux(-0.46) - step).abs() < 1e-3);
+        assert!((flux(5.5) / flux(6.5) - step).abs() < 1e-3);
+        assert!((2.0..2.5).contains(&step), "{step}");
+        assert_eq!(flux(6.5), FAINT_FLUX);
+        assert!(flux(-1.46) > 300.0 * flux(6.5));
     }
 
     #[test]

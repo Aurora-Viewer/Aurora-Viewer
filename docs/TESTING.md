@@ -4944,6 +4944,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>[,<milky way>]]` | Where the real sky is seen from, its stars' brightness and the Milky Way's |
 | `AURORA_DEMO_NIGHT_SKY_CLOCK=<longitude>[,<YYYY-MM-DDTHH:MM>]` | The real sky's hour from the clock at this longitude, at a fixed UTC moment if given |
+| `AURORA_STARS_AFTER_AA=0` | The real stars drawn in the sky pass, before the anti-aliasing, as before |
 | `AURORA_DEMO_OCCLUSION=1\|edge` | Wall with hidden objects (occlusion test); `edge`: cubes in plain view beside a near wall |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
@@ -5523,6 +5524,18 @@ both open states and the selection count. Capture at frame 620.
   `40.71` (`AURORA_DEMO_NIGHT_SKY_PLACE`) and `2.35,2026-01-15T23:00` the
   sky overhead is the one New York sees five hours later,
   `-74.01,2026-01-16T04:05`; `-74.01,2026-01-15T23:00` shows another.
+- **`AURORA_STARS_AFTER_AA=0`**: the real stars' points of the main view
+  drawn in the sky pass, before TAA or FSR, as before
+  (`star_composite.rs`), for this launch; any other value, or none, draws
+  them after the anti-aliasing, at the display's size. Compare
+  `AURORA_DEMO_NIGHT_SKY=real:150,35` (Orion) with `AURORA_AA=7` and
+  `AURORA_FSR_QUALITY=1` (or `2`, `3`) both ways: before, the stars are
+  soft and the faint ones lost; after, every anti-aliasing mode shows the
+  same sharp points, Betelgeuse orange and Rigel blue-white, each with a
+  glow as large as its light. No star shows over the lamps and posts, nor
+  through a leaf drawn blended; a nearly clear prim lets them through,
+  a tinted one dims them. `AURORA_PROFILE=1`: the sky pass (in
+  `g_terrain_sky`) gets cheaper, the pass costs a little in `g_post`.
 - **The Milky Way** (`AURORA_DEMO_NIGHT_SKY=real:0,85` in autumn and
   winter, the band across the image): the band is made of points, a faint
   haze under many tiny stars whose density follows the real star counts,

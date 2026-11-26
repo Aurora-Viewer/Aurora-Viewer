@@ -469,6 +469,9 @@ pub(crate) struct Clouds {
     layout: wgpu::BindGroupLayout,
     composite: Vec<((u32, bool), wgpu::RenderPipeline)>,
     composite_group: Option<wgpu::BindGroup>,
+    /// The image `composite_group` reads (transmittance in alpha), for the
+    /// stars drawn after the anti-aliasing (star_composite.rs).
+    composite_image: Option<wgpu::TextureView>,
 }
 
 fn texture(
@@ -599,6 +602,7 @@ impl Clouds {
             layout,
             composite: Vec::new(),
             composite_group: None,
+            composite_image: None,
         }
     }
 
@@ -656,6 +660,7 @@ impl Clouds {
         self.still = None;
         self.latest = None;
         self.composite_group = None;
+        self.composite_image = None;
     }
 
     /// The noise is complete: the clouds can be drawn this frame.
@@ -758,6 +763,7 @@ impl Clouds {
         // (the targets are made, checked, before: `ensure_targets`. A live
         // frame drops the still of the photo before it)
         self.composite_group = None;
+        self.composite_image = None;
         if still.is_none() {
             self.still = None;
         }
@@ -883,6 +889,7 @@ impl Clouds {
                 layout: &self.layout,
                 entries: &[entry(0, self.uniform.as_entire_binding()), entry(15, tv(target))],
             }));
+            self.composite_image = Some(target.clone());
             return;
         }
         let Some(sized) = self.sized.as_ref().filter(|s| s.size == size) else {
@@ -933,6 +940,7 @@ impl Clouds {
             layout: &self.layout,
             entries: &[entry(0, self.uniform.as_entire_binding()), entry(15, tv(&sized.history[write]))],
         }));
+        self.composite_image = Some(sized.history[write].clone());
         self.latest = Some(write);
         self.prev_vp = p.vp;
         self.prev_camera_km = p.camera_km;
@@ -1028,6 +1036,14 @@ impl Clouds {
         self.composite.push(((samples, gbuf), pipeline));
     }
 
+    /// The image drawn over the sky this frame (its transmittance in alpha,
+    /// below 0 where it has no sample), if [`Self::encode`] made one: the
+    /// stars drawn after the anti-aliasing are seen through it
+    /// (star_composite.rs).
+    pub(crate) fn composited_image(&self) -> Option<&wgpu::TextureView> {
+        self.composite_image.as_ref()
+    }
+
     /// Draws the clouds over the sky in scene pass A, if [`Self::encode`]
     /// made them this frame. `prepare` has been called for these `samples`.
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32, gbuf: bool) {
@@ -1043,6 +1059,7 @@ impl Clouds {
     /// leaves the live history alone.
     pub fn skipped(&mut self, still: bool) {
         self.composite_group = None;
+        self.composite_image = None;
         drop_live(still, &mut self.latest, &mut self.still);
     }
 }

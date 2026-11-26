@@ -35,6 +35,21 @@ const STAR_CELL_TABLE: u32 = 3460u; // stars.rs CELL_TABLE
 const STAR_MARGIN: f32 = 0.025;     // stars.rs MARGIN (radians)
 // a cell holds about 6 stars, up to a few dozen in the Milky Way
 const STAR_MAX_PER_CELL: u32 = 96u;
+// The real stars' glow, the eye's scattering around a bright point, for the
+// stars brighter than STAR_GLOW_MIN (stars.rs flux, about magnitude 3.5):
+// a Gaussian whose peak grows with the star's light (STAR_GLOW_PEAK per
+// unit) and whose width grows with it too (STAR_GLOW_SIGMA pixels at
+// STAR_GLOW_MIN, x (flux / STAR_GLOW_MIN)^0.3: Capella about 4.5, Sirius
+// 6.5), so that a brighter star looks larger, as on a photograph of the
+// sky. Cut, with a fade, at STAR_GLOW_REACH pixels.
+const STAR_GLOW_MIN: f32 = 0.5;
+const STAR_GLOW_PEAK: f32 = 0.017;
+const STAR_GLOW_SIGMA: f32 = 2.0;
+const STAR_GLOW_REACH: f32 = 24.0;
+// Extinction of the real sky per airmass (natural log, red, green, blue):
+// the blue goes first (Rayleigh scattering), so low stars turn orange as
+// they dim, as the setting sun does. The green is the former grey value.
+const STAR_EXTINCTION: vec3<f32> = vec3<f32>(0.19, 0.3, 0.48);
 // the Milky Way's light at its brightest, and the size of its points
 // (sigma, pixels)
 const MW_GLOW: f32 = 0.12;
@@ -46,7 +61,7 @@ const MW_POINTS: f32 = 2.0;
 const MW_POINT_MEAN_MIN: f32 = 0.6;
 
 struct GpuStar {
-    pos: vec4<f32>,   // unit direction, peak intensity
+    pos: vec4<f32>,   // unit direction, light (real: summed over the point; Legacy: peak)
     color: vec4<f32>, // linear colour, point size (pixels)
 };
 
@@ -271,7 +286,16 @@ fn milky_way(q: vec3<f32>, ax: vec3<f32>, ay: vec3<f32>, pixel: f32) -> vec3<f32
 // smoothstep(0, 0.9, ...) * 32 on the star texture's alpha: full brightness
 // from about 100, dimmer only below. The same curve, without the 32 times
 // overdrive.
-fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
+//
+// `points`: draw the stars' points (else the Milky Way only, the points being
+// drawn after the anti-aliasing, `fs_star_composite`); `milky`: draw the
+// Milky Way; `scale`: the size of a star's pixel in this pass's pixels (1;
+// more on a display of more than 1080 lines, `star_scale`).
+fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint, points: bool) -> vec3<f32> {
+    return sky_star_light(d, background, foot, points, true, 1.0);
+}
+
+fn sky_star_light(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint, points: bool, milky: bool, scale: f32) -> vec3<f32> {
     let catalogue = frame.sky_stars[0].w;
     let gain = min(smoothstep(0.0, 0.9, frame.sky_misc.w / 500.0) * 8.0, 1.0);
     if (catalogue < 0.0 || gain <= 0.0 || d.z <= 0.0) {
@@ -279,16 +303,21 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f3
     }
     let q = vec3<f32>(dot(frame.sky_stars[0].xyz, d), dot(frame.sky_stars[1].xyz, d), dot(frame.sky_stars[2].xyz, d));
     let legacy = catalogue > 0.5;
-    // atmospheric extinction: stars dim and vanish towards the horizon
+    // atmospheric extinction: stars dim, redden and vanish towards the
+    // horizon
     let airmass = 1.0 / (d.z + 0.025);
-    let extinction = select(exp(-0.3 * (airmass - 1.0)), 1.0, legacy);
+    let extinction = select(exp(-STAR_EXTINCTION * (airmass - 1.0)), vec3<f32>(1.0), legacy);
     let glow = dot(background, vec3<f32>(0.2126, 0.7152, 0.0722)) / 0.045;
     let glow2 = glow * glow;
     let glare = select(1.0 / (1.0 + glow2 * glow2), 1.0, legacy);
-    // daylight, or right on the horizon: nothing would show
-    if (gain * extinction * glare < 0.003) {
+    // daylight, or right on the horizon: nothing would show (the red, the
+    // last to go)
+    if (gain * extinction.x * glare < 0.003) {
         return vec3<f32>(0.0);
     }
+    // how low the direction is, for the scintillation: strong near the
+    // horizon, slight overhead
+    let low = 1.0 - clamp(d.z * 2.0, 0.0, 1.0);
     // the pixel's footprint in the catalogue's frame
     let ax = vec3<f32>(dot(frame.sky_stars[0].xyz, foot.across), dot(frame.sky_stars[1].xyz, foot.across), dot(frame.sky_stars[2].xyz, foot.across));
     let ay = vec3<f32>(dot(frame.sky_stars[0].xyz, foot.down), dot(frame.sky_stars[1].xyz, foot.down), dot(frame.sky_stars[2].xyz, foot.down));
@@ -298,7 +327,9 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f3
     let t = frame.camera_pos.w;
     let cell = select(0u, STAR_CELL_TABLE, legacy) + star_cell(q);
     let first = star_sky.cells[cell];
-    let last = min(star_sky.cells[cell + 1u], first + STAR_MAX_PER_CELL);
+    let last = select(first, min(star_sky.cells[cell + 1u], first + STAR_MAX_PER_CELL), points);
+    // the real stars' sizes in star pixels (`scale` of this pass's)
+    let inv_s2 = 1.0 / (scale * scale);
     var sum = vec3<f32>(0.0);
     for (var i = first; i < last; i++) {
         let s = star_sky.stars[i];
@@ -306,34 +337,73 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f3
         let off = s.pos.xyz - q;
         let px = dot(off, ax) / ax2;
         let py = dot(off, ay) / ay2;
-        // the real stars' size is in pixels; the Legacy Viewer's is an
-        // angle in the sky (stars.rs legacy_sigma), at least 0.75 px wide
-        let sigma = select(s.color.w, max(s.color.w / pixel, 0.75), legacy);
-        let r2 = (px * px + py * py) / (sigma * sigma);
-        // stars are listed in the cells within STAR_MARGIN only: on coarse
-        // targets (reflection probes) the widest points are cut there
-        let reach = STAR_MARGIN / (pixel * sigma);
-        let reach2 = reach * reach;
-        // the bright stars' soft glow, four times wider (the eye's
-        // scattering, as on a photograph of the sky)
-        if (s.pos.w > 0.3 && r2 < min(144.0, reach2)) {
-            sum += s.color.rgb * (s.pos.w - 0.3) * 0.05 * exp(-0.5 * r2 / 16.0);
+        let seed = hash3(floor(s.pos.xyz * 4096.0));
+        if (legacy) {
+            // the Legacy Viewer's stars: a peak intensity and a size in the
+            // sky (stars.rs legacy_sigma), at least 0.75 px wide
+            let sigma = max(s.color.w / pixel, 0.75);
+            let r2 = (px * px + py * py) / (sigma * sigma);
+            // stars are listed in the cells within STAR_MARGIN only: on
+            // coarse targets (reflection probes) the widest points are cut
+            // there
+            let reach = STAR_MARGIN / (pixel * sigma);
+            let reach2 = reach * reach;
+            // a soft glow four times wider
+            if (s.pos.w > 0.3 && r2 < min(144.0, reach2)) {
+                sum += s.color.rgb * (s.pos.w - 0.3) * 0.05 * exp(-0.5 * r2 / 16.0);
+            }
+            if (r2 < min(9.0, reach2)) {
+                // they flicker (starsF.glsl twinkle)
+                let wave = sin(t * (2.3 + 3.1 * seed) + seed * 40.0) * sin(t * (0.9 + 1.3 * seed) + seed * 17.0);
+                sum += s.color.rgb * s.pos.w * exp(-0.5 * r2) * (1.0 + 0.4 * wave);
+            }
+            continue;
         }
-        if (r2 < min(9.0, reach2)) {
-            // scintillation: slow and slight overhead, stronger low down
-            // (the Legacy Viewer's stars flicker, starsF.glsl twinkle)
-            let seed = hash3(floor(s.pos.xyz * 4096.0));
-            let depth = select(mix(0.35, 0.05, clamp(d.z * 2.0, 0.0, 1.0)), 0.4, legacy);
-            let wave = sin(t * (2.3 + 3.1 * seed) + seed * 40.0) * sin(t * (0.9 + 1.3 * seed) + seed * 17.0);
-            sum += s.color.rgb * s.pos.w * exp(-0.5 * r2) * (1.0 + depth * wave);
+        // The real stars: `s.pos.w` is the point's whole light, spread over
+        // a sharp core and, for the bright ones, a glow (squared distances
+        // in star pixels; the cells list a star within STAR_MARGIN only).
+        let rr = (px * px + py * py) * inv_s2;
+        let reach = STAR_MARGIN / (pixel * scale);
+        let reach2 = reach * reach;
+        // The core, a Gaussian of the star's size widened by the pixel's own
+        // square (its variance 1/12 each way): a point narrower than a pixel
+        // keeps the same light wherever it falls between pixel centres, so
+        // the faint stars do not shimmer as the sky turns.
+        let v = s.color.w * s.color.w + inv_s2 / 12.0;
+        if (rr < min(9.0 * v, reach2)) {
+            // scintillation: slow and slight overhead, stronger low down,
+            // where the bright stars flash in colour (each colour bent its
+            // own way by the air)
+            let phase = vec3<f32>(0.0, 1.3, 2.6) * low;
+            let wave = sin(t * (2.3 + 3.1 * seed) + seed * 40.0 + phase) * sin(t * (0.9 + 1.3 * seed) + seed * 17.0 + phase * 0.7);
+            let depth = mix(0.05, 0.35, low);
+            sum += s.color.rgb * s.pos.w * exp(-0.5 * rr / v) / (6.2831853 * v) * (vec3<f32>(1.0) + depth * wave);
+        }
+        if (s.pos.w > STAR_GLOW_MIN) {
+            let sg = STAR_GLOW_SIGMA * pow(s.pos.w / STAR_GLOW_MIN, 0.3);
+            let edge = min(min(reach, STAR_GLOW_REACH), 3.0 * sg);
+            if (rr < edge * edge) {
+                let fade = 1.0 - smoothstep(0.6 * edge, edge, sqrt(rr));
+                // fades in from STAR_GLOW_MIN, so no star's glow pops on
+                let weight = STAR_GLOW_PEAK * (s.pos.w - STAR_GLOW_MIN);
+                sum += s.color.rgb * weight * exp(-0.5 * rr / (sg * sg)) * fade;
+            }
         }
     }
     // Preferences › "Star brightness" (1 for the Legacy Viewer's stars)
     var col = sum * max(frame.sky_stars[2].w, 0.0);
-    if (frame.sky_stars[1].w > 0.0) {
+    if (milky && frame.sky_stars[1].w > 0.0) {
         col += milky_way(q, ax, ay, pixel) * frame.sky_stars[1].w;
     }
     return col * gain * extinction * glare;
+}
+
+// Whether the main view's sky pass leaves the real stars' points to
+// `fs_star_composite` (renderer.rs sets bit 1 of features.w on the main
+// view's frame only; under water the sky pass keeps them, seen through the
+// water's fog).
+fn stars_after_resolve() -> bool {
+    return (frame.features.w & 2u) != 0u && frame.sky_stars[0].w > -0.5 && frame.sky_stars[0].w < 0.5 && !camera_underwater();
 }
 
 // Texel of a heavenly body's texture in direction `dir`, as stored: rgb in the
@@ -409,14 +479,16 @@ fn sky_full(dir: vec3<f32>) -> vec3<f32> {
     var foot: SkyFootprint;
     foot.across = u * length(middle.across);
     foot.down = cross(d, u) * length(middle.down);
-    return sky_full_at(dir, foot);
+    return sky_full_at(dir, foot, true);
 }
 
-fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
+// `star_points`: false when the real stars' points are drawn after the
+// anti-aliasing instead (the main view's sky pass, `stars_after_resolve`).
+fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint, star_points: bool) -> vec3<f32> {
     let d = normalize(dir);
     if (frame.studio_aurora[0].w > 0.0) {
         let c = studio_sky_color(d);
-        return c + sky_stars(d, c, foot) * smoothstep(0.01, 0.08, d.z);
+        return c + sky_stars(d, c, foot, star_points) * studio_star_horizon(d);
     }
     let a = atmos_eval(d, false);
     // skyF.glsl: added to the haze color before its x 2, under the clouds
@@ -431,14 +503,10 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     // alpha <= 2/255. Premultiplying in linear and adding the sun x 6 (moon at
     // 90 % opacity) blew soft halos out to a white disc with stepped rings and
     // a visible quad (#2782).
-    var hidden = 0.0;
     let sd = normalize(frame.sky_sun.xyz);
     if (frame.tex_slots.y != 0u) {
         let s = body_disc(d, sd, 0.5, frame.sky_sun.w, frame.tex_slots.y);
         c = mix(c, s.rgb, s.a);
-        // the Legacy Viewer's sun quad writes depth and hides every star
-        // behind it, even where it is clear: here only as much as it covers
-        hidden = s.a;
     }
     if (frame.tex_slots.z != 0u) {
         let md = normalize(frame.sky_moon.xyz);
@@ -446,15 +514,13 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
         if (m.a > 2.0 / 255.0) {
             let fade = select(1.0, clamp(md.z * md.z * 4.0, 0.0, 1.0), md.z > 0.0);
             c = mix(c, m.rgb * frame.sky_misc.z, m.a * fade);
-            // SL-14113: the moon's kept texels write depth, the stars behind
-            // them are hidden
-            hidden = 1.0;
         }
     }
-    // (frame.features.w: the main view's clouds are composited over the sky
-    // by the volumetric layer, clouds.rs; the Legacy layer is skipped)
+    let hidden = sky_bodies_hidden(d);
+    // (frame.features.w bit 0: the main view's clouds are composited over the
+    // sky by the volumetric layer, clouds.rs; the Legacy layer is skipped)
     var clouds = vec4<f32>(0.0);
-    if (frame.features.w == 0u) {
+    if ((frame.features.w & 1u) == 0u) {
         clouds = sky_clouds(d);
     }
     c = mix(c, clouds.rgb, clouds.a);
@@ -462,13 +528,162 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     let cover = 1.0 - clouds.a;
     // stars and Milky Way (above) behind the clouds and the sun and moon; the
     // aurora, in the atmosphere, behind the clouds only
-    col += (sky_stars(d, col, foot) * (1.0 - hidden) + aurora_sky(d)) * cover;
+    col += (sky_stars(d, col, foot, star_points) * (1.0 - hidden) + aurora_sky(d)) * cover;
     if (frame.tex_slots.y == 0u) {
         let mu = dot(d, sd);
         let disk = smoothstep(0.99955, 0.9997, mu) * clamp(sd.z * 10.0 + 1.0, 0.0, 1.0);
         col += frame.sun_color.rgb * disk * 6.0 * cover;
     }
     return col;
+}
+
+// The studio sky's stars fade out just above its horizon.
+fn studio_star_horizon(d: vec3<f32>) -> f32 {
+    return smoothstep(0.01, 0.08, d.z);
+}
+
+// How much the sun and moon textures hide the stars at `d` (0 to 1).
+fn sky_bodies_hidden(d: vec3<f32>) -> f32 {
+    var hidden = 0.0;
+    if (frame.tex_slots.y != 0u) {
+        // the Legacy Viewer's sun quad writes depth and hides every star
+        // behind it, even where it is clear: here only as much as it covers
+        hidden = body_disc(d, normalize(frame.sky_sun.xyz), 0.5, frame.sky_sun.w, frame.tex_slots.y).a;
+    }
+    if (frame.tex_slots.z != 0u) {
+        // SL-14113: the moon's kept texels write depth, the stars behind
+        // them are hidden
+        if (body_disc(d, normalize(frame.sky_moon.xyz), 0.45, frame.sky_moon.w, frame.tex_slots.z).a > 2.0 / 255.0) {
+            hidden = 1.0;
+        }
+    }
+    return hidden;
+}
+
+// ------------------------------------------- stars after the anti-aliasing
+//
+// The real stars' points drawn over the resolved image, at the display's
+// size, after TAA or FSR and before the depth of field, the glow, the bloom
+// and the tone mapping (star_composite.rs): drawn into the scene, a point of
+// a pixel or less was smeared by the temporal resolve and, with FSR, drawn
+// at the render size then upscaled and sharpened. The sky pass keeps the
+// Milky Way and leaves them out (`stars_after_resolve`). Hidden where the
+// prepass depth has a surface, behind the clouds, the sun and the moon, and
+// drowned by a bright pixel (the resolved colour, which holds the sky, the
+// moonlight and the lights), as in the sky pass.
+
+struct StarComposite {
+    // the pass's camera without the TAA / FSR jitter (the resolved image
+    // has none), for positions relative to the eye
+    inv_view_proj_rot: mat4x4<f32>,
+    // width, height, 1/w, 1/h of the pass
+    size: vec4<f32>,
+    // x: a star pixel in pass pixels (star_composite.rs `star_scale`)
+    misc: vec4<f32>,
+};
+
+@group(3) @binding(40) var sc_color: texture_2d<f32>;
+// the scene's opaque depth at the render size (the prepass): the same in
+// every anti-aliasing mode (FSR's own depth holds the blended faces too)
+@group(3) @binding(41) var sc_depth: texture_depth_2d;
+// the scene at the render size before the blended faces (renderer.rs
+// `scene_copy`) and after them (before the anti-aliasing)
+@group(3) @binding(44) var sc_before: texture_2d<f32>;
+@group(3) @binding(45) var sc_after: texture_2d<f32>;
+// the volumetric clouds' image (clouds.rs; transmittance in alpha, below 0
+// where it has no sample), or a clear 1 x 1 one
+@group(3) @binding(42) var sc_clouds: texture_2d<f32>;
+@group(3) @binding(43) var<uniform> sc: StarComposite;
+
+fn sc_ray(ndc: vec2<f32>) -> vec3<f32> {
+    let w = sc.inv_view_proj_rot * vec4<f32>(ndc, 0.5, 1.0);
+    return normalize(w.xyz / w.w);
+}
+
+// The volumetric clouds' transmittance at `uv`, bilinear over the texels
+// that hold a sample (clouds.wgsl bilinear_samples); clear where none does.
+fn sc_cloud_transmittance(uv: vec2<f32>) -> f32 {
+    let dims = vec2<i32>(textureDimensions(sc_clouds));
+    let p = uv * vec2<f32>(dims) - 0.5;
+    let i = vec2<i32>(floor(p));
+    let f = p - floor(p);
+    var sum = 0.0;
+    var weight = 0.0;
+    for (var k = 0; k < 4; k++) {
+        let o = vec2<i32>(k % 2, k / 2);
+        let t = textureLoad(sc_clouds, clamp(i + o, vec2<i32>(0), dims - 1), 0).a;
+        let w = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
+        if (t >= 0.0) {
+            sum += w * t;
+            weight += w;
+        }
+    }
+    return select(1.0, sum / weight, weight > 1e-4);
+}
+
+// How much of the light behind a render pixel its blended faces let
+// through, from the pixel before them `b` and after them `a` (linear). A face
+// blends `a = (1 - alpha) b + alpha s` with a colour `s` of its own: never
+// below `(1 - alpha) b`, so a channel it darkened bounds what passes; and a
+// face that turns the sky's hue (a leaf over the night) is taken as opaque.
+// Faint glass that only lightens keeps the stars, a leaf hides them, tinted
+// glass dims them by its tint.
+fn sc_blend_transmittance(b: vec3<f32>, a: vec3<f32>) -> f32 {
+    let e = 1e-4;
+    let ratio = (a + e) / (b + e);
+    let darkened = clamp(min(ratio.x, min(ratio.y, ratio.z)), 0.0, 1.0);
+    let hue = dot(normalize(a + e), normalize(b + e));
+    return min(darkened, smoothstep(0.85, 0.98, hue));
+}
+
+@fragment
+fn fs_star_composite(in: SkyOut) -> @location(0) vec4<f32> {
+    let px = vec2<i32>(in.clip.xy);
+    let c = textureLoad(sc_color, px, 0);
+    if (!stars_after_resolve()) {
+        return c;
+    }
+    // the four render pixels around this one: sky in all of them (reverse-Z,
+    // the sky at 0), so that the jittered render's edges do not flicker the
+    // stars beside a silhouette; and how much their blended faces pass,
+    // bilinear
+    let dims = vec2<i32>(textureDimensions(sc_depth));
+    let p = in.clip.xy * sc.size.zw * vec2<f32>(dims) - 0.5;
+    let i = vec2<i32>(floor(p));
+    let f = p - floor(p);
+    var passed = 0.0;
+    for (var k = 0; k < 4; k++) {
+        let o = vec2<i32>(k % 2, k / 2);
+        let q = clamp(i + o, vec2<i32>(0), dims - 1);
+        if (textureLoad(sc_depth, q, 0) > 0.0) {
+            return c;
+        }
+        let w = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
+        passed += w * sc_blend_transmittance(textureLoad(sc_before, q, 0).rgb, textureLoad(sc_after, q, 0).rgb);
+    }
+    if (passed <= 0.0) {
+        return c;
+    }
+    let dir = sc_ray(in.ndc);
+    var foot: SkyFootprint;
+    foot.across = sc_ray(in.ndc + vec2<f32>(2.0 * sc.size.z, 0.0)) - dir;
+    foot.down = sc_ray(in.ndc + vec2<f32>(0.0, 2.0 * sc.size.w)) - dir;
+    var seen = passed;
+    if (frame.studio_aurora[0].w > 0.0) {
+        seen *= studio_star_horizon(dir);
+    } else {
+        seen *= 1.0 - sky_bodies_hidden(dir);
+        if ((frame.features.w & 1u) != 0u) {
+            seen *= sc_cloud_transmittance(in.clip.xy * sc.size.zw);
+        } else {
+            seen *= 1.0 - sky_clouds(dir).a;
+        }
+    }
+    if (seen <= 0.0) {
+        return c;
+    }
+    let stars = sky_star_light(dir, c.rgb, foot, true, false, sc.misc.x);
+    return vec4<f32>(c.rgb + stars * seen, c.a);
 }
 
 // The volumetric clouds' weather map (clouds.rs), drawn when the sky's cloud
@@ -636,7 +851,7 @@ fn sky_pixel(in: SkyOut) -> vec4<f32> {
             return vec4<f32>(sky_color(vec3<f32>(d.x, d.y, abs(d.z))) * fresnel, 1.0);
         }
     }
-    var col = sky_full_at(dir, sky_footprint(in.ndc, dir));
+    var col = sky_full_at(dir, sky_footprint(in.ndc, dir), !stars_after_resolve());
     col += lightning_glow(dir);
     if (camera_underwater()) {
         let wf = water_fog_view(dir * 512.0, frame.water_normal.w);

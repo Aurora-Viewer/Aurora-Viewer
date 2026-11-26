@@ -87,6 +87,7 @@ mod soft_shadows;
 #[cfg(test)]
 mod specular_aa;
 pub mod spirv_fix;
+mod star_composite;
 pub mod stars;
 pub mod start_progress;
 pub mod stereo_view;
