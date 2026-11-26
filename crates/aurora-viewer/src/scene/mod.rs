@@ -6549,6 +6549,13 @@ impl Scene {
         Some(self.motions.get(id)?.camera_eye_pos()? - world.avatar_lib.pelvis)
     }
 
+    /// The animated point between the eyes relative to the avatar root,
+    /// before its world transform: the standing mouselook eye of "Attach the
+    /// camera between the eyes" (`FrameInput::eye_midpoint`).
+    pub fn eyes_midpoint_offset(&self, world: &World, id: &Uuid) -> Option<Vec3> {
+        Some(self.motions.get(id)?.eyes_pos()? - world.avatar_lib.pelvis)
+    }
+
     /// The head joint as last posed, relative to the avatar root (as
     /// `eyes_offset`).
     pub fn head_offset(&self, world: &World, id: &Uuid) -> Option<Vec3> {
@@ -7840,6 +7847,7 @@ mod tests {
                 build_mode: false,
                 edit_tracking: None,
                 eye_offset: scene.eyes_offset(&world, &owner),
+                eye_midpoint: scene.eyes_midpoint_offset(&world, &owner),
                 follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
                 head_offset: scene.head_offset(&world, &owner),
                 draw_distance: 128.0,
@@ -7913,6 +7921,7 @@ mod tests {
             build_mode: false,
             edit_tracking: None,
             eye_offset: Some(eyes),
+            eye_midpoint: scene.eyes_midpoint_offset(&world, &owner),
             follow_joint_offset: None,
             head_offset: Some(head),
             draw_distance: 128.0,
@@ -7921,6 +7930,57 @@ mod tests {
         };
         camera.update(&mut world, &settings, &input);
         assert!(camera.position.z - head_world.z > 1.4, "{} / {head_world}", camera.position);
+    }
+
+    #[test]
+    fn standing_eye_following_keeps_the_point_between_the_eyes() {
+        use crate::camera::{Camera, CameraSettings, FrameInput};
+
+        // "Attach the camera between the eyes" is Aurora's own option: the
+        // Legacy Viewer's standing camera takes no eye X/Y, so the left
+        // system eye of the seated path (#4606) does not apply to it
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for event in crate::demo::events() {
+            if let NetEvent::ObjectUpdates { handle, .. } = &event {
+                world.main_region = Some(*handle);
+            }
+            world.apply(event);
+        }
+        assert!(!world.agent.is_sitting());
+        let owner = world.agent_id;
+        let mut scene = Scene::new(Default::default(), lib.clone());
+        scene.palette_base(owner);
+        let now = Instant::now();
+        scene.update_poses(&mut world, Vec3::ZERO, now);
+        let left = scene.joint_world(&world, &owner, "mEyeLeft", now).expect("left eye");
+        let right = scene.joint_world(&world, &owner, "mEyeRight", now).expect("right eye");
+        let between = (left + right) * 0.5;
+        assert!(left.distance(between) > 0.02, "{left} / {between}");
+        let settings = CameraSettings {
+            mouselook_follow_eyes: true,
+            hover_affects_camera: true,
+            ..Default::default()
+        };
+        let mut camera = Camera::default();
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        let input = FrameInput {
+            dt: 1.0,
+            now,
+            steering: false,
+            build_mode: false,
+            edit_tracking: None,
+            eye_offset: scene.eyes_offset(&world, &owner),
+            eye_midpoint: scene.eyes_midpoint_offset(&world, &owner),
+            follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
+            head_offset: scene.head_offset(&world, &owner),
+            draw_distance: 128.0,
+            region_width: 256.0,
+            aspect: 1.0,
+        };
+        camera.update(&mut world, &settings, &input);
+        assert!(camera.position.abs_diff_eq(between, 2e-4), "{} / {between}", camera.position);
     }
 
     #[test]
@@ -7966,6 +8026,7 @@ mod tests {
             build_mode: false,
             edit_tracking: None,
             eye_offset: scene.eyes_offset(&world, &owner),
+            eye_midpoint: scene.eyes_midpoint_offset(&world, &owner),
             follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
             head_offset: scene.head_offset(&world, &owner),
             draw_distance: 128.0,

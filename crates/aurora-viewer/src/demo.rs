@@ -962,7 +962,8 @@ pub fn first_person_eye_animation() -> aurora_assets::Animation {
 /// AURORA_DEMO_CAMERA=sit-ml-periscope: a vehicle's sit animation that
 /// raises only the left system eye (mEyeLeft) to its periscope, 1.5 m above
 /// the head, the right eye and the Bento eyes left in it (#4606).
-pub const PERISCOPE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0104);
+/// (an id no other demo asset uses)
+pub const PERISCOPE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_4606);
 
 /// The animation of PERISCOPE_ANIM: a position key on mEyeLeft, from its
 /// rest place in `rig`.

@@ -209,9 +209,15 @@ pub struct FrameInput {
     pub build_mode: bool,
     /// Focus object belongs to the edit selection: follow it only on request.
     pub edit_tracking: Option<bool>,
-    /// Animated point between the eyes relative to the rendered avatar root.
-    /// Sitting and optional eye following consume it after skeleton evaluation.
+    /// The animated left system eye relative to the rendered avatar root
+    /// (LLVOAvatar::updateHeadOffset reads `mEyeLeftp` alone): the seated
+    /// and ground-sit mouselook eye, also with eye following on. Consumed
+    /// after skeleton evaluation.
     pub eye_offset: Option<Vec3>,
+    /// The animated point between the eyes relative to the rendered avatar
+    /// root: the standing mouselook eye with "Attach the camera between the
+    /// eyes" on (Aurora's own option, which the Legacy Viewer does not have).
+    pub eye_midpoint: Option<Vec3>,
     /// Selected skeleton joint's displacement from rest, after pose evaluation.
     pub follow_joint_offset: Option<Vec3>,
     /// The head joint as last posed, relative to the rendered avatar root:
@@ -2514,7 +2520,7 @@ impl Camera {
         let world = &*world;
         let agent = &world.agent;
         self.head = if self.vr_mode == Some(VrView::FirstPerson) && agent.is_sitting() {
-            self.mouselook_eye(agent, s, f.eye_offset)
+            self.mouselook_eye(agent, s, f)
         } else {
             self.avatar.position + Vec3::Z * HEAD_HEIGHT
         };
@@ -2738,12 +2744,21 @@ impl Camera {
         Some(p + r * if eye { sit.eye } else { sit.at })
     }
 
-    fn mouselook_eye(&self, agent: &AgentState, s: &CameraSettings, eye_offset: Option<Vec3>) -> Vec3 {
-        let posed = eye_offset.filter(|p| p.is_finite());
-        // Requested opt-in: follow the eye midpoint's translation, never the
-        // head's rotation. calc_focus_target keeps the mouse's world-space aim.
+    fn mouselook_eye(&self, agent: &AgentState, s: &CameraSettings, f: &FrameInput) -> Vec3 {
+        // the left system eye: the Legacy Viewer's seated and ground-sit eye
+        let posed = f.eye_offset.filter(|p| p.is_finite());
+        // Requested opt-in: follow the eyes' translation, never the head's
+        // rotation. calc_focus_target keeps the mouse's world-space aim.
+        // Standing, the point between the eyes, as its label says; sitting,
+        // the left system eye the Legacy Viewer's seated camera follows, so
+        // a vehicle's periscope eye (#4606) still carries the view.
+        let followed = if agent.is_sitting() {
+            posed
+        } else {
+            f.eye_midpoint.filter(|p| p.is_finite())
+        };
         if s.mouselook_follow_eyes
-            && let Some(eyes) = posed
+            && let Some(eyes) = followed
         {
             return self.avatar.render_root + self.avatar.render_rotation * eyes;
         }
@@ -2767,7 +2782,7 @@ impl Camera {
     fn calc_camera_target(&mut self, world: &World, s: &CameraSettings, f: &FrameInput) -> Vec3 {
         let agent = &world.agent;
         let mut camera = match self.mode {
-            CameraMode::Mouselook => self.mouselook_eye(agent, s, f.eye_offset),
+            CameraMode::Mouselook => self.mouselook_eye(agent, s, f),
             CameraMode::Follow if self.focus_on_avatar => self.follow.eye,
             CameraMode::ThirdPerson if self.focus_on_avatar => match self.sit_camera_point(world, f.now, true) {
                 Some(p) => p,
@@ -4527,6 +4542,7 @@ mod tests {
             build_mode: false,
             edit_tracking: None,
             eye_offset: None,
+            eye_midpoint: None,
             follow_joint_offset: None,
             head_offset: None,
             draw_distance: 128.0,
@@ -7149,6 +7165,7 @@ mod tests {
             for eyes in [Vec3::new(0.1, 0.0, 0.65), Vec3::new(-0.3, 0.2, 0.1)] {
                 let mut input = frame(1.0 / 60.0);
                 input.eye_offset = Some(eyes);
+                input.eye_midpoint = Some(eyes);
                 camera.update(&mut world, &settings, &input);
                 camera.shake = Vec3::new(0.2, 0.1, -0.1);
                 world.agent.pitch = 0.8;
@@ -7423,7 +7440,7 @@ mod tests {
                     if mode != VrView::FirstPerson {
                         continue;
                     }
-                    let expected = camera.mouselook_eye(&world.agent, &settings, eyes);
+                    let expected = camera.mouselook_eye(&world.agent, &settings, &frame);
                     let inverse = camera.vr_view(0.4).inverse();
                     assert!(inverse.w_axis.truncate().abs_diff_eq(expected, 1e-5));
                     assert!(inverse.transform_vector3(Vec3::NEG_Z).z.abs() < 1e-5);
@@ -7668,12 +7685,20 @@ mod tests {
             ] {
                 settings.hover_affects_camera = follow_hover;
                 let mut input = frame(1.0 / 60.0);
-                input.eye_offset = Some(eyes);
+                // the left system eye 3.6 cm aside from the point between
+                // the eyes, as on the default skeleton
+                let left = eyes + Vec3::Y * 0.036;
+                input.eye_offset = Some(left);
+                input.eye_midpoint = Some(eyes);
                 assert!(camera.needs_animated_eyes(&world.agent, &settings));
                 camera.update(&mut world, &settings, &input);
                 let index = world.objects.index_of_uuid(&world.agent_id).unwrap();
                 let (root, rotation, _) = Scene::object_transform(&world, index, input.now, 0).unwrap();
-                let expected = root + rotation * eyes;
+                // standing: between the eyes, as the option says; sitting
+                // (seated or on the ground): the left system eye, which the
+                // Legacy Viewer's seated camera follows (#4606)
+                let followed = if seated || ground { left } else { eyes };
+                let expected = root + rotation * followed;
                 assert!(camera.position.abs_diff_eq(expected, 2e-5));
                 let aim = camera.mouselook_aim(&world.agent);
                 assert!(camera.forward().abs_diff_eq(aim, 2e-5));

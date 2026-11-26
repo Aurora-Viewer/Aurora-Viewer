@@ -11748,6 +11748,7 @@ impl App {
                     Some(false)
                 },
                 eye_offset: None,
+                eye_midpoint: None,
                 follow_joint_offset: None,
                 head_offset: self.scene.head_offset(&self.world, &self.world.agent_id),
                 draw_distance: self.settings.draw_distance,
@@ -12381,6 +12382,7 @@ impl App {
             if let Some(mut frame) = late_camera_frame {
                 let camera_settings = late_camera_settings.unwrap_or_else(|| self.settings.camera.clone());
                 frame.eye_offset = self.scene.eyes_offset(&self.world, &self.world.agent_id);
+                frame.eye_midpoint = self.scene.eyes_midpoint_offset(&self.world, &self.world.agent_id);
                 frame.follow_joint_offset = camera_settings
                     .third_person_follow_joint
                     .and_then(|joint| self.scene.joint_offset(&self.world, &self.world.agent_id, joint.rig_name()));

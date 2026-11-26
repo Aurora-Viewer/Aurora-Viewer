@@ -401,6 +401,7 @@ mod tests {
                 build_mode: false,
                 edit_tracking: None,
                 eye_offset: None,
+                eye_midpoint: None,
                 follow_joint_offset: None,
                 head_offset: None,
                 draw_distance: 128.0,
