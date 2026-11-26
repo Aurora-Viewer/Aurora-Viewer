@@ -356,6 +356,7 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
     let host = bare_host(url)?;
     let parts = segments(url);
     let slug = |id: &str| (1..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'='));
+    let digits = |id: &str| (1..=24).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit());
     let safe = match (host.as_str(), parts.as_slice()) {
         ("snapchat.com", ["spotlight", id] | [_, "spotlight", id]) => {
             (8..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
@@ -363,6 +364,8 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
         ("dailymotion.com", ["video", id]) => id.starts_with('x') && slug(id),
         ("arte.tv", [lang, "videos", id, ..]) => lang.len() == 2 && slug(id),
         ("bbc.com" | "bbc.co.uk", ["iplayer", "episode", id, ..]) => slug(id),
+        ("tver.jp", ["episodes", id]) => slug(id),
+        ("nicovideo.jp", ["watch", id]) => ["sm", "so", "nm"].iter().any(|prefix| id.strip_prefix(prefix).is_some_and(digits)),
         _ => false,
     };
     safe.then(|| {
@@ -381,6 +384,8 @@ pub(super) fn publisher_poster(page: &str, html: &str) -> Option<String> {
         "snapchat.com" => &["sc-cdn.net", "snapcdn.com"],
         "dailymotion.com" => &["dmcdn.net"],
         "bbc.com" | "bbc.co.uk" => &["bbci.co.uk"],
+        "tver.jp" => &["tver.jp", "tver-static.com"],
+        "nicovideo.jp" => &["nimg.jp", "nicovideo.jp"],
         _ => &[],
     };
     head_meta(html).find_map(|(key, value)| {
