@@ -148,37 +148,31 @@ impl Whole {
     }
 }
 
-/// The orders of the View panel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum Sort {
-    /// Head to toe, by section (objects in the world: the linksets' order).
-    #[default]
-    Area,
-    Name,
-    Heaviest,
-    Newest,
+/// Whether a prim's name or creator holds `query` (already lowercase).
+fn finds(row: &Row, query: &str) -> bool {
+    query.is_empty() || row.name.to_lowercase().contains(query) || row.creator_name.to_lowercase().contains(query)
 }
 
-/// The items to list for `query` (name or creator, ignoring case), in the
-/// order of `sort`.
-pub fn shown<'a>(rows: &[Row], items: &'a [Item], query: &str, sort: Sort) -> Vec<&'a Item> {
+/// The items to list for `query` (the name or creator of any of their prims,
+/// ignoring case), head to toe by section (objects in the world: the
+/// linksets' order).
+pub fn shown<'a>(rows: &[Row], items: &'a [Item], query: &str) -> Vec<&'a Item> {
     let query = query.trim().to_lowercase();
     let mut list: Vec<&Item> = items
         .iter()
-        .filter(|item| {
-            let row = &rows[item.first];
-            query.is_empty() || row.name.to_lowercase().contains(&query) || row.creator_name.to_lowercase().contains(&query)
-        })
+        .filter(|item| item.prims.iter().any(|i| finds(&rows[*i], &query)))
         .collect();
-    let name = |item: &Item| &rows[item.first].name;
-    match sort {
-        // a stable sort keeps the linksets' order inside a section
-        Sort::Area => list.sort_by_key(|item| item.area),
-        Sort::Name => list.sort_by(|a, b| crate::natural_order::cmp(name(a), name(b))),
-        Sort::Heaviest => list.sort_by_key(|item| std::cmp::Reverse(item.complexity)),
-        Sort::Newest => list.sort_by_key(|item| std::cmp::Reverse(rows[item.first].created)),
-    }
+    // a stable sort keeps the linksets' order inside a section
+    list.sort_by_key(|item| item.area);
     list
+}
+
+/// The prims of `item` the search keeps: all of them when the item itself
+/// (its root) is found, else those whose name or creator holds `query`.
+pub fn found_prims<'a>(rows: &'a [Row], item: &'a Item, query: &str) -> impl Iterator<Item = usize> + 'a {
+    let query = query.trim().to_lowercase();
+    let whole = finds(&rows[item.first], &query);
+    item.prims.iter().copied().filter(move |i| whole || finds(&rows[*i], &query))
 }
 
 /// The badge of a complexity: light, medium, or among the heaviest.
@@ -287,29 +281,51 @@ mod tests {
         assert_eq!(list[1].area, Area::Head);
         assert_eq!((objects(&list), prims(&list)), (1, 2));
         assert_eq!(Whole::of(&list).triangles, 200);
-        assert_eq!(shown(&rows, &list, "eyes", Sort::Area).len(), 1);
+        assert_eq!(shown(&rows, &list, "eyes").len(), 1);
     }
 
     #[test]
-    fn search_finds_names_and_creators_and_sorts() {
+    fn search_finds_names_and_creators_head_to_toe() {
         let rows = [
             row(1, true, "Boots", 7, 400),
             row(2, true, "Aster Head", 2, 900),
             row(3, true, "Hair", 2, 700),
         ];
         let list = items(&rows);
-        let names = |q: &str, sort| {
-            shown(&rows, &list, q, sort)
+        let names = |q: &str| {
+            shown(&rows, &list, q)
                 .iter()
                 .map(|i| rows[i.first].name.clone())
                 .collect::<Vec<_>>()
         };
         // head to toe, the linksets' order kept inside the head
-        assert_eq!(names("", Sort::Area), ["Aster Head", "Hair", "Boots"]);
-        assert_eq!(names("", Sort::Name), ["Aster Head", "Boots", "Hair"]);
-        assert_eq!(names("", Sort::Heaviest), ["Aster Head", "Hair", "Boots"]);
-        assert_eq!(names("ASTER", Sort::Area), ["Aster Head"]);
-        assert_eq!(names("maker 1", Sort::Area), ["Boots"]);
+        assert_eq!(names(""), ["Aster Head", "Hair", "Boots"]);
+        assert_eq!(names("ASTER"), ["Aster Head"]);
+        assert_eq!(names("maker 1"), ["Boots"]);
+    }
+
+    #[test]
+    fn search_finds_an_item_by_one_of_its_prims_and_keeps_those_prims() {
+        let mut rows = vec![
+            row(1, true, "Boots", 7, 400),
+            row(2, false, "Laces", 7, 0),
+            row(3, false, "Heel", 7, 0),
+            row(4, true, "Hair", 2, 700),
+        ];
+        rows[2].creator_name = "Cobbler".into();
+        let list = items(&rows);
+        let found = |q: &str| {
+            shown(&rows, &list, q)
+                .iter()
+                .map(|i| found_prims(&rows, i, q).map(|r| rows[r].name.as_str()).collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        };
+        // a child prim's name, or its creator alone: its item, that prim only
+        assert_eq!(found("laces"), [vec!["Laces"]]);
+        assert_eq!(found("COBBLER"), [vec!["Heel"]]);
+        // the item's own name: every prim of it
+        assert_eq!(found("boots"), [vec!["Boots", "Laces", "Heel"]]);
+        assert_eq!(found("").len(), 2);
     }
 
     #[test]

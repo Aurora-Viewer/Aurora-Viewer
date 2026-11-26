@@ -870,14 +870,8 @@ pub struct Settings {
     pub inspect_columns: u32,
     /// The same for what an avatar wears.
     pub inspect_avatar_columns: u32,
-    /// Inspect opens on its wide view (a board of tiles); Area Search has
-    /// only that one.
-    pub inspect_wide: bool,
     /// The 3D views have a light ground.
     pub stage_light: bool,
-    /// The Inspect window's View panel: order, creator on the rows, what
-    /// else the rows show (Aurora's own).
-    pub inspect_view: crate::ui::inspect::InspectView,
     /// LandmarksSortedByDate: the Landmarks tab of Places sorted by date.
     pub landmarks_by_date: bool,
     /// FSTPHistoryTZ: the time zone of the teleport history's days, chosen
@@ -2599,9 +2593,7 @@ impl Default for Settings {
             standalone_place_details: false,
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
             inspect_avatar_columns: crate::ui::inspect::AVATAR_COLUMNS,
-            inspect_wide: false,
             stage_light: false,
-            inspect_view: Default::default(),
             landmarks_by_date: true,
             tp_history_zone: HistoryZone::Slt,
             confirm_teleports: true,
