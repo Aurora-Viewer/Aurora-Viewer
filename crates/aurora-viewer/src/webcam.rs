@@ -4,6 +4,7 @@
 mod panel;
 mod recording;
 mod retarget;
+mod soundtrack;
 mod take_tools;
 
 use std::{
@@ -19,6 +20,7 @@ use serde::Deserialize;
 
 use retarget::Channels;
 pub(crate) use retarget::Pose;
+use uuid::Uuid;
 
 pub const WINDOW: &str = "webcam_tracking";
 const SCRIPT: &str = include_str!("webcam_capture.py");
@@ -367,6 +369,30 @@ struct Transport {
     scrub: Option<f32>,
 }
 
+pub(crate) struct GestureAssets {
+    pub(crate) animation: Uuid,
+    pub(crate) sounds: Vec<(f32, Uuid)>,
+}
+
+struct GestureUpload {
+    animation: Uuid,
+    sounds: Vec<(f32, Uuid)>,
+    received: std::collections::HashMap<Uuid, Uuid>,
+}
+
+impl GestureUpload {
+    fn assets(&self) -> Option<GestureAssets> {
+        Some(GestureAssets {
+            animation: *self.received.get(&self.animation)?,
+            sounds: self
+                .sounds
+                .iter()
+                .map(|(at, entry)| Some((*at, *self.received.get(entry)?)))
+                .collect::<Option<_>>()?,
+        })
+    }
+}
+
 impl Default for Transport {
     fn default() -> Self {
         Self {
@@ -417,6 +443,8 @@ pub(crate) struct Webcam {
     fps: f32,
     front_view_requested: bool,
     recorder: recording::Recorder,
+    gesture_upload: Option<GestureUpload>,
+    gesture_requested: bool,
 }
 
 impl Webcam {
@@ -531,6 +559,39 @@ impl Webcam {
 
     pub(crate) fn take_recorded_upload(&mut self) -> Option<crate::ik_edit::PreparedAnimation> {
         self.recorder.take_upload()
+    }
+
+    pub(crate) fn take_media_upload(&mut self) -> Option<recording::PreparedMedia> {
+        self.recorder.take_media()
+    }
+
+    pub(crate) fn track_gesture_upload(&mut self, animation: Uuid, sounds: Vec<(f32, Uuid)>) {
+        self.gesture_upload = Some(GestureUpload {
+            animation,
+            sounds,
+            received: Default::default(),
+        });
+        self.gesture_requested = false;
+    }
+
+    pub(crate) fn uploaded(&mut self, entry: Uuid, item: Uuid) {
+        if let Some(upload) = &mut self.gesture_upload
+            && (entry == upload.animation || upload.sounds.iter().any(|(_, sound)| *sound == entry))
+        {
+            upload.received.insert(entry, item);
+            self.gesture_requested = upload.assets().is_some();
+        }
+    }
+
+    pub(crate) fn take_gesture_request(&mut self) -> Option<GestureAssets> {
+        if !std::mem::take(&mut self.gesture_requested) {
+            return None;
+        }
+        self.gesture_upload.as_ref()?.assets()
+    }
+
+    pub(crate) fn clear_gesture_upload(&mut self) {
+        self.gesture_upload = None;
     }
 
     pub fn update(&mut self, audio: Option<&aurora_audio::AudioEngine>, rig: &crate::scene::anim::Rig) -> Option<Arc<Pose>> {

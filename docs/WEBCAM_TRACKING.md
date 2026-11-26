@@ -124,6 +124,24 @@ override. It uses animation priority 4. The exporter reduces redundant
 keys before checking Second Life's 250,000-byte limit. Trim a take
 further if it exceeds that limit.
 
+### Export the soundtrack or assemble a gesture
+
+**Sound & gesture** uses FFmpeg on PATH to read the source audio. It
+uses the same trim, playback speeds and captured sections as the take.
+Muting the video affects monitoring. A WAV export contains the aligned
+mono, 44.1 kHz, 16-bit soundtrack. Webcams do not capture microphone audio.
+
+**Preview & upload soundtrack…** stages sound assets in Import and auditions the first piece. It
+splits long selections into uploadable chunks of up to 29 seconds.
+**Create gesture from take…** stages a non-looping animation and, if
+selected, the corresponding sounds. Confirm the uploads through the
+existing Import window. When those entries finish, the viewer
+opens a new gesture with the animation, sounds and required waits in
+order. The regular editor lets you preview, assign a trigger and save.
+Gesture assets are separate inventory items and require the usual asset
+permissions. The grid plays clips as separate sound events, so later
+chunks can be affected by asset loading or timing on the receiving viewer.
+
 ### Edit a recorded take
 
 Open **Take tools** below the take preview controls. The marker strip

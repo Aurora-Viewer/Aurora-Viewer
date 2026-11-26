@@ -727,6 +727,26 @@ impl Imports {
         self.open_window(ctx);
     }
 
+    pub(crate) fn authored_sound(
+        &mut self,
+        world: &crate::world::World,
+        prefs: &crate::ui::inventory::InventoryPreferences,
+        name: String,
+        sound: Sound,
+    ) -> Uuid {
+        let mut entry = Entry::new(
+            PathBuf::from(format!("{name}.wav")),
+            Ok(Source::Sound(Arc::new(sound))),
+            self.load_preferences.texture(),
+        );
+        entry.folder = Self::default_folder(world, prefs, Kind::Sound);
+        let id = entry.id;
+        self.active = Some(id);
+        self.entries.push(entry);
+        self.open(Choice::Sound);
+        id
+    }
+
     /// Import (Build › Import, its shortcut, the toolbar's "Import"): the
     /// import window. The quick import bar it could open is the import
     /// floating block now, with its own Ctrl+U (human request, 2026-11-25).

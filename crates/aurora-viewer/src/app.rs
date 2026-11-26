@@ -4140,6 +4140,7 @@ impl App {
             if let Some(item) = self.imports.uploaded(request, result) {
                 if let Some(entry) = material_map {
                     self.texture_library.map_uploaded(entry, &item);
+                    self.webcam.uploaded(entry, item.id);
                 }
                 let id = item.id;
                 self.world.inventory.add_items(vec![item]);
@@ -4163,6 +4164,9 @@ impl App {
             }
             self.world.inventory.add_items(vec![item]);
             self.inventory_ui.show_original(&self.world.inventory, id);
+            if gesture && self.open_webcam_gesture(id) {
+                return;
+            }
             self.inventory_ui.begin_rename(&self.world.inventory, id);
             if gesture && self.gesture_state.new_editor {
                 self.gesture_state.new_editor = false;
@@ -4255,6 +4259,7 @@ impl App {
         }
         if let NetEvent::InventoryOperationFailed(reason) = ev {
             self.gesture_state.new_editor = false;
+            self.gesture_state.cancel_webcam_gesture();
             if self.physics_ui.creation_failed() {
                 self.appearance_ui.message.clone_from(&reason);
             }
@@ -21093,6 +21098,41 @@ impl App {
                         recording.animation,
                     );
                     self.imports.review_webcam_uploads(&ctx, &[entry]);
+                }
+                if let Some(media) = self.webcam.take_media_upload() {
+                    let animation_entry = media.animation.map(|recording| {
+                        self.imports.authored_animation(
+                            &self.world,
+                            &self.settings.inventory,
+                            recording.name,
+                            recording.bytes,
+                            recording.animation,
+                        )
+                    });
+                    let sound_entries = media
+                        .sounds
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, (at, sound))| {
+                            let name = format!("{} - {:02}", media.name, index + 1);
+                            (at, self.imports.authored_sound(&self.world, &self.settings.inventory, name, sound))
+                        })
+                        .collect::<Vec<_>>();
+                    let entries: Vec<_> = animation_entry
+                        .iter()
+                        .copied()
+                        .chain(sound_entries.iter().map(|(_, id)| *id))
+                        .collect();
+                    self.imports.active = entries.first().copied();
+                    self.imports.review_webcam_uploads(&ctx, &entries);
+                    if let Some(entry) = animation_entry {
+                        self.webcam.track_gesture_upload(entry, sound_entries);
+                    } else {
+                        self.play_import_preview(&ctx, entries.first().copied());
+                    }
+                }
+                if let Some(assets) = self.webcam.take_gesture_request() {
+                    self.create_webcam_gesture(assets);
                 }
                 if self.webcam.take_front_view_request() && !self.world.rlva.camera_preset_locked(uuid::Uuid::nil()) {
                     self.switch_camera_view(crate::camera::CameraPreset::Front);

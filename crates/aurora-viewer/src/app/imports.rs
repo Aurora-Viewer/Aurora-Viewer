@@ -501,19 +501,7 @@ impl App {
                     }
                 }
                 Action::Play(id, start) => {
-                    for entry in &mut self.imports.entries {
-                        entry.sound.stop();
-                    }
-                    self.imports.sound_playing = None;
-                    if let Some(previous) = self.imports.play_request.take() {
-                        self.world.preview_animation(previous, false);
-                    }
-                    if let Some(engine) = &self.audio_engine {
-                        engine.stop_world(SOUND_PREVIEW);
-                    }
-                    if start {
-                        self.imports.play(id, &self.scene.jobs, ctx, self.scene.avatar_lib.rig.clone());
-                    }
+                    self.play_import_preview(ctx, start.then_some(id));
                 }
                 Action::AnimationModel(id) => {
                     self.imports
@@ -914,6 +902,22 @@ impl App {
                     modifiers: Default::default(),
                 },
             ]);
+        }
+    }
+
+    pub(super) fn play_import_preview(&mut self, ctx: &egui::Context, id: Option<uuid::Uuid>) {
+        for entry in &mut self.imports.entries {
+            entry.sound.stop();
+        }
+        self.imports.sound_playing = None;
+        if let Some(previous) = self.imports.play_request.take() {
+            self.world.preview_animation(previous, false);
+        }
+        if let Some(engine) = &self.audio_engine {
+            engine.stop_world(SOUND_PREVIEW);
+        }
+        if let Some(id) = id {
+            self.imports.play(id, &self.scene.jobs, ctx, self.scene.avatar_lib.rig.clone());
         }
     }
 

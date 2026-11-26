@@ -572,6 +572,21 @@ impl Webcam {
                 self.stop();
             }
         }
+        if let Some(batch) = &self.gesture_upload {
+            if batch.assets().is_some() {
+                self.gesture_requested |= ui.button(tr!("webcam-gesture-create")).clicked();
+            } else {
+                ui.colored_label(
+                    palette.muted,
+                    tr!(
+                        "webcam-gesture-progress",
+                        done = batch.received.len().to_string(),
+                        total = (1 + batch.sounds.len()).to_string()
+                    ),
+                );
+            }
+        }
+
         widgets::divider(ui, palette);
         widgets::section_header(ui, palette, "bone-filled", &tr!("webcam-channels"));
         let ch = &mut self.panel.channels;
