@@ -550,4 +550,22 @@ mod tests {
         assert_eq!(&out[..8], &[0, 10, 20, 30, 1, 11, 21, 31]);
         assert_eq!(&out[20..], &[5, 15, 25, 35]);
     }
+
+    #[test]
+    fn writes_each_plane_with_its_own_stride() {
+        // a 2 x 2 region into a plane 3 samples wide and one 2 wide (a
+        // sub-sampled component): each row lands at its own plane's stride
+        let planes: Vec<Vec<i32>> = (0..2).map(|c| (0..4).map(|i| c * 10 + i - 128).collect()).collect();
+        let f = Finish {
+            shift: 128,
+            lo: 0,
+            hi: 255,
+            reversible: true,
+        };
+        let regions: Vec<Region<'_>> = planes.iter().map(|p| Region { src: p, stride: 2, f }).collect();
+        let (mut wide, mut narrow) = (vec![-1i32; 3 * 2], vec![-1i32; 2 * 2]);
+        write_planes(&regions, Mct::None, 2, 2, &mut [(&mut wide[..], 3), (&mut narrow[..], 2)]);
+        assert_eq!(wide, [0, 1, -1, 2, 3, -1]);
+        assert_eq!(narrow, [10, 11, 12, 13]);
+    }
 }

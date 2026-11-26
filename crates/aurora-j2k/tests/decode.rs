@@ -879,8 +879,8 @@ fn a_sub_sampled_plane_keeps_its_own_stride() {
     let a = oracle::decode(&NARROW_THIRD_PLANE, 0);
     let b = ours(&mut dec, &NARROW_THIRD_PLANE, 0);
     assert_eq!(oracle::compare(&NARROW_THIRD_PLANE, &a, &b), Verdict::Same);
-    // with the four components the viewer asks for
-    let _ = dec.decode(
+    // with the four components the viewer asks for: the same refusal
+    let viewer = dec.decode(
         &NARROW_THIRD_PLANE,
         &Options {
             reduce: 0,
@@ -889,4 +889,5 @@ fn a_sub_sampled_plane_keeps_its_own_stride() {
             ..Options::default()
         },
     );
+    assert!(matches!(viewer, Err(Error::Data(_))));
 }
