@@ -15918,7 +15918,6 @@ toolbar-interfaces-shown = Shown in the Interfaces block
 toolbar-interfaces-hidden = Hidden from the Interfaces block
 toolbar-preset-light = Aurora
 toolbar-preset-old-school = Aurora OldSchool
-toolbar-preset-build = Aurora Builder
 toolbar-preset-photographer = Aurora Photographer
 toolbar-preset-legacy = Legacy
 toolbar-import-textures = Import textures

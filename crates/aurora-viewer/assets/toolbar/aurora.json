@@ -3,75 +3,6 @@
   "version": 2,
   "base": "aurora",
   "toolbar": {
-    "shortcuts": {
-      "drawer:import_bar": {
-        "input": {
-          "Key": "KeyU"
-        },
-        "ctrl": true,
-        "shift": false,
-        "alt": false
-      }
-    },
-    "drawers": {
-      "drawer:import_bar": {
-        "buttons": [
-          {
-            "icon": "photo-filled",
-            "command": "import_texture",
-            "tooltip": ""
-          },
-          {
-            "icon": "run",
-            "command": "import_animation",
-            "tooltip": ""
-          },
-          {
-            "icon": "file-music-filled",
-            "command": "import_sound",
-            "tooltip": ""
-          },
-          {
-            "icon": "droplet-filled",
-            "command": "import_material",
-            "tooltip": ""
-          },
-          {
-            "icon": "cube-3d-sphere",
-            "command": "import_mesh",
-            "tooltip": ""
-          },
-          {
-            "icon": "separator-vertical",
-            "command": "divider:import-bar-files",
-            "tooltip": ""
-          },
-          {
-            "icon": "adjustments-filled",
-            "command": "import_advanced",
-            "tooltip": ""
-          },
-          {
-            "icon": "eye-filled",
-            "command": "import_local",
-            "tooltip": ""
-          },
-          {
-            "icon": "settings-filled",
-            "command": "import_settings",
-            "tooltip": ""
-          }
-        ],
-        "mode": "icons_only",
-        "closes": true,
-        "floating": {
-          "name": "",
-          "icon": "file-upload-filled",
-          "vertical": false,
-          "shown": false
-        }
-      }
-    },
     "buttons": [
       {
         "icon": "message-filled",
@@ -119,11 +50,6 @@
         "tooltip": ""
       },
       {
-        "icon": "Command_Snapshot_Icon",
-        "command": "snapshot",
-        "tooltip": ""
-      },
-      {
         "icon": "separator-vertical",
         "command": "divider:aurora-avatar-camera",
         "tooltip": ""
@@ -139,19 +65,29 @@
         "tooltip": ""
       },
       {
-        "icon": "device-vision-pro-filled",
-        "command": "vr_view",
+        "icon": "Command_View_Icon",
+        "command": "mouselook",
         "tooltip": ""
       },
       {
-        "icon": "Command_View_Icon",
-        "command": "mouselook",
+        "icon": "device-vision-pro-filled",
+        "command": "vr_view",
         "tooltip": ""
       },
       {
         "icon": "separator-vertical",
         "command": "divider:aurora-camera-inventory",
         "tooltip": ""
+      },
+      {
+        "icon": "Command_Snapshot_Icon",
+        "command": "snapshot",
+        "tooltip": ""
+      },
+      {
+        "icon": "movie",
+        "command": "director",
+        "tooltip": "Director"
       },
       {
         "icon": "Command_Inventory_Icon",
@@ -190,7 +126,7 @@
       },
       {
         "icon": "separator-vertical",
-        "command": "divider:aurora-places-movement",
+        "command": "separator:f17f74cb-a3be-49fd-9bd9-fb73e2adfc9e",
         "tooltip": ""
       },
       {
@@ -210,22 +146,30 @@
       },
       {
         "icon": "separator-vertical",
-        "command": "divider:aurora-movement-settings",
+        "command": "separator:508f78e1-3496-4666-a79f-3a9aa574d8db",
         "tooltip": ""
       },
       {
-        "icon": "Command_Performance_Icon",
-        "command": "performance",
+        "icon": "pointer-filled",
+        "command": "build_edit",
         "tooltip": ""
       },
       {
-        "icon": "Command_Preferences_Icon",
-        "command": "preferences",
+        "icon": "wand",
+        "command": "build_create",
+        "tooltip": ""
+      },
+      {
+        "icon": "mountain-filled",
+        "command": "build_land",
         "tooltip": ""
       }
     ],
     "locked": false,
     "vr_button_migrated": true,
+    "director_button_migrated": true,
+    "import_bar_filled": true,
+    "import_shortcut_given": true,
     "bottom_style": {
       "mode": "icons_only",
       "align": "center",
@@ -264,7 +208,12 @@
       },
       {
         "icon": "layout-grid-filled",
-        "command": "edit_interface",
+        "command": "drawer:interfaces",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Preferences_Icon",
+        "command": "preferences",
         "tooltip": ""
       },
       {
@@ -366,6 +315,82 @@
       }
     },
     "appearance": {},
+    "drawers": {
+      "drawer:import_bar": {
+        "buttons": [
+          {
+            "icon": "photo-filled",
+            "command": "import_texture",
+            "tooltip": ""
+          },
+          {
+            "icon": "run",
+            "command": "import_animation",
+            "tooltip": ""
+          },
+          {
+            "icon": "file-music-filled",
+            "command": "import_sound",
+            "tooltip": ""
+          },
+          {
+            "icon": "droplet-filled",
+            "command": "import_material",
+            "tooltip": ""
+          },
+          {
+            "icon": "cube-3d-sphere",
+            "command": "import_mesh",
+            "tooltip": ""
+          },
+          {
+            "icon": "separator-vertical",
+            "command": "divider:import-bar-files",
+            "tooltip": ""
+          },
+          {
+            "icon": "adjustments-filled",
+            "command": "import_advanced",
+            "tooltip": ""
+          },
+          {
+            "icon": "eye-filled",
+            "command": "import_local",
+            "tooltip": ""
+          },
+          {
+            "icon": "settings-filled",
+            "command": "import_settings",
+            "tooltip": ""
+          }
+        ],
+        "mode": "icons_only",
+        "closes": true,
+        "hides_button": true,
+        "close_button": true,
+        "floating": {
+          "name": "",
+          "icon": "file-upload-filled",
+          "vertical": false,
+          "shown": false
+        }
+      },
+      "drawer:interfaces": {
+        "buttons": [],
+        "mode": "icons_with_text",
+        "closes": true
+      }
+    },
+    "shortcuts": {
+      "drawer:import_bar": {
+        "input": {
+          "Key": "KeyU"
+        },
+        "ctrl": true,
+        "shift": false,
+        "alt": false
+      }
+    },
     "menu_layout": {},
     "address_visible": null,
     "composed": true,

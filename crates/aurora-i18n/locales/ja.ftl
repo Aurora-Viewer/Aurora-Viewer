@@ -15755,7 +15755,6 @@ toolbar-interfaces-shown = 「インターフェース」ブロックに表示
 toolbar-interfaces-hidden = 「インターフェース」ブロックに非表示
 toolbar-preset-light = Aurora
 toolbar-preset-old-school = Aurora OldSchool
-toolbar-preset-build = Aurora Builder
 toolbar-preset-photographer = Aurora Photographer
 toolbar-preset-legacy = Legacy
 toolbar-import-textures = テクスチャをインポート

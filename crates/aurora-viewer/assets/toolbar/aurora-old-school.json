@@ -75,6 +75,11 @@
         "tooltip": ""
       },
       {
+        "icon": "movie",
+        "command": "director",
+        "tooltip": "Director"
+      },
+      {
         "icon": "Command_Inventory_Icon",
         "command": "inventory",
         "tooltip": ""
@@ -92,7 +97,30 @@
     ],
     "locked": false,
     "vr_button_migrated": true,
+    "director_button_migrated": true,
+    "import_bar_filled": true,
+    "import_shortcut_given": true,
     "left": [
+      {
+        "icon": "pointer-filled",
+        "command": "build_edit",
+        "tooltip": ""
+      },
+      {
+        "icon": "wand",
+        "command": "build_create",
+        "tooltip": ""
+      },
+      {
+        "icon": "mountain-filled",
+        "command": "build_land",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:095c1ba4-9c11-4c18-9070-36e586c9fe7e",
+        "tooltip": ""
+      },
       {
         "icon": "Command_Places_Icon",
         "command": "places",
@@ -137,7 +165,7 @@
       },
       {
         "icon": "layout-grid-filled",
-        "command": "edit_interface",
+        "command": "drawer:interfaces",
         "tooltip": ""
       },
       {
@@ -334,6 +362,13 @@
       }
     },
     "appearance": {},
+    "drawers": {
+      "drawer:interfaces": {
+        "buttons": [],
+        "mode": "icons_with_text",
+        "closes": true
+      }
+    },
     "menu_layout": {},
     "address_visible": null,
     "composed": true,

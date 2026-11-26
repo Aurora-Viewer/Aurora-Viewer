@@ -6478,23 +6478,16 @@ without executing a button action or reopening in the same input frame.
 `AURORA_DEMO_TOOLBAR=defaults` shows the restored layout without an SLURL toggle,
 with one information block, a separate media/music/volume block, and the
 notification bell alone in the rightmost block. The chat block starts at the left.
-`preset-light|preset-old-school|preset-build|preset-photographer|preset-legacy` use the five named
-layouts. `preset-light` is the stable demo identifier for the first preset, now
-labelled Aurora. Check the authored bottom tool order/dividers, separate
-chat/conversation blocks, empty side bars, native top groups and localized
-captions; preset-light-edit shows the renamed first choice. The top order begins
-Aurora menu, Bug report, Customize interface, then navigation, with separate blocks.
-Click the Customize interface icon to open the buttons/menu editor. Photographer exposes graphics preferences, quick preferences, environments
-and personal lighting at the top. Its bottom buttons, dividers and styles must
-match Aurora exactly; photo roll and immersive mode are on the left, and the
-Customize interface block remains after Bug report. Verify that graphics preferences opens the Graphics page and personal
-lighting opens its existing window. Old-school exposes Me, Communicate, World, Build, Contents and Help as
-localized text menus after separate Aurora, Bug report and Customize interface
-blocks. Builder also exposes Save back to object contents after its imports, using the native Build action; without a suitable selection it stays disabled. Reapply the preset before testing a saved layout. OldSchool uses its authored VR control; Builder uses its supplied bottom
-arrangement and import-block spacing. Thin internal
-dividers separate the six menu buttons without splitting their block. Open each group and check Build's Import
-action through its native handler. Append `-edit` to inspect the Presets section; `preset-build-advanced`
-filters the advanced catalogue to the six typed import actions. Compare Aurora
+`preset-light|preset-old-school|preset-photographer|preset-legacy` use the four
+built-in interfaces, the saved layouts of `crates/aurora-viewer/assets/toolbar/`
+(`aurora.json`, `aurora-old-school.json`, `aurora-photographer.json`,
+`legacy.json`, in the interface notecard format). `preset-light` is the stable
+demo identifier for the first one, labelled Aurora. Check that each matches its
+file: its bars, blocks, separators, styles and drawers, with localized captions,
+and its Interfaces block, which reaches the others. Old-school's localized text
+menus (Me, Communicate, World, Build, Contents and Help) share one block, split
+by thin dividers. Append `-edit` to inspect the Presets section, and `-advanced`
+to filter the advanced catalogue, where the six typed import actions are. Compare Aurora
 and Legacy global looks; the Legacy preset uses `AURORA_DEMO_BARS=legacy` for
 offline bar captures. Real preset clicks must update the complete look, preserve
 non-interface settings, honor layout locks and survive restart. Clicking a

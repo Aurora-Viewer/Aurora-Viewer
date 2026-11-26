@@ -35,6 +35,14 @@ pub(crate) struct Selection {
     pub baseline: profile::Profile,
 }
 
+/// A saved selection that no longer reads, such as one of the Aurora Builder
+/// interface, removed on 2026-11-26, is no selection: the settings still
+/// load, and the editor infers the interface again.
+pub(crate) fn or_none<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Selection>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
+}
+
 impl Selection {
     pub fn removed(&mut self, owner: Uuid, item: Uuid) -> bool {
         if self.source.personal(owner) != Some(item) {
@@ -124,6 +132,20 @@ mod tests {
     }
 
     #[test]
+    fn a_selection_of_the_removed_builder_interface_loads_as_none() {
+        let layout = Layout::default();
+        let mut settings = crate::settings::Settings::default();
+        assert!(Preset::Photographer.apply(&mut settings, &layout));
+        let text = serde_json::to_string(&settings)
+            .expect("settings")
+            .replace("{\"Builtin\":\"photographer\"}", "{\"Builtin\":\"build\"}");
+        assert!(text.contains("\"build\""));
+        let restored: crate::settings::Settings = serde_json::from_str(&text).expect("the settings still load");
+        assert!(restored.toolbar_selection.is_none());
+        assert_eq!(restored.toolbar, settings.toolbar);
+    }
+
+    #[test]
     fn toolbar_selection_infers_existing_builtin_and_does_not_export_preset_identity() {
         let layout = Layout::default();
         let mut view = View::default();
@@ -180,7 +202,7 @@ mod tests {
     #[test]
     fn toolbar_deleted_personal_identity_becomes_unsaved_without_changing_its_layout() {
         let layout = Layout::default();
-        let mut selection = Selection::builtin(Preset::Build, &layout);
+        let mut selection = Selection::builtin(Preset::Photographer, &layout);
         let owner = Uuid::new_v4();
         let item = Uuid::new_v4();
         selection.source = Source::Personal {

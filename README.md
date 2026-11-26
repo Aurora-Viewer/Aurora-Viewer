@@ -1074,18 +1074,17 @@ ordinary layout even when it is the first block;
 input, drafts, keyboard focus and the width handle follow it.
 Restore defaults places its block at the left; explicit saved alignments stay in effect.
 
-The **Presets** section above the catalogue offers five complete arrangements:
+The **Presets** section above the catalogue offers four complete arrangements, saved layouts bundled with the viewer (`crates/aurora-viewer/assets/toolbar/`):
 
-- **Aurora**: the supplied layout, with separate left-aligned chat and conversation blocks, grouped bottom tools with internal dividers, and navigation/status/audio/notifications across the top. A separate Customize interface block follows Bug report.
-- **Aurora OldSchool**: the supplied traditional layout, with VR in the bottom toolbar, Places on the left and separate Aurora, Bug report and Customize interface blocks before the six localized text menus.
-- **Aurora Builder**: the supplied building layout, with Aurora-style bottom tools and a top block for textures, sounds, animations, materials, meshes and local imports, followed by Save back to object contents. Imports are also in Advanced; Save back uses the native selection checks.
-- **Aurora Photographer**: the same bottom toolbar and Customize interface block as Aurora, with graphics preferences, quick preferences, environments and personal lighting at the top. The photo roll and immersive mode stay on the left; snapshot and camera controls use their shared bottom positions.
-- **Legacy**: the traditional arrangement and the existing global Legacy look.
+- **Aurora**: separate chat and conversation blocks and grouped tools at the bottom; at the top, the Interfaces block with Preferences and the quick import bar after Bug report, then navigation, status, audio and notifications.
+- **Aurora OldSchool**: the traditional bottom toolbar, the build tools and Places on the left, and the six localized text menus after the Aurora, Bug report and Interfaces blocks.
+- **Aurora Photographer**: Aurora's bars with the capture tools on the left (snapshot, photo roll, 360° capture, immersive mode, Director, second camera) and Phototools, quick preferences, environments and personal lighting at the top.
+- **Legacy**: the traditional arrangement and the existing global Legacy look, with the Interfaces block right of Bug report.
 
 **Save to a notecard…** asks for a name and creates a native inventory notecard in `#Aurora/Aurora Interfaces`, creating missing folders before uploading. The Saved interfaces list reads this inventory folder automatically alongside the built-in presets; selecting a card restores it through the same guarded loader. It uses indented technical JSON containing the four bars, blocks, drawers, menu placements, separators and button appearances. **Load from a notecard…** browses your inventory and restores a validated configuration after you select a copyable notecard. The required `base` field restores Aurora or Legacy bars along with their layout; loading succeeds without a confirmation message. Other window styles, graphics preferences and window positions stay in effect. Cards use schema version 2; older cards are not supported. A download never replaces a layout or base you changed or locked while it was loading.
 
-Choosing a preset replaces the current toolbar arrangement. A locked layout must
-be unlocked first. Selecting a button no longer inserts actions into this window;
+Choosing a preset replaces the current toolbar arrangement, even locked: the new
+one stays locked. Selecting a button no longer inserts actions into this window;
 use its context menu or its block's gear. Split before/after creates block gaps.
 
 Every toolbar control uses **Customize interface** as its final context-menu entry,

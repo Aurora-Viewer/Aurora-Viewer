@@ -792,12 +792,16 @@ fn photographer_controls_render_and_personal_lighting_uses_the_native_handler() 
     for _ in 0..5 {
         bench.frame(Vec::new());
     }
+    // its left bar's capture tools and its top bar's photography block
+    // (the human's saved layout, 2026-11-26)
     for command in [
         "snapshot",
-        "view",
         "photo_roll",
+        "360capture",
         "immersive",
-        "graphics_preferences",
+        "director",
+        "second_camera",
+        "phototools",
         "quickprefs",
         "myenvironments",
     ] {
@@ -2004,12 +2008,19 @@ fn drawer_icon_hover_survives_clearing_a_bar_preview_and_cancels_outside_the_vie
 }
 
 #[test]
-fn builder_save_back_uses_the_native_action_and_rechecks_selection_on_dispatch() {
+fn save_back_button_uses_the_native_action_and_rechecks_selection_on_dispatch() {
     const COMMAND: &str = "menu:common-build/ui-bars-save-to-object-contents";
+    // the top bar's Save back button, as the Aurora Builder interface had it
+    let mut settings = presets::Preset::Light.layout(&Layout::default());
+    settings.top.push(ToolButton {
+        command: COMMAND.into(),
+        icon: "package-import".into(),
+        tooltip: String::new(),
+    });
     for classic in [false, true] {
         for (enabled, dispatch_enabled) in [(false, false), (true, true), (true, false)] {
             let mut bench = Bench {
-                settings: presets::Preset::Build.layout(&Layout::default()),
+                settings: settings.clone(),
                 native_top: true,
                 menu_open: false,
                 classic,
@@ -2021,10 +2032,7 @@ fn builder_save_back_uses_the_native_action_and_rechecks_selection_on_dispatch()
                 bench.frame(Vec::new());
             }
             assert_eq!(commands::available(&bench.ctx, COMMAND), enabled);
-            let button = bench
-                .ctx
-                .read_response(bars::tool_button_id(COMMAND))
-                .expect("Builder Save back button");
+            let button = bench.ctx.read_response(bars::tool_button_id(COMMAND)).expect("Save back button");
             // Unavailable toolbar controls retain their drag target. Their
             // live availability gates execution rather than egui interaction.
             let point = button.rect.center();
@@ -4816,7 +4824,7 @@ fn the_interfaces_block_is_a_drawer_of_the_presets_its_eyes_keep() {
     assert!(bench.settings.drawers.contains_key(drawers::INTERFACES), "a drawer");
     assert_eq!(bench.settings.location(drawers::INTERFACES, &Layout::default()), Some(Bar::Left));
     assert_eq!(label(&toggle), aurora_i18n::tr!("toolbar-interfaces"));
-    bench.settings.hidden_interfaces.insert(presets::Preset::Build.key().into());
+    bench.settings.hidden_interfaces.insert(presets::Preset::Photographer.key().into());
     drawers::set_open(&bench.ctx, drawers::INTERFACES, true);
     for _ in 0..4 {
         bench.frame(Vec::new());
@@ -4828,7 +4836,7 @@ fn the_interfaces_block_is_a_drawer_of_the_presets_its_eyes_keep() {
             .is_some_and(|response| response.rect.is_positive())
     };
     for preset in presets::Preset::ALL {
-        assert_eq!(shown(&bench, preset), preset != presets::Preset::Build, "{preset:?}");
+        assert_eq!(shown(&bench, preset), preset != presets::Preset::Photographer, "{preset:?}");
     }
     let old_school = bench
         .ctx
@@ -5426,7 +5434,7 @@ fn choosing_an_interface_keeps_the_eyes_and_the_interfaces_shortcuts() {
         shift: true,
         alt: false,
     };
-    let key = format!("{}{}", drawers::INTERFACE_PREFIX, presets::Preset::Build.key());
+    let key = format!("{}{}", drawers::INTERFACE_PREFIX, presets::Preset::Photographer.key());
     let mark = |toolbar: &mut ToolbarSettings| {
         toolbar.hidden_interfaces.insert(presets::Preset::Legacy.key().into());
         toolbar.shortcuts.insert(key.clone(), binding.clone());

@@ -4,17 +4,18 @@
 
 use std::sync::LazyLock;
 
-use super::{Align, BarStyle, ButtonMode, Sizing, ToolbarSettings, catalogue, drawers, structure};
-use crate::{
-    settings::Settings,
-    ui::skin::{Layout, ToolButton},
-};
+use super::ToolbarSettings;
+use crate::{settings::Settings, ui::skin::Layout};
 
-// Bundled presentation data is validated by the preset and profile tests. Keep
-// captions live through the catalogue, rather than freezing an export's locale.
+// The built-in interfaces are the human's saved layouts (2026-11-26), in the
+// interface notecard format, validated by the preset and profile tests. Keep
+// captions live through the catalogue, rather than freezing an export's
+// locale. The Aurora Builder interface is gone with them.
 static AURORA: LazyLock<ToolbarSettings> = LazyLock::new(|| bundled(include_str!("../../../assets/toolbar/aurora.json")));
 static OLD_SCHOOL: LazyLock<ToolbarSettings> = LazyLock::new(|| bundled(include_str!("../../../assets/toolbar/aurora-old-school.json")));
-static BUILDER: LazyLock<ToolbarSettings> = LazyLock::new(|| bundled(include_str!("../../../assets/toolbar/aurora-builder.json")));
+static PHOTOGRAPHER: LazyLock<ToolbarSettings> =
+    LazyLock::new(|| bundled(include_str!("../../../assets/toolbar/aurora-photographer.json")));
+static LEGACY: LazyLock<ToolbarSettings> = LazyLock::new(|| bundled(include_str!("../../../assets/toolbar/legacy.json")));
 
 fn bundled(text: &str) -> ToolbarSettings {
     let mut toolbar = super::profile::read(text)
@@ -29,19 +30,17 @@ fn bundled(text: &str) -> ToolbarSettings {
 pub enum Preset {
     Light,
     OldSchool,
-    Build,
     Photographer,
     Legacy,
 }
 
 impl Preset {
-    pub const ALL: [Self; 5] = [Self::Light, Self::OldSchool, Self::Build, Self::Photographer, Self::Legacy];
+    pub const ALL: [Self; 4] = [Self::Light, Self::OldSchool, Self::Photographer, Self::Legacy];
 
     pub fn label(self) -> &'static str {
         aurora_i18n::text(match self {
             Self::Light => "toolbar-preset-light",
             Self::OldSchool => "toolbar-preset-old-school",
-            Self::Build => "toolbar-preset-build",
             Self::Photographer => "toolbar-preset-photographer",
             Self::Legacy => "toolbar-preset-legacy",
         })
@@ -53,7 +52,6 @@ impl Preset {
         match self {
             Self::Light => "light",
             Self::OldSchool => "old_school",
-            Self::Build => "build",
             Self::Photographer => "photographer",
             Self::Legacy => "legacy",
         }
@@ -67,101 +65,18 @@ impl Preset {
         match self {
             Self::Light => "sparkles-filled",
             Self::OldSchool => "layout-align-bottom-filled",
-            Self::Build => "box",
             Self::Photographer => "camera-filled",
             Self::Legacy => "layout-grid-filled",
         }
     }
 
-    pub fn layout(self, skin: &Layout) -> ToolbarSettings {
+    /// The same for every skin: the bundled layouts name their bars' buttons.
+    pub fn layout(self, _skin: &Layout) -> ToolbarSettings {
         match self {
             Self::Light => AURORA.clone(),
             Self::OldSchool => OLD_SCHOOL.clone(),
-            Self::Build => BUILDER.clone(),
-            Self::Photographer => {
-                let mut settings = AURORA.clone();
-                // A focused extension of the Legacy Viewer's Phototools:
-                // camera/capture together, graphics and local lighting together.
-                settings.left = PHOTO_CAMERA
-                    .into_iter()
-                    .filter(|id| settings.location(id, skin).is_none())
-                    .filter_map(button)
-                    .collect();
-                let mut tools = PHOTO_SETTINGS.iter().filter_map(|id| button(id)).collect::<Vec<_>>();
-                tools.push(ToolButton {
-                    command: PERSONAL_LIGHTING.into(),
-                    icon: "adjustments-filled".into(),
-                    tooltip: "@common-personal-lighting".into(),
-                });
-                insert_top_block(&mut settings, tools, "preset-photographer");
-                settings
-            }
-            Self::Legacy => {
-                let mut settings = ToolbarSettings::default();
-                settings.compose_top();
-                settings.compose_chat(skin);
-                // Unsupported historical buttons are replaced with Aurora's
-                // existing equivalents, without inventing inert commands.
-                let tools = [
-                    "conversations",
-                    "speak",
-                    "voice",
-                    "move",
-                    "view",
-                    "people",
-                    "appearance",
-                    "search",
-                    "worldmap",
-                    "minimap",
-                    "snapshot",
-                    "inventory",
-                    "ao",
-                    "preferences",
-                ];
-                let mut bottom = button("bar_chat").into_iter().collect::<Vec<_>>();
-                bottom.push(structure::separator("preset-chat-tools"));
-                bottom.extend(tools.iter().filter_map(|id| button(id)));
-                settings.buttons = Some(bottom);
-                settings.bottom_style = BarStyle {
-                    mode: Some(ButtonMode::IconsOnly),
-                    sizing: Some(Sizing::Fill),
-                    align: Some(Align::Start),
-                };
-                settings.left = button("places").into_iter().collect();
-                settings.top = [
-                    "aurora_menu",
-                    "report_bug",
-                    "bar_navigation",
-                    "bar_conversations",
-                    "bar_status",
-                    "bar_balance",
-                    "bar_clock",
-                    "bar_ping",
-                    "bar_fps",
-                    "bar_network",
-                    "bar_media",
-                    "bar_music",
-                    "bar_volume",
-                    "bar_notifications",
-                ]
-                .iter()
-                .filter_map(|id| button(id))
-                .collect();
-                // the Interfaces block right of Report a bug (human request,
-                // 2026-11-26)
-                if let Some(at) = settings.top.iter().position(|button| button.command == "report_bug") {
-                    settings.top.insert(
-                        at + 1,
-                        ToolButton {
-                            command: drawers::INTERFACES.into(),
-                            icon: drawers::INTERFACES_ICON.into(),
-                            tooltip: String::new(),
-                        },
-                    );
-                    settings.drawers.insert(drawers::INTERFACES.into(), Default::default());
-                }
-                settings
-            }
+            Self::Photographer => PHOTOGRAPHER.clone(),
+            Self::Legacy => LEGACY.clone(),
         }
     }
 
@@ -186,39 +101,6 @@ impl Preset {
     }
 }
 
-/// The existing root menus keep their native handlers and localized labels.
-#[cfg(test)]
-const ROOT_MENUS: [(&str, &str); 6] = [
-    ("common-me", "user-filled"),
-    ("ui-bars-communicate", "messages-filled"),
-    ("common-world", "world-filled"),
-    ("common-build", "box"),
-    ("common-contents", "briefcase-filled"),
-    ("common-help", "help-circle-filled"),
-];
-
-const PHOTO_CAMERA: [&str; 4] = ["snapshot", "view", "photo_roll", "immersive"];
-const PHOTO_SETTINGS: [&str; 3] = ["graphics_preferences", "quickprefs", "myenvironments"];
-const PERSONAL_LIGHTING: &str = "menu:common-world/common-environment/common-personal-lighting";
-
-fn insert_top_block(settings: &mut ToolbarSettings, mut buttons: Vec<ToolButton>, separator: &str) {
-    let at = settings
-        .top
-        .iter()
-        .position(|button| button.command == "bar_navigation")
-        .unwrap_or(settings.top.len());
-    buttons.push(structure::separator(separator));
-    settings.top.splice(at..at, buttons);
-}
-
-fn button(id: &str) -> Option<ToolButton> {
-    catalogue::find(id).filter(|command| command.ready).map(|command| ToolButton {
-        command: command.id.into(),
-        icon: command.icon.into(),
-        tooltip: String::new(),
-    })
-}
-
 pub const IMPORTS: [(&str, crate::imports::Choice); 6] = [
     ("import_texture", crate::imports::Choice::Texture),
     ("import_sound", crate::imports::Choice::Sound),
@@ -236,7 +118,6 @@ pub fn demo_mode(mode: &str) -> Option<Preset> {
     match mode.trim_end_matches("-edit").trim_end_matches("-advanced") {
         "preset-light" => Some(Preset::Light),
         "preset-old-school" => Some(Preset::OldSchool),
-        "preset-build" => Some(Preset::Build),
         "preset-photographer" => Some(Preset::Photographer),
         "preset-legacy" => Some(Preset::Legacy),
         _ => None,
@@ -250,7 +131,7 @@ mod tests {
         settings::{ChatStyle, ChatThumbnails},
         ui::{
             Panels, bars,
-            toolbar::{Bar, catalogue_view},
+            toolbar::{Bar, catalogue, catalogue_view, drawers, profile},
         },
     };
 
@@ -278,37 +159,16 @@ mod tests {
             assert_eq!(settings.language, "ja");
             assert_eq!(settings.chat_thumbnails, ChatThumbnails::TopRight);
             let toolbar = settings.toolbar.as_ref().expect("preset layout");
-            assert_eq!(toolbar.block_styles["bar_chat"].align, Some(Align::Start));
+            // every interface reaches the others through its Interfaces block
+            assert!(toolbar.drawers.contains_key(drawers::INTERFACES), "{preset:?}");
+            assert!(toolbar.placed(drawers::INTERFACES, &Layout::default()), "{preset:?}");
             if preset == Preset::Legacy {
                 let top: Vec<_> = toolbar.top.iter().map(|button| button.command.as_str()).collect();
                 assert_eq!(
                     top[..3],
-                    ["aurora_menu", "report_bug", crate::ui::toolbar::drawers::INTERFACES],
+                    ["aurora_menu", "report_bug", drawers::INTERFACES],
                     "the Interfaces block right of Report a bug"
                 );
-                assert!(toolbar.drawers.contains_key(crate::ui::toolbar::drawers::INTERFACES));
-            } else {
-                let editor = toolbar
-                    .top
-                    .split(|button| structure::is_separator(&button.command))
-                    .find(|group| group.iter().any(|button| button.command == crate::ui::toolbar::drawers::INTERFACES))
-                    .expect("Aurora presets expose the Interfaces block, which ends with Customize interface");
-                assert!(toolbar.drawers.contains_key(crate::ui::toolbar::drawers::INTERFACES));
-                // the Aurora layout's block also shows and hides the quick
-                // import bar (human request, 2026-11-25)
-                let commands: Vec<_> = editor.iter().map(|button| button.command.as_str()).collect();
-                if matches!(preset, Preset::Light | Preset::Photographer) {
-                    let import = crate::ui::toolbar::drawers::IMPORT_BAR;
-                    assert_eq!(commands, [crate::ui::toolbar::drawers::INTERFACES, import]);
-                    assert_eq!(toolbar.drawers[import].buttons.len(), 9, "its buttons");
-                    assert!(toolbar.shortcuts.contains_key(import), "its Ctrl+U");
-                } else {
-                    assert_eq!(
-                        commands,
-                        [crate::ui::toolbar::drawers::INTERFACES],
-                        "the interfaces have their own block"
-                    );
-                }
             }
             let all = Bar::ALL
                 .into_iter()
@@ -335,73 +195,35 @@ mod tests {
         assert_eq!(toolbar.left, Preset::Legacy.layout(&Layout::default()).left);
     }
 
+    /// The built-in interfaces are the human's saved layouts (2026-11-26),
+    /// each on its own base, the personal interfaces of whoever saved them
+    /// left out; the Aurora Builder interface is gone.
     #[test]
-    fn photographer_groups_focus_on_capture_graphics_and_local_lighting() {
-        let skin = Layout::default();
-        let toolbar = Preset::Photographer.layout(&skin);
-        let aurora = Preset::Light.layout(&skin);
-        assert_eq!(toolbar.buttons, aurora.buttons, "identical Aurora bottom controls and order");
-        assert_eq!(toolbar.bottom_style, aurora.bottom_style);
-        for command in ["bar_chat", "bar_conversations"] {
-            assert_eq!(toolbar.block_styles.get(command), aurora.block_styles.get(command));
+    fn the_built_in_interfaces_are_the_bundled_saved_layouts() {
+        let files = [
+            (Preset::Light, include_str!("../../../assets/toolbar/aurora.json")),
+            (Preset::OldSchool, include_str!("../../../assets/toolbar/aurora-old-school.json")),
+            (
+                Preset::Photographer,
+                include_str!("../../../assets/toolbar/aurora-photographer.json"),
+            ),
+            (Preset::Legacy, include_str!("../../../assets/toolbar/legacy.json")),
+        ];
+        assert_eq!(files.map(|(preset, _)| preset), Preset::ALL);
+        for (preset, text) in files {
+            let saved = profile::read(text).expect("a valid interface");
+            assert_eq!(saved.base, profile::Base::from_islands(preset != Preset::Legacy), "{preset:?}");
+            assert!(saved.toolbar.hidden_interfaces.is_empty(), "{preset:?}");
+            assert!(!saved.toolbar.locked, "{preset:?}");
+            assert_eq!(preset.layout(&Layout::default()), bundled(text), "{preset:?}");
         }
-        assert_eq!(
-            toolbar.left.iter().map(|button| button.command.as_str()).collect::<Vec<_>>(),
-            ["photo_roll", "immersive"],
-            "camera and snapshot already live in the shared bottom bar"
-        );
-        let settings = toolbar
-            .top
-            .split(|button| structure::is_separator(&button.command))
-            .find(|group| group.iter().any(|button| button.command == "graphics_preferences"))
-            .expect("photography settings block");
-        let mut expected = PHOTO_SETTINGS.to_vec();
-        expected.push(PERSONAL_LIGHTING);
-        assert_eq!(settings.iter().map(|button| button.command.as_str()).collect::<Vec<_>>(), expected);
-        assert!(
-            !toolbar
-                .buttons(&skin)
-                .iter()
-                .any(|button| PHOTO_SETTINGS.contains(&button.command.as_str()))
-        );
-        assert!(!toolbar.top.iter().any(|button| button.command.starts_with("import_")));
-        let ctx = egui::Context::default();
-        let mut panels = Panels::from_settings(&Settings::default());
-        assert!(matches!(
-            bars::run_command(&ctx, "graphics_preferences", &mut panels),
-            bars::BarAction::GraphicsPreferences
-        ));
-        bars::run_command(&ctx, "quickprefs", &mut panels);
-        assert!(panels.quick_prefs);
-        bars::run_command(&ctx, "myenvironments", &mut panels);
-        assert!(panels.environment);
-        assert!(matches!(
-            bars::run_command(&ctx, "photo_roll", &mut panels),
-            bars::BarAction::PhotoRoll
-        ));
-        for command in PHOTO_CAMERA.into_iter().chain(PHOTO_SETTINGS) {
-            assert!(catalogue::find(command).is_some_and(|command| command.ready));
-        }
+        assert!(Preset::from_key("build").is_none());
     }
 
     #[test]
-    fn build_imports_are_one_block_and_all_are_advanced_native_type_actions() {
+    fn imports_are_advanced_native_type_actions() {
         let skin = Layout::default();
-        let toolbar = Preset::Build.layout(&skin);
-        let imports = toolbar
-            .top
-            .split(|button| structure::is_separator(&button.command))
-            .find(|group| group.iter().any(|button| button.command == "import_texture"))
-            .expect("import block");
-        assert_eq!(
-            imports
-                .iter()
-                .filter(|button| import_choice(&button.command).is_some())
-                .map(|button| button.command.as_str())
-                .collect::<Vec<_>>(),
-            IMPORTS.iter().map(|(id, _)| *id).collect::<Vec<_>>()
-        );
-        let tiles = catalogue_view::entries(&skin, &toolbar, &Default::default());
+        let tiles = catalogue_view::entries(&skin, &Preset::Light.layout(&skin), &Default::default());
         let ctx = egui::Context::default();
         let mut panels = Panels::from_settings(&Settings::default());
         for (id, expected) in IMPORTS {
@@ -410,59 +232,5 @@ mod tests {
             assert!(catalogue::find(id).is_some_and(|command| command.ready));
             assert!(matches!(bars::run_command(&ctx, id, &mut panels), bars::BarAction::ImportType(choice) if choice == expected));
         }
-        let old = Preset::OldSchool.layout(&skin);
-        let legacy = Preset::Legacy.layout(&skin);
-        assert_eq!(
-            old.buttons(&skin)
-                .iter()
-                .filter(|button| button.command != "vr_view")
-                .map(|button| button.command.as_str())
-                .collect::<Vec<_>>(),
-            legacy
-                .buttons(&skin)
-                .iter()
-                .map(|button| button.command.as_str())
-                .collect::<Vec<_>>(),
-            "authored OldSchool retains the traditional command order with explicit VR"
-        );
-        assert_eq!(
-            old.left.iter().map(|button| button.command.as_str()).collect::<Vec<_>>(),
-            ["places"]
-        );
-        assert_eq!(old.top[0].command, "aurora_menu");
-        assert!(structure::is_separator(&old.top[1].command));
-        assert_eq!(old.top[2].command, "report_bug");
-        assert!(structure::is_separator(&old.top[3].command));
-        assert_eq!(old.top[4].command, crate::ui::toolbar::drawers::INTERFACES);
-        assert!(structure::is_separator(&old.top[5].command));
-        let start = old
-            .top
-            .iter()
-            .position(|button| button.command == "menu:common-me")
-            .expect("first root menu");
-        let menus = old.top[start..]
-            .split(|button| structure::is_separator(&button.command))
-            .next()
-            .expect("text menu block");
-        assert_eq!(menus.len(), ROOT_MENUS.len() * 2 - 1);
-        for (index, (key, _)) in ROOT_MENUS.iter().enumerate() {
-            let button = &menus[index * 2];
-            assert_eq!(button.command, format!("menu:{key}"));
-            assert_eq!(button.tooltip, format!("@{key}"));
-            assert_eq!(old.block_styles[&button.command].mode, Some(ButtonMode::TextOnly));
-            assert_eq!(old.block_styles[&button.command].sizing, Some(Sizing::Auto));
-            if index > 0 {
-                assert!(structure::is_divider(&menus[index * 2 - 1].command));
-            }
-        }
-        assert!(structure::is_separator(&old.top[start + menus.len()].command));
-        assert_eq!(old.top.iter().filter(|button| button.command == "report_bug").count(), 1);
-        assert_eq!(old.top.iter().filter(|button| button.command == "aurora_menu").count(), 1);
-        assert_eq!(old.bottom_style.sizing, Some(Sizing::Fill));
-        assert!(
-            old.buttons(&skin)
-                .windows(3)
-                .any(|buttons| buttons.iter().map(|button| button.command.as_str()).eq(["speak", "voice", "move"]))
-        );
     }
 }

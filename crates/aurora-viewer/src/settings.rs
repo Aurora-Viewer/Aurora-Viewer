@@ -1985,7 +1985,11 @@ pub struct Settings {
     #[serde(rename = "toolbar_common", default)]
     pub toolbar: Option<crate::ui::toolbar::ToolbarSettings>,
     /// Preset identity and its last confirmed snapshot; never exported in a notecard.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::ui::toolbar::selection::or_none"
+    )]
     pub(crate) toolbar_selection: Option<crate::ui::toolbar::selection::Selection>,
     /// Keep the earlier per-account layouts through saves made before login.
     #[serde(rename = "toolbar", default, skip_serializing_if = "std::collections::HashMap::is_empty")]
