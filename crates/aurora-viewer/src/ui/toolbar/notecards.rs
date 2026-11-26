@@ -363,42 +363,46 @@ impl State {
             let enabled = !self.busy() && self.catalog.can_preview;
             // no scroll area of their own: the editor's interface section
             // scrolls, and one inside it hid the rows past its 100 points
-            // (human report, 2026-11-26)
+            // (human report, 2026-11-26). Each place is taken in the row
+            // first, which wraps it as the presets' row does: a group per
+            // button (`push_id`, `add_enabled_ui`) is placed without wrapping,
+            // and widened the editor past its window.
             ui.horizontal_wrapped(|ui| {
                 for entry in &self.catalog.entries {
-                    ui.push_id(entry.id, |ui| {
-                        let current = active.and_then(|source| source.personal(self.catalog.owner)) == Some(entry.id);
-                        let response = ui
-                            .add_enabled_ui(enabled && entry.available, |ui| {
-                                widgets::action_button_trailing(
-                                    ui,
-                                    p,
-                                    "file-text-filled",
-                                    &entry.name,
-                                    if current {
-                                        widgets::ActionKind::Primary
-                                    } else {
-                                        widgets::ActionKind::Flat
-                                    },
-                                    egui::vec2(190.0, 30.0),
-                                    super::editor::EYE_ROOM,
-                                )
-                            })
-                            .inner;
-                        let key = entry.id.to_string();
-                        let shown = !hidden.contains(&key);
-                        ui.add_enabled_ui(!locked, |ui| {
-                            if let Some(shown) = super::editor::interface_eye(ui, p, response.rect, &key, shown, current) {
-                                toggled = Some((key.clone(), shown));
-                            }
-                        });
-                        #[cfg(test)]
-                        ui.ctx()
-                            .data_mut(|data| data.insert_temp(egui::Id::unique(("toolbar_saved_interface", entry.id)), response.rect));
-                        if response.clicked() {
-                            self.selected_profile = Some(entry.id);
-                        }
-                    });
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(190.0, 30.0), egui::Sense::hover());
+                    let current = active.and_then(|source| source.personal(self.catalog.owner)) == Some(entry.id);
+                    let mut button = ui.new_child(egui::UiBuilder::new().id_salt(entry.id).max_rect(rect));
+                    if !(enabled && entry.available) {
+                        button.disable();
+                    }
+                    let response = widgets::action_button_trailing(
+                        &mut button,
+                        p,
+                        "file-text-filled",
+                        &entry.name,
+                        if current {
+                            widgets::ActionKind::Primary
+                        } else {
+                            widgets::ActionKind::Flat
+                        },
+                        rect.size(),
+                        super::editor::EYE_ROOM,
+                    );
+                    let key = entry.id.to_string();
+                    let shown = !hidden.contains(&key);
+                    let mut eye = ui.new_child(egui::UiBuilder::new().id_salt(("eye", entry.id)).max_rect(rect));
+                    if locked {
+                        eye.disable();
+                    }
+                    if let Some(shown) = super::editor::interface_eye(&mut eye, p, response.rect, &key, shown, current) {
+                        toggled = Some((key.clone(), shown));
+                    }
+                    #[cfg(test)]
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::unique(("toolbar_saved_interface", entry.id)), response.rect));
+                    if response.clicked() {
+                        self.selected_profile = Some(entry.id);
+                    }
                 }
             });
         }

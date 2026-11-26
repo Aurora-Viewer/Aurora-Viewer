@@ -3183,36 +3183,56 @@ fn a_loaded_personal_interface_leaves_the_editor_as_it_was() {
 }
 
 /// Every saved interface shows in the editor, past its first row, on a
-/// usual screen (human report, 2026-11-26: four of six were seen).
+/// usual screen (human report, 2026-11-26: four of six were seen), and a
+/// narrow window wraps them instead of growing past its width (the same day:
+/// the window's content ran out of its right edge).
 #[test]
 fn the_editor_shows_every_saved_interface() {
-    for screen in [Vec2::new(1600.0, 900.0), Vec2::new(1920.0, 1080.0)] {
+    for screen in [Vec2::new(900.0, 650.0), Vec2::new(1600.0, 900.0), Vec2::new(1920.0, 1080.0)] {
         let mut bench = Bench {
             screen,
             ..Default::default()
         };
         bench.state.open = true;
         let ids = bench.state.notecards.test_interfaces(&[
+            "Aurora",
             "Aurora Builder",
             "Aurora OldSchool",
             "Aurora Photographer",
-            "Aurora Test",
             "Legacy",
             "Legacy2",
         ]);
         for _ in 0..8 {
             bench.frame(vec![]);
         }
+        let window = bench
+            .ctx
+            .memory(|memory| memory.area_rect(egui::Id::unique(editor::WINDOW)))
+            .expect("editor");
         let clip = bench
             .ctx
             .data(|data| data.get_temp::<Rect>(egui::Id::unique("toolbar_preset_clip")))
             .expect("interface section");
-        for id in ids {
-            let rect = bench
-                .ctx
-                .data(|data| data.get_temp::<Rect>(egui::Id::unique(("toolbar_saved_interface", id))))
-                .expect("saved interface");
-            assert!(clip.contains_rect(rect), "{screen:?}: {rect:?} outside {clip:?}");
+        assert!(window.right() <= screen.x, "{screen:?}: {window:?}");
+        assert!(clip.right() <= window.right(), "{screen:?}: {clip:?} in {window:?}");
+        let rects: Vec<Rect> = ids
+            .iter()
+            .map(|id| {
+                bench
+                    .ctx
+                    .data(|data| data.get_temp::<Rect>(egui::Id::unique(("toolbar_saved_interface", *id))))
+                    .expect("saved interface")
+            })
+            .collect();
+        for rect in &rects {
+            assert!(
+                clip.x_range().contains(rect.left()) && clip.x_range().contains(rect.right()),
+                "{screen:?}: {rect:?} beside {clip:?}"
+            );
+            if screen.y >= 900.0 {
+                assert!(clip.contains_rect(*rect), "{screen:?}: {rect:?} outside {clip:?}");
+            }
         }
+        assert!(rects.iter().any(|rect| rect.top() > rects[0].top()), "{screen:?}: the row wraps");
     }
 }
