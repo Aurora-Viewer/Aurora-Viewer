@@ -1247,10 +1247,13 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                         return Ok(Content::Clip(fetch_found_clip(client, found).await));
                     }
                     if let Some(post) = services::reddit_feed(&xml) {
-                        let picture = match services::from_feed(&xml) {
-                            Some(source) => fetch_picture(client, &source).await.ok(),
-                            None => None,
-                        };
+                        let mut picture = None;
+                        for source in services::reddit_animation(&xml).into_iter().chain(services::from_feed(&xml)) {
+                            if let Ok(image) = fetch_picture(client, &source).await {
+                                picture = Some(image);
+                                break;
+                            }
+                        }
                         return Ok(Content::Post(post, picture));
                     }
                 }

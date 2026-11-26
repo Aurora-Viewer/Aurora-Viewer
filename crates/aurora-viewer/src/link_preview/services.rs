@@ -873,6 +873,33 @@ pub(super) fn clip_from_feed(xml: &str) -> Option<FoundClip> {
     })
 }
 
+/// A GIF or animated WebP linked from the post itself. Reddit can publish a
+/// still `media:thumbnail` for these, so try the original image first.
+pub(super) fn reddit_animation(xml: &str) -> Option<String> {
+    let entry = xml.split("<entry").nth(1)?.split("</entry>").next()?;
+    let html = unescape(entry.split("<content").nth(1)?.split("</content>").next()?);
+    html.split("<a ").skip(1).find_map(|tag| {
+        let tag = tag.split_once('>')?.0;
+        let url = Url::parse(&unescape(attribute(tag, "href")?)).ok()?;
+        let path = url.path().to_ascii_lowercase();
+        (url.host_str() == Some("i.redd.it")
+            && (path.ends_with(".gif") || path.ends_with(".webp"))
+            && picture_host_ok(Service::Reddit, url.as_str()))
+        .then(|| url.into())
+    })
+}
+
+#[test]
+fn reddit_prefers_its_animated_image_to_the_still_thumbnail() {
+    let xml = concat!(
+        r#"<feed><entry><media:thumbnail url="https://preview.redd.it/still.jpg"/>"#,
+        r#"<content type="html">&lt;a href=&quot;https://i.redd.it.example.org/untrusted.gif&quot;&gt;other&lt;/a&gt;"#,
+        r#"&lt;a href=&quot;https://i.redd.it/example.gif&quot;&gt;image&lt;/a&gt;</content></entry></feed>"#,
+    );
+    assert_eq!(reddit_animation(xml).as_deref(), Some("https://i.redd.it/example.gif"));
+    assert_eq!(from_feed(xml).as_deref(), Some("https://preview.redd.it/still.jpg"));
+}
+
 /// The picture of a Reddit post's feed: its entry's `media:thumbnail`
 /// (Reddit's preview, at most 640 wide). A text post has none.
 pub(super) fn from_feed(xml: &str) -> Option<String> {
