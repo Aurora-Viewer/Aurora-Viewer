@@ -71,7 +71,7 @@ mod hover_pick;
 mod legacy_lists;
 mod texture_picker;
 mod typing_pointer;
-use folders::chat_log_root;
+use folders::bind_chat_log_folder;
 mod admin_status;
 mod avatar_studio;
 mod contents_drop_demo;
@@ -3583,12 +3583,8 @@ impl App {
             crate::world::chat_log::grid_name(&s.grid, &s.custom_login_uri, self.demo)
         });
         // the chosen folder (InstantMessageLogPath) and the yes to sharing
-        // a Legacy Viewer's; once logged in they only change together, with
-        // the files (`change_folder`)
-        if log.identity().is_none() {
-            log.set_folder(chat_log_root(&s.chat_log_location));
-            log.set_sharing(s.log_legacy_layout);
-        }
+        // a Legacy Viewer's
+        bind_chat_log_folder(log, s);
     }
 
     // ------------------------------------------------------------------ login
@@ -3825,11 +3821,10 @@ impl App {
             // a folder change still being placed ends with the session, and
             // one the transcript thread dropped is not taken later: the
             // account keeps the folder its files are in
-            if self.world.chat_log.changing() || self.world.chat_log.take_dropped_change() {
-                folders::restore_chat_log_previous(&mut self.settings, &mut self.folders);
-            }
-            self.settings.release_chat_log_account();
+            folders::chat_log_logout(&mut self.world.chat_log, &mut self.settings, &mut self.folders);
         }
+        // (the demo's too: the folder to go back to is its session's)
+        self.folders.chat_log_previous = None;
         // a parcel's saved preset goes with the session
         self.panels.time_of_day = self.settings.time_of_day;
         self.hover_height_ui = Default::default();

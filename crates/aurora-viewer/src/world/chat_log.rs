@@ -188,6 +188,10 @@ pub struct ChatLog {
     /// A move to another folder asked for, until its answer comes, with the
     /// folder, sharing and place to go back to if it fails.
     moving: Option<Moving>,
+    /// Moves of sessions logged out since (a slow folder still being
+    /// written): their answer changes nothing of the current session, and
+    /// they do not make it busy (`take_past_move_failure`).
+    past_moves: Vec<Moving>,
     /// A change of folder the transcript thread never took (its placement
     /// or its move dropped: queue full, thread gone): the files stayed in
     /// the folder in use, and the settings that already name the new one
@@ -232,6 +236,23 @@ struct Moving {
     accounts: Option<PathBuf>,
     legacy_layout: bool,
     place: Placement,
+    /// `ChatLog::epoch` of the session that asked it: once that session is
+    /// over, its answer never touches the current one (`past_moves`).
+    epoch: u64,
+    /// Whose files move: a failure after the logout puts back that
+    /// account's own folder (`take_past_move_failure`).
+    identity: Identity,
+}
+
+/// A move of an earlier session that failed after its logout: the
+/// account's files stayed in the folder they had before, with the folder
+/// chosen and the yes to sharing of that time (`accounts`, None the default
+/// folder), which its saved settings should name again.
+#[derive(Debug)]
+pub struct PastMoveFailed {
+    pub identity: Identity,
+    pub accounts: Option<PathBuf>,
+    pub legacy_layout: bool,
 }
 
 impl ChatLog {
@@ -272,6 +293,7 @@ impl ChatLog {
     /// reads the folders) and taken when it comes (`poll_conversations`);
     /// until then the session's lines and histories wait.
     pub fn login_named(&mut self, agent: Uuid, name: Option<(&str, &str)>) {
+        self.retire_move();
         self.epoch += 1;
         self.append_epoch += 1;
         self.place_version += 1;
@@ -604,6 +626,10 @@ impl ChatLog {
     /// they were queued with; those still waiting for the login's folder
     /// are dropped with the session.
     pub fn logout(&mut self) {
+        // a move still under way goes on without the session: its answer
+        // is never applied to the next one, whose folder and sharing come
+        // from its own settings (`set_folder`, `set_sharing`)
+        self.retire_move();
         self.epoch += 1;
         self.append_epoch += 1;
         self.place_version += 1;
@@ -979,15 +1005,20 @@ impl ChatLog {
         };
         let accounts = std::mem::replace(&mut self.accounts, accounts);
         let legacy_layout = std::mem::replace(&mut self.legacy_layout, share);
-        if let Some(open) = &mut self.open {
-            open.place = Some(to);
-        }
+        // (`from` is the open session's place)
+        let Some(open) = &mut self.open else {
+            return;
+        };
+        open.place = Some(to);
+        let identity = open.identity.clone();
         self.place_version += 1;
         self.moving = Some(Moving {
             done,
             accounts,
             legacy_layout,
             place: from,
+            epoch: self.epoch,
+            identity,
         });
     }
 
@@ -997,6 +1028,11 @@ impl ChatLog {
     /// worked out again from the folder chosen before, which a refused
     /// folder would have sent elsewhere.
     pub fn take_relocated(&mut self) -> Option<std::io::Result<usize>> {
+        // another session's move is that session's (`take_past_move_failure`)
+        if self.moving.as_ref()?.epoch != self.epoch {
+            self.retire_move();
+            return None;
+        }
         let done = match self.moving.as_ref()?.done.try_recv() {
             Ok(done) => done,
             Err(crossbeam_channel::TryRecvError::Empty) => return None,
@@ -1015,6 +1051,50 @@ impl ChatLog {
             self.legacy_layout = moving.legacy_layout;
         }
         Some(done)
+    }
+
+    /// The session ends with a move under way (logout, another login): the
+    /// move goes on on the transcript thread, and its answer goes to
+    /// `take_past_move_failure`.
+    fn retire_move(&mut self) {
+        if let Some(moving) = self.moving.take() {
+            log::info!("conversation transcripts: a move goes on after its session");
+            self.past_moves.push(moving);
+        }
+    }
+
+    /// The moves of earlier sessions answered since, each once. A move that
+    /// ran is done (the account's saved folder already names its new one);
+    /// a failed one (or one the thread dropped) is returned: the account's
+    /// files stayed where they were, and its own saved folder and sharing go
+    /// back to them, never the current session's place or settings.
+    pub fn take_past_move_failure(&mut self) -> Option<PastMoveFailed> {
+        let mut i = 0;
+        while i < self.past_moves.len() {
+            let done = match self.past_moves[i].done.try_recv() {
+                Ok(done) => done,
+                Err(crossbeam_channel::TryRecvError::Empty) => {
+                    i += 1;
+                    continue;
+                }
+                Err(crossbeam_channel::TryRecvError::Disconnected) => Err(std::io::Error::other("the transcript thread dropped the move")),
+            };
+            let moving = self.past_moves.remove(i);
+            match done {
+                Ok(count) => log::info!("conversation transcripts: an earlier session's move ended ({count} files)"),
+                Err(e) => {
+                    log::warn!(
+                        "conversation transcripts: an earlier session's move failed ({e}); its account keeps the folder used before"
+                    );
+                    return Some(PastMoveFailed {
+                        identity: moving.identity,
+                        accounts: moving.accounts,
+                        legacy_layout: moving.legacy_layout,
+                    });
+                }
+            }
+        }
+        None
     }
 
     /// A change of folder the transcript thread never took, once: its
@@ -2313,6 +2393,70 @@ mod tests {
         settled(&mut log);
         assert!(log.flush(WAIT));
         assert_eq!(log.take_relocated().unwrap().unwrap(), 1);
+    }
+
+    /// A move still under way at the logout (a slow folder) is the session's
+    /// that asked it: the next session places its own account in its own
+    /// folder, is not busy with it, and its answer changes nothing there.
+    #[test]
+    fn a_move_answered_after_the_logout_never_touches_the_next_session() {
+        let guard = TempGuard::new();
+        let (a_root, a_new, b_root) = (guard.path().join("a"), guard.path().join("a_new"), guard.path().join("b"));
+        let (me, other) = (Uuid::from_u128(0xA11CE), Uuid::from_u128(0xB0B));
+        let mut log = ChatLog::in_folder(a_root.clone());
+        log.set_grid("agni".into());
+        log.login_named(me, JANE);
+        settled(&mut log);
+        log.append("Bob Smith", now(), "Bob Smith", "before the pick");
+        // placed by a working thread, the move taken by a stalled one
+        assert!(log.change_folder(Some(a_new.clone()), false));
+        assert!(log.flush(WAIT));
+        let (worker, queue) = store::Worker::stalled();
+        log.set_worker(worker);
+        settled(&mut log);
+        assert!(log.busy());
+
+        // logout, then another account with its own folder
+        log.logout();
+        assert!(!log.busy());
+        log.set_folder(Some(b_root.clone()));
+        log.set_sharing(false);
+        log.set_worker(store::Worker::start().unwrap());
+        log.login_named(other, Some(("Bob", "Smith")));
+        settled(&mut log);
+        let b_dir = log.dir().unwrap().to_path_buf();
+        assert!(b_dir.starts_with(&b_root), "{b_dir:?}");
+        assert!(!log.busy());
+        assert!(log.take_past_move_failure().is_none(), "no answer yet");
+
+        // the move fails: nothing of the session changes, the first
+        // account's folder before the pick comes back for its settings
+        drop(queue);
+        assert!(log.take_relocated().is_none());
+        let failed = log.take_past_move_failure().expect("the earlier session's failure");
+        assert_eq!(
+            failed.identity,
+            Identity {
+                grid: "agni".into(),
+                agent: me
+            }
+        );
+        assert_eq!(failed.accounts.as_deref(), Some(a_root.as_path()));
+        assert!(!failed.legacy_layout);
+        assert!(log.take_past_move_failure().is_none(), "once");
+        assert_eq!(log.dir(), Some(b_dir.as_path()));
+        assert!(!log.busy());
+        log.append("Alice Example", now(), "Alice Example", "the second account's line");
+        assert!(log.flush(WAIT));
+        assert_eq!(texts(&b_dir.join("Alice Example.txt")), ["the second account's line"]);
+
+        // a move that ends after the logout is simply done
+        assert!(log.change_folder(Some(guard.path().join("b_new")), false));
+        settled(&mut log);
+        assert!(log.flush(WAIT));
+        log.logout();
+        assert!(log.take_past_move_failure().is_none());
+        assert!(log.past_moves.is_empty());
     }
 
     #[test]

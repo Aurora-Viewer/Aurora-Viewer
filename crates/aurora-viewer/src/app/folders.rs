@@ -162,6 +162,13 @@ impl App {
             &mut self.options_ui,
             &mut self.folders,
         );
+        // the demo's settings are every worktree's: an earlier session's
+        // move changes none of them
+        if self.demo {
+            while self.world.chat_log.take_past_move_failure().is_some() {}
+        } else {
+            poll_past_chat_log_moves(&mut self.world.chat_log, &mut self.settings, &mut self.folders);
+        }
     }
 }
 
@@ -171,6 +178,43 @@ pub(super) fn restore_chat_log_previous(settings: &mut crate::settings::Settings
     if let Some((location, share)) = folders.chat_log_previous.take() {
         settings.chat_log_location = location;
         settings.log_legacy_layout = share;
+        folders.settings_changed = true;
+    }
+}
+
+/// The transcripts' folder and sharing the next login is placed with: the
+/// settings', which are the account's once it is selected
+/// (`Settings::select_chat_log_account`). Logged in, they only change
+/// together with the files (`ChatLog::change_folder`).
+pub(super) fn bind_chat_log_folder(chat_log: &mut ChatLog, settings: &crate::settings::Settings) {
+    if chat_log.identity().is_none() {
+        chat_log.set_folder(chat_log_root(&settings.chat_log_location));
+        chat_log.set_sharing(settings.log_legacy_layout);
+    }
+}
+
+/// The account's transcript settings at its logout, before its transcripts
+/// close: a folder change still being placed, or one the transcript thread
+/// dropped, puts back the folder in use; then they are saved for the
+/// account, and the next one starts from its own. The folder to go back to
+/// goes with the session: a move still under way keeps its own
+/// (`ChatLog::take_past_move_failure`), for this account's entry only.
+pub(super) fn chat_log_logout(chat_log: &mut ChatLog, settings: &mut crate::settings::Settings, folders: &mut Folders) {
+    if chat_log.changing() || chat_log.take_dropped_change() {
+        restore_chat_log_previous(settings, folders);
+    }
+    settings.release_chat_log_account();
+    folders.chat_log_previous = None;
+}
+
+/// The moves of earlier sessions answered since: one that failed puts the
+/// folder and the sharing its files stayed with back in its own account's
+/// entry (its grid and agent), never in the settings of the account logged
+/// in now, and says nothing to it.
+fn poll_past_chat_log_moves(chat_log: &mut ChatLog, settings: &mut crate::settings::Settings, folders: &mut Folders) {
+    while let Some(failed) = chat_log.take_past_move_failure() {
+        let location = failed.accounts.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        settings.restore_chat_log_account(&failed.identity.grid, failed.identity.agent, location, failed.legacy_layout);
         folders.settings_changed = true;
     }
 }
@@ -188,7 +232,11 @@ fn poll_chat_log_change(
 ) {
     if let Some(done) = chat_log.take_relocated() {
         match done {
-            Ok(count) => options_ui.set_chat_log_status(aurora_i18n::tr!("ui-options-chat-logs-moved", count = count), false),
+            Ok(count) => {
+                // the settings name the folder in use: nothing to go back to
+                folders.chat_log_previous = None;
+                options_ui.set_chat_log_status(aurora_i18n::tr!("ui-options-chat-logs-moved", count = count), false);
+            }
             Err(e) => {
                 log::warn!("conversation transcripts: moving failed ({e})");
                 restore_chat_log_previous(settings, folders);
@@ -646,11 +694,116 @@ mod tests {
             aurora_i18n::tr!("ui-options-chat-logs-move-failed")
         );
 
-        // a working thread again: the default folder taken, its files moved
+        // a working thread again: the default folder taken, its files
+        // moved, and nothing left to go back to
         prefs.chat_log.set_worker(Worker::start().unwrap());
-        prefs.default_folder();
+        default_folder(&mut prefs);
+        assert!(prefs.folders.chat_log_previous.is_some());
+        assert!(prefs.chat_log.settle(WAIT));
+        assert!(prefs.chat_log.flush(WAIT));
+        let start = std::time::Instant::now();
+        while prefs.chat_log.busy() {
+            assert!(start.elapsed() < WAIT, "the move never answered");
+            poll(&mut prefs);
+            std::thread::yield_now();
+        }
         assert!(prefs.settings.chat_log_location.is_empty());
         assert!(prefs.chat_log.dir().unwrap().starts_with(&default_accounts));
+        assert!(!prefs.options_ui.chat_log_status_warn);
+        assert_eq!(prefs.folders.chat_log_previous, None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A move still under way at the logout (a slow folder) that fails in
+    /// the next account's session: that account keeps its folder and
+    /// settings, and the first account's own entry names the folder its
+    /// files stayed in again.
+    #[test]
+    fn a_move_failing_after_the_logout_puts_back_only_its_own_account_s_folder() {
+        use crate::world::chat_log::store::Worker;
+        let dir = std::env::temp_dir().join(format!("aurora_folders_past_move_{}", uuid::Uuid::new_v4()));
+        let default_accounts = dir.join("aurora_default");
+        let (a_saved, b_saved) = (dir.join("a_saved"), dir.join("b_saved"));
+        for folder in [&default_accounts, &a_saved, &b_saved] {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        let (a, b) = (uuid::Uuid::from_u128(0xA11CE), uuid::Uuid::from_u128(0xB0B));
+        let (a_setting, b_setting) = (a_saved.to_string_lossy().into_owned(), b_saved.to_string_lossy().into_owned());
+        let mut settings = crate::settings::Settings::default();
+        // each account's own folder, saved at earlier logins
+        settings.select_chat_log_account("agni", b);
+        settings.chat_log_location = b_setting.clone();
+        settings.select_chat_log_account("agni", a);
+        settings.chat_log_location = a_setting.clone();
+
+        // A logs in, in its own folder
+        let mut chat_log = ChatLog::default();
+        chat_log.set_default_folder(default_accounts.clone());
+        chat_log.set_grid("agni".into());
+        bind_chat_log_folder(&mut chat_log, &settings);
+        chat_log.login_named(a, Some(("Jane", "Doe")));
+        assert!(chat_log.settle(WAIT));
+        assert!(chat_log.dir().unwrap().starts_with(&a_saved));
+        let mut prefs = Prefs {
+            chat_log,
+            settings,
+            options_ui: crate::ui::options::OptionsUi::default(),
+            folders: Folders::default(),
+        };
+        let poll = |prefs: &mut Prefs| {
+            poll_chat_log_change(&mut prefs.chat_log, &mut prefs.settings, &mut prefs.options_ui, &mut prefs.folders);
+            poll_past_chat_log_moves(&mut prefs.chat_log, &mut prefs.settings, &mut prefs.folders);
+        };
+
+        // A picks Default folder: placed by a working thread, its files
+        // moved by one that never gets to it (a slow folder)
+        set_chat_log_folder(
+            &mut prefs.chat_log,
+            &mut prefs.settings,
+            &mut prefs.options_ui,
+            &mut prefs.folders,
+            String::new(),
+        );
+        assert!(prefs.chat_log.flush(WAIT));
+        let (worker, queue) = Worker::stalled();
+        prefs.chat_log.set_worker(worker);
+        assert!(prefs.chat_log.settle(WAIT));
+        poll(&mut prefs);
+        assert!(prefs.chat_log.busy());
+        assert!(prefs.settings.chat_log_location.is_empty());
+
+        // A logs out (the app's steps, then the World's), B logs in
+        chat_log_logout(&mut prefs.chat_log, &mut prefs.settings, &mut prefs.folders);
+        prefs.chat_log.logout();
+        assert_eq!(prefs.folders.chat_log_previous, None);
+        prefs.settings.select_chat_log_account("agni", b);
+        bind_chat_log_folder(&mut prefs.chat_log, &prefs.settings);
+        prefs.chat_log.set_worker(Worker::start().unwrap());
+        prefs.chat_log.login_named(b, Some(("Bob", "Smith")));
+        assert!(prefs.chat_log.settle(WAIT));
+        let b_dir = prefs.chat_log.dir().unwrap().to_path_buf();
+        // B's own folder, not the one A picked
+        assert!(b_dir.starts_with(&b_saved), "{b_dir:?}");
+        assert!(!prefs.chat_log.busy());
+        prefs.folders.settings_changed = false;
+        poll(&mut prefs);
+        assert!(!prefs.folders.settings_changed);
+
+        // A's move fails now
+        drop(queue);
+        poll(&mut prefs);
+        assert_eq!(prefs.chat_log.dir(), Some(b_dir.as_path()));
+        assert_eq!(prefs.settings.chat_log_location, b_setting);
+        assert!(!prefs.settings.log_legacy_layout);
+        assert!(prefs.options_ui.chat_log_status.is_empty(), "nothing said to B");
+        assert!(prefs.folders.settings_changed);
+        assert_eq!(prefs.folders.chat_log_previous, None);
+        // A's own entry names its files' folder again
+        prefs.settings.select_chat_log_account("agni", a);
+        assert_eq!(prefs.settings.chat_log_location, a_setting);
+        prefs.settings.select_chat_log_account("agni", b);
+        assert_eq!(prefs.settings.chat_log_location, b_setting);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

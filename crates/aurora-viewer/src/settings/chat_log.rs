@@ -78,6 +78,23 @@ impl Settings {
         self.remember_chat_log_account();
     }
 
+    /// A change of folder of an earlier session of `agent` on `grid` failed
+    /// after its logout (`ChatLog::take_past_move_failure`): its entry names
+    /// the folder and the sharing its files stayed with again. When that
+    /// account is logged in again, its entry is the settings' own fields.
+    pub(crate) fn restore_chat_log_account(&mut self, grid: &str, agent: Uuid, location: String, share: bool) {
+        let key = account_key(grid, agent);
+        let preferences = Preferences {
+            chat_log_location: location,
+            log_legacy_layout: share,
+        };
+        if self.chat_log_account.as_deref() == Some(key.as_str()) {
+            preferences.apply(self);
+        } else {
+            self.chat_log_accounts.get_or_insert_with(Default::default).insert(key, preferences);
+        }
+    }
+
     /// Release the active account at logout so another account starts clean
     /// without inheriting or overwriting the leaving account's settings.
     pub(crate) fn release_chat_log_account(&mut self) {
@@ -325,5 +342,39 @@ mod tests {
         assert!(reloaded.chat_log_accounts.as_ref().unwrap().contains_key(&me.to_string()));
         // its folder is still one the uninstall lists
         assert_eq!(reloaded.chat_log_locations(), vec![PathBuf::from("D:\\LegacyRoot")]);
+    }
+
+    #[test]
+    fn a_move_that_failed_after_the_logout_goes_back_to_its_own_account() {
+        let (first, second) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut settings = Settings::default();
+        settings.select_chat_log_account("agni", second);
+        settings.chat_log_location = "E:\\Second".into();
+        // the first account picked a new folder, then logged out while its
+        // files were still moving
+        settings.select_chat_log_account("agni", first);
+        settings.chat_log_location = "D:\\New".into();
+        settings.release_chat_log_account();
+        settings.select_chat_log_account("agni", second);
+
+        // the move fails in the second account's session: the first one's
+        // entry goes back, the session's settings stay
+        settings.restore_chat_log_account("agni", first, "D:\\Old".into(), false);
+        assert_eq!(settings.chat_log_location, "E:\\Second");
+        assert!(!settings.log_legacy_layout);
+        // the same account on another grid is another entry
+        settings.select_chat_log_account("aditi", first);
+        assert_eq!(Preferences::current(&settings), Preferences::default());
+        settings.select_chat_log_account("agni", first);
+        assert_eq!(settings.chat_log_location, "D:\\Old");
+
+        // logged in again before the answer: its own fields go back
+        settings.chat_log_location = "D:\\New".into();
+        settings.restore_chat_log_account("agni", first, "D:\\Old".into(), true);
+        assert_eq!(settings.chat_log_location, "D:\\Old");
+        assert!(settings.log_legacy_layout);
+        settings.release_chat_log_account();
+        settings.select_chat_log_account("agni", first);
+        assert_eq!(settings.chat_log_location, "D:\\Old");
     }
 }
