@@ -119,7 +119,7 @@ impl App {
             || !self.in_world()
             || self.world.teleporting
             || self.settings.photo_held.is_some()
-            || crate::settings::draw_stepping::holds_draw_distance(&self.settings);
+            || self.settings.draw_stepping.is_some();
         let mut hold = self.settings.autotune_hold.take();
         if let Some(h) = &mut hold {
             h.sync(&self.settings);

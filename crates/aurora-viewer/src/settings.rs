@@ -737,8 +737,7 @@ pub struct Settings {
     /// the pace of the steps while objects are still arriving or the frames
     /// are slow (the Legacy Viewer's fixed pace).
     pub draw_distance_stepping_interval: u32,
-    /// The steps, under way or watching after reaching the user's
-    /// distance; the file keeps the user's draw distance.
+    /// The steps under way; the file keeps the user's draw distance.
     #[serde(skip)]
     pub draw_stepping: Option<draw_stepping::Stepping>,
     /// Autotune, the Performance window's target frame rate

@@ -59,7 +59,7 @@
 //! ([`Tuner::tick`]), run once a frame on a ring of 50 frame times: a few
 //! microseconds, no wait on the GPU.
 
-use crate::settings::{Settings, draw_stepping};
+use crate::settings::Settings;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -191,10 +191,9 @@ impl Tuned {
 /// The user's own values while Autotune holds the live ones (as
 /// `draw_stepping::Stepping` and `snapshot::quality::Held` do).
 ///
-/// A hold is only made outside the photo quality and draw distance steps
-/// under way (the tuner is paused then), so that the values it takes as the
-/// user's are theirs. Steps that reached the user's distance only watch the
-/// load: the tuner runs, and its first write ends them. It may last into them: the photo quality then holds the user's
+/// A hold is only made outside the photo quality and draw distance stepping
+/// (the tuner is paused then), so that the values it takes as the user's are
+/// theirs. It may last into them: the photo quality then holds the user's
 /// values itself (it read them through `Values::read`, which shows the
 /// user's), and the steps climb to the tuned draw distance.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -214,11 +213,9 @@ impl Hold {
     }
 
     /// Whether another hold of the same values is under way: then the live
-    /// values are not the user's nor Autotune's. (The steps of the draw
-    /// distance only while under the user's: past that they watch, the
-    /// live value is the user's.)
+    /// values are not the user's nor Autotune's.
     fn others_hold(s: &Settings) -> bool {
-        s.photo_held.is_some() || draw_stepping::holds_draw_distance(s)
+        s.photo_held.is_some() || s.draw_stepping.is_some()
     }
 
     /// The user's values, with what they changed since the last write.
@@ -237,7 +234,7 @@ impl Hold {
             return;
         }
         let now = Tuned::read(s);
-        if !draw_stepping::holds_draw_distance(s) && now.draw_distance != self.applied.draw_distance {
+        if s.draw_stepping.is_none() && now.draw_distance != self.applied.draw_distance {
             self.user.draw_distance = now.draw_distance;
             self.applied.draw_distance = now.draw_distance;
         }
@@ -297,7 +294,7 @@ impl Hold {
         if s.photo_held.is_some() {
             return;
         }
-        let stepping = draw_stepping::holds_draw_distance(s);
+        let stepping = s.draw_stepping.is_some();
         let now = Tuned::read(s);
         if let Some(h) = &mut s.autotune_hold {
             if !stepping {

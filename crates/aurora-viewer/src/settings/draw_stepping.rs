@@ -25,9 +25,9 @@
 //! the floor pace ([`FLOOR_INTERVALS`]) with both busy, and a frame that
 //! stays heavy steps it back one level. The point is to spare the GPU the
 //! burst of a whole crowd arriving at once after a teleport (the shadow maps
-//! of a busy region drawn in one frame). Reaching the user's distance keeps
-//! that watch, without holding the draw distance against the other holds
-//! ([`Stepping::under_way`]).
+//! of a busy region drawn in one frame). As in the Legacy Viewer, the steps
+//! end once they reach the user's distance: what happens after the arrival
+//! is Autotune's, which the steps pause while they last.
 
 use crate::settings::Settings;
 use std::time::{Duration, Instant};
@@ -147,7 +147,7 @@ pub struct Ceiling {
     pub hold: Duration,
 }
 
-/// The steps, under way or watching.
+/// The steps under way.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Stepping {
     /// The user's draw distance, given back at the end (it plays
@@ -163,22 +163,6 @@ pub struct Stepping {
     pub heavy_since: Option<Instant>,
     /// The last distance found too heavy.
     pub ceiling: Option<Ceiling>,
-}
-
-impl Stepping {
-    /// The steps hold the draw distance under the user's. At the user's
-    /// they only watch the load (a heavy frame still steps back): the
-    /// draw distance is then the user's, and the other holds of it
-    /// (Autotune) go on.
-    pub fn under_way(&self) -> bool {
-        self.step < self.user
-    }
-}
-
-/// Whether steps under way hold the live draw distance (see
-/// [`Stepping::under_way`]): Autotune pauses and leaves it alone then.
-pub fn holds_draw_distance(s: &Settings) -> bool {
-    s.draw_stepping.is_some_and(|steps| steps.under_way())
 }
 
 /// Starts the steps (or starts them over, keeping the user's value of steps
@@ -234,6 +218,9 @@ pub enum Tick {
 /// One frame of the steps, driven by the load rather than by a timer:
 /// - the user changed the draw distance (`draw_distance` is not the step):
 ///   the steps end and keep it; the option turned off: the user's value;
+/// - the step is the user's distance (a draw distance of 32 m or less at
+///   the start): the steps end, as display() does once RenderFarClip
+///   reaches gSavedDrawDistance;
 /// - nothing while teleporting (`TELEPORT_NONE` in the Legacy Viewer);
 /// - a frame heavy for [`HEAVY_HOLD`] halves the distance (not under 32 m),
 ///   and that distance waits [`CEILING_HOLD`] before it is tried again,
@@ -243,15 +230,13 @@ pub enum Tick {
 ///   (objects still arriving, or a slow but not heavy frame), at most every
 ///   `interval` (FSRenderFarClipSteppingInterval, the Legacy Viewer's fixed
 ///   pace); with both busy, or a heavy frame at 32 m, at the floor pace
-///   ([`FLOOR_INTERVALS`]); not at all while a heavy run may step back.
-///
-/// Reaching the user's distance keeps the watch, so a later heavy frame can
-/// still step back.
+///   ([`FLOOR_INTERVALS`]); not at all while a heavy run may step back;
+///   the step that reaches the user's distance ends the steps.
 pub fn tick(s: Stepping, draw_distance: f32, enabled: bool, teleporting: bool, load: Load, interval: Duration, now: Instant) -> Tick {
     if draw_distance != s.step {
         return Tick::End(draw_distance);
     }
-    if !enabled {
+    if !enabled || s.step >= s.user {
         return Tick::End(s.user);
     }
     if teleporting {
@@ -299,9 +284,6 @@ pub fn tick(s: Stepping, draw_distance: f32, enabled: bool, teleporting: bool, l
         };
     }
     let value = (s.step * 2.0).min(s.user);
-    if value <= s.step {
-        return Tick::Wait;
-    }
     if s.ceiling.is_some_and(|c| value >= c.level && now < c.until) {
         return Tick::Wait;
     }
@@ -318,6 +300,9 @@ pub fn tick(s: Stepping, draw_distance: f32, enabled: bool, teleporting: bool, l
     };
     if now.saturating_duration_since(s.changed) < gap {
         return Tick::Wait;
+    }
+    if value >= s.user {
+        return Tick::End(s.user);
     }
     Tick::Step(
         Stepping {
@@ -358,7 +343,8 @@ mod tests {
     }
 
     /// Runs the steps frame by frame (every 100 ms) under `load` and returns
-    /// the steps and the distance at `until`.
+    /// the steps and the distance at `until`, or at their end (the steps
+    /// then sit at the user's distance and are not run further).
     fn run(mut s: Stepping, mut dd: f32, load: impl Fn(Duration) -> Load, t0: Instant, until: Duration) -> (Stepping, f32) {
         let mut t = Duration::ZERO;
         while t <= until {
@@ -366,7 +352,10 @@ mod tests {
                 Tick::Wait => {}
                 Tick::Hold(next) => s = next,
                 Tick::Step(next, value) => (s, dd) = (next, value),
-                Tick::End(_) => panic!("only the user ends the steps"),
+                Tick::End(value) => {
+                    assert_eq!(value, s.user, "only the user ends the steps elsewhere");
+                    return (Stepping { step: value, ..s }, value);
+                }
             }
             t += FRAME;
         }
@@ -382,11 +371,10 @@ mod tests {
         assert_eq!(at(s, dd, true, false, quiet(), t0 + MIN_GAP / 2), Tick::Wait);
         let fast = |_| load(0, 8.0, 2.0);
         assert_eq!(run(s, dd, fast, t0, MIN_GAP).1, 64.0);
-        assert_eq!(run(s, dd, fast, t0, MIN_GAP * 2).1, 128.0);
-        let (s, dd) = run(s, dd, fast, t0, MIN_GAP * 3);
-        assert_eq!(dd, 256.0, "the user's distance in about 6 s, not 60");
-        // and it stays there, still watched
-        assert_eq!(run(s, dd, fast, t0 + MIN_GAP * 3, INTERVAL).1, 256.0);
+        let (s, dd) = run(s, dd, fast, t0, MIN_GAP * 2);
+        assert_eq!(dd, 128.0);
+        // the step to the user's distance, in about 6 s, not 60, ends them
+        assert_eq!(at(s, dd, true, false, load(0, 8.0, 2.0), t0 + MIN_GAP * 3), Tick::End(256.0));
     }
 
     #[test]
@@ -485,16 +473,17 @@ mod tests {
     }
 
     #[test]
-    fn a_place_heavy_at_the_users_distance_settles_under_it() {
+    fn a_distance_heavy_on_the_way_waits_longer_each_time() {
         let t0 = Instant::now();
         let (s, dd) = start(None, 256.0, t0);
-        // heavy at 256 m only, fast under it
-        let scene = |dd: f32| if dd >= 256.0 { load(0, 120.0, 60.0) } else { load(0, 8.0, 2.0) };
+        // heavy from 128 m, fast under it
+        let scene = |dd: f32| if dd >= 128.0 { load(0, 120.0, 60.0) } else { load(0, 8.0, 2.0) };
         let (mut s, mut dd) = (s, dd);
         let mut holds = Vec::new();
         let mut t = Duration::ZERO;
         while t <= Duration::from_secs(3600) {
             match at(s, dd, true, false, scene(dd), t0 + t) {
+                Tick::Wait => {}
                 Tick::Hold(next) => s = next,
                 Tick::Step(next, value) => {
                     if value < s.step {
@@ -502,11 +491,11 @@ mod tests {
                     }
                     (s, dd) = (next, value);
                 }
-                _ => {}
+                Tick::End(_) => panic!("never reaches the user's distance"),
             }
             t += FRAME;
         }
-        // each step back from 256 m doubles the wait, up to its cap: 7 tries
+        // each step back from 128 m doubles the wait, up to its cap: 7 tries
         // in an hour, where a fixed 60 s would make about 60
         let min = Duration::from_secs(60);
         assert_eq!(
@@ -514,7 +503,29 @@ mod tests {
             [min, min * 2, min * 4, min * 8, min * 16, CEILING_HOLD_MAX, CEILING_HOLD_MAX]
         );
         assert_eq!(CEILING_HOLD_MAX, min * 16);
-        assert_eq!(dd, 128.0, "settled a level under the user's");
+        assert_eq!(dd, 64.0, "a level under the heavy one");
+    }
+
+    #[test]
+    fn the_steps_end_at_the_users_distance_even_where_it_is_heavy() {
+        let t0 = Instant::now();
+        let (s, dd) = start(None, 256.0, t0);
+        // heavy at 256 m only: the steps reach it and end there, as the
+        // Legacy Viewer's do; what comes after the arrival is Autotune's
+        let scene = |dd: f32| if dd >= 256.0 { load(0, 120.0, 60.0) } else { load(0, 8.0, 2.0) };
+        let (mut s, mut dd) = (s, dd);
+        let mut t = Duration::ZERO;
+        let end = loop {
+            assert!(t <= Duration::from_secs(10), "the steps end in about 6 s");
+            match at(s, dd, true, false, scene(dd), t0 + t) {
+                Tick::Wait => {}
+                Tick::Hold(next) => s = next,
+                Tick::Step(next, value) => (s, dd) = (next, value),
+                Tick::End(value) => break value,
+            }
+            t += FRAME;
+        };
+        assert_eq!(end, 256.0);
     }
 
     #[test]
@@ -556,34 +567,45 @@ mod tests {
     }
 
     #[test]
-    fn a_draw_distance_already_at_32_does_not_step() {
+    fn a_draw_distance_already_at_32_ends_at_once() {
         let t0 = Instant::now();
         let (s, dd) = start(None, 32.0, t0);
         assert_eq!(dd, 32.0);
-        assert!(!s.under_way());
-        assert_eq!(at(s, dd, true, false, quiet(), t0 + INTERVAL), Tick::Wait);
+        assert_eq!(at(s, dd, true, false, quiet(), t0), Tick::End(32.0));
+        let (s, dd) = start(None, 20.0, t0);
+        assert_eq!((s.step, dd), (20.0, 20.0));
+        assert_eq!(at(s, dd, true, false, quiet(), t0), Tick::End(20.0));
     }
 
     #[test]
-    fn the_steps_hold_the_draw_distance_only_under_the_users() {
+    fn reaching_the_users_distance_lets_go_of_the_draw_distance() {
         let t0 = Instant::now();
         let mut settings = Settings {
             draw_distance: 256.0,
             draw_distance_stepping: true,
             ..Settings::default()
         };
-        let steps = begin(&mut settings, t0).expect("on");
-        assert!(holds_draw_distance(&settings), "under way: Autotune pauses");
-        let (steps, dd) = run(steps, settings.draw_distance, |_| quiet(), t0, MIN_GAP * 3);
-        assert_eq!(dd, 256.0);
-        settings.draw_stepping = Some(steps);
-        settings.draw_distance = dd;
-        assert!(!holds_draw_distance(&settings), "watching: Autotune runs again");
-        // a step back holds it again
-        let (steps, dd) = run(steps, dd, |_| load(0, 120.0, 4.0), t0 + MIN_GAP * 3, HEAVY_HOLD + FRAME);
-        assert_eq!(dd, 128.0);
-        settings.draw_stepping = Some(steps);
-        assert!(holds_draw_distance(&settings));
+        begin(&mut settings, t0).expect("on");
+        let mut t = Duration::ZERO;
+        while let Some(steps) = settings.draw_stepping {
+            assert!(t <= Duration::from_secs(10), "the steps end in about 6 s");
+            match at(steps, settings.draw_distance, true, false, quiet(), t0 + t) {
+                Tick::Wait => {}
+                Tick::Hold(next) => settings.draw_stepping = Some(next),
+                Tick::Step(next, value) => {
+                    settings.draw_stepping = Some(next);
+                    settings.draw_distance = value;
+                }
+                Tick::End(value) => {
+                    settings.draw_stepping = None;
+                    settings.draw_distance = value;
+                }
+            }
+            t += FRAME;
+        }
+        // nothing holds it any more (Autotune pauses on `draw_stepping`)
+        assert_eq!(settings.draw_distance, 256.0);
+        assert_eq!(settings.to_saved().draw_distance, 256.0);
     }
 
     #[test]
@@ -630,22 +652,6 @@ mod tests {
         assert_eq!(run(s, dd, |_| load(0, 200.0, 100.0), t0, Duration::from_secs(3)).1, 32.0);
     }
 
-    /// A step back from a user distance between 32 m and 64 m halves to
-    /// under 32 m: it stops at 32 m.
-    #[test]
-    fn a_step_back_stops_at_32() {
-        let t0 = Instant::now();
-        let s = Stepping {
-            user: 40.0,
-            step: 40.0,
-            changed: t0,
-            heavy_since: None,
-            ceiling: None,
-        };
-        let (s, dd) = run(s, 40.0, |_| load(0, 200.0, 100.0), t0, Duration::from_secs(2));
-        assert_eq!((dd, s.step), (32.0, 32.0));
-    }
-
     /// The saved draw distance: the user's while a step holds it, but one
     /// the user set since the last step (a graphics level, the slider) is
     /// theirs and saved as it is, though the steps only end at the next
@@ -668,7 +674,7 @@ mod tests {
         assert_eq!(stepped.to_saved().draw_distance, 256.0);
         let set_since = Settings {
             draw_distance: 128.0,
-            draw_stepping: Some(stepping(256.0)),
+            draw_stepping: Some(stepping(64.0)),
             ..Settings::default()
         };
         assert_eq!(set_since.to_saved().draw_distance, 128.0);
@@ -699,12 +705,13 @@ mod tests {
             ..Settings::default()
         };
         let steps = begin(&mut s, t0).expect("on");
-        let (steps, dd) = run(steps, s.draw_distance, |_| quiet(), t0, MIN_GAP * 3);
-        let (steps, dd) = run(steps, dd, |_| load(0, 120.0, 4.0), t0 + MIN_GAP * 3, HEAVY_HOLD + FRAME);
-        assert_eq!((dd, steps.user), (128.0, 256.0));
+        let (steps, dd) = run(steps, s.draw_distance, |_| quiet(), t0, MIN_GAP * 2);
+        assert_eq!(dd, 128.0);
+        let (steps, dd) = run(steps, dd, |_| load(0, 120.0, 4.0), t0 + MIN_GAP * 2, HEAVY_HOLD + FRAME);
+        assert_eq!((dd, steps.user), (64.0, 256.0));
         s.draw_stepping = Some(steps);
         s.draw_distance = dd;
-        // the photo quality: its user value is 256 m, not the step's 128
+        // the photo quality: its user value is 256 m, not the step's 64
         let held = crate::snapshot::quality::boost(&mut s);
         assert_eq!(held.user().draw_distance, 256.0);
         assert_eq!(s.draw_stepping, None, "the photo ends the steps");

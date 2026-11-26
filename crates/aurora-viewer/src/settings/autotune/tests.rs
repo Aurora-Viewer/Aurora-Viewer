@@ -707,19 +707,40 @@ fn a_change_of_the_avatars_during_the_steps_is_the_users() {
 }
 
 #[test]
-fn the_steps_at_the_users_distance_leave_autotune_alone() {
+fn autotune_writes_again_once_the_steps_reach_the_users_distance() {
+    use crate::settings::draw_stepping::{Tick, begin, tick};
     let mut s = Settings {
         draw_distance: 256.0,
         draw_distance_stepping: true,
         ..Settings::default()
     };
-    let mut steps = crate::settings::draw_stepping::begin(&mut s, Instant::now()).expect("on");
-    assert!(crate::settings::draw_stepping::holds_draw_distance(&s), "under way: paused");
-    // the steps reach the user's distance and keep watching
-    steps.step = steps.user;
-    s.draw_stepping = Some(steps);
-    s.draw_distance = steps.user;
-    assert!(!crate::settings::draw_stepping::holds_draw_distance(&s), "watching: not paused");
+    let t0 = Instant::now();
+    begin(&mut s, t0).expect("on");
+    let quiet = crate::settings::draw_stepping::Load {
+        waiting: 0,
+        gpu_ms: Some(8.0),
+        shadow_ms: Some(2.0),
+    };
+    // the steps climb (Autotune paused meanwhile) and end at 256 m, as the
+    // Legacy Viewer's do: nothing holds the draw distance after the arrival
+    let mut t = Duration::ZERO;
+    while let Some(steps) = s.draw_stepping {
+        assert!(t <= Duration::from_secs(10), "the steps end in about 6 s");
+        match tick(steps, s.draw_distance, true, false, quiet, Duration::from_secs(20), t0 + t) {
+            Tick::Wait => {}
+            Tick::Hold(next) => s.draw_stepping = Some(next),
+            Tick::Step(next, value) => {
+                s.draw_stepping = Some(next);
+                s.draw_distance = value;
+            }
+            Tick::End(value) => {
+                s.draw_stepping = None;
+                s.draw_distance = value;
+            }
+        }
+        t += Duration::from_millis(100);
+    }
+    assert_eq!(s.draw_distance, 256.0);
     let mut h = Hold::new(&s);
     let max_avatars = s.max_avatars;
     h.write(
