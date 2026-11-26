@@ -7900,14 +7900,17 @@ failure. Grid validation and any paid upload are performed by the human.
   come from the system. From frame 700, once a second, the log says
   `demo inventory ime:` with the selected row's number (`Some(9702)` is
   "ママ服"), the type-ahead prefix and the list's focus, and
-  `demo ime output:` with what the viewer asks of the input method (`on`,
-  `off`, or `interrupt`, which drops a composition). Composing "ママ" must
+  `demo ime output:` with what the viewer asks of the input method in that
+  frame (`on`, `off`, or `interrupt`, which drops a composition) and
+  `interrupts=`, the frames that dropped one since the start: a drop lasts
+  one frame, which the once-a-second sample would miss. Composing "ママ" must
   keep the selection and end on "ママ服"; "マスク" means the composition was
   cut short. On Linux, `python3 scripts/test-ime-linux.py` runs it, and
   `AURORA_DEMO_CHAT_INPUT=os-ime`, against fcitx5 and Mozc without touching
   the desktop: a headless sway on a private runtime folder and D-Bus, the
-  keys typed by wtype ("mama", F7, Enter), the checks read from the log,
-  and grim's captures beside the logs in `.scratch/ime-test/<time>/`.
+  keys typed by wtype ("mama", F7, Enter), the checks read from the log
+  (`interrupts=` must not grow once the target holds the keyboard), and
+  grim's captures beside the logs in `.scratch/ime-test/<time>/`.
   The list draws no preedit and a new Mozc dictionary opens no prediction
   window, so the inventory's captures show no composition: the log is the
   proof there; the chat field shows it underlined. `--only inventory|aurora-inventory|chat` picks scenarios, `--viewer` a

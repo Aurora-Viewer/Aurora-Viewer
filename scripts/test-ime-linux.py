@@ -16,12 +16,14 @@ the result from the viewer's log:
   commit "ママ" lands in the field.
 
 In every scenario the viewer must never ask the input method to drop the
-composition (`ime=interrupt` in its log) once the target holds the keyboard.
+composition once the target holds the keyboard: the count of such frames in
+its log (`interrupts=`) must not grow from then on.
 
 Needs: sway, fcitx5 with fcitx5-mozc, wtype, dbus-daemon, setpriv
 (util-linux), and grim for the captures (optional). The viewer's settings,
-the input method's profile and Mozc's dictionary stay in the output folder;
-nothing of the user's session is read or written. Exit code 0 when every
+the input method's profile and Mozc's dictionary stay in the output folder
+(fcitx5 and Mozc get a home folder there); nothing of the user's session is
+read or written. Exit code 0 when every
 check passed, 1 when one failed, 2 when the test could not run.
 """
 
@@ -88,7 +90,7 @@ INVENTORY_LINE = re.compile(
     r'prefix="(.*)", list_focus=(true|false)'
 )
 CHAT_LINE = re.compile(r'demo chat os-ime: frame=(\d+), text="(.*)", field_focus=(true|false)')
-IME_LINE = re.compile(r"demo ime output: frame=(\d+), ime=(\w+)")
+IME_LINE = re.compile(r"demo ime output: frame=(\d+), ime=(\w+), interrupts=(\d+)")
 
 
 class CannotRun(Exception):
@@ -149,6 +151,7 @@ class Session:
         self.shot = 0
         self.runtime = None
         self.fcitx_home = out / "fcitx"
+        self.ime_home = out / "ime-home"
 
     def __enter__(self):
         try:
@@ -217,7 +220,18 @@ class Session:
         # waits holds the keyboard for the whole session.
         self.spawn("wtype-hold", ["wtype", "-s", "3600000", "-m", "shift"], env)
         time.sleep(0.3)
-        self.spawn("fcitx5", ["fcitx5", "--verbose=default=3"], env | {"XDG_CONFIG_HOME": str(self.fcitx_home)})
+        # Mozc keeps its dictionary in $HOME/.mozc when that folder exists,
+        # else under XDG_CONFIG_HOME: a home of their own keeps fcitx5 and
+        # mozc_server off the user's.
+        self.ime_home.mkdir()
+        ime_env = env | {
+            "HOME": str(self.ime_home),
+            "XDG_CONFIG_HOME": str(self.fcitx_home),
+            "XDG_DATA_HOME": str(self.ime_home / ".local/share"),
+            "XDG_CACHE_HOME": str(self.ime_home / ".cache"),
+            "XDG_STATE_HOME": str(self.ime_home / ".local/state"),
+        }
+        self.spawn("fcitx5", ["fcitx5", "--verbose=default=3"], ime_env)
         try:
             wait("fcitx5 on the private bus", lambda: self.remote() is not None, 15)
         except Failed as error:
@@ -303,17 +317,30 @@ def mozc_off(s):
     wait("the input method to be off", lambda: s.remote("-n") not in (None, "mozc"), 10)
 
 
+def interrupt_counts(s, since):
+    """The viewer's count of dropped compositions when the target took the
+    keyboard (frame `since`) and in its last log line."""
+    lines = [(int(frame), int(count)) for frame, _, count in s.lines(IME_LINE)]
+    before = [count for frame, count in lines if frame <= since]
+    after = [count for frame, count in lines if frame >= since]
+    start = before[-1] if before else (after[0] if after else 0)
+    return start, (lines[-1][1] if lines else 0)
+
+
 def interrupts(s, since):
     """A note for a failure message when the viewer dropped compositions."""
-    count = sum(1 for frame, ime in s.lines(IME_LINE) if ime == "interrupt" and int(frame) >= since)
+    start, end = interrupt_counts(s, since)
+    count = end - start
     return f" (the viewer asked the input method to drop the composition {count} times)" if count else ""
 
 
-def no_interrupt(s, since):
-    frames = [int(frame) for frame, ime in s.lines(IME_LINE) if ime == "interrupt" and int(frame) >= since]
-    if frames:
-        raise Failed(f"the viewer asked the input method to drop the composition at frames {frames}")
-    if not any(ime == "on" for frame, ime in s.lines(IME_LINE) if int(frame) >= since):
+def no_interrupt(s, since, until):
+    """No composition dropped from frame `since` to a log line past `until`."""
+    wait(f"a log line past frame {until}", lambda: any(int(frame) > until for frame, _, _ in s.lines(IME_LINE)), 10)
+    start, end = interrupt_counts(s, since)
+    if end != start:
+        raise Failed(f"the viewer asked the input method to drop the composition {end - start} times")
+    if not any(ime == "on" for frame, ime, _ in s.lines(IME_LINE) if int(frame) >= since):
         raise Failed("the viewer never enabled the input method")
 
 
@@ -343,10 +370,16 @@ def inventory(s):
     s.keys("-d", "80", "mama")
     time.sleep(1.5)
     s.capture("composing")
+    typed = int(s.lines(INVENTORY_LINE)[-1][0])
     s.keys("-k", "F7")
     time.sleep(1.5)
     s.capture("katakana")
-    last = s.lines(INVENTORY_LINE)[-1]
+    # a line logged after F7, not one from before the typing
+    last = wait(
+        "a log line after F7",
+        lambda: next((line for line in reversed(s.lines(INVENTORY_LINE)) if int(line[0]) > typed), None),
+        10,
+    )
     if last[1] != str(ZIPPER) or last[3] != "true":
         raise Failed(f"the selection or the list's keyboard moved while composing: {last}")
     print("  ok: while composing, Zipper bag stays selected and the list keeps the keyboard")
@@ -363,8 +396,8 @@ def inventory(s):
     if done[2] != "ママ":
         raise Failed(f'the prefix is {done[2]!r}, not "ママ"')
     print('  ok: the commit "ママ" selects ママ服')
-    no_interrupt(s, since)
-    print("  ok: the input method was on and never told to drop the composition")
+    no_interrupt(s, since, int(done[0]))
+    print("  ok: the input method was on and no composition was dropped")
 
 
 def chat(s):
@@ -395,13 +428,13 @@ def chat(s):
     s.capture("katakana")
     s.keys("-k", "Return")
     try:
-        wait('the commit "ママ" in the field', text("ママ"), 10)
+        done = wait('the commit "ママ" in the field', text("ママ"), 10)
     except Failed as error:
         raise Failed(f"{error}{interrupts(s, since)}") from None
     s.capture("committed")
     print('  ok: the commit "ママ" lands in the field')
-    no_interrupt(s, since)
-    print("  ok: the input method was on and never told to drop the composition")
+    no_interrupt(s, since, int(done[0]))
+    print("  ok: the input method was on and no composition was dropped")
 
 
 def main():
@@ -448,6 +481,10 @@ def main():
             with Session(folder, viewer, demo_env, not args.no_captures) as s:
                 scenario(s)
         except CannotRun as error:
+            print(f"  cannot run: {error}", file=sys.stderr)
+            return 2
+        except (subprocess.CalledProcessError, OSError) as error:
+            # a tool that failed or could not be started (wtype, grim...)
             print(f"  cannot run: {error}", file=sys.stderr)
             return 2
         except Failed as error:

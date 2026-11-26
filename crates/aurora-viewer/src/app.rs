@@ -866,6 +866,10 @@ pub struct App {
     loading_frac: f32,
     loading_target: f32,
     frame_count: u64,
+    /// AURORA_DEMO_INVENTORY=ime, AURORA_DEMO_CHAT_INPUT=os-ime: frames whose
+    /// output told the input method to drop its composition, since the start
+    /// (scripts/test-ime-linux.py).
+    demo_ime_interrupts: u64,
     demo_rlva_frame: Option<u64>,
     rlva_login: crate::world::rlva::login::State,
     rlva_minimap: rlva::HiddenMinimap,
@@ -2184,6 +2188,7 @@ impl App {
             loading_frac: 0.0,
             loading_target: 0.0,
             frame_count: 0,
+            demo_ime_interrupts: 0,
             demo_rlva_frame: None,
             rlva_minimap: Default::default(),
             rlva_login: if std::env::var("AURORA_DEMO").as_deref() == Ok("1") {
@@ -13746,11 +13751,10 @@ impl App {
         ui::chat::previews::clipboard_update(&ctx, &mut full.platform_output);
         self.inventory_ui.clipboard_output(&full.platform_output.commands);
         // AURORA_DEMO_INVENTORY=ime, AURORA_DEMO_CHAT_INPUT=os-ime: what the
-        // viewer asks of the system's input method, once a second
-        // (scripts/test-ime-linux.py)
+        // viewer asks of the system's input method (scripts/test-ime-linux.py).
+        // A drop of the composition lasts one frame: every one is counted, and
+        // the count is logged once a second with this frame's request.
         if self.demo
-            && self.frame_count >= 700
-            && self.frame_count.is_multiple_of(60)
             && (std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "ime" | "aurora-ime"))
                 || std::env::var("AURORA_DEMO_CHAT_INPUT").is_ok_and(|mode| mode == "os-ime"))
         {
@@ -13759,7 +13763,16 @@ impl App {
                 Some(ime) if ime.should_interrupt_composition => "interrupt",
                 Some(_) => "on",
             };
-            log::info!("demo ime output: frame={}, ime={ime}", self.frame_count);
+            if ime == "interrupt" {
+                self.demo_ime_interrupts += 1;
+            }
+            if self.frame_count >= 700 && self.frame_count.is_multiple_of(60) {
+                log::info!(
+                    "demo ime output: frame={}, ime={ime}, interrupts={}",
+                    self.frame_count,
+                    self.demo_ime_interrupts
+                );
+            }
         }
         // interface sounds of the widgets; the sounds are SL assets, loaded
         // once logged in
