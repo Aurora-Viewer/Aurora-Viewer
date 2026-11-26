@@ -550,7 +550,7 @@ impl Renderer {
                 if c.surface { "can present" } else { "cannot present to the window" }
             );
         }
-        let notice = if cfg!(target_os = "macos") {
+        let notice = if cfg!(target_vendor = "apple") {
             None
         } else {
             crate::adapter_choice::hint(&candidates)
@@ -2387,7 +2387,7 @@ fn open_device(
 /// macOS, Vulkan elsewhere. It does not say the call failed: an empty list
 /// may also be a success with no driver installed.
 fn no_adapter_listed() -> &'static str {
-    if cfg!(target_os = "macos") {
+    if cfg!(target_vendor = "apple") {
         "Metal lists no graphics card"
     } else {
         "Vulkan lists no graphics card"
@@ -2396,7 +2396,7 @@ fn no_adapter_listed() -> &'static str {
 
 /// Size of the largest device-local memory heap (the GPU's own VRAM on a
 /// discrete card), read from Vulkan.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
     use ash::vk;
     // SAFETY: the hal adapter is only borrowed for this call; the physical
@@ -2423,7 +2423,7 @@ fn gpu_memory_label(dedicated: Option<u64>, shared: Option<u64>, integrated: boo
 }
 
 /// The Vulkan driver's version and limits the viewer statistics report.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 fn vulkan_limits(adapter: &wgpu::Adapter) -> Option<VulkanLimits> {
     use ash::vk;
     // SAFETY: the hal adapter is only borrowed for this call; the physical
@@ -2446,7 +2446,7 @@ fn vulkan_limits(adapter: &wgpu::Adapter) -> Option<VulkanLimits> {
 }
 
 /// Metal: no Vulkan driver.
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 fn vulkan_limits(_adapter: &wgpu::Adapter) -> Option<VulkanLimits> {
     None
 }
@@ -2455,7 +2455,7 @@ fn vulkan_limits(_adapter: &wgpu::Adapter) -> Option<VulkanLimits> {
 /// set of the device (a share of the unified memory on Apple Silicon), the
 /// figure the Legacy Viewer reads as `kCGLRPVideoMemoryMegabytes`
 /// (indra/llwindow/llopenglview-objc.mm).
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
     use objc2_metal::MTLDevice;
     // SAFETY: the hal adapter is only borrowed for this call; reading a
@@ -2468,7 +2468,7 @@ fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
 /// `maxUpdateAfterBindDescriptorsInAllPools`, which bounds the pools of the
 /// binding arrays: wgpu keeps it to itself. `None` without the query
 /// (a Vulkan 1.0 instance or device) or another backend.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 fn descriptors_in_all_pools(adapter: &wgpu::Adapter) -> Option<u32> {
     use ash::vk;
     // SAFETY: the hal adapter is only borrowed for this call; the physical
@@ -2493,7 +2493,7 @@ fn descriptors_in_all_pools(adapter: &wgpu::Adapter) -> Option<u32> {
     Some(indexing.max_update_after_bind_descriptors_in_all_pools)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 fn descriptors_in_all_pools(_adapter: &wgpu::Adapter) -> Option<u32> {
     None
 }

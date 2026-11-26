@@ -163,6 +163,7 @@ pub mod texture_picker;
 #[cfg(test)]
 mod theme_guard;
 pub mod toolbar;
+pub mod touch;
 pub mod uninstall;
 pub mod update;
 pub mod viewfinder;

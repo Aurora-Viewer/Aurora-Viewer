@@ -20,27 +20,47 @@ impl App {
             .with_title(crate::cli::window_title())
             // Metal needs a visible layer to present its first drawable.
             // Other platforms keep the unpainted client area hidden.
-            .with_visible(cfg!(target_os = "macos"))
+            .with_visible(cfg!(target_vendor = "apple"))
             .with_active(plan.active)
-            .with_inner_size(plan.size)
-            .with_min_inner_size(winit::dpi::LogicalSize::new(800, 560))
-            .with_fullscreen(plan.fullscreen.clone())
+            // (a test's phone, `AURORA_DEVICE=phone`, takes a phone's size)
+            .with_min_inner_size(if super::touch::device() == crate::touch::Device::Phone {
+                winit::dpi::LogicalSize::new(320, 320)
+            } else {
+                winit::dpi::LogicalSize::new(800, 560)
+            })
             // none yet at start (it is decoded in the background)
             .with_window_icon(self.window_icon.clone());
-        if let Some(position) = plan.position {
-            attrs = attrs.with_position(position);
+        // iPadOS gives the app its window, the screen or its share of it:
+        // a size or a place asked for there is taken as the window's frame,
+        // and a computer's would put the bars off the screen
+        if cfg!(not(target_os = "ios")) {
+            attrs = attrs.with_inner_size(plan.size).with_fullscreen(plan.fullscreen.clone());
+            if let Some(position) = plan.position {
+                attrs = attrs.with_position(position);
+            }
         }
+        // a phone is held sideways: its interface is laid out for a wide
+        // screen (Info.plist says the same to the system)
+        #[cfg(target_os = "ios")]
+        let attrs = if super::touch::device() == crate::touch::Device::Phone {
+            use winit::platform::ios::{ValidOrientations, WindowAttributesExtIOS};
+            attrs.with_valid_orientations(ValidOrientations::Landscape)
+        } else {
+            attrs
+        };
         let window = Arc::new(event_loop.create_window(attrs)?);
         self.current_window = Arc::downgrade(&window);
         crate::window_hold::install(&window);
         crate::slurl_handoff::window_ready(&window);
+        #[cfg(target_os = "ios")]
+        crate::ios::attach(&window);
         Ok(window)
     }
 
     /// The renderer for `window`, the user's settings applied once the
     /// caller has settled them.
     pub(super) fn open_renderer(&mut self, window: &Arc<Window>) -> Result<Renderer, aurora_render::RenderError> {
-        let size = window.inner_size();
+        let size = window.view_size();
         if std::env::var_os("AURORA_NOVSYNC").is_some() {
             self.settings.vsync = false;
         }
@@ -331,7 +351,7 @@ impl App {
         let old = self.gfx.take()?;
         let started = Instant::now();
         let plan = WindowPlan {
-            size: old.window.inner_size().into(),
+            size: old.window.view_size().into(),
             position: old.window.outer_position().ok(),
             active: old.window.has_focus(),
             fullscreen: old.window.fullscreen(),

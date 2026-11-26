@@ -1,0 +1,4 @@
+/* Shown by the system when voice chat first opens the microphone. */
+"NSMicrophoneUsageDescription" = "Aurora ViewerはSecond Lifeのボイスチャットにマイクを使用します。";
+/* Shown by the system when the viewer first reaches a device of the local network. */
+"NSLocalNetworkUsageDescription" = "Aurora Viewerはローカルネットワーク上のグリッドとボイスサーバーに接続します。";

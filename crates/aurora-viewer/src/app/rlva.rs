@@ -110,12 +110,12 @@ impl App {
     pub(super) fn camera_aspect(&self) -> f32 {
         self.gfx
             .as_ref()
-            .map(|g| g.window.inner_size())
+            .map(|g| g.window.view_size())
             .filter(|size| size.width > 0 && size.height > 0)
             .map_or(1.0, |size| size.width as f32 / size.height as f32)
     }
     pub(super) fn rlva_overlay_blocks(&self) -> bool {
-        let size = self.gfx.as_ref().map(|g| g.window.inner_size());
+        let size = self.gfx.as_ref().map(|g| g.window.view_size());
         let Some(size) = size.filter(|s| s.width > 0 && s.height > 0) else {
             return false;
         };

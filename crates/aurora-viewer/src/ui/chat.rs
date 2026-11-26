@@ -5075,6 +5075,23 @@ impl Held {
 /// `want_names` / `wanted_pics`. `cards`: Aurora's cards grouped by sender
 /// (`console.rs`), else the Legacy Viewer's one-line look (pills over the
 /// islands when `pills`). Without `residents`, only the other lines.
+/// How far from the left edge the lines of `toasts` start in this pass,
+/// when not at their usual place: beside the touch stick on a short screen
+/// (`ui::touch::chat_lines_left`). Said before each pass's `toasts`.
+pub fn set_toasts_left(ctx: &egui::Context, left: Option<f32>) {
+    let id = egui::Id::unique("chat_toasts_left");
+    ctx.data_mut(|d| match left {
+        Some(left) => {
+            d.insert_temp(id, left);
+        }
+        None => d.remove::<f32>(id),
+    });
+}
+
+fn toasts_left(ctx: &egui::Context) -> f32 {
+    ctx.data(|d| d.get_temp(egui::Id::unique("chat_toasts_left"))).unwrap_or(8.0)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn toasts(
     ctx: &egui::Context,
@@ -5137,7 +5154,7 @@ pub fn toasts(
     let mut shift = egui::Vec2::ZERO;
     let lift = -(ctx.content_rect().bottom() - bottom) - 6.0;
     egui::Area::new(egui::Id::unique("chat_toasts"))
-        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, lift))
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(toasts_left(ctx), lift))
         .interactable(false)
         .order(egui::Order::Background)
         .show(ctx, |ui| {

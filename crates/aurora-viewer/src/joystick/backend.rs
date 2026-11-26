@@ -11,6 +11,11 @@
 //! mice reset (disconnect / reconnect) when repeated, so the scans only
 //! ever read the strings of 3D mice.
 
+// iPadOS has no USB HID access: the same calls, over no device.
+#[cfg(target_os = "ios")]
+#[path = "hid_none.rs"]
+mod hidapi;
+
 use super::{AXES, Device, GamepadButton, GamepadStyle, Snapshot};
 use parking_lot::Mutex;
 use std::sync::{

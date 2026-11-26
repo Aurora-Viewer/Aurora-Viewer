@@ -750,7 +750,10 @@ impl QuickView {
             };
             for path in &d.recycle {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                let text = if cfg!(windows) {
+                let text = if cfg!(target_os = "ios") {
+                    // (iPadOS has no Trash for an app's own files)
+                    aurora_i18n::tr!("photo-reel-delete-for-good", name = name.as_str())
+                } else if cfg!(windows) {
                     aurora_i18n::tr!("photo-reel-delete-recycle", name = name.as_str())
                 } else {
                     aurora_i18n::tr!("photo-reel-delete-trash-file", name = name.as_str())

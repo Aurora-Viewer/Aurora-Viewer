@@ -1,0 +1,4 @@
+/* Shown by the system when voice chat first opens the microphone. */
+"NSMicrophoneUsageDescription" = "Aurora Viewer utilise le microphone pour le chat vocal dans Second Life.";
+/* Shown by the system when the viewer first reaches a device of the local network. */
+"NSLocalNetworkUsageDescription" = "Aurora Viewer se connecte aux grilles et aux serveurs vocaux de votre réseau local.";

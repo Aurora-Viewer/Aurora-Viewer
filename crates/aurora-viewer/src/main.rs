@@ -2,6 +2,13 @@
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+// iPadOS: the document picker and the alerts, with the calls of the `rfd`
+// crate the other systems use, so that the call sites stay the same.
+#[cfg(target_os = "ios")]
+extern crate aurora_ios_files as rfd;
+#[cfg(target_os = "ios")]
+extern crate keyring_core as keyring;
+
 mod agent;
 mod allocator;
 mod alt_codes;
@@ -63,6 +70,7 @@ mod gpu_load;
 mod graphics_presets;
 mod grid_status;
 mod grids;
+mod haptics;
 mod high_contrast;
 mod hover_tips;
 mod ik_edit;
@@ -70,6 +78,8 @@ mod imports;
 mod instances;
 mod interaction;
 mod interface_colors;
+#[cfg(target_os = "ios")]
+mod ios;
 mod joystick;
 mod keybinds;
 mod keywords;
@@ -127,6 +137,7 @@ mod system_notify;
 mod text_validation;
 mod theme;
 mod tolerant;
+mod touch;
 mod ui;
 mod ui_sound;
 mod uninstall;
@@ -158,6 +169,8 @@ mod gpu_hints {
 }
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(target_os = "ios")]
+    ios::credential_store();
     // Preferences › Graphics › Overlays, read from the file alone: nothing
     // else of the viewer has started yet
     let allow_overlays = settings::Settings::allow_overlays_at_start();
@@ -274,6 +287,19 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
+/// iPadOS: the end of `run_viewer` and of `main`, for the exit that does not
+/// come back from the event loop there (`App::exit_ios`). No plugin process
+/// nor private browser profile exists on iPadOS to wait for.
+#[cfg(target_os = "ios")]
+fn finish_ios() -> ! {
+    aurora_render::pipeline_cache::flush(std::time::Duration::from_secs(2));
+    saves::wait(std::time::Duration::from_secs(5));
+    world::tphistory::finish_writes();
+    logging::drain(logging::DRAIN_WAIT);
+    crash::finished(true);
+    std::process::exit(0)
+}
+
 #[cfg(windows)]
 fn process_elevation() -> &'static str {
     use windows_sys::Win32::{
@@ -368,6 +394,9 @@ fn run_viewer() -> anyhow::Result<()> {
             .name("aurora-web-misplaced".into())
             .spawn(move || media::remove_misplaced_cache(&cache));
     }
+    // (before the app opens the sound output)
+    #[cfg(target_os = "ios")]
+    ios::audio_session();
     let mut app = app::App::new()?;
     let result = event_loop.run_app(app.as_mut());
     // a graphics card box still shown would outlive the viewer on macOS and

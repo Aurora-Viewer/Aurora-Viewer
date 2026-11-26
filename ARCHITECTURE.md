@@ -2134,6 +2134,7 @@ one-line command (`scripts/setup.ps1`, then the tools):
 | `aurora-audio` | Audio output: mixer with the SL volume channels, music streams, world sounds, wind noise; HTTPS radio uses rustls with platform certificate verification (`http.rs`), including intermediate-chain completion on Windows/macOS (#1628); `tls.rs` turns a failed certificate (expired, self-signed, another name…) into a `CertificateIssue` carried by `StreamStatus::Playing`, so the station plays and the viewer warns in red, the handshake signatures still checked. `playlist.rs` resolves bounded PLS/M3U documents and the playlist exported by an AzuraCast public player before decoding, with discovered links and their redirects restricted to the same HTTP(S) origin. Stream failures are typed (`StreamError`: web page, playlist, HTTP status, TLS, connection, address, audio format, interruption), and a retry keeps the last error until audio returns (#2582). |
 | `aurora-voice` | SL voice over WebRTC (receiving and sending). `link_stats.rs`: one `voice stats:` log line every 5 s during a call (what waits in the receive and send queues, the arrival lag, the RTCP jitter and loss of both streams), to tell a delay built in the viewer from one on the network or the server. `receive_gain.rs`: the viewer's own gain on the received voice, for a private call, where the server ignores the per-resident volume |
 | `aurora-media` | Host of the SLPlugin media plugins (CEF for the web, LibVLC for video, GStreamer instead on Linux), taken from Aurora's media plugins pack or from a folder chosen in the preferences; pixels in Win32 or POSIX shared memory. On macOS the plugins live in `SLPlugin.app/Contents/Frameworks` (`PluginPaths::bundle_in`: the pack's `llplugin/`, a folder, or a Legacy Viewer's application), are `.dylib` files, and SLPlugin runs in that folder; the viewer's `media/keys.rs` sends CEF the Cocoa key data of the Legacy Viewer's window, and `Modifiers::command` carries the Command key. On Linux, `stream_volume.rs` sets a web page's volume on the sound server, which the Linux CEF plugin does not do |
+| `aurora-ios-files` | iPadOS only: the calls of the `rfd` crate the viewer and the media host make (file pickers, alerts), over UIKit's document picker and alert controller (`backend/uikit.rs`). Both crates take it under `rfd`'s name on iOS, so their call sites stay as they are. A "Save as" answers a path in the app's `Documents/Exports`, which the Files app shows. The pure helpers (accepted extensions, proposed and unique names, an alert's buttons) are tested on every system. |
 | `aurora-build-gate` | Development tool, not a part of the viewer: the compiler wrapper the scripts give Cargo (`rustc-wrapper` of `<project folder>\.cargo\config.toml`, written by `Sync-BuildCache` of `scripts/common.ps1`). Every compile of the viewer crate waits there for one of `AURORA_BUILD_SLOTS` build slots (a locked file of `.cargo\build-slots\`, freed by the system when the process ends), whatever the Cargo command; the other crates go straight through, and the compiler is handed over to sccache when it is installed. One file and the standard library only: the scripts build it with `rustc` alone, before Cargo can run. |
 
 Dependencies between crates (simplified):
@@ -3655,6 +3656,52 @@ while it rains). The footprints and the snow on avatars run only while snow
 falls or lies (`RenderStats::snow_lying`).
 
 ## Life of a frame
+
+### Touch screens, iPadOS
+
+`touch.rs` is the pure part of the touch layer: the world's gestures as a
+state machine over the fingers (`World`: tap, long press, one-finger drag,
+pinch and two-finger pan, two-finger tap), the movement stick (`Stick`,
+`stick_move`), the device kinds (`Device`) and the helpers of the insets
+(`keyboard_cover`, `safe_area`). `touch/demo.rs` scripts fingers for
+`AURORA_DEMO_TOUCH`. `app/touch.rs` gives each finger an owner when it
+lands (the interface, the stick, a touch button or the world) and keeps it
+until it lifts: only the interface's finger reaches egui, since egui-winit
+makes one finger its pointer. The world's gestures call what the mouse
+calls (`mouse_input`, `camera_mouse_delta`, `camera_wheel`,
+`open_context_menu`, `reset_camera_view`), so a tap is a click with
+everything a click does. A still thumb in the stick's zone taps or
+long-presses the world there; the interface's finger held still right-clicks
+where it is, which opens every menu the right button opens. `touch_frame`
+runs at the start of the frame, while the renderer is still in `App` for
+the picks. `ui/touch.rs` draws the stick and the buttons under the windows
+and hands their rectangles back for the layer's own hit test.
+`touch_raw_input` adds the on-screen keyboard and the test insets to egui's
+safe area, and `draw_ui` is given a child of the root inside
+`Context::content_rect`, so the bars and the work area stay clear of them
+(`widgets::pointer_over_ui` then counts the bars itself: egui's root no
+longer knows them). The same function hands the interface the right click
+of a finger held still (`touch::interface_long_press`): the finger's own
+press is released first and egui's click delay is shortened to the long
+press's while a finger is on the interface, so the hold never also clicks.
+The owner of a finger is decided by the pure `touch::owner`. The touch
+buttons are egui areas of their own in the background's order: a window, a
+bar or a menu drawn over one takes the finger, and a mouse clicks them.
+
+`ios.rs` (iOS targets only, Mac Catalyst included) is what the viewer asks
+of UIKit itself: the window's view, the keyboard's frame, haptics, the
+pasteboard (egui-winit's clipboard has no iOS backend; it is read only when
+the user pastes, since iPadOS shows a notice at each read), the keychain as
+keyring-core's store, the audio session (a category that records, set
+before the sound output opens), and the background flag that stops the
+frames. iPadOS places the app's one window: `gpu_recovery.rs` asks for no
+size, place or full screen there, and `outside.rs` opens no second window.
+`finish_ios` (main.rs) is the end of a quit: winit cannot leave its event
+loop on iOS, so the saves are waited for and the process ends itself. The
+renderer's Metal path is taken on every Apple system
+(`target_vendor = "apple"`); the BC7 encoder is left out of the simulator
+and Catalyst builds, whose targets its library does not ship.
+`joystick/hid_none.rs` stands for hidapi where there are no HID devices.
 
 `joystick/` owns persisted NDOF settings, native input and the six-axis flycam
 pose. `backend.rs` reads generic joysticks through gilrs-core and SpaceMouse

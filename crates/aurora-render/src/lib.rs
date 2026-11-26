@@ -22,7 +22,7 @@ mod contact_shadows;
 pub mod curvature;
 mod cutout;
 // (Vulkan only: Metal textures stay with wgpu's allocator)
-#[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
+#[cfg_attr(target_vendor = "apple", path = "dedicated_none.rs")]
 mod dedicated;
 mod device_lost;
 pub use device_lost::{
@@ -168,7 +168,7 @@ pub use egui_wgpu;
 pub use wgpu;
 
 /// Native graphics API for this platform.
-pub const BACKENDS: wgpu::Backends = if cfg!(target_os = "macos") {
+pub const BACKENDS: wgpu::Backends = if cfg!(target_vendor = "apple") {
     wgpu::Backends::METAL
 } else {
     wgpu::Backends::VULKAN

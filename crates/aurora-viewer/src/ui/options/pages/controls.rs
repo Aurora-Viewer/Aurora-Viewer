@@ -41,6 +41,20 @@ pub fn page(cx: &mut Cx) {
             &field!(block_click_sit),
         );
     });
+    // The touch layer (src/touch.rs): Aurora's own, the Legacy Viewer has none.
+    cx.group(tr!("ui-options-touch"), |cx| {
+        use crate::settings::TouchControls;
+        cx.choice(
+            tr!("ui-options-touch-controls"),
+            tr!("ui-options-touch-controls-help"),
+            &field!(touch_controls),
+            &[
+                (TouchControls::Auto, tr!("ui-options-touch-auto"), false),
+                (TouchControls::On, tr!("ui-options-touch-on"), false),
+                (TouchControls::Off, tr!("ui-options-touch-off"), false),
+            ],
+        );
+    });
     // The rigged meshes a plain left click acts on (scene/drawn.rs). Off, the
     // click passes through them, as LLToolPie::handleMouseDown does for all
     // of them (`pick_rigged = false`); animesh are on at the human's request.

@@ -918,6 +918,11 @@ impl Outside {
         if self.is_open(id) {
             return Ok(());
         }
+        // iPadOS gives an app one window (winit has no scenes there): a
+        // second one would lie over the viewer's. The window stays inside.
+        if cfg!(target_os = "ios") {
+            return Err("iPadOS shows one window".into());
+        }
         let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
         // (from the first window outside on: the keyboard's focus is known
         // by the time one is to come in front)

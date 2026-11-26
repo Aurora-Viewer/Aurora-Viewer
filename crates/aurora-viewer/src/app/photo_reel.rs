@@ -730,9 +730,7 @@ impl App {
         }
         if !d.recycle.is_empty() {
             let files = d.recycle.clone();
-            spawn(&self.snapshots.reel.tx, move || {
-                Done::Recycled(trash::delete_all(&files).map_err(|e| e.to_string()))
-            });
+            spawn(&self.snapshots.reel.tx, move || Done::Recycled(recycle(&files)));
         }
         log::info!(
             "photo reel: photo {id} deleted ({} file(s) to the Recycle Bin, {} item(s) to the Trash)",
@@ -773,4 +771,18 @@ impl App {
         // (dropped: its folder is deleted)
         r.folder = None;
     }
+}
+
+/// Sends files to the Recycle Bin / Trash, where the user can get them back.
+#[cfg(not(target_os = "ios"))]
+fn recycle(files: &[std::path::PathBuf]) -> Result<(), String> {
+    trash::delete_all(files).map_err(|e| e.to_string())
+}
+
+/// iPadOS keeps no Recycle Bin for an app's own files: they are deleted.
+#[cfg(target_os = "ios")]
+fn recycle(files: &[std::path::PathBuf]) -> Result<(), String> {
+    files
+        .iter()
+        .try_for_each(|f| std::fs::remove_file(f).map_err(|e| format!("{}: {e}", f.display())))
 }

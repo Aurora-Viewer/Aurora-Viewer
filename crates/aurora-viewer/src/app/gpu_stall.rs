@@ -399,7 +399,7 @@ mod platform {
 /// zenity, the program rfd ran here before: a process of its own, which
 /// keeps its box on the screen after the viewer is gone. Run here, it is
 /// ended when the box is to go away.
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "ios")))]
 mod platform {
     use super::POLL;
     use std::process::{Command, Stdio};
@@ -454,6 +454,38 @@ mod platform {
     }
 
     /// The box's thread sees `withdrawn` and ends zenity.
+    pub fn close(_thread: u32) {}
+}
+
+/// iPadOS: the system's alert, which the viewer cannot take back once it
+/// is up.
+#[cfg(target_os = "ios")]
+mod platform {
+    pub fn thread_id() -> u32 {
+        0
+    }
+
+    /// Not asked: an alert left on the screen after the card answered again
+    /// would close a viewer that works. The viewer keeps waiting, and the
+    /// system ends an app that stops answering for good.
+    pub fn ask(title: &str, _body: &str, _gone: &dyn Fn() -> bool) -> bool {
+        log::warn!("graphics card notice not shown on this system, the viewer keeps waiting: {title}");
+        true
+    }
+
+    /// OK alone; this thread waits for it.
+    pub fn tell(title: &str, body: &str, gone: &dyn Fn() -> bool) {
+        if gone() {
+            return;
+        }
+        rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title(title)
+            .set_description(body)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+    }
+
     pub fn close(_thread: u32) {}
 }
 

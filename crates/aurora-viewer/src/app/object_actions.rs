@@ -211,7 +211,7 @@ impl App {
                 if let Some((center, extent)) = self.scene.click_bounds(&self.world, idx) {
                     let object = crate::camera::pick_focus_object(&self.world, idx, now);
                     let aspect = self.gfx.as_ref().map_or(1.0, |g| {
-                        let s = g.window.inner_size();
+                        let s = g.window.view_size();
                         s.width as f32 / s.height.max(1) as f32
                     });
                     self.camera

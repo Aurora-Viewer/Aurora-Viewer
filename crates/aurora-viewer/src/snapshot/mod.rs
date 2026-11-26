@@ -418,10 +418,23 @@ fn clamp_side(v: u32) -> u32 {
 /// pictures folder (Firestorm asks the first time; a ready folder lets the
 /// first photo be one click).
 pub fn default_folder() -> PathBuf {
+    // iPadOS: an app only writes inside its own folders, and its Documents
+    // is the one the Files app shows
+    if cfg!(target_os = "ios") {
+        return ios_documents().join("Photos");
+    }
     directories::UserDirs::new()
         .and_then(|d| d.picture_dir().map(Path::to_path_buf))
         .unwrap_or_else(|| crate::settings::config_dir().join("photos"))
         .join("Aurora Viewer")
+}
+
+/// The app's Documents folder on iPadOS, where the photos and the films go
+/// (the data folder if the system names none).
+pub fn ios_documents() -> PathBuf {
+    directories::UserDirs::new()
+        .and_then(|d| d.document_dir().map(Path::to_path_buf))
+        .unwrap_or_else(crate::settings::config_dir)
 }
 
 /// Size of a photo: the preset's long side with the proportions, the

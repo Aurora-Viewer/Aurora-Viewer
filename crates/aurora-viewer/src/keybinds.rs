@@ -1762,6 +1762,32 @@ pub fn keypad_navigation(code: KeyCode) -> Option<KeyCode> {
     })
 }
 
+/// The key a press gives with its modifiers left out (Shift+1 gives "1").
+/// winit has no such reading on iPadOS: the key as typed stands in.
+pub fn key_without_modifiers(key: &winit::event::KeyEvent) -> winit::keyboard::Key {
+    #[cfg(not(target_os = "ios"))]
+    {
+        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+        key.key_without_modifiers()
+    }
+    #[cfg(target_os = "ios")]
+    key.logical_key.clone()
+}
+
+/// The system's scan code of a key, 0 when it has none (iPadOS gives none).
+pub fn scancode(key: winit::keyboard::PhysicalKey) -> u32 {
+    #[cfg(not(target_os = "ios"))]
+    {
+        use winit::platform::scancode::PhysicalKeyExtScancode;
+        key.to_scancode().unwrap_or(0)
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let _ = key;
+        0
+    }
+}
+
 /// The key a press counts as for the shortcuts. With NumLock off the
 /// system turns the keypad into arrows, Home and Page keys, and the Legacy
 /// Viewer binds them as those keys: keypad 8 walks forward, 9 / 3 jump and

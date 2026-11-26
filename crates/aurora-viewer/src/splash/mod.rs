@@ -61,7 +61,8 @@ pub fn helper() -> anyhow::Result<bool> {
 
 /// Whether this launch shows a splash, from its environment.
 fn wanted(splash: Option<&str>, capture: bool, splash_capture: bool) -> bool {
-    if cfg!(target_os = "macos") {
+    // (iPadOS: an app is one process, and the system shows its launch screen)
+    if cfg!(any(target_os = "macos", target_os = "ios")) {
         return false;
     }
     match splash.map(str::trim) {

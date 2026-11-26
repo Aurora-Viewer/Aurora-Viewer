@@ -1,0 +1,44 @@
+[package]
+name = "aurora-ios-files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "File and message dialogs of Aurora Viewer on iPadOS, with the calls of the `rfd` crate the desktop builds use."
+
+[dependencies]
+log = "0.4.34"
+
+# UIKit's document picker and alerts (backend/uikit.rs): the objc2 bindings
+# the tree already has through wgpu, cpal and egui-winit, with only the
+# classes used. objc2-uniform-type-identifiers 0.3 is the one new to the tree
+# (winit brings its 0.2): the picker takes its file types as `UTType`s.
+# All MIT / Apache-2.0 / Zlib.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
+block2 = { version = "0.6.2", default-features = false, features = ["std"] }
+dispatch2 = { version = "0.3.1", default-features = false, features = ["std"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSPathUtilities",
+    "NSString",
+    "NSURL",
+] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-uniform-type-identifiers",
+    "UIAlertController",
+    "UIApplication",
+    "UIDocumentPickerViewController",
+    "UIResponder",
+    "UIView",
+    "UIViewController",
+    "UIWindow",
+] }
+objc2-uniform-type-identifiers = { version = "0.3.2", default-features = false, features = ["std", "UTCoreTypes", "UTType"] }
+
+[lints]
+workspace = true

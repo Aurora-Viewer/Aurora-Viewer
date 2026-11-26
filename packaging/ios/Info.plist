@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Aurora Viewer.app for iPadOS and iOS: scripts/package-ios.ps1 replaces @VERSION@
+     with the viewer's MAJOR.MINOR.PATCH. The texts shown to the user are
+     translated in the .lproj folders next to this file. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Aurora Viewer</string>
+	<key>CFBundleName</key>
+	<string>Aurora Viewer</string>
+	<key>CFBundleExecutable</key>
+	<string>aurora-viewer</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.aurora-viewer.AuroraViewer</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon60x60</string>
+			</array>
+		</dict>
+	</dict>
+	<key>CFBundleIcons~ipad</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon76x76</string>
+				<string>AppIcon83.5x83.5</string>
+			</array>
+		</dict>
+	</dict>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.games</string>
+	<key>GCSupportsGameMode</key>
+	<true/>
+	<key>MinimumOSVersion</key>
+	<string>26.0</string>
+	<!-- iPhone (1) and iPad (2): the viewer asks UIKit which one it runs on
+	     (ios.rs) and takes the phone's layout on the first -->
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	<!-- an empty launch screen: without the key iPadOS runs the app in a
+	     letterboxed compatibility size -->
+	<key>UILaunchScreen</key>
+	<dict/>
+	<!-- a phone is held sideways: its screen is too narrow upright for the bars -->
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<!-- every orientation, which Split View, Slide Over and Stage Manager ask for -->
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+	</array>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+		<string>metal</string>
+	</array>
+	<!-- a trackpad or a mouse arrives as a pointer, not as a finger -->
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>UIStatusBarHidden</key>
+	<true/>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<true/>
+	<!-- the Documents folder (the Exports of every "Save as") shows in the Files app -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<!-- voice chat: without it iPadOS ends the app when the microphone opens -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Aurora Viewer uses the microphone for voice chat in Second Life.</string>
+	<!-- a grid on the local network (OpenSimulator at home) and voice's peer discovery -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Aurora Viewer connects to grids and voice servers on your local network.</string>
+</dict>
+</plist>

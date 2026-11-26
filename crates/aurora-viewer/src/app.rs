@@ -70,6 +70,7 @@ mod folders;
 mod hover_pick;
 mod legacy_lists;
 mod texture_picker;
+mod touch;
 mod typing_pointer;
 use folders::chat_log_root;
 mod admin_status;
@@ -249,7 +250,7 @@ impl WindowedGeometry {
     }
 
     fn from_window(window: &Window) -> Self {
-        let size = window.inner_size();
+        let size = window.view_size();
         let scale = window.scale_factor();
         Self {
             width: (size.width as f64 / scale).round() as u32,
@@ -515,6 +516,8 @@ pub struct App {
     vr_world_since: Option<Instant>,
     input: MoveInput,
     joystick: joystick::State,
+    /// Fingers on the touch screen (app/touch.rs).
+    touch: touch::State,
     /// Game Controls: GameControlData and the controller's local control.
     game_control: game_control::State,
     /// Keys and bindable mouse buttons held down.
@@ -1522,7 +1525,7 @@ fn ui_scale(settings: &Settings) -> f32 {
         .ok()
         .and_then(|v| v.trim().parse::<f32>().ok())
         .filter(|s| s.is_finite())
-        .map_or(settings.ui_scale, |s| s.clamp(0.75, 2.0))
+        .map_or(settings.ui_scale * touch::device().interface_scale(), |s| s.clamp(0.75, 2.0))
 }
 
 /// The text size, or AURORA_TEXT_SIZE for this launch (brought into the
@@ -1803,6 +1806,23 @@ fn world_press_stops_for_poser_subject(posing_self: bool, alt: bool, build_open:
     posing_self && !alt && !build_open && on_own_body
 }
 
+/// The size of the window's view, where the world and the interface are
+/// drawn. On iPadOS winit's `inner_size` is the safe area, the view without
+/// its status and home bars, while the surface takes the whole view.
+pub(crate) trait ViewSize {
+    fn view_size(&self) -> winit::dpi::PhysicalSize<u32>;
+}
+
+impl ViewSize for Window {
+    fn view_size(&self) -> winit::dpi::PhysicalSize<u32> {
+        if cfg!(target_os = "ios") {
+            self.outer_size()
+        } else {
+            self.inner_size()
+        }
+    }
+}
+
 impl App {
     // Growing editor state must not accumulate large return-value temporaries
     // on the Windows main stack while the avatar library is being loaded.
@@ -1812,6 +1832,9 @@ impl App {
         // the regional 12 / 24 hours and time zone of the bars' clock, read once
         ui::bars::clock::read_system_clock();
         let mut settings = Settings::load();
+        if settings.new_profile && touch::device().touch_first() {
+            settings.start_for_touch();
+        }
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
             && std::env::var("AURORA_DEMO_INVENTORY")
                 .is_ok_and(|mode| matches!(mode.as_str(), "delete-confirm" | "delete-tab") || mode.starts_with("aurora-delete-confirm"))
@@ -2014,6 +2037,7 @@ impl App {
             vr_world_since: None,
             input: MoveInput::default(),
             joystick: Default::default(),
+            touch: Default::default(),
             game_control: Default::default(),
             down: HashSet::new(),
             shift: false,
@@ -7565,6 +7589,17 @@ impl App {
         crate::autoreplace::save_before_exit();
         crate::tolerant::save_before_exit();
         event_loop.exit();
+        #[cfg(target_os = "ios")]
+        self.exit_ios(event_loop);
+    }
+
+    /// winit's exit does nothing on iOS, where the system ends the apps and
+    /// the event loop never returns: what follows it on the other systems
+    /// (`exiting`, then the end of `run_viewer` and of `main`) is done here.
+    #[cfg(target_os = "ios")]
+    fn exit_ios(&mut self, event_loop: &ActiveEventLoop) -> ! {
+        ApplicationHandler::exiting(self, event_loop);
+        crate::finish_ios()
     }
 
     /// Hide as soon as Quit is confirmed. A hidden native window may lose its
@@ -7579,7 +7614,7 @@ impl App {
                 self.settings.window_maximized = window.is_maximized();
                 // The last restored size and position already belong to a maximized window.
                 if !self.settings.window_maximized && !window.is_minimized().unwrap_or(false) {
-                    let size = window.inner_size();
+                    let size = window.view_size();
                     let scale = window.scale_factor();
                     if size.width > 0 && size.height > 0 {
                         self.settings.window_width = (size.width as f64 / scale) as u32;
@@ -7634,7 +7669,7 @@ impl App {
         if g.window.fullscreen().is_some() || g.window.is_maximized() || g.window.is_minimized().unwrap_or(false) {
             return;
         }
-        let s = g.window.inner_size();
+        let s = g.window.view_size();
         if s.width == 0 || s.height == 0 {
             return;
         }
@@ -7652,7 +7687,8 @@ impl App {
     /// full screen the system entered or left by itself (the macOS green
     /// button, a window manager's rule) is left alone.
     fn apply_fullscreen_setting(&mut self) {
-        if self.capture.is_some() || forced_window_size().is_some() {
+        // (iPadOS: the window is the system's to place, gpu_recovery.rs)
+        if cfg!(target_os = "ios") || self.capture.is_some() || forced_window_size().is_some() {
             return;
         }
         let Some(window) = self.gfx.as_ref().map(|g| g.window.clone()) else {
@@ -8909,6 +8945,48 @@ impl App {
         true
     }
 
+    /// The wheel on the world, `steps` away from the user (a mouse's, or
+    /// the pinch of two fingers, app/touch.rs): the avatar studio, the build
+    /// tools, a HUD, the viewfinder and a media face take it first, then
+    /// the camera.
+    fn world_wheel(&mut self, steps: f32) {
+        if self.studio_scroll(steps) {
+            return;
+        }
+        if self.on_build_scroll(steps) || self.on_hud_scroll(steps) || self.viewfinder_wheel(steps) {
+            return;
+        }
+        let mods = aurora_media::Modifiers {
+            control: self.ctrl,
+            alt: self.alt,
+            shift: self.shift,
+            command: self.command,
+        };
+        let ray = if self.media.focus.is_some() {
+            self.gfx
+                .as_ref()
+                .and_then(|g| g.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1))
+        } else {
+            None
+        };
+        let on_media = match ray {
+            Some(ray) => {
+                let (ray, depth, hud) = self
+                    .scene
+                    .hud_click_pick(&self.world, self.cursor_pos)
+                    .map_or((ray, None, false), |(_, p, r)| (r, Some((p - r.0).dot(r.1)), true));
+                self.media.on_scroll(&self.world, &self.scene, ray, depth, steps, mods, hud)
+            }
+            None => false,
+        };
+        // (the free camera has no zoom: the wheel would change the
+        // avatar's view behind it, or enter mouselook)
+        if !on_media && self.camera.free().is_none() {
+            // SL wheel clicks: positive zooms out
+            self.camera_wheel(-steps);
+        }
+    }
+
     /// Wheel clicks on the world (SL sign: positive zooms out): the held
     /// mouselook zoom's angle, or the camera's own use of the wheel.
     fn camera_wheel(&mut self, clicks: f32) {
@@ -9509,13 +9587,12 @@ impl App {
     /// The headset has no viewer UI yet. Restrict keyboard actions so an
     /// accidental shortcut cannot open an invisible window or enter text.
     fn vr_keyboard_input(&mut self, key: &winit::event::KeyEvent) {
-        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
         let PhysicalKey::Code(code) = key.physical_key else {
             return;
         };
         let code = crate::keybinds::binding_code(code, &key.logical_key);
         let input = Input::key(code);
-        let gesture = crate::gestures::keys::from_key(code, &key.key_without_modifiers());
+        let gesture = crate::gestures::keys::from_key(code, &crate::keybinds::key_without_modifiers(key));
         if key.state == ElementState::Released {
             self.down.remove(&input);
             self.check_temp_run();
@@ -9631,7 +9708,8 @@ impl App {
         }
         // Route only the keyboard. Controls, the joystick and mouse steering
         // still send their own movement, even when they share a held direction.
-        let temp_run = (self.temp_run.is_some() || self.joystick.running || self.game_control.running) && !self.world.rlva.has("temprun");
+        let temp_run = (self.temp_run.is_some() || self.joystick.running || self.game_control.running || self.touch_runs())
+            && !self.world.rlva.has("temprun");
         let seated_camera = self.world.agent.is_sitting()
             && self.in_world()
             && !self.avatar_studio.active
@@ -9691,6 +9769,7 @@ impl App {
             || i.up
             || i.down
             || self.joystick.motion.player_movement_input()
+            || self.touch_moves()
             || (self.mouse_mode == MouseMode::Steer && self.right_drag);
         i.down |= self.joystick.motion.crouch;
         i.down = self.crouch_toggle.apply(
@@ -9702,6 +9781,7 @@ impl App {
             i.up || joystick_up,
         );
         self.joystick_avatar(&mut i);
+        self.touch_avatar(&mut i);
         self.game_control_keyboard(&i);
         self.game_control_avatar(&mut i);
         if self.avatar_studio.active && self.camera.free().is_none() {
@@ -10857,6 +10937,12 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        // behind another app the system allows no drawing (a Metal call
+        // from the background ends the app): the frames wait for the return
+        #[cfg(target_os = "ios")]
+        if crate::ios::in_background() {
+            return;
+        }
         // the input this frame reads came with the events just handled: its
         // time to the screen starts here (Performance › latency, pacing.rs)
         if let Some(g) = &mut self.gfx {
@@ -11109,6 +11195,9 @@ impl App {
         }
         self.poll_inventory_images();
         self.poll_outfit_hd();
+        // the long press and a tap's release, while the renderer is still
+        // here for the picks they make (app/touch.rs)
+        self.touch_frame();
         // a click whose depth is back already (the render thread finished
         // the last frame while this thread waited for its next one)
         self.resolve_clicks();
@@ -11162,6 +11251,9 @@ impl App {
             && now >= t
         {
             event_loop.exit();
+            #[cfg(target_os = "ios")]
+            self.exit_ios(event_loop);
+            #[cfg(not(target_os = "ios"))]
             return;
         }
 
@@ -12211,7 +12303,7 @@ impl App {
                 },
             );
             self.frame_profile.lap(Lap::Complexity);
-            let hud_size = gfx.window.inner_size();
+            let hud_size = gfx.window.view_size();
             self.world.hud_area = self.hud_area([hud_size.width, hud_size.height]);
             self.world.hud_aspect = match (self.snapshots.capturing, self.world.hud_area) {
                 // the HUD laid out for the photo's proportions
@@ -13389,6 +13481,7 @@ impl App {
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
         self.carry_own_input(&mut raw);
         self.demo_script_input(&mut raw);
+        self.touch_raw_input(&mut raw);
         // Synthetic preedit uses the ordinary focused Conversations editor.
         if self.demo && self.frame_count == 710 && std::env::var("AURORA_DEMO_CHAT_INPUT").is_ok_and(|mode| mode == "ime") {
             raw.events.push(egui::Event::Ime(egui::ImeEvent::Preedit {
@@ -13726,10 +13819,28 @@ impl App {
         {
             self.inventory_ui.clipboard_changed(egui_state.clipboard_text().as_deref());
         }
+        #[cfg(target_os = "ios")]
+        let pasting = self.text_menu.paste_pending();
         self.text_menu.before(
             &ctx,
             &mut raw,
-            || egui_state.clipboard_text(),
+            || {
+                // iPadOS asks the user before it hands over what another
+                // app copied: that is read once Paste is chosen, and the
+                // menu only learns whether there is something to paste
+                // (ios.rs)
+                #[cfg(target_os = "ios")]
+                {
+                    if pasting {
+                        if let Some(text) = crate::ios::pasteboard_news() {
+                            egui_state.set_clipboard_text(text);
+                        }
+                    } else if crate::ios::pasteboard_has_text() {
+                        return Some(String::from("\u{2026}"));
+                    }
+                }
+                egui_state.clipboard_text()
+            },
             self.demo.then_some(self.frame_count),
         );
         let mut inventory_drop = Vec::new();
@@ -13751,7 +13862,18 @@ impl App {
             // A discarded pass (`request_discard`) is followed by one that
             // gets no input events: what the first pass clicked must survive
             // the second, or a click that changed a row's size is lost.
-            actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
+            // egui hands its root the whole viewport, and clips it to the
+            // part the screen leaves free (a tablet's status bar and home
+            // bar, the on-screen keyboard): the bars are laid out in that part
+            let content = ui.ctx().content_rect();
+            if ui.max_rect() == content {
+                actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
+            } else {
+                // (in a child of the root, which then does not know what
+                // the bars took: `widgets::pointer_over_ui` counts them)
+                let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(content));
+                actions.merge(self.draw_ui(&mut inner, &projector, &gfx.renderer));
+            }
             self.studio_overlay(ui.ctx());
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             crate::outside::carry::hint(ui.ctx(), &self.palette);
@@ -14034,6 +14156,13 @@ impl App {
             .take()
             .and_then(|image| self.cursor_shown.cursor(event_loop, &image));
         let icon = full.platform_output.cursor_icon;
+        // (egui-winit's clipboard stays inside the app on iPadOS: ios.rs)
+        #[cfg(target_os = "ios")]
+        for command in &full.platform_output.commands {
+            if let egui::OutputCommand::CopyText(text) = command {
+                crate::ios::set_pasteboard_text(text);
+            }
+        }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
         match (self.cursor_shown.step(picture.as_ref().map(|(number, _)| *number), icon), picture) {
@@ -16383,6 +16512,12 @@ impl App {
             && let Ok(v) = std::env::var("AURORA_DEMO_CAMERA")
         {
             self.demo_camera_steps(&v);
+        }
+        // AURORA_DEMO_TOUCH="orbit" (pinch, stick, hold…): touch/demo.rs
+        if self.demo
+            && let Ok(v) = std::env::var("AURORA_DEMO_TOUCH")
+        {
+            self.demo_touch_steps(&v);
         }
         // AURORA_DEMO_MMO="x,y[,flags]": left press once the world shows
         // (frame 225 at the earliest), right button held 10 to 105 frames
@@ -20077,6 +20212,12 @@ impl App {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
                     // in their bubbles
                     let residents = !(self.chat_bubbles() && self.settings.chat_bubbles_hide_console);
+                    // (beside the touch stick on a phone's short screen)
+                    let left = self
+                        .touch_controls()
+                        .and_then(|_| ui::touch::chat_lines_left(ui::layout::work_area(&ctx)))
+                        .map(|x| x - ctx.content_rect().left());
+                    ui::chat::set_toasts_left(&ctx, left);
                     ui::chat::toasts(
                         &ctx,
                         &p,
@@ -20133,6 +20274,10 @@ impl App {
                     bottom_top
                 };
                 a.stand_fly = ui::stand_fly::show(&ctx, &p, self.stand_fly_buttons(), strip_top);
+                if let Some(state) = self.touch_controls() {
+                    let shown = ui::touch::show(&ctx, &p, &state, ui::layout::work_area(&ctx));
+                    self.touch.shown(shown);
+                }
                 if self.fly_override_caution && ui::fly_override::caution(&ctx, &p) {
                     self.fly_override_caution = false;
                 }
@@ -22045,7 +22190,13 @@ fn forced_window_size() -> Option<(u32, u32)> {
     *SIZE.get_or_init(|| {
         let v = std::env::var("AURORA_WINDOW_SIZE").ok()?;
         let (w, h) = v.split_once(',')?;
-        Some((w.trim().parse::<u32>().ok()?.max(800), h.trim().parse::<u32>().ok()?.max(560)))
+        // (a test's phone is smaller than the smallest window: `AURORA_DEVICE`)
+        let (min_w, min_h) = if touch::device() == crate::touch::Device::Phone {
+            (320, 320)
+        } else {
+            (800, 560)
+        };
+        Some((w.trim().parse::<u32>().ok()?.max(min_w), h.trim().parse::<u32>().ok()?.max(min_h)))
     })
 }
 
@@ -22142,6 +22293,14 @@ impl UiActions {
 }
 
 impl ApplicationHandler for App {
+    /// iPadOS: the app is no longer the active one (the Control Center, a
+    /// system question, the app switcher): its fingers are taken away. The
+    /// frames go on until it is behind another app (ios.rs).
+    #[cfg(target_os = "ios")]
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        self.touch_drop();
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gfx.is_some() {
             return;
@@ -22219,7 +22378,7 @@ impl ApplicationHandler for App {
             Ok(r) => r,
             Err(e) => {
                 log::error!("renderer initialisation failed: {e}");
-                let message = if cfg!(target_os = "macos") {
+                let message = if cfg!(target_vendor = "apple") {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-metal", e = format!("{}", e))
                 } else {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
@@ -22235,6 +22394,11 @@ impl ApplicationHandler for App {
                 // vanished (#894)
                 let memory_full = matches!(e, aurora_render::RenderError::VideoMemoryFull);
                 graphics_start::report(&e.to_string(), memory_full, capture);
+                // iPadOS shows the message in this window, at the next turn
+                // of the run loop, and an app there cannot close itself: the
+                // window stays, with the message
+                #[cfg(target_os = "ios")]
+                std::mem::forget(window);
                 event_loop.exit();
                 return;
             }
@@ -25748,6 +25912,19 @@ impl ApplicationHandler for App {
             self.apply_fullscreen_setting();
             return;
         }
+        // the fingers the touch layer keeps (the world's, the stick's, its
+        // buttons') are not the interface's (app/touch.rs)
+        let event = match &event {
+            WindowEvent::Touch(t) if !from_outside => match self.touch_event(t.id, t.phase, t.location.x as f32, t.location.y as f32) {
+                touch::Handoff::Kept => return,
+                touch::Handoff::Interface => event,
+                touch::Handoff::InterfaceCancelled => WindowEvent::Touch(winit::event::Touch {
+                    phase: winit::event::TouchPhase::Cancelled,
+                    ..*t
+                }),
+            },
+            _ => event,
+        };
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
@@ -25842,6 +26019,7 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => {
                 self.super_held = false;
                 self.ime_preedit = false;
+                self.touch_drop();
                 self.options_ui.cancel_joystick_capture();
                 self.alt_codes.reset();
                 self.chat_ui.cancel_gesture_key();
@@ -26051,8 +26229,7 @@ impl ApplicationHandler for App {
                     }
                     // Releases always go through so keys never get stuck.
                     let typing = self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx);
-                    use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
-                    let gesture_key = crate::gestures::keys::from_key(code, &ke.key_without_modifiers());
+                    let gesture_key = crate::gestures::keys::from_key(code, &crate::keybinds::key_without_modifiers(ke));
                     if !pressed && let Some(key) = gesture_key {
                         self.gesture_state.manager.release(Some(key));
                     }
@@ -26087,8 +26264,7 @@ impl ApplicationHandler for App {
                     let web = self.focused_web();
                     let web_focused = web.is_some();
                     if !typing && let Some(p) = web {
-                        use winit::platform::scancode::PhysicalKeyExtScancode;
-                        let scancode = ke.physical_key.to_scancode().unwrap_or(0);
+                        let scancode = crate::keybinds::scancode(ke.physical_key);
                         if crate::media::keys::edit(p, letter, code, pressed, ke.repeat, web_mods)
                             || crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods)
                             || pressed
@@ -26098,8 +26274,7 @@ impl ApplicationHandler for App {
                     }
                     // a focused media page gets the keyboard (LLViewerMediaFocus)
                     if self.media.focus.is_some() && !typing && (!resp.consumed || !pressed) {
-                        use winit::platform::scancode::PhysicalKeyExtScancode;
-                        let scancode = ke.physical_key.to_scancode().unwrap_or(0);
+                        let scancode = crate::keybinds::scancode(ke.physical_key);
                         let mods = aurora_media::Modifiers {
                             control: self.ctrl,
                             alt: self.alt,
@@ -26199,6 +26374,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_pos = (position.x as f32, position.y as f32);
+                self.touch.mouse_at = Some(self.cursor_pos);
                 self.recenter_mouselook_cursor();
             }
             WindowEvent::MouseInput { state, button, .. } => {
@@ -26234,41 +26410,7 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(_, y) => *y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 60.0,
                 };
-                if self.studio_scroll(steps) {
-                    return;
-                }
-                if self.on_build_scroll(steps) || self.on_hud_scroll(steps) || self.viewfinder_wheel(steps) {
-                    return;
-                }
-                let mods = aurora_media::Modifiers {
-                    control: self.ctrl,
-                    alt: self.alt,
-                    shift: self.shift,
-                    command: self.command,
-                };
-                let ray = if self.media.focus.is_some() {
-                    self.gfx
-                        .as_ref()
-                        .and_then(|g| g.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1))
-                } else {
-                    None
-                };
-                let on_media = match ray {
-                    Some(ray) => {
-                        let (ray, depth, hud) = self
-                            .scene
-                            .hud_click_pick(&self.world, self.cursor_pos)
-                            .map_or((ray, None, false), |(_, p, r)| (r, Some((p - r.0).dot(r.1)), true));
-                        self.media.on_scroll(&self.world, &self.scene, ray, depth, steps, mods, hud)
-                    }
-                    None => false,
-                };
-                // (the free camera has no zoom: the wheel would change the
-                // avatar's view behind it, or enter mouselook)
-                if !on_media && self.camera.free().is_none() {
-                    // SL wheel clicks: positive zooms out
-                    self.camera_wheel(-steps);
-                }
+                self.world_wheel(steps);
             }
             _ => {}
         }

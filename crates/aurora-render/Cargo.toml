@@ -26,18 +26,24 @@ wgpu = { version = "30.0.1", features = ["counters"] }
 naga = { version = "30.0.1", features = ["wgsl-in", "spv-out"] }
 spirv = "0.4"
 bcdec_rs = "0.2.0"
+
+# The BC7 encoder (bc7.rs). It ships one library per system, and none for
+# the iOS simulator nor Mac Catalyst, whose textures stay RGBA8.
+[target.'cfg(not(any(target_abi = "sim", target_abi = "macabi")))'.dependencies]
 intel_tex_2 = "0.5.0"
 
 # Vulkan under wgpu: memory budget (vram.rs), texture pages in memory of
-# their own (dedicated.rs); macOS draws through Metal instead
-[target.'cfg(not(target_os = "macos"))'.dependencies]
+# their own (dedicated.rs); macOS and iPadOS draw through Metal instead
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
 ash = "0.38"
 
 # Metal under wgpu: memory budget and size of the device (vram.rs); the
 # version and the feature wgpu-hal uses
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(target_vendor = "apple")'.dependencies]
 objc2 = "0.6.5"
 objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice", "MTLCommandQueue", "MTLTexture", "MTLPixelFormat"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
 # OpenXR's Metal path (xr_metal.rs) loads the installed loader
 # (`AURORA_OPENXR_LOADER`): not validated yet, the built-in loader comes with
 # that.

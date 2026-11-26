@@ -20,6 +20,11 @@
 //! Copyright (C) Linden Research, Inc. and The Phoenix Firestorm Project,
 //! originally LGPL 2.1.
 
+// iPadOS: the document picker, with the calls of the `rfd` crate the other
+// systems use.
+#[cfg(target_os = "ios")]
+extern crate aurora_ios_files as rfd;
+
 mod file_picker;
 pub mod media;
 pub mod message;

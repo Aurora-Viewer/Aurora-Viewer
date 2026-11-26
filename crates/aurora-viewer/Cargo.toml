@@ -40,7 +40,6 @@ crossbeam-channel = "0.5.17"
 directories = "6.0.0"
 # experimental: only makes egui::theme public (the text fields' size, theme.rs)
 egui = { version = "0.37.0", features = ["experimental", "monochrome_emoji_fonts", "persistence"] }
-egui-winit = "0.37.0"
 emojis = "0.9.0"
 # imported Hunspell dictionaries in their own SET encoding (spelling.rs);
 # MIT / Apache-2.0
@@ -49,9 +48,6 @@ env_logger = "0.11.11"
 glam = "0.34.1"
 # Native raw joystick axes (including unmapped flight sticks), MIT / Apache-2.0.
 gilrs-core = "0.6.8"
-# SpaceMouse HID reports, independently of gamepad mappings; MIT wrapper,
-# bundled HIDAPI under BSD-3-Clause.
-hidapi = "2.6.7"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "bmp", "tga", "gif", "webp"] }
 log = "0.4.34"
 # photos written row by row with their progress (the PNG encoder of image,
@@ -68,8 +64,6 @@ pulldown-cmark = { version = "0.13.6", default-features = false }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 rayon = "1.12.0"
 resvg = "0.49"
-# native file dialogs (About Land: export / import of access lists)
-rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 softbuffer = "0.4.8"
@@ -77,9 +71,6 @@ sha2 = "0.11.0"
 # spell checking of the text fields with Hunspell dictionaries (spelling.rs);
 # pure Rust, MPL-2.0
 spellbook = "0.4.2"
-# A photo of the reel deleted goes to the Recycle Bin / Trash (snapshot::reel,
-# app/photo_reel.rs), recoverable; Windows, macOS and freedesktop. MIT.
-trash = "5.2.9"
 ttf-parser = "0.25.1"
 # Right-to-left text in reading order (ui/bidi.rs): the Unicode Bidirectional
 # Algorithm (unicode-rs, already in the tree through url) and its mirrored
@@ -120,10 +111,40 @@ foldhash = "0.2.0"
 mimalloc = { version = "=0.1.50", features = ["v2"] }
 libmimalloc-sys = "=0.1.47"
 
+# The desktop systems. iPadOS has none of these: its files go through the
+# document picker (aurora-ios-files), its clipboard through
+# UIPasteboard, and it has no Recycle Bin and no USB HID devices.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+egui-winit = "0.37.0"
 # remembered login password and the GitHub authorization of crash reports
 # (Windows Credential Manager, macOS Keychain, Secret Service on Linux)
-[dependencies.keyring]
-version = "4"
+keyring = "4"
+# SpaceMouse HID reports, independently of gamepad mappings; MIT wrapper,
+# bundled HIDAPI under BSD-3-Clause.
+hidapi = "2.6.7"
+# native file dialogs (About Land: export / import of access lists)
+rfd = "0.17.2"
+# A photo of the reel deleted goes to the Recycle Bin / Trash (snapshot::reel,
+# app/photo_reel.rs), recoverable; Windows, macOS and freedesktop. MIT.
+trash = "5.2.9"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# (without `clipboard`: arboard has no iOS backend, and its Unix one pulls Wayland)
+egui-winit = { version = "0.37.0", default-features = false, features = ["links"] }
+# (taken under rfd's name in main.rs)
+aurora-ios-files = { version = "0.1.0", path = "../aurora-ios-files" }
+# keyring 4 refuses every entry on iOS (it names no store for it): its core
+# is taken under its name in main.rs, over the data-protection keychain,
+# the only one iOS has (ios.rs sets it as the store at start)
+keyring-core = "1.0.0"
+apple-native-keyring-store = { version = "1", features = ["protected"] }
+# The view's haptics, the keyboard's frame and the pasteboard (ios.rs): the
+# bindings the tree already has through winit and wgpu (MIT / Apache-2.0 / Zlib)
+objc2 = "0.6.5"
+block2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSString", "NSNotification", "NSOperation", "NSDictionary", "NSValue"] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "UIResponder", "UIView", "UIWindow", "UIGeometry", "UIFeedbackGenerator", "UIImpactFeedbackGenerator", "UIPasteboard", "UIDevice", "UIApplication"] }
+objc2-avf-audio = { version = "0.3.2", default-features = false, features = ["std", "AVAudioSession", "AVAudioSessionTypes"] }
 
 [target.'cfg(windows)'.dependencies]
 # Already used by egui-winit (MIT/Apache-2.0); add a file offer alongside

@@ -310,7 +310,7 @@ The other components (ported code, native libraries, assets) are in
 | munge_macro 0.4.7 | MIT |
 | naga 30.0.1 | MIT OR Apache-2.0 |
 | naga-types 30.0.1 | MIT OR Apache-2.0 |
-| nix 0.31.3 | MIT |
+| nix 0.31.4 | MIT |
 | nohash-hasher 0.2.0 | Apache-2.0 OR MIT |
 | nom 7.1.3 | MIT |
 | nom 8.0.0 | MIT |
@@ -331,6 +331,7 @@ The other components (ported code, native libraries, assets) are in
 | objc2-app-kit 0.2.2 | MIT |
 | objc2-app-kit 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | objc2-audio-toolbox 0.3.2 | Zlib OR Apache-2.0 OR MIT |
+| objc2-avf-audio 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | objc2-core-audio 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | objc2-core-audio-types 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | objc2-core-foundation 0.3.2 | Zlib OR Apache-2.0 OR MIT |
@@ -341,6 +342,9 @@ The other components (ported code, native libraries, assets) are in
 | objc2-io-kit 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | objc2-metal 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | objc2-quartz-core 0.3.2 | Zlib OR Apache-2.0 OR MIT |
+| objc2-ui-kit 0.2.2 | MIT |
+| objc2-ui-kit 0.3.2 | Zlib OR Apache-2.0 OR MIT |
+| objc2-uniform-type-identifiers 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | ogg_next_sys 0.1.5 | BSD-3-Clause |
 | oid-registry 0.7.1 | MIT OR Apache-2.0 |
 | oid-registry 0.8.1 | MIT OR Apache-2.0 |
@@ -12419,7 +12423,7 @@ limitations under the License.
 
 ### Apache License 2.0
 
-Used by: wgpu 30.0.1, naga-types 30.0.1, naga 30.0.1, wgpu-core-deps-apple 30.0.1, wgpu-core-deps-windows-linux-android 30.0.1, wgpu-core 30.0.1, wgpu-hal 30.0.1, wgpu-naga-bridge 30.0.1, wgpu-types 30.0.1, ab_glyph 0.2.32, ab_glyph_rasterizer 0.1.10, accesskit 0.25.1, allocator-api2 0.2.21, alsa 0.11.0, anyhow 1.0.104, arboard 3.7.0, asn1-rs-impl 0.2.0, async-trait 0.1.92, aws-lc-sys 0.45.0, bevy_mikktspace 1.0.0, color 0.3.3, constant_time_eq 0.6.1, crc32c 0.6.8, dasp_sample 0.11.0, directories 6.0.0, dirs-sys 0.5.0, dispatch2 0.3.1, document-features 0.2.12, ecolor 0.37.0, egui-wgpu 0.37.0, egui-winit 0.37.0, egui 0.37.0, emath 0.37.0, enumn 0.1.14, epaint 0.37.0, epaint_default_fonts 0.37.0, fdeflate 0.3.7, fearless_simd 0.4.1, fluent-langneg 0.13.1, gilrs-core 0.6.8, guillotiere 0.7.0, half 2.7.1, image-webp 0.2.4, image 0.25.10, intel_tex_2 0.5.0, intl_pluralrules 7.0.2, itoa 1.0.18, libc 0.2.191, linebender_resource_handle 0.1.1, litrs 1.0.0, mach2 0.4.3, mach2 0.6.0, md5 0.8.1, meshopt 0.7.0, miniz_oxide 0.8.9, miniz_oxide 0.9.1, num-conv 0.2.2, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-audio 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-io-kit 0.3.2, objc2-metal 0.3.2, objc2-quartz-core 0.3.2, openxr 0.22.0, owned_ttf_parser 0.25.1, parry3d 0.31.1, pin-project-lite 0.2.17, proc-macro2 1.0.107, profiling 1.0.18, quote 1.0.47, rand 0.10.3, range-alloc 0.1.5, raw-window-handle 0.6.2, rcgen 0.14.10, resvg 0.49.0, rstar 0.13.0, rtc-crypto 0.21.1, rtc-datachannel 0.21.1, rtc-dtls 0.21.1, rtc-ice 0.21.1, rtc-interceptor 0.21.1, rtc-mdns 0.21.1, rtc-media 0.21.1, rtc-rtcp 0.21.1, rtc-rtp 0.21.1, rtc-sctp 0.21.1, rtc-sdp 0.21.1, rtc-shared 0.21.1, rtc-srtp 0.21.1, rtc-stun 0.21.1, rtc-turn 0.21.1, rustc-hash 2.1.3, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_json 1.0.154, serde_path_to_error 0.1.20, serde_repr 0.1.21, simdutf8 0.1.5, spirv 0.4.0+sdk-1.4.341.0, syn 2.0.119, syn 3.0.6, sync_wrapper 1.0.2, thiserror-impl 1.0.69, thiserror-impl 2.0.21, thiserror 1.0.69, thiserror 2.0.21, time-core 0.1.9, time-macros 0.2.32, time 0.3.55, tiny-xlib 0.2.5, type-map 0.5.1, typed-path 0.13.0, typeid 1.0.3, unicode-ident 1.0.26, usvg 0.49.0, utf8parse 0.2.2, vello_common 0.2.0, vello_cpu 0.2.0
+Used by: wgpu 30.0.1, naga-types 30.0.1, naga 30.0.1, wgpu-core-deps-apple 30.0.1, wgpu-core-deps-windows-linux-android 30.0.1, wgpu-core 30.0.1, wgpu-hal 30.0.1, wgpu-naga-bridge 30.0.1, wgpu-types 30.0.1, ab_glyph 0.2.32, ab_glyph_rasterizer 0.1.10, accesskit 0.25.1, allocator-api2 0.2.21, alsa 0.11.0, anyhow 1.0.104, arboard 3.7.0, asn1-rs-impl 0.2.0, async-trait 0.1.92, aws-lc-sys 0.45.0, bevy_mikktspace 1.0.0, color 0.3.3, constant_time_eq 0.6.1, crc32c 0.6.8, dasp_sample 0.11.0, directories 6.0.0, dirs-sys 0.5.0, dispatch2 0.3.1, document-features 0.2.12, ecolor 0.37.0, egui-wgpu 0.37.0, egui-winit 0.37.0, egui 0.37.0, emath 0.37.0, enumn 0.1.14, epaint 0.37.0, epaint_default_fonts 0.37.0, fdeflate 0.3.7, fearless_simd 0.4.1, fluent-langneg 0.13.1, gilrs-core 0.6.8, guillotiere 0.7.0, half 2.7.1, image-webp 0.2.4, image 0.25.10, intel_tex_2 0.5.0, intl_pluralrules 7.0.2, itoa 1.0.18, libc 0.2.191, linebender_resource_handle 0.1.1, litrs 1.0.0, mach2 0.4.3, mach2 0.6.0, md5 0.8.1, meshopt 0.7.0, miniz_oxide 0.8.9, miniz_oxide 0.9.1, num-conv 0.2.2, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-avf-audio 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-audio 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-io-kit 0.3.2, objc2-metal 0.3.2, objc2-quartz-core 0.3.2, objc2-ui-kit 0.3.2, objc2-uniform-type-identifiers 0.3.2, openxr 0.22.0, owned_ttf_parser 0.25.1, parry3d 0.31.1, pin-project-lite 0.2.17, proc-macro2 1.0.107, profiling 1.0.18, quote 1.0.47, rand 0.10.3, range-alloc 0.1.5, raw-window-handle 0.6.2, rcgen 0.14.10, resvg 0.49.0, rstar 0.13.0, rtc-crypto 0.21.1, rtc-datachannel 0.21.1, rtc-dtls 0.21.1, rtc-ice 0.21.1, rtc-interceptor 0.21.1, rtc-mdns 0.21.1, rtc-media 0.21.1, rtc-rtcp 0.21.1, rtc-rtp 0.21.1, rtc-sctp 0.21.1, rtc-sdp 0.21.1, rtc-shared 0.21.1, rtc-srtp 0.21.1, rtc-stun 0.21.1, rtc-turn 0.21.1, rustc-hash 2.1.3, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_json 1.0.154, serde_path_to_error 0.1.20, serde_repr 0.1.21, simdutf8 0.1.5, spirv 0.4.0+sdk-1.4.341.0, syn 2.0.119, syn 3.0.6, sync_wrapper 1.0.2, thiserror-impl 1.0.69, thiserror-impl 2.0.21, thiserror 1.0.69, thiserror 2.0.21, time-core 0.1.9, time-macros 0.2.32, time 0.3.55, tiny-xlib 0.2.5, type-map 0.5.1, typed-path 0.13.0, typeid 1.0.3, unicode-ident 1.0.26, usvg 0.49.0, utf8parse 0.2.2, vello_common 0.2.0, vello_cpu 0.2.0
 
 ````text
 Apache License
@@ -16007,7 +16011,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by: bcdec_rs 0.2.1, block2 0.5.1, block2 0.6.2, dispatch 0.2.0, dpi 0.1.2, drm-fourcc 2.2.0, ispc_rt 2.0.4, libm 0.2.16, objc-sys 0.3.5, objc2-app-kit 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2 0.5.3, objc2 0.6.5
+Used by: bcdec_rs 0.2.1, block2 0.5.1, block2 0.6.2, dispatch 0.2.0, dpi 0.1.2, drm-fourcc 2.2.0, ispc_rt 2.0.4, libm 0.2.16, objc-sys 0.3.5, objc2-app-kit 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-ui-kit 0.2.2, objc2 0.5.3, objc2 0.6.5
 
 ````text
 MIT License
@@ -16378,7 +16382,7 @@ THE SOFTWARE.
 
 ### MIT License
 
-Used by: nix 0.31.3
+Used by: nix 0.31.4
 
 ````text
 The MIT License (MIT)

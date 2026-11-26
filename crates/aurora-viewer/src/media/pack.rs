@@ -103,8 +103,18 @@ impl PluginPack {
         let (tx, rx) = crossbeam_channel::unbounded();
         let dir = media_pack::installed(&root, &PACK);
         let consent = settled(consent, dir.is_some() || any_pack_installed(&root));
+        // iPadOS starts no plugin process and has no pack: nothing is
+        // offered nor downloaded there (the pack named above is another
+        // system's).
+        let unsupported = cfg!(target_os = "ios");
         let mut this = Self {
-            state: if dir.is_some() { PackState::Ready } else { PackState::Idle },
+            state: if unsupported {
+                PackState::Failed(Failure::Unsupported)
+            } else if dir.is_some() {
+                PackState::Ready
+            } else {
+                PackState::Idle
+            },
             root,
             dir,
             source: Source::default(),
@@ -115,7 +125,7 @@ impl PluginPack {
             retry_at: None,
             // the isolated update tests have their own local feed, and unit
             // tests no network at all
-            automatic: !cfg!(test) && aurora_updater::test_environment().is_none(),
+            automatic: !unsupported && !cfg!(test) && aurora_updater::test_environment().is_none(),
             consent,
             wanted: false,
             demo_card: false,

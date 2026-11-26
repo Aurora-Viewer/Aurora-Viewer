@@ -170,8 +170,12 @@ pub fn pack_only() -> bool {
 }
 
 /// The pack this viewer can download: `None` for a build whose
-/// `ffmpeg_pack::PACK` names none.
+/// `ffmpeg_pack::PACK` names none, and on iPadOS, which runs no other
+/// program.
 pub fn pack() -> Option<Published> {
+    if cfg!(target_os = "ios") {
+        return None;
+    }
     ffmpeg_pack::published(&ffmpeg_pack::PACK)
 }
 
