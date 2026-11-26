@@ -2900,6 +2900,51 @@ fn blocks_drawers_and_floating_blocks_switch_into_one_another() {
     assert!(!settings.drawers.contains_key(drawers::IMPORT_BAR));
 }
 
+/// While the interface is edited its lock is set aside: the frame's edits
+/// act as unlocked, "Interface locked" still shows it, and it comes back
+/// after them; clicked meanwhile, it unlocks (human request, 2026-11-26).
+#[test]
+fn the_lock_is_set_aside_while_the_interface_is_edited() {
+    let ctx = egui::Context::default();
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(vec![button("inventory"), button("people"), button("search")]),
+        top: Vec::new(),
+        locked: true,
+        ..Default::default()
+    };
+    // outside editing: refused, nothing set aside
+    let mut state = ToolbarUi {
+        pending: Some(Edit::Remove("people".into())),
+        ..Default::default()
+    };
+    assert!(!state.commit(&layout(), &mut settings));
+    assert!(!state.suspend_lock(&ctx, &mut settings));
+    assert!(settings.locked && !ToolbarUi::lock_shown(&ctx, false));
+    // editing: unlocked for the frame, shown locked, locked again after
+    state.open = true;
+    let suspended = state.suspend_lock(&ctx, &mut settings);
+    assert!(suspended && !settings.locked);
+    assert!(ToolbarUi::lock_shown(&ctx, settings.locked), "still shown locked");
+    state.pending = Some(Edit::Remove("people".into()));
+    assert!(state.commit(&layout(), &mut settings));
+    ToolbarUi::restore_lock(&mut settings, suspended);
+    assert!(settings.locked);
+    assert_eq!(commands(settings.buttons.as_ref().expect("bottom")), ["inventory", "search"]);
+    // "Interface locked" clicked while editing: unlocked
+    let suspended = state.suspend_lock(&ctx, &mut settings);
+    state.pending = Some(Edit::Lock);
+    assert!(state.commit(&layout(), &mut settings));
+    ToolbarUi::restore_lock(&mut settings, suspended);
+    assert!(!settings.locked);
+    // an edit committed alone while editing: set aside too
+    settings.locked = true;
+    state.pending = Some(Edit::Remove("search".into()));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(settings.locked);
+    assert_eq!(commands(settings.buttons.as_ref().expect("bottom")), ["inventory"]);
+}
+
 /// A block made a fixed block, then a drawer or a floating block again,
 /// keeps the name, the icon and the id it had: the import block stays the
 /// import block (human request, 2026-11-26).

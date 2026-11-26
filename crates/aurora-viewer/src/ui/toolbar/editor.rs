@@ -386,7 +386,7 @@ impl ToolbarUi {
                         }
                     }
                 });
-                let mut locked = settings.locked;
+                let mut locked = ToolbarUi::lock_shown(ui.ctx(), settings.locked);
                 if widgets::checkbox(ui, p, &mut locked, aurora_i18n::tr!("toolbar-locked-bars")).changed() {
                     self.pending = Some(Edit::Lock);
                 }

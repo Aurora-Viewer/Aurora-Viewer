@@ -19511,6 +19511,9 @@ impl App {
                     toolbar_migrated |= toolbar_settings.ensure_import_bar(bar_layout);
                     toolbar_migrated |= toolbar_settings.single_gaps();
                 }
+                // the interface edited: its lock set aside for this frame,
+                // put back below before anything is saved
+                let lock_suspended = self.toolbar_ui.suspend_lock(&ctx, toolbar_settings);
                 let chat_edge = toolbar_settings.location("bar_chat", bar_layout);
                 if self.chat_ui.in_use() && chat_edge == Some(ui::toolbar::Bar::Top) {
                     chrome.top = true;
@@ -19837,6 +19840,7 @@ impl App {
                         crate::settings::ChatThumbnails::Off
                     };
                 }
+                ui::toolbar::ToolbarUi::restore_lock(toolbar_settings, lock_suspended);
                 if toolbar_changed || chat_width_set || toolbar_migrated {
                     if toolbar_settings.composed {
                         self.settings.show_bug_report = toolbar_settings.placed("report_bug", bar_layout);

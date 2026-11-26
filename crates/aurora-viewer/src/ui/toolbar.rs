@@ -1050,11 +1050,37 @@ fn insertion(rects: &[Rect], pos: egui::Pos2, vertical: bool) -> usize {
 }
 
 impl ToolbarUi {
+    /// While the interface is edited, its lock is set aside (human request,
+    /// 2026-11-26): the bars and their edits act as unlocked for the frame,
+    /// and `restore_lock` puts it back once its edits are applied, before
+    /// anything is saved. Whether it was set aside.
+    pub fn suspend_lock(&self, ctx: &egui::Context, settings: &mut ToolbarSettings) -> bool {
+        let suspended = self.open && settings.locked;
+        if suspended {
+            settings.locked = false;
+        }
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique("toolbar_lock_suspended"), suspended));
+        suspended
+    }
+
+    /// The lock `suspend_lock` set aside, back: "Interface locked" clicked
+    /// meanwhile (which locked the frame's settings) unlocks the interface.
+    pub fn restore_lock(settings: &mut ToolbarSettings, suspended: bool) {
+        if suspended {
+            settings.locked = !settings.locked;
+        }
+    }
+
+    /// The lock as the user set it, while it is set aside too.
+    pub(crate) fn lock_shown(ctx: &egui::Context, locked: bool) -> bool {
+        locked != ctx.data(|data| data.get_temp::<bool>(egui::Id::unique("toolbar_lock_suspended")).unwrap_or(false))
+    }
+
     /// Shared final rows of every interface right click: "Interface
     /// locked", the interface edited or not (human request, 2026-11-26),
     /// then "Customize interface".
     pub(crate) fn interface_edit_menu(&mut self, ui: &mut egui::Ui, p: &Palette, command: Option<&str>) {
-        let locked = appearance::settings(ui.ctx()).locked;
+        let locked = Self::lock_shown(ui.ctx(), appearance::settings(ui.ctx()).locked);
         if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("toolbar-interface-locked"), locked, true) {
             self.pending = Some(Edit::Lock);
         }
@@ -1443,12 +1469,20 @@ impl ToolbarUi {
             .iter()
             .map(|(id, drawer)| (id.clone(), drawer.buttons.len()))
             .collect();
+        // the interface edited: its lock set aside (human request, 2026-11-26)
+        let suspended = self.open && settings.locked && !matches!(self.pending, Some(Edit::Lock));
+        if suspended {
+            settings.locked = false;
+        }
         let changed = self.apply_edit(layout, settings, provisional);
         if changed {
             drawers::remove_emptied(settings, layout, &counts);
             settings.single_gaps();
             blocks::normalize_styles(settings, layout, &moving);
             shortcuts::forget_removed(settings);
+        }
+        if suspended {
+            settings.locked = true;
         }
         changed
     }

@@ -290,8 +290,13 @@ fn column(
     island
 }
 
-/// A side toolbar in Firestorm's look: a panel the height of the screen
-/// between the top and bottom bars. Returns its width.
+/// A side toolbar in the Legacy Viewer's look: a panel the height of the
+/// screen between the top and bottom bars, its background behind its
+/// buttons only, as the Legacy Viewer's `button_panel` (its
+/// `bg_opaque_image`, sized to the buttons and placed by the alignment in
+/// LLToolBar::updateLayoutAsNeeded, indra/llui/lltoolbar.cpp): the world
+/// shows above and below them, all along when they fill the bar (human
+/// request, 2026-11-26). Returns its width.
 #[allow(clippy::too_many_arguments)]
 fn classic(
     ui: &mut egui::Ui,
@@ -343,14 +348,14 @@ fn classic(
         egui::Panel::right(id)
     };
     let mut glass = None;
+    // the background is painted behind the buttons only, below
+    let fill = bar_frame(p).fill;
+    let mut backing = None;
     let resp = panel
         .frame(
-            (if row.editing {
-                bar_frame(p).fill(p.bar.gamma_multiply(0.0))
-            } else {
-                bar_frame(p)
-            })
-            .inner_margin(egui::Margin::same(CLASSIC_PAD as i8)),
+            bar_frame(p)
+                .fill(p.bar.gamma_multiply(0.0))
+                .inner_margin(egui::Margin::same(CLASSIC_PAD as i8)),
         )
         .exact_size(panel_w)
         .resizable(false)
@@ -399,6 +404,12 @@ fn classic(
                 || sizing::place(style.align, zone.top(), zone.bottom(), height),
                 |lead| zone.top() + lead,
             );
+            if !buttons.is_empty() {
+                backing = Some(Rect::from_min_max(
+                    Pos2::new(zone.left() - CLASSIC_PAD, top - CLASSIC_PAD),
+                    Pos2::new(zone.right() + CLASSIC_PAD, top + height + CLASSIC_PAD),
+                ));
+            }
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(Rect::from_min_max(Pos2::new(zone.left(), top), zone.max))
@@ -434,8 +445,10 @@ fn classic(
             let rects = toolbar_row(&mut child, p, icons, buttons, look, toolbar, panels, mic, row, action);
             toolbar.drop_bar(&target, row.bar, display.original(), &display.full_rects(&rects), row.locked);
         });
-    if let Some((painter, slot)) = glass.filter(|_| !row.editing) {
-        crate::ui::widgets::finish_bar_glass(&painter, slot, resp.response.rect, p);
+    if let Some(((painter, slot), backing)) = glass.zip(backing).filter(|_| !row.editing) {
+        let backing = backing.intersect(resp.response.rect);
+        painter.set(slot, egui::Shape::rect_filled(backing, 0.0, fill));
+        crate::ui::widgets::finish_bar_glass(&painter, slot, backing, p);
     }
     resp.response.rect.width()
 }
