@@ -30,8 +30,10 @@
 //!   RLVa, network and proxy, language and updates, confirmations, chat
 //!   commands and game controls; and on the other pages the settings that protect the user or
 //!   send something out ([`PROTECTIVE`]: auto-accepting inventory, media
-//!   that plays by itself or skips the site filter, announces on a chat
-//!   channel, the scripted bridge). A code from someone else never lowers a
+//!   and music that play by itself or skip the site filter, media on other
+//!   avatars, link previews fetched by themselves, announces and script
+//!   errors on a chat channel, the warnings before items move into an
+//!   object, the scripted bridge). A code from someone else never lowers a
 //!   protection nor redirects the network;
 //! - a setting no page of Preferences shows (Debug Settings only);
 //! - a value holding a UUID (someone's asset, AGENTS.md "Creators'
@@ -133,9 +135,21 @@ const PROTECTIVE: &[&str] = &[
     "media.allow_scripted",
     "media.filter",
     "media.filter_trust_own_worn",
+    "audio.music_autoplay",
+    "media.show_on_others",
+    // links posted in chat fetched by themselves, the same IP exposure to
+    // whoever posts them
+    "link_previews.load",
+    "link_previews.nearby",
     // posts on a chat channel, channel 0 included
     "audio.stream_title_announce",
     "audio.stream_title_channel",
+    "script_errors_to_channel",
+    "script_errors_channel",
+    // the warnings before items move into an object's contents, confirmations
+    // like those of the Confirmations page
+    "inventory.warn_task_move",
+    "inventory.warn_scripted_task_move",
     // the scripted bridge worn by the viewer
     "use_bridge",
 ];

@@ -204,8 +204,12 @@ detail, removing exceptions and adding residents from the shared picker.
 **Share codes.** `AURORA_DEMO_OPTIONS=system:share` opens Preferences ›
 Language and updates with the Share window: change a few graphics or
 appearance settings first and check that only those pages and settings are
-in the code, never a Privacy, Protections, RLVa, Network or Language and
-updates setting; Looks only, Everything changed and None tick the pages;
+in the code, never a Privacy, Protections, RLVa, Network, Language and
+updates, Confirmations, Commands or Game Controls setting (nor a row another
+page borrows from them), nor a protective setting of a shared page (media or
+music auto-play, media on other avatars, link previews loading by themselves,
+script errors on a chat channel, the warnings before items move into an
+object…); Looks only, Everything changed and None tick the pages;
 Copy the code puts it on the clipboard. `system:share-import` opens the
 Import window with a sample code of a friend (draw distance, vsync, a chat
 colour with its swatch, the camera's field of view): every change shows its

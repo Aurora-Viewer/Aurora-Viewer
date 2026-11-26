@@ -324,6 +324,14 @@ fn protections_are_never_shared_nor_accepted() {
         ("sound", "audio.stream_title_announce".to_owned()),
         ("sound", "audio.stream_title_channel".to_owned()),
         ("aurora", "use_bridge".to_owned()),
+        ("sound", "audio.music_autoplay".to_owned()),
+        ("media", "media.show_on_others".to_owned()),
+        ("chat", "link_previews.load".to_owned()),
+        ("chat", "link_previews.nearby".to_owned()),
+        ("chat", "script_errors_to_channel".to_owned()),
+        ("chat", "script_errors_channel".to_owned()),
+        ("inventory", "inventory.warn_task_move".to_owned()),
+        ("inventory", "inventory.warn_scripted_task_move".to_owned()),
         ("confirmations", "confirm_teleports".to_owned()),
         ("commands", "chat_commands".to_owned()),
         ("graphics", "draw_distance".to_owned()),
@@ -338,8 +346,25 @@ fn protections_are_never_shared_nor_accepted() {
     s.audio.stream_title_announce = !s.audio.stream_title_announce;
     s.audio.stream_title_channel = 0;
     s.use_bridge = !s.use_bridge;
+    s.audio.music_autoplay = !s.audio.music_autoplay;
+    s.media.show_on_others = !s.media.show_on_others;
+    s.link_previews.load = crate::link_preview::Load::All;
+    s.link_previews.nearby = !s.link_previews.nearby;
+    s.script_errors_to_channel = !s.script_errors_to_channel;
+    s.script_errors_channel = 0;
+    s.inventory.warn_task_move = !s.inventory.warn_task_move;
+    s.inventory.warn_scripted_task_move = !s.inventory.warn_scripted_task_move;
     s.draw_distance = 222.0;
-    let all = ["inventory", "media", "sound", "aurora", "confirmations", "commands", "graphics"];
+    let all = [
+        "inventory",
+        "media",
+        "sound",
+        "aurora",
+        "chat",
+        "confirmations",
+        "commands",
+        "graphics",
+    ];
     let text = export(&s, &catalog, &all, "");
     for key in [
         "auto_accept_inventory",
@@ -349,6 +374,12 @@ fn protections_are_never_shared_nor_accepted() {
         "media.filter",
         "stream_title",
         "use_bridge",
+        "music_autoplay",
+        "show_on_others",
+        "link_previews",
+        "script_errors",
+        "warn_task_move",
+        "warn_scripted_task_move",
         "confirmations",
         "commands",
     ] {
@@ -359,10 +390,13 @@ fn protections_are_never_shared_nor_accepted() {
     // a hand-written code that lowers them is refused, both ways round
     let defaults = Settings::default();
     let code = format!(
-        "{HEADER}\npages: inventory, media, sound, aurora, confirmations, commands\n\
+        "{HEADER}\npages: inventory, media, sound, aurora, chat, confirmations, commands\n\
          auto_accept_inventory = {}\naudio.media_autoplay = {}\nmedia.allow_scripted = {}\n\
          media.filter = {}\naudio.stream_title_announce = {}\naudio.stream_title_channel = 0\n\
-         use_bridge = {}\nconfirm_teleports = {}\n",
+         use_bridge = {}\nconfirm_teleports = {}\n\
+         audio.music_autoplay = {}\nmedia.show_on_others = {}\nlink_previews.load = \"All\"\n\
+         link_previews.nearby = {}\nscript_errors_to_channel = {}\nscript_errors_channel = 0\n\
+         inventory.warn_task_move = {}\ninventory.warn_scripted_task_move = {}\n",
         !defaults.auto_accept_inventory,
         !defaults.audio.media_autoplay,
         !defaults.media.allow_scripted,
@@ -370,6 +404,12 @@ fn protections_are_never_shared_nor_accepted() {
         !defaults.audio.stream_title_announce,
         !defaults.use_bridge,
         !defaults.confirm_teleports,
+        !defaults.audio.music_autoplay,
+        !defaults.media.show_on_others,
+        !defaults.link_previews.nearby,
+        !defaults.script_errors_to_channel,
+        !defaults.inventory.warn_task_move,
+        !defaults.inventory.warn_scripted_task_move,
     );
     let code = Code::parse(&code).unwrap();
     assert!(
@@ -383,7 +423,7 @@ fn protections_are_never_shared_nor_accepted() {
         "{:?}",
         plan.changes.iter().map(|c| &c.key).collect::<Vec<_>>()
     );
-    assert_eq!(plan.refused, 8);
+    assert_eq!(plan.refused, 16);
     // nor does "reset the others" put them back to their defaults
     let plan = Plan::new(&code, &s, &catalog, &Locks::default(), true);
     assert!(
