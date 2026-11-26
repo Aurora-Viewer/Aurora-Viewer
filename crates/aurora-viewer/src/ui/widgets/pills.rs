@@ -454,9 +454,10 @@ pub fn select_on_focus(ui: &egui::Ui, response: &egui::Response, text: &str) {
     // Only the field's own: under a press of this pass on the field, nothing
     // else is dragged yet, and a field that takes no drag (egui's on a touch
     // screen, before it has the keyboard) leaves the press to what scrolls
-    // under it. The rest of the press is nobody's, as `handleMouseDown`
-    // takes no mouse capture for it: what is under the pointer shows its
-    // hover, and nothing takes a click, a drag or a drop of it.
+    // under it. Once past egui's click distance, the rest of the press is
+    // nobody's, as `handleMouseDown` takes no mouse capture for it: what is
+    // under the pointer shows its hover, and nothing takes a click, a drag
+    // or a drop of it.
     if response.sense.senses_drag()
         && response.is_pointer_button_down_on()
         && ui.input(|i| i.pointer.any_pressed())
@@ -1102,16 +1103,23 @@ mod search_tests {
 
     #[test]
     fn a_search_that_takes_the_keyboard_selects_its_text_so_typing_replaces_it() {
-        let mut f = Lone::new();
-        let mut text = "old search".to_owned();
-        f.idle(&mut text);
-        // The window asks for the keyboard after drawing it, like the Inventory.
-        f.frame(&mut text, Vec::new(), |_, field| field.request_focus());
-        f.idle(&mut text);
-        let all = Some(egui::text::CCursorRange::select_all_str("old search"));
-        assert_eq!(f.range(), all, "the whole old search is selected");
-        f.frame(&mut text, vec![egui::Event::Text("n".into())], |_, _| {});
-        assert_eq!(text, "n", "the first character replaces the selection");
+        // also while another program is in front (a demo's window launched
+        // behind it): the keyboard is egui's, the next key typed in the viewer
+        // goes there
+        for in_front in [true, false] {
+            let mut f = Lone::new();
+            f.in_front = in_front;
+            let mut text = "old search".to_owned();
+            f.idle(&mut text);
+            // The window asks for the keyboard after drawing it, like the Inventory.
+            f.frame(&mut text, Vec::new(), |_, field| field.request_focus());
+            f.idle(&mut text);
+            let all = Some(egui::text::CCursorRange::select_all_str("old search"));
+            assert_eq!(f.range(), all, "the whole old search is selected (in front: {in_front})");
+            f.in_front = true;
+            f.frame(&mut text, vec![egui::Event::Text("n".into())], |_, _| {});
+            assert_eq!(text, "n", "the first character replaces the selection (in front: {in_front})");
+        }
     }
 
     #[test]
