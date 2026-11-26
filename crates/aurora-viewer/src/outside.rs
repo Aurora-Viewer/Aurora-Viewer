@@ -411,6 +411,13 @@ pub(crate) fn seen(ctx: &egui::Context, window: egui::Id) {
     ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<egui::Id>>(seen_id()).push(window));
 }
 
+/// The window `window` drew in its window outside at this pass, so far:
+/// what is drawn for it after it (`widgets::dialog_here`) was drawn there.
+pub(crate) fn drawn(ctx: &egui::Context, window: egui::Id) -> bool {
+    ctx.data(|d| d.get_temp::<Vec<egui::Id>>(seen_id()))
+        .is_some_and(|seen| seen.contains(&window))
+}
+
 /// A window of a Wayland session, where no program takes the focus by
 /// itself.
 fn on_wayland(window: &Window) -> bool {

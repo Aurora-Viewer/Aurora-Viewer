@@ -178,7 +178,7 @@ pub fn show_document(
         facts.god_level,
         &mut actions,
     );
-    dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
+    dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions, None);
     actions
 }
 
@@ -3400,6 +3400,7 @@ pub fn show(
             aurora::tabs::close_shown(pane, prefs);
         }
     }
+    let main_window = egui::Id::unique("inventory");
     floater.show(ctx, p, open, |ui| {
         if let Some(dual) = dual.as_deref_mut() {
             let available = ui.available_size();
@@ -3454,6 +3455,13 @@ pub fn show(
         } else {
             aurora::contents(ui, p, icons, inv, st, prefs, &facts, images, &mut actions);
         }
+        // a confirmation asked here, over this window while it is outside
+        // the viewer's (`widgets::dialog_here`)
+        let here = Some((main_window, super::widgets::DialogCall::InWindow));
+        dialogs::show(ui.ctx(), p, icons, inv, st, prefs, &facts, images, &mut actions, here);
+        if let Some(dual) = dual.as_deref_mut() {
+            dialogs::show(ui.ctx(), p, icons, inv, dual, prefs, &facts, images, &mut dual_actions, here);
+        }
     });
     if widen {
         aurora::widen(ctx, "inventory");
@@ -3466,7 +3474,8 @@ pub fn show(
     controls::dialogs(ctx, p, st, prefs);
     folder_colors::show(ctx, p, inv, st, prefs);
     finish_hidden_rename(inv, st, &mut actions);
-    dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
+    let after = Some((main_window, super::widgets::DialogCall::After));
+    dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions, after);
     move_to::show(ctx, p, icons, inv, st, prefs, &facts, &mut actions);
     dialogs::preview(
         ctx,
@@ -3505,7 +3514,18 @@ pub fn show(
         controls::dialogs(ctx, p, dual, prefs);
         folder_colors::show(ctx, p, &world.inventory, dual, prefs);
         finish_hidden_rename(&world.inventory, dual, &mut dual_actions);
-        dialogs::show(ctx, p, icons, &world.inventory, dual, prefs, &facts, images, &mut dual_actions);
+        dialogs::show(
+            ctx,
+            p,
+            icons,
+            &world.inventory,
+            dual,
+            prefs,
+            &facts,
+            images,
+            &mut dual_actions,
+            after,
+        );
         move_to::show(ctx, p, icons, &mut world.inventory, dual, prefs, &facts, &mut dual_actions);
         dialogs::preview(
             ctx,
@@ -3596,6 +3616,7 @@ pub fn show(
         w.state.plays.clone_from(&st.plays);
         let before = (w.state.clipboard.clone(), w.state.cut);
         let window_id = floater_id(w.id);
+        let owner = egui::Id::unique(window_id.as_str());
         let floater = if w.additional {
             fetch_whole_inventory(&mut world.inventory, &mut w.state);
             super::widgets::Floater::new(
@@ -3652,6 +3673,19 @@ pub fn show(
                         &mut actions,
                     );
                 }
+                let here = Some((owner, super::widgets::DialogCall::InWindow));
+                dialogs::show(
+                    ui.ctx(),
+                    p,
+                    icons,
+                    &world.inventory,
+                    &mut w.state,
+                    prefs,
+                    &facts,
+                    images,
+                    &mut actions,
+                    here,
+                );
             });
         } else {
             // Aurora's window, kept under its folder (the whole inventory
@@ -3689,7 +3723,20 @@ pub fn show(
                     &facts,
                     images,
                     &mut actions,
-                )
+                );
+                let here = Some((owner, super::widgets::DialogCall::InWindow));
+                dialogs::show(
+                    ui.ctx(),
+                    p,
+                    icons,
+                    &world.inventory,
+                    &mut w.state,
+                    prefs,
+                    &facts,
+                    images,
+                    &mut actions,
+                    here,
+                );
             });
             if widen {
                 aurora::widen(ctx, &window_id);
@@ -3710,7 +3757,18 @@ pub fn show(
         folder_colors::show(ctx, p, &world.inventory, &mut w.state, prefs);
         context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         delete::finish_detach(&world.inventory, &mut w.state, prefs, &facts, &mut actions);
-        dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
+        dialogs::show(
+            ctx,
+            p,
+            icons,
+            &world.inventory,
+            &mut w.state,
+            prefs,
+            &facts,
+            images,
+            &mut actions,
+            Some((owner, super::widgets::DialogCall::After)),
+        );
         move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         dialogs::preview(
             ctx,
@@ -3806,6 +3864,8 @@ pub fn show(
 mod delete_tests;
 #[cfg(test)]
 mod drag_tests;
+#[cfg(test)]
+mod outside_dialog_tests;
 #[cfg(test)]
 mod texture_tests;
 
