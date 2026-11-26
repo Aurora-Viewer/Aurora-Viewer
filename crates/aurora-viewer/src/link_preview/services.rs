@@ -429,6 +429,8 @@ pub(super) fn from_oembed(service: Service, body: &[u8]) -> Option<String> {
 /// A clip identified by its provider's metadata.
 pub(super) struct FoundClip {
     pub clip: super::Clip,
+    pub title: String,
+    pub channel: String,
     /// Its thumbnail's addresses, the larger first.
     pub posters: Vec<String>,
     /// Its size in pixels, when the answer gives it.
@@ -470,7 +472,13 @@ pub(super) fn clip_from_oembed(service: Service, page: &str, body: &[u8]) -> Opt
         None => Vec::new(),
     };
     let size = v["width"].as_f64().zip(v["height"].as_f64());
-    Some(FoundClip { clip, posters, size })
+    Some(FoundClip {
+        clip,
+        title: String::new(),
+        channel: String::new(),
+        posters,
+        size,
+    })
 }
 
 /// HTML's character references the services put in an attribute.
@@ -509,6 +517,20 @@ fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
         });
     }
     None
+}
+
+pub(super) fn metadata(html: &str, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        let (_, value) = head_meta(html).find(|(name, _)| name.eq_ignore_ascii_case(key))?;
+        let value: String = unescape(value)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(200)
+            .collect();
+        (!value.is_empty()).then_some(value)
+    })
 }
 
 fn head_meta(html: &str) -> impl Iterator<Item = (&str, &str)> {
@@ -594,9 +616,72 @@ pub(super) fn clip_from_head(service: Service, page: &str, html: &str) -> Option
     }
     Some(FoundClip {
         clip: stream.or(video)?,
+        title: metadata(html, &["og:title"]).unwrap_or_default(),
+        channel: metadata(html, &["author"]).unwrap_or_default(),
         posters: from_head(service, html).into_iter().collect(),
         size: width.zip(height),
     })
+}
+
+pub(super) fn reddit_feed(xml: &str) -> Option<super::PostInfo> {
+    let entry = xml.split("<entry").nth(1)?.split("</entry>").next()?;
+    let field = |name: &str| {
+        let value = entry
+            .split_once(&format!("<{name}"))?
+            .1
+            .split_once('>')?
+            .1
+            .split_once(&format!("</{name}>"))?
+            .0;
+        Some(unescape(value))
+    };
+    let title: String = field("title")?.trim().chars().take(200).collect();
+    if title.is_empty() {
+        return None;
+    }
+    let text = field("content").unwrap_or_default();
+    let summary = text
+        .split("<!-- SC_ON -->")
+        .nth(1)
+        .and_then(|body| body.split("<!-- SC_OFF -->").next())
+        .map_or_else(String::new, |body| {
+            body.split('<')
+                .flat_map(|part| part.split_once('>').map(|(_, text)| text))
+                .flat_map(str::split_whitespace)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(280)
+                .collect()
+        });
+    let community = entry
+        .split_once("<category")
+        .and_then(|(_, tag)| tag.split_once('>'))
+        .and_then(|(tag, _)| attribute(tag, "term"))
+        .map(|term| format!("r/{}", unescape(term)));
+    let channel = [
+        community,
+        field("name"),
+        field("published").map(|date| date.chars().take(10).collect()),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(" · ");
+    Some(super::PostInfo { title, channel, summary })
+}
+
+#[test]
+fn reddit_feed_keeps_the_post_title_byline_and_plain_text() {
+    let xml = r#"<feed><entry><title>Example title</title><author><name>/u/example</name></author>
+        <category term="demo"/><published>2026-03-01T15:51:00Z</published>
+        <content type="html">&lt;!-- SC_ON --&gt;&lt;p&gt;A short &lt;b&gt;summary&lt;/b&gt;.&lt;/p&gt;
+        &lt;!-- SC_OFF --&gt;</content></entry></feed>"#;
+    let post = reddit_feed(xml).unwrap();
+    assert_eq!(post.title, "Example title");
+    assert_eq!(post.channel, "r/demo · /u/example · 2026-03-01");
+    assert_eq!(post.summary, "A short summary .");
 }
 
 /// The first entry may link to the Reddit-hosted video, separately from its poster.
@@ -605,8 +690,11 @@ pub(super) fn clip_from_feed(xml: &str) -> Option<FoundClip> {
     let content = unescape(entry.split("<content").nth(1)?.split("</content>").next()?);
     let url = content.split_once("href=\"https://v.redd.it/")?.1.split('"').next()?;
     let clip = super::Clip::of(&format!("https://v.redd.it/{url}")).filter(super::Clip::native_video)?;
+    let post = reddit_feed(xml)?;
     Some(FoundClip {
         clip,
+        title: post.title,
+        channel: post.channel,
         posters: from_feed(xml).into_iter().collect(),
         size: None,
     })
@@ -666,6 +754,16 @@ pub(super) fn clip_from_post(service: Service, body: &[u8]) -> Option<FoundClip>
     let size = &detail["original_info"];
     Some(FoundClip {
         clip,
+        title: post["text"]
+            .as_str()
+            .unwrap_or_default()
+            .split(" https://t.co/")
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(160)
+            .collect(),
+        channel: post["user"]["name"].as_str().unwrap_or_default().chars().take(80).collect(),
         posters: poster
             .filter(|url| picture_host_ok(service, url))
             .into_iter()

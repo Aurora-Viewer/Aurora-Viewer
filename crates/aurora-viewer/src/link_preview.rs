@@ -280,6 +280,17 @@ impl Clip {
     }
 
     /// The directly playable file, available for a resident-requested save.
+    pub fn fallback_title(&self) -> String {
+        reqwest::Url::parse(self.source().as_ref())
+            .ok()
+            .and_then(|url| {
+                let segment = url.path_segments()?.rfind(|segment| !segment.is_empty())?;
+                Some(segment.chars().take(100).collect())
+            })
+            .filter(|title: &String| !title.is_empty())
+            .unwrap_or_else(|| aurora_i18n::tr!("ui-chat-preview-video").to_owned())
+    }
+
     pub fn download_url(&self) -> Option<&str> {
         match &self.0 {
             ClipSource::File(url) => Some(url),
@@ -881,13 +892,21 @@ pub struct VideoInfo {
 pub struct ClipInfo {
     pub clip: Clip,
     pub title: String,
+    pub channel: String,
     /// The picture its service gives (Gyazo); a file alone has none.
     pub thumbnail: Option<Picture>,
     /// Width over height, when known before it plays.
     pub aspect: Option<f32>,
 }
 
+pub struct PostInfo {
+    pub title: String,
+    pub channel: String,
+    pub summary: String,
+}
+
 pub enum Content {
+    Post(PostInfo, Option<Picture>),
     Picture(Picture),
     Video(VideoInfo),
     Clip(ClipInfo),
@@ -1204,7 +1223,35 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
             if let Some(found) = answer.as_ref().ok().and_then(|xml| services::clip_from_feed(xml)) {
                 return Ok(Content::Clip(fetch_found_clip(client, found).await));
             }
-            answer.ok().and_then(|xml| services::from_feed(&xml))
+            if let Some(xml) = answer.ok()
+                && let Some(post) = services::reddit_feed(&xml)
+            {
+                let picture = match services::from_feed(&xml) {
+                    Some(source) => fetch_picture(client, &source).await.ok(),
+                    None => None,
+                };
+                return Ok(Content::Post(post, picture));
+            }
+            if let Some(page) = feed.strip_suffix("/.rss?limit=1") {
+                let endpoint =
+                    reqwest::Url::parse_with_params("https://www.reddit.com/oembed", [("url", page)]).map_err(|_| Failure::Unavailable)?;
+                if let Some(data) = download(client, endpoint.as_str(), "application/json", 64 * 1024)
+                    .await
+                    .ok()
+                    .and_then(|(body, _)| serde_json::from_slice::<serde_json::Value>(&body).ok())
+                    && let Some(title) = data["title"].as_str().filter(|title| !title.trim().is_empty())
+                {
+                    return Ok(Content::Post(
+                        PostInfo {
+                            title: title.chars().take(200).collect(),
+                            channel: data["author_name"].as_str().unwrap_or("").chars().take(80).collect(),
+                            summary: String::new(),
+                        },
+                        None,
+                    ));
+                }
+            }
+            None
         }
     };
     let Some(source) = source else {
@@ -1236,30 +1283,64 @@ async fn fetch_found_clip(client: &reqwest::Client, found: services::FoundClip) 
             break;
         }
     }
+    let stream_shape = if found.clip.native_video() {
+        stream_aspect(client, &found.clip).await
+    } else {
+        None
+    };
     let aspect = found
         .size
         .and_then(|(w, h)| aspect(w, h))
+        .or(stream_shape)
         .or_else(|| thumbnail.as_ref().and_then(|t| aspect(f64::from(t.size[0]), f64::from(t.size[1]))));
     ClipInfo {
         clip: found.clip,
-        title: String::new(),
+        title: found.title,
+        channel: found.channel,
         thumbnail,
         aspect,
     }
+}
+
+async fn stream_aspect(client: &reqwest::Client, clip: &Clip) -> Option<f32> {
+    let (body, _) = download(client, &clip.player(), "application/vnd.apple.mpegurl", 64 * 1024)
+        .await
+        .ok()?;
+    std::str::from_utf8(&body).ok()?.lines().find_map(|line| {
+        let dimensions = line
+            .strip_prefix("#EXT-X-STREAM-INF:")?
+            .split(',')
+            .find_map(|part| part.strip_prefix("RESOLUTION="))?;
+        let (width, height) = dimensions.split_once('x')?;
+        aspect(width.parse().ok()?, height.parse().ok()?)
+    })
 }
 
 pub async fn fetch_clip(client: &reqwest::Client, clip: &Clip) -> ClipInfo {
     let mut info = ClipInfo {
         clip: clip.clone(),
         title: String::new(),
+        channel: String::new(),
         thumbnail: None,
         aspect: None,
     };
+    if clip.native_video() {
+        info.aspect = stream_aspect(client, clip).await;
+        return info;
+    }
     let ClipSource::Hosted(video) = &clip.0 else {
         return info;
     };
     info.aspect = video.aspect();
     let Some(endpoint) = video.oembed() else {
+        let page = video.page();
+        if let Ok(html) = text_head(client, &page, "text/html", "</head>").await.0 {
+            info.title = services::metadata(&html, &["og:title", "twitter:title"]).unwrap_or_default();
+            info.channel = services::metadata(&html, &["author", "video:actor"]).unwrap_or_default();
+            if let Some(poster) = services::metadata(&html, &["og:image", "twitter:image"]).and_then(|url| video.poster(&url)) {
+                info.thumbnail = fetch_picture(client, &poster).await.ok();
+            }
+        }
         return info;
     };
     if let Some(data) = download(client, &endpoint, "application/json", 64 * 1024)
@@ -1269,6 +1350,7 @@ pub async fn fetch_clip(client: &reqwest::Client, clip: &Clip) -> ClipInfo {
         .filter(|data| data["type"].as_str() == Some("video"))
     {
         info.title = data["title"].as_str().unwrap_or_default().chars().take(200).collect();
+        info.channel = data["author_name"].as_str().unwrap_or_default().chars().take(80).collect();
         info.aspect = info
             .aspect
             .or_else(|| data["width"].as_f64().zip(data["height"].as_f64()).and_then(|(w, h)| aspect(w, h)));
@@ -1461,6 +1543,7 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
         Target::Clip(clip) => Ok(Content::Clip(ClipInfo {
             clip: clip.clone(),
             title: String::new(),
+            channel: String::new(),
             thumbnail: None,
             aspect: None,
         })),
@@ -1470,7 +1553,8 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
         // Gyazo's video capture to its clip
         Target::Page(_) if let Some(found) = services::demo_clip(url) => Ok(Content::Clip(ClipInfo {
             clip: found.clip,
-            title: String::new(),
+            title: found.title,
+            channel: found.channel,
             thumbnail: Some(demo_still(640, 360, 1)),
             aspect: Some(16.0 / 9.0),
         })),

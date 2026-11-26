@@ -131,6 +131,7 @@ impl Shown {
 }
 
 enum Entry {
+    Post(lp::PostInfo, Option<Shown>),
     /// Asked for, waiting for a download slot.
     Queued,
     Loading,
@@ -384,7 +385,7 @@ impl Previews {
 
     fn enlarge(&mut self, ctx: &egui::Context, url: &str, trusted_only: bool, window: bool) {
         let Some(Cached {
-            entry: Entry::Picture(shown),
+            entry: Entry::Picture(shown) | Entry::Post(_, Some(shown)),
             ..
         }) = self.cache.get(url)
         else {
@@ -424,6 +425,7 @@ impl Previews {
             self.in_flight = self.in_flight.saturating_sub(1);
             let entry = match result {
                 Ok(Content::Picture(p)) => Entry::Picture(Shown::new(ctx, &url, p)),
+                Ok(Content::Post(post, picture)) => Entry::Post(post, picture.map(|p| Shown::new(ctx, &url, p))),
                 Ok(Content::Page {
                     picture,
                     source,
@@ -442,7 +444,7 @@ impl Previews {
                 },
                 Ok(Content::Clip(c)) => Entry::Video {
                     title: c.title,
-                    channel: String::new(),
+                    channel: c.channel,
                     thumbnail: c.thumbnail.map(|p| Shown::new(ctx, &url, p)),
                     aspect: c.aspect.unwrap_or(DEFAULT_ASPECT),
                     clip: Some(c.clip),
@@ -807,6 +809,9 @@ pub(super) fn text<'a>(pv: Option<&Previews>, line: &ChatLine, text: &'a str, wi
             let Some((_, start)) = lp::decide(&pv.settings, pv.place, sender(line), url) else {
                 return false;
             };
+            if lp::blurred_until_clicked(url) {
+                return false;
+            }
             let k = key(line, url);
             if pv.hidden.contains(&k) || (start == Start::Ask && !pv.asked.contains(&k)) {
                 return false;
@@ -939,6 +944,54 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
                 enlarge |= !window;
             }
             out.resp
+        }
+        (Entry::Post(post, image), _) => {
+            let mut reveal = false;
+            let frame = egui::Frame::new()
+                .fill(p.raised)
+                .corner_radius(ui.visuals().window_corner_radius)
+                .inner_margin(10)
+                .show(ui, |ui| {
+                    ui.set_max_width(width);
+                    ui.label(RichText::new(&post.title).strong().color(p.ink));
+                    if !post.channel.is_empty() {
+                        ui.label(RichText::new(&post.channel).size(11.5).color(p.muted));
+                    }
+                    if !post.summary.is_empty() {
+                        if pv.place == Place::Group && pv.settings.blur_groups && !pv.revealed.contains(&k) {
+                            reveal |= ui.small_button(aurora_i18n::tr!("ui-chat-preview-show")).clicked();
+                        } else {
+                            ui.label(RichText::new(&post.summary).color(p.ink));
+                        }
+                    }
+                    if crate::ui::widgets::icon_button(ui, p, "external-link-filled", &link_tip(url, false), true) {
+                        super::open_web_link(ui.ctx(), url);
+                    }
+                });
+            if let Some(image) = image {
+                let out = picture(ui, p, image, url, width, blur);
+                match out.action {
+                    Some(Action::Reveal) => reveal = true,
+                    Some(Action::Copy) => clipboard::request(ui.ctx(), &image.copy),
+                    Some(Action::CopyLink) => ui.ctx().copy_text(url.to_owned()),
+                    Some(Action::Open) => super::open_web_link(ui.ctx(), url),
+                    Some(Action::Enlarge) => enlarge = true,
+                    Some(Action::Window) => window = true,
+                    Some(Action::Hide) => {
+                        pv.hidden.insert(k);
+                    }
+                    None => {}
+                }
+                if reveal {
+                    pv.revealed.insert(k);
+                }
+                out.resp
+            } else {
+                if reveal {
+                    pv.revealed.insert(k);
+                }
+                frame.response
+            }
         }
         // A hosted video, a direct clip, or a clip found on a service page.
         (Entry::Video { .. }, _) => {
@@ -1304,17 +1357,17 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
         return;
     }
     let title = if title.is_empty() {
-        if clip.is_some() {
-            aurora_i18n::tr!("ui-chat-preview-clip")
+        if let Some(clip) = &clip {
+            clip.fallback_title()
         } else {
-            aurora_i18n::tr!("ui-chat-preview-video")
+            aurora_i18n::tr!("ui-chat-preview-video").to_owned()
         }
-        .to_owned()
     } else {
         title.clone()
     };
     let channel = match (&clip, channel.is_empty()) {
-        (Some(_), _) => lp::host(url).unwrap_or_default(),
+        (Some(_), true) => lp::host(url).unwrap_or_default(),
+        (Some(_), false) => format!("{channel} · {}", lp::host(url).unwrap_or_default()),
         (None, true) => "YouTube".to_owned(),
         (None, false) => format!("{channel} · YouTube"),
     };
