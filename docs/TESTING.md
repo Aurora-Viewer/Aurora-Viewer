@@ -9164,10 +9164,15 @@ failure. Grid validation and any paid upload are performed by the human.
   the chat field; `top`: an island at the top right of the windows' area;
   `off`: none. One square per open conversation (picture, insignia or
   conference glyph) with the red unread counter; with more conversations
-  than room (`AURORA_DEMO_CONV=many`), a "+N" square lists the others and
-  the unread ones stay in sight. With `AURORA_DEMO_FLASH=1`, Tess's
-  thumbnail flashes from the 10th second (eight rises, then a faint mark
-  until her conversation is opened).
+  than room (`AURORA_DEMO_CONV=many`), left and right scroll arrows step
+  one thumbnail per click, per wheel notch over the strip, or while an
+  arrow is held, when both arrows and one square fit (unread behind an
+  arrow shows above that arrow); else a "+N" slot lists the rest with unread
+  kept in sight (a lone "+N" included in the bar). A centred dock stays put
+  when the gap holds a strip with a face (#3552); when it cannot (no square,
+  or only a lone "+N" in that gap), the strip stays left of the dock. With
+  `AURORA_DEMO_FLASH=1`, Tess's thumbnail flashes from the 10th second
+  (eight rises, then a faint mark until her conversation is opened).
 - **`AURORA_DEMO_FLASH=1`**: from the 10th second, Tess writes to us every
   8 seconds ("Are you there? (n)"), while the Conversations window is
   open. With another conversation shown, her entry (the column in
