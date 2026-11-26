@@ -438,6 +438,10 @@ fn adult_media_pages_keep_only_the_parameters_needed_to_share_the_item() {
         recognize("https://www.pornhub.com/embed/phabcdef?viewkey=ignored"),
         Some((Service::Site, Step::Publisher(page))) if page == "https://www.pornhub.com/view_video.php?viewkey=phabcdef"
     ));
+    assert!(matches!(
+        recognize("https://www.xvideos.com/embedframe/123456?tracking=1"),
+        Some((Service::Site, Step::Publisher(page))) if page == "https://www.xvideos.com/video123456"
+    ));
     assert!(!adult_media_site("redgifs.com.example.org"));
     assert!(adult_media_site("media.redgifs.com"));
     assert!(recognize("https://onlyfans.com/example").is_none());
@@ -480,11 +484,11 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
     let viewkey = url.query_pairs().find(|(key, _)| key == "viewkey").map(|(_, value)| value);
     let safe = match (host.as_str(), parts.as_slice()) {
         ("pornhub.com", ["view_video.php"]) => viewkey.as_deref().is_some_and(slug),
+        ("xvideos.com", ["embedframe", id]) => digits(id),
         ("xvideos.com", [video, ..]) => video.strip_prefix("video.").is_some_and(slug) || video.strip_prefix("video").is_some_and(digits),
         ("onlyfans.com", [post, creator]) => digits(post) && slug(creator),
         ("redgifs.com", ["watch" | "ifr", id]) => slug(id),
         ("pornhub.com", ["embed", id]) => alnum(id, 5, 48),
-        ("xvideos.com", ["embedframe", id]) => digits(id),
         ("snapchat.com", ["spotlight", id] | [_, "spotlight", id]) => {
             (8..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
         }
