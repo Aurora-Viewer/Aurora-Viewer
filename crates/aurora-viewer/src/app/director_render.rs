@@ -173,6 +173,7 @@ impl App {
             cube: None,
         });
         Some(PhotoFrame {
+            lens_flare: None,
             aspect: width as f32 / height.max(1) as f32,
             tile: glam::Mat4::IDENTITY,
             height,

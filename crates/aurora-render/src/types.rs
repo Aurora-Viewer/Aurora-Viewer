@@ -1850,6 +1850,10 @@ pub struct FrameParams {
     pub photo_scale: f32,
     /// The whole photo's depth around the tiles (`PhotoContext`).
     pub photo_context: PhotoContext,
+    /// An active tiled snapshot still owns its full-frame flare map.
+    pub hold_photo_flare: bool,
+    /// Lens flare for this normal desktop frame or ordinary photo.
+    pub lens_flare: Option<crate::lens_flare::Frame>,
     pub camera_pos: Vec3,
     pub near: f32,
     pub far: f32,
@@ -2212,6 +2216,8 @@ pub struct RenderStats {
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,
+    /// Highlight extraction and optics filtering in GPU milliseconds.
+    pub gpu_lens_flare: Option<f32>,
     /// GPU time of the rest of [`GpuElement::Effects`] (ms): the planar
     /// reflections (with the refracted water light), the reflection probe,
     /// the scene copy (with the cut-out pass and the submerged water

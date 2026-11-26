@@ -266,12 +266,13 @@ struct PostU {
     /// A cut-out photo (cutout.rs): 1 the snapshot, 2 the live view over
     /// its checkerboard, 3 the live view over `cutout_key`.
     cutout: f32,
-    _pad: f32,
+    flare: f32,
     /// The part of the photo the frame draws ([`photo_part`]).
     photo_part: [f32; 4],
     /// The key color of a cut-out live view (`FrameParams::cutout_key`),
     /// linear RGB.
     cutout_key: [f32; 4],
+    flare_extract: [f32; 4],
 }
 
 /// Where `PostU::auto_exposure` sits in the post uniforms.
@@ -320,11 +321,11 @@ struct SmaaTargets {
 impl Smaa {
     const LDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-    /// `post_layouts`: the post pass's groups (scene image, bloom).
+    /// `post_layouts`: the post pass's groups (scene image, bloom, lens flare).
     fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        post_layouts: [&wgpu::BindGroupLayout; 2],
+        post_layouts: [&wgpu::BindGroupLayout; 3],
         surface_format: wgpu::TextureFormat,
     ) -> Smaa {
         let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
@@ -426,7 +427,7 @@ impl Smaa {
         });
         let post_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("post ldr"),
-            bind_group_layouts: &[Some(post_layouts[0]), Some(post_layouts[1])],
+            bind_group_layouts: &post_layouts.map(Some),
             immediate_size: 0,
         });
         let post_ldr = make_pipeline(device, &post_module, &post_pl, desc("post ldr", "vs_post", "fs_post", Self::LDR));
@@ -1302,6 +1303,7 @@ struct GpuTimer {
     last_soft: Option<f32>,
     /// Last time of the bloom levels (ms).
     last_bloom: Option<f32>,
+    last_lens_flare: Option<f32>,
     /// Last times of the rest of the effects (ms), in [`GPU_EFFECT_PARTS`]
     /// order.
     last_effects: Option<[f32; 4]>,
@@ -1380,7 +1382,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 39;
+const GPU_MARKS: u32 = 41;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1472,6 +1474,8 @@ const MARK_CLOUDS_END: u32 = 39;
 /// there when they are off); in the effects' range from `MARK_SSAO_END` to
 /// `MARK_WATER_AIR_BEGIN`.
 const MARK_SOFT_END: u32 = 40;
+const MARK_LENS_FLARE_BEGIN: u32 = 41;
+const MARK_LENS_FLARE_END: u32 = 42;
 /// The effects beyond the occlusion, the contact shadows and the soft
 /// shadows (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1589,6 +1593,7 @@ impl GpuTimer {
             last_clouds: None,
             last_soft: None,
             last_bloom: None,
+            last_lens_flare: None,
             st_sum: [0.0; 4],
             st_n: 0,
             last_st: None,
@@ -1632,6 +1637,7 @@ impl GpuTimer {
                             self.last_clouds = Some(ms(MARK_DEPTH_MSAA_END, MARK_CLOUDS_END));
                             self.last_soft = Some(ms(MARK_CONTACT_END, MARK_SOFT_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
+                            self.last_lens_flare = Some(ms(MARK_LENS_FLARE_BEGIN, MARK_LENS_FLARE_END));
                             self.last_st = None;
                             if self.slot_st[slot].get() {
                                 let parts = [
@@ -2112,6 +2118,7 @@ pub(crate) struct Backend {
     /// occlusion's depth (`AURORA_BLEND_AO`).
     blend_ao_depth: bool,
     bloom: crate::bloom::Bloom,
+    lens_flare: crate::lens_flare::Pass,
     /// The automatic exposure of skies that are not classic (exposure.rs).
     exposure: crate::exposure::Exposure,
     /// The photo viewfinder's luminance histogram (histogram.rs).
@@ -3461,6 +3468,24 @@ struct PipelineBuild {
     done: std::sync::mpsc::Receiver<(Pipelines, ImpostorPipelines)>,
 }
 
+/// Return a receiver immediately. Keep the worker with the backend so device
+/// replacement and shutdown account for builds whose receiver was dropped.
+pub(crate) fn spawn_pipeline_build<T: Send + 'static>(
+    workers: &mut Vec<std::thread::JoinHandle<()>>,
+    name: &'static str,
+    build: impl FnOnce() -> T + Send + 'static,
+) -> std::sync::mpsc::Receiver<T> {
+    let (tx, done) = std::sync::mpsc::sync_channel(1);
+    workers.retain(|w| !w.is_finished());
+    match std::thread::Builder::new().name(name.into()).spawn(move || {
+        let _ = tx.send(build());
+    }) {
+        Ok(worker) => workers.push(worker),
+        Err(e) => log::error!("cannot start {name} worker: {e}"),
+    }
+    done
+}
+
 /// What a worker thread made for ray tracing: the ray tracer, or the parts
 /// of it an effect turned on later needs.
 enum RtMade {
@@ -4482,6 +4507,7 @@ impl Backend {
         let msaa_samples = if msaa_supported.contains(&4) { 4 } else { 1 };
         let settings = RenderSettings::default();
         let bloom = crate::bloom::Bloom::new(&device, &post_layout);
+        let lens_flare = crate::lens_flare::Pass::new(&device);
         // what the stochastic transparency is made from, the first frame the
         // method is on (`make_st`): nothing of it exists before
         let st_init = {
@@ -4512,7 +4538,7 @@ impl Backend {
             &records_layout,
             &tex_layout,
             &shadow_layout,
-            [&post_layout, &bloom.post_layout],
+            [&post_layout, &bloom.post_layout, &lens_flare.post_layout],
             &gbuf_layout,
             msaa_samples,
             format,
@@ -4528,7 +4554,7 @@ impl Backend {
         let rt = None;
         lost_at_start(&lost, &surface)?;
         let glow = Glow::new(&device, &post_layout);
-        let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
+        let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout, &lens_flare.post_layout], format);
         let refuse = crate::gpu_alloc::targets_refused();
         let (targets, refused) = crate::gpu_alloc::scoped(&device, || {
             Self::make_targets(
@@ -4723,6 +4749,7 @@ impl Backend {
             motion_now: false,
             blend_ao_depth: true,
             bloom,
+            lens_flare,
             exposure,
             histogram,
             thumbnails: crate::thumbnail::Thumbnails::new(),
@@ -5126,7 +5153,7 @@ impl Backend {
         records_layout: &wgpu::BindGroupLayout,
         tex_layout: &wgpu::BindGroupLayout,
         shadow_layout: &wgpu::BindGroupLayout,
-        post_layouts: [&wgpu::BindGroupLayout; 2],
+        post_layouts: [&wgpu::BindGroupLayout; 3],
         gbuf_layout: &wgpu::BindGroupLayout,
         samples: u32,
         surface_format: wgpu::TextureFormat,
@@ -6249,7 +6276,7 @@ impl Backend {
         });
         let post_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("post"),
-            bind_group_layouts: &[Some(post_layouts[0]), Some(post_layouts[1])],
+            bind_group_layouts: &post_layouts.map(Some),
             immediate_size: 0,
         });
         let post = batch.add(
@@ -7444,10 +7471,7 @@ impl Backend {
                 if s.gbuffer() { "on" } else { "off" },
                 if soft { "on" } else { "off" }
             );
-            let (build, worker) = self.start_pipeline_build(samples, s.gbuffer(), soft);
-            self.pipeline_workers.retain(|w| !w.is_finished());
-            self.pipeline_workers.extend(worker);
-            self.pipeline_build = Some(build);
+            self.pipeline_build = Some(self.start_pipeline_build(samples, s.gbuffer(), soft));
         }
         let Some(build) = &self.pipeline_build else {
             return;
@@ -7485,7 +7509,7 @@ impl Backend {
                     &self.records_layout,
                     &self.tex_layout,
                     &self.shadow_layout,
-                    [&self.post_layout, &self.bloom.post_layout],
+                    [&self.post_layout, &self.bloom.post_layout, &self.lens_flare.post_layout],
                     &self.gbuf_layout,
                     samples,
                     self.config.format,
@@ -7509,8 +7533,7 @@ impl Backend {
 
     /// Compile the pipelines for `samples`, `ssr` and the soft shadows'
     /// path `soft` on a worker thread.
-    fn start_pipeline_build(&self, samples: u32, ssr: bool, soft: bool) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
-        let (tx, done) = std::sync::mpsc::sync_channel(1);
+    fn start_pipeline_build(&mut self, samples: u32, ssr: bool, soft: bool) -> PipelineBuild {
         let device = self.device.clone();
         let layouts = [
             self.frame_layout.clone(),
@@ -7519,19 +7542,20 @@ impl Backend {
             self.shadow_layout.clone(),
             self.post_layout.clone(),
             self.bloom.post_layout.clone(),
+            self.lens_flare.post_layout.clone(),
             self.gbuf_layout.clone(),
             self.impostors.layout.clone(),
         ];
         let format = self.config.format;
-        let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
-            let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
+        let done = spawn_pipeline_build(&mut self.pipeline_workers, "aurora-pipelines", move || {
+            let [frame, records, tex, shadow, post, bloom, flare, gbuf, impostor] = &layouts;
             let scene = Self::make_pipelines(
                 &device,
                 frame,
                 records,
                 tex,
                 shadow,
-                [post, bloom],
+                [post, bloom, flare],
                 gbuf,
                 samples,
                 format,
@@ -7539,23 +7563,15 @@ impl Backend {
                 soft,
             );
             let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr, soft);
-            // (refused when other settings came meanwhile: the set is dropped)
-            let _ = tx.send((scene, impostors));
+            (scene, impostors)
         });
-        let worker = spawned
-            .inspect_err(|e| {
-                // the receiver reports the worker gone: compiled on this thread
-                log::error!("cannot start the pipeline worker: {e}");
-            })
-            .ok();
-        let build = PipelineBuild {
+        PipelineBuild {
             samples,
             ssr,
             soft,
             started: std::time::Instant::now(),
             done,
-        };
-        (build, worker)
+        }
     }
 
     /// Take over `other`'s pipeline workers, to wait for them when this one
@@ -8696,6 +8712,12 @@ impl Backend {
     }
 
     pub fn render(&mut self, mut packet: FramePacket) -> FrameResult {
+        // Cancellation or failed readback can end a photo before its last tile.
+        // Check ownership before any early return, independently of live optics.
+        if !packet.params.hold_photo_flare && self.lens_flare.photo_ready() {
+            self.lens_flare.release_photo();
+            log::debug!("lens flare: released the abandoned photo map");
+        }
         // the 360° snapshot's panorama, before the frame: projected from the
         // cube the faces filled, its readback begun and answered by a later
         // frame (equirect.rs). The cube is let go once the GPU has the job.
@@ -10105,10 +10127,10 @@ impl Backend {
         let glow_skip = *GLOW_SKIP.get_or_init(|| std::env::var("AURORA_GLOW_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
         // Aurora's bloom: its levels kept while on (or alternated), none
         // under a debug view, which replaces the image
+        let debug_view = f.debug_glow || f.debug.shadows || f.debug.ambient_occlusion;
         let bloom = {
             static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
             let secs = START.get_or_init(Instant::now).elapsed().as_secs();
-            let debug_view = f.debug_glow || f.debug.shadows || f.debug.ambient_occlusion;
             let (strength, keep) = crate::bloom::Override::from_env().strength(if debug_view { 0.0 } else { f.bloom }, secs);
             if keep && !debug_view {
                 self.bloom.ensure(&self.device, post_size);
@@ -10117,6 +10139,34 @@ impl Backend {
             }
             if self.bloom.norm() > 0.0 { strength.clamp(0.0, 1.0) } else { 0.0 }
         };
+        use crate::types::PhotoContext;
+        let record_flare = f.photo_context == PhotoContext::Record;
+        let use_photo_flare = f.photo_context == PhotoContext::Use;
+        let flare = f
+            .lens_flare
+            .filter(|frame| frame.settings.active() && !debug_view && !f.cutout && !cube_face && !external_output);
+        if record_flare {
+            self.lens_flare.release_photo();
+        }
+        if flare.is_none() && f.photo_context == PhotoContext::None {
+            self.lens_flare.release_live();
+        }
+        let generate_flare = flare.filter(|_| !use_photo_flare).and_then(|frame| {
+            let extent = frame.photo_size.unwrap_or(post_size);
+            let size = frame.settings.quality.size(extent);
+            self.lens_flare
+                .prepare(
+                    &self.device,
+                    &self.post_layout,
+                    &mut self.pipeline_workers,
+                    size,
+                    record_flare,
+                    frame.settings,
+                )
+                .then_some((frame, extent, size))
+        });
+        let composite_flare =
+            !record_flare && (generate_flare.is_some() || use_photo_flare && flare.is_some() && self.lens_flare.photo_ready());
         // "HDR and Emissive" off: LLPipeline::renderFinalize skips the
         // luminance, the exposure, the tone mapping and the CAS for
         // gammaCorrect, which only encodes and clamps (legacyGamma kept on
@@ -10177,9 +10227,17 @@ impl Backend {
                 (true, false, None) => 2.0,
                 (true, false, Some(_)) => 3.0,
             },
-            _pad: 0.0,
+            flare: if composite_flare { 1.0 } else { 0.0 },
             photo_part: photo_part(f.photo_tile),
             cutout_key: f.cutout_key.map_or([0.0; 4], |[r, g, b]| [r, g, b, 1.0]),
+            flare_extract: generate_flare.map_or([0.0; 4], |(frame, _, (w, h))| {
+                [
+                    frame.settings.threshold,
+                    frame.settings.threshold_knee(),
+                    1.0 / w as f32,
+                    1.0 / h as f32,
+                ]
+            }),
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
@@ -12998,6 +13056,7 @@ impl Backend {
                 post_src = &taa.history[w];
             }
         }
+        let flare_source = post_bg;
         // ---- depth of field, on the resolved (and TAA-steady) image,
         // before the glow and the tone mapping (not in probe captures)
         match &f.dof {
@@ -13073,6 +13132,12 @@ impl Backend {
             &self.post_buffer,
             POST_AUTO_EXPOSURE_OFFSET,
         );
+        mark(&mut encoder, MARK_LENS_FLARE_BEGIN);
+        if let Some((frame, extent, _)) = generate_flare {
+            self.lens_flare
+                .encode(&self.queue, &mut encoder, flare_source, frame, extent, record_flare);
+        }
+        mark(&mut encoder, MARK_LENS_FLARE_END);
         // the viewfinder's histogram, of the live view only
         if let Some(exposure) = histogram
             && snapshot.is_none()
@@ -13256,6 +13321,7 @@ impl Backend {
                 pass.set_pipeline(post_pipe);
                 pass.set_bind_group(0, post_bg, &[]);
                 pass.set_bind_group(1, self.bloom.post_bg(), &[]);
+                pass.set_bind_group(2, self.lens_flare.post_group(composite_flare, use_photo_flare), &[]);
                 pass.draw(0..3, 0..1);
             }
             if let Some(st) = &self.smaa_targets {
@@ -13277,6 +13343,10 @@ impl Backend {
                 let passes = looks.encode(&self.device, &self.queue, &mut encoder, look, scene_target, Some(depth));
                 calls.set(calls.get() + passes);
             }
+        }
+
+        if f.lens_flare.is_some_and(|frame| frame.last_context_tile) {
+            self.lens_flare.release_photo();
         }
 
         if let Some(debug) = &self.motion_debug {
@@ -13870,6 +13940,7 @@ impl Backend {
         stats.gpu_clouds = self.timer.as_ref().and_then(|t| t.last_clouds).filter(|_| self.clouds_now);
         stats.gpu_soft = self.timer.as_ref().and_then(|t| t.last_soft);
         stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
+        stats.gpu_lens_flare = self.timer.as_ref().and_then(|t| t.last_lens_flare);
         stats.gpu_effects = self.timer.as_ref().and_then(|t| t.last_effects);
         stats.gpu_weather = self.timer.as_ref().and_then(|t| t.last_weather);
         if profile_frames && let Some(e) = stats.gpu_elements {
@@ -14347,6 +14418,8 @@ mod tests {
         MARK_ST_ACCUM_END,
         MARK_ST_COMPOSITE_END,
         MARK_SCENE_END,
+        MARK_LENS_FLARE_BEGIN,
+        MARK_LENS_FLARE_END,
         MARK_BLOOM_BEGIN,
         MARK_BLOOM_END,
         1,
@@ -14394,6 +14467,7 @@ mod tests {
             inside(part, GpuElement::Effects);
         }
         inside(&[(MARK_BLOOM_BEGIN, MARK_BLOOM_END)], GpuElement::Post);
+        inside(&[(MARK_LENS_FLARE_BEGIN, MARK_LENS_FLARE_END)], GpuElement::Post);
     }
 
     #[test]

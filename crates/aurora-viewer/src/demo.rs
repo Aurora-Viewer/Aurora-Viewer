@@ -207,6 +207,7 @@ pub mod legacy_bump;
 /// A Legacy Viewer's lists to import (AURORA_DEMO_LEGACY_LISTS).
 #[path = "demo_legacy_lists.rs"]
 pub mod legacy_lists;
+pub mod lens_flare;
 #[path = "demo_link.rs"]
 pub mod link;
 /// A market for Area Search and Inspect (`market` of AURORA_DEMO_AREA_SEARCH
@@ -6604,6 +6605,13 @@ pub fn events() -> Vec<NetEvent> {
         }
         id += skin_layer::COUNT;
     }
+    if let Some(scene) = lens_flare::scenario() {
+        let props = lens_flare::objects(*scene, id);
+        id += props.len() as u32;
+        for object in props {
+            add(object);
+        }
+    }
     if mirror::enabled() {
         for o in mirror::objects(id) {
             add(o);
@@ -10382,6 +10390,9 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
     ));
     if legacy_bump::enabled() {
         list.push((legacy_bump::PBR_MATERIAL, legacy_bump::pbr_material()));
+    }
+    if lens_flare::scenario().is_some() {
+        list.extend(lens_flare::materials());
     }
     list.extend(neon_room::materials());
     for (mat, double_sided) in MAT_PBR_SIDED.into_iter().zip([false, true]) {

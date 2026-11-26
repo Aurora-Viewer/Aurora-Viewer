@@ -45,6 +45,7 @@ mod helpers;
 mod histogram;
 pub mod hud;
 mod label_depth;
+pub mod lens_flare;
 pub mod light_tiles;
 pub mod look_thumbs;
 pub mod looks;
