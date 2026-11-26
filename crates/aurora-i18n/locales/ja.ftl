@@ -15639,6 +15639,7 @@ area-search-band-further = 少し離れた所
 area-search-band-far = 遠く
 area-search-band = 範囲
 area-search-within = { $distance }以内
+area-search-within-across = 水平{ $distance }以内
 area-search-between = { $from }～{ $to }
 area-search-any-distance = すべての距離を表示
 area-search-from = 距離の下限

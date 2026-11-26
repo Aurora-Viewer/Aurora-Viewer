@@ -15810,6 +15810,7 @@ area-search-band-further = Plus loin
 area-search-band-far = Loin
 area-search-band = Zone
 area-search-within = À moins de { $distance }
+area-search-within-across = À moins de { $distance } à l’horizontale
 area-search-between = { $from }–{ $to }
 area-search-any-distance = Montrer toutes les distances
 area-search-from = Distance à partir de

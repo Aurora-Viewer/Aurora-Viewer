@@ -15802,6 +15802,7 @@ area-search-band-further = Further
 area-search-band-far = Far
 area-search-band = Area
 area-search-within = Within { $distance }
+area-search-within-across = Within { $distance } across
 area-search-between = { $from }–{ $to }
 area-search-any-distance = Show every distance
 area-search-from = Distance from

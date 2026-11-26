@@ -138,7 +138,7 @@ pub(super) fn body(ui: &mut egui::Ui, p: &Palette, f: &mut Filters, scopes: &[Sc
             ui,
             p,
             aurora_i18n::tr!("area-search-scope-heading"),
-            &aurora_i18n::tr!("area-search-within", distance = reach),
+            &aurora_i18n::tr!("area-search-within-across", distance = reach),
         );
         ui.horizontal(|ui| scope_choice(ui, p, f, scopes));
     }

@@ -84,9 +84,17 @@ impl Kind {
     }
 }
 
-/// How far an object can be and still be listed, in metres: as far as the draw
-/// distance goes (human request, 2026-11-25; the Legacy Viewer has no limit).
+/// How far an object can be and still be listed, in metres across the map: as
+/// far as the draw distance goes (human request, 2026-11-25; the Legacy Viewer
+/// has no limit).
 pub const REACH: f32 = crate::settings::DRAW_DISTANCE_MAX;
+
+/// Listed at all: within `REACH` across the map, whatever the height, so that
+/// a skybox over the land around is (2026-11-26). The distance a row shows,
+/// sorts and filters by stays the straight one: 20 m is 20 m.
+pub(crate) fn within_reach(global: glam::DVec3, agent: glam::DVec3) -> bool {
+    global.truncate().distance(agent.truncate()) <= f64::from(REACH)
+}
 
 /// Where the objects are looked for: one choice for the Legacy Viewer's
 /// "current parcel" and "neighbour regions".
@@ -639,5 +647,24 @@ mod tests {
         );
         // attachments are left out at first: one filter on
         assert_eq!(filters_on(&Filters::default()), [On::Kind(Kind::Attached)]);
+    }
+
+    #[test]
+    fn area_search_reach_counts_across_and_a_set_distance_stays_straight() {
+        let agent = glam::DVec3::new(128.0, 128.0, 25.0);
+        let skybox = glam::DVec3::new(140.0, 128.0, 3000.0);
+        assert!(within_reach(skybox, agent), "a skybox over the land around is listed");
+        assert!(!within_reach(glam::DVec3::new(128.0 + 1100.0, 128.0, 25.0), agent));
+        assert!(within_reach(glam::DVec3::new(128.0 + 1000.0, 128.0, 25.0), agent));
+        // its row has the straight distance: 20 m set keeps it out
+        let mut table = super::super::Table::default();
+        let distance = skybox.distance(agent) as f32;
+        table.replace(vec![row(1, 1, 3.0, None), row(2, 2, distance, None)]);
+        table.filters.distance_on = true;
+        table.filters.min_distance = 0.0;
+        table.filters.max_distance = 20.0;
+        table.prepare();
+        let ids: Vec<_> = table.visible.iter().map(|i| table.rows[*i].id).collect();
+        assert_eq!(ids, [Uuid::from_u128(1)]);
     }
 }
