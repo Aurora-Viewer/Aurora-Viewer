@@ -670,6 +670,7 @@ mod tests {
                     binormal: Vec3::Z,
                 }),
                 blend: None,
+                ray: None,
             };
             let depth = scene.touch_depth(&world, &drawn, Some(ray), Some(point), 100.0);
             let hit = scene.drawn_action_point(&world, ray, depth, 100.0);
@@ -706,6 +707,7 @@ mod tests {
                     binormal: Vec3::Z,
                 }),
                 blend: None,
+                ray: None,
             };
             assert_eq!(scene.touch_depth(&world, &drawn, Some(ray), Some(point), 100.0), Some(point));
         }
@@ -736,6 +738,7 @@ mod tests {
         let drawn = Drawn {
             opaque: Some(body),
             blend: None,
+            ray: None,
         };
         let pick = |scene: &Scene, drawn: &Drawn, point| scene.own_avatar_surface(&world, drawn, ray, point);
         assert_eq!(pick(&scene, &drawn, Some(body_point)), Some(body_point));
@@ -746,6 +749,7 @@ mod tests {
             let gap = Drawn {
                 opaque: Some(face(1, point)),
                 blend: None,
+                ray: None,
             };
             assert_eq!(pick(&scene, &gap, Some(point)), None);
         }
@@ -768,6 +772,7 @@ mod tests {
         let mesh = Drawn {
             opaque: Some(face(0, body_point)),
             blend: None,
+            ray: None,
         };
         assert_eq!(pick(&scene, &mesh, Some(body_point)), Some(body_point));
         assert_eq!(pick(&scene, &covered, Some(body_point)), Some(body_point - Vec3::X));
@@ -792,6 +797,7 @@ mod tests {
                 binormal: Vec3::Z,
             }),
             blend: None,
+            ray: None,
         };
         let o = world.objects.get_mut(front).unwrap();
         o.click_action = crate::interaction::code::NONE;
@@ -815,6 +821,7 @@ mod tests {
                 point: point + Vec3::X,
                 ..face
             }),
+            ray: None,
         };
         assert_eq!(
             scene.own_avatar_surface(&world, &through, ray, Some(point + Vec3::X)),
@@ -1336,6 +1343,7 @@ mod tests {
         let layered = Drawn {
             blend: face(0, 2.5),
             opaque: face(1, 2.504),
+            ray: None,
         };
         // the click passes through both: the skin, for the search under it
         assert_eq!(scene.drawn_hover_under(&world, &layered, ray), Some((skin, 2.504)));

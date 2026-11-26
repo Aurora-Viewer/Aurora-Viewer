@@ -51,6 +51,19 @@ impl Question {
     }
 }
 
+/// The question an answer of the GPU speaks for: the pixel asked, seen by
+/// the camera of the frame that drew it. The request leaves with the frame
+/// after the question, whose camera may have moved: measured along the ray
+/// asked, a face drawn after Esc brought the camera back from far away can
+/// lie thousands of kilometres out (#5021). The depth and the reach stay
+/// those asked.
+fn answered(asked: Question, drawn: &aurora_render::Drawn) -> Question {
+    Question {
+        ray: drawn.ray.unwrap_or(asked.ray),
+        ..asked
+    }
+}
+
 /// The CPU still preempts a kept GPU target when it finds a different
 /// foreground surface. The 5 cm tolerance is `Scene::designated`'s.
 fn foreground(cpu: Hit, kept: Hit, ray: (Vec3, Vec3)) -> bool {
@@ -296,6 +309,7 @@ impl HoverDrawn {
             let late = now.duration_since(started) >= TIMEOUT;
             if let Some(drawn) = renderer.take_drawn(ticket) {
                 self.pending = None;
+                let asked = answered(asked, &drawn);
                 if !late {
                     // The answer for a pixel the pointer has left is kept
                     // too: it tells what is drawn around it (`between`).
@@ -438,6 +452,40 @@ mod tests {
         assert!(!foreground((Some(Vec3::X * 6.0), Some(1)), kept, q.ray));
         assert!(!foreground((Some(Vec3::X * 4.0), Some(2)), kept, q.ray));
         assert!(!foreground((Some(Vec3::X * 4.0), None), kept, q.ray));
+    }
+
+    /// An answer is measured along the ray of the camera that drew it, not
+    /// the one asked a frame or more before (#5021): asked from 2^25 m out,
+    /// then drawn by the camera back at the avatar, the face lies 2 m ahead,
+    /// not 2^25 m. Depth and reach stay those asked, and an answer no frame
+    /// drew keeps the ray asked.
+    #[test]
+    fn an_answer_speaks_for_the_camera_that_drew_it() {
+        let asked = Question {
+            ray: (Vec3::new(0.0, -33_554_432.0, 1.5), Vec3::Y),
+            depth: Some(Vec3::new(0.0, -2.0, 1.5)),
+            far: 128.0,
+        };
+        let drew = (Vec3::new(0.0, -5.0, 1.5), Vec3::Y);
+        let face = aurora_render::DrawnFace {
+            record: 7,
+            point: Vec3::new(0.0, -3.0, 1.5),
+            st: glam::Vec2::ZERO,
+            normal: -Vec3::Y,
+            binormal: Vec3::Z,
+        };
+        let drawn = aurora_render::Drawn {
+            opaque: Some(face),
+            blend: None,
+            ray: Some(drew),
+        };
+        let a = answered(asked, &drawn);
+        // the distance the hover walks from (`touch_depth_of`'s `at`)
+        let at = (face.point - a.ray.0).dot(a.ray.1);
+        assert!((at - 2.0).abs() < 1e-3, "{at}");
+        assert_eq!((a.depth, a.far), (asked.depth, asked.far));
+        let a = answered(asked, &aurora_render::Drawn::default());
+        assert_eq!((a.ray, a.depth, a.far), (asked.ray, asked.depth, asked.far));
     }
 
     #[test]
