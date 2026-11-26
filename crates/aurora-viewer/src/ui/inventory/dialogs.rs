@@ -665,6 +665,7 @@ pub(super) fn preview(
     let Some(it) = inv.items.get(&id) else {
         st.preview = None;
         super::clipboard::return_document_focus(ctx, st);
+        stop_shown_animation(st, actions);
         return;
     };
     if it.asset_type == 20 {
@@ -1044,13 +1045,6 @@ pub(super) fn preview(
         // The closed document gives the list that opened it its keyboard
         // back (LLToastAlertPanel restores the focus it saved).
         super::clipboard::return_document_focus(ctx, st);
-        if let Some((asset, local)) = st.playing {
-            actions.push(InvAction::Animation {
-                asset,
-                local,
-                start: false,
-            });
-        }
     }
 }
 
@@ -1110,6 +1104,7 @@ fn animation(
         st.animation_description = Some((it.id, it.desc.clone()));
         st.animation_details = true;
     }
+    st.animation_asset = Some(it.asset_id);
     let mut open = true;
     Floater::new(
         &format!("inventory_preview_{}_{}", st.ui_id, it.id),
@@ -1141,12 +1136,12 @@ fn animation(
             }
         });
         ui.horizontal(|ui| {
-            let playing = st.playing.filter(|(asset, _)| *asset == it.asset_id);
+            let playing = super::plays::playing(&st.plays, it.asset_id);
             for (local, label) in [
                 (false, aurora_i18n::tr!("ui-inventory-dialogs-play-for-everyone")),
                 (true, aurora_i18n::tr!("common-play-locally")),
             ] {
-                let same = playing.is_some_and(|(_, mode)| mode == local);
+                let same = playing.is_some_and(|play| play.local == local);
                 if ui
                     .add_enabled(
                         playing.is_none() || same,
@@ -1224,13 +1219,20 @@ fn animation(
         // The closed document gives the list that opened it its keyboard
         // back (LLToastAlertPanel restores the focus it saved).
         super::clipboard::return_document_focus(ctx, st);
-        if let Some((asset, local)) = st.playing.filter(|(asset, _)| *asset == it.asset_id) {
-            actions.push(InvAction::Animation {
-                asset,
-                local,
-                start: false,
-            });
-        }
+        stop_shown_animation(st, actions);
+    }
+}
+
+/// LLPreviewAnim::onClose: the window stops its own animation, and leaves
+/// those of the other windows playing.
+fn stop_shown_animation(st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
+    let asset = st.animation_asset.take();
+    if let Some(play) = st.plays.iter().find(|play| Some(play.asset) == asset) {
+        actions.push(InvAction::Animation {
+            asset: play.asset,
+            local: play.local,
+            start: false,
+        });
     }
 }
 

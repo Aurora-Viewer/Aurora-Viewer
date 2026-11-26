@@ -3,12 +3,17 @@
 //! sends for selected prims, the scene for geometry and textures. Follows
 //! LLFloaterInspect::onOpen / refresh (indra/newview/llfloaterinspect.cpp).
 use super::*;
-use crate::ui::inspect::{Row, Totals};
+use crate::object_stage::{Group, Place};
+use crate::ui::inspect::{Action, Person, Row, Subject, Totals};
 use crate::world::names::NameScope;
 use aurora_net::RegionHandle;
 use aurora_net::build::BuildCmd;
 use std::collections::HashMap;
 use uuid::Uuid;
+
+/// Land impacts asked for in one request, and for one window.
+const COST_BATCH: usize = 64;
+const COST_MOST: usize = 512;
 
 impl App {
     /// "Inspect" of a right-click menu on object `id`: its whole
@@ -39,7 +44,7 @@ impl App {
             return;
         }
         self.inspect_wire(false);
-        self.inspect_ui.inspect(roots);
+        self.inspect_ui.inspect(roots, Subject::Objects);
         // names, owners and dates come with the selection of each prim
         self.inspect_wire(true);
     }
@@ -53,7 +58,7 @@ impl App {
             return;
         }
         self.inspect_wire(false);
-        self.inspect_ui.inspect(roots);
+        self.inspect_ui.inspect(roots, Subject::Avatar(id));
         self.inspect_wire(true);
     }
 
@@ -61,6 +66,7 @@ impl App {
     pub(super) fn inspect_closed(&mut self) {
         self.inspect_wire(false);
         self.inspect_ui.roots.clear();
+        self.inspect_ui.stage.stage.clear(&self.scene);
     }
 
     /// Prims of the inspected objects, root first: (index, is the root).
@@ -80,8 +86,21 @@ impl App {
             .collect()
     }
 
-    /// ObjectSelect / ObjectDeselect of the inspected prims. What the build
-    /// tools have selected themselves stays selected.
+    /// What an avatar puts on, and the prims that arrive, while the window is
+    /// open join the list, and are asked for like the others.
+    fn inspect_arrivals(&mut self) {
+        if let Subject::Avatar(id) = self.inspect_ui.subject {
+            for root in worn_roots(&self.world, &id) {
+                if !self.inspect_ui.roots.contains(&root) {
+                    self.inspect_ui.roots.push(root);
+                }
+            }
+        }
+        self.inspect_wire(true);
+    }
+
+    /// ObjectSelect of the inspected prims, once each, or ObjectDeselect of
+    /// them all. What the build tools have selected themselves stays selected.
     fn inspect_wire(&mut self, select: bool) {
         let kept: HashSet<usize> = if select {
             HashSet::new()
@@ -89,10 +108,26 @@ impl App {
             self.build.highlighted(&self.world).into_iter().map(|(i, _)| i).collect()
         };
         let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
-        for (idx, _) in self.inspect_prims() {
-            if let Some(o) = self.world.objects.get(idx).filter(|_| !kept.contains(&idx)) {
+        let prims = self.inspect_prims();
+        if select {
+            // an object killed and sent again (a teleport there and back) is
+            // selected again: its properties come anew
+            let here: HashSet<Uuid> = prims
+                .iter()
+                .filter_map(|(i, _)| self.world.objects.get(*i))
+                .map(|o| o.full_id)
+                .collect();
+            self.inspect_ui.asked.retain(|id| here.contains(id));
+        }
+        for (idx, _) in prims {
+            if let Some(o) = self.world.objects.get(idx).filter(|_| !kept.contains(&idx))
+                && (!select || self.inspect_ui.asked.insert(o.full_id))
+            {
                 by_region.entry(o.key.region).or_default().push(o.key.local_id);
             }
+        }
+        if !select {
+            self.inspect_ui.asked.clear();
         }
         for (handle, local_ids) in by_region {
             self.send(NetCommand::Build(if select {
@@ -129,22 +164,37 @@ impl App {
             prims: prims.len() as u32,
             ..Totals::default()
         };
-        // a linkset at a time, for its complexity
+        // a linkset at a time, for its complexity, kept on its root's row
+        let mut complexity: HashMap<usize, u32> = HashMap::new();
         let mut linkset: Vec<usize> = Vec::new();
         for (i, (idx, root)) in prims.iter().enumerate() {
             if *root && !linkset.is_empty() {
-                totals.complexity += self.scene.linkset_complexity(&self.world, &linkset);
+                let value = self.scene.linkset_complexity(&self.world, &linkset);
+                complexity.insert(linkset[0], value);
+                totals.complexity += value;
                 linkset.clear();
             }
             linkset.push(*idx);
             if i + 1 == prims.len() {
-                totals.complexity += self.scene.linkset_complexity(&self.world, &linkset);
+                let value = self.scene.linkset_complexity(&self.world, &linkset);
+                complexity.insert(linkset[0], value);
+                totals.complexity += value;
             }
         }
         let mut textures: HashSet<Uuid> = HashSet::new();
         let mut rows = Vec::with_capacity(prims.len());
         let loading = aurora_i18n::tr!("common-loading-2");
+        let mut point = 0;
         for (idx, root) in prims {
+            if root {
+                // the attachment point of the linkset (0: in the world)
+                point = self
+                    .world
+                    .objects
+                    .get(idx)
+                    .filter(|o| o.is_attachment())
+                    .map_or(0, |o| o.attachment_point());
+            }
             let Some(id) = self.world.objects.get(idx).map(|o| o.full_id) else {
                 continue;
             };
@@ -156,6 +206,11 @@ impl App {
                 faces: stats.faces,
                 vertices: stats.vertices,
                 triangles: stats.triangles,
+                point,
+                complexity: complexity.get(&idx).copied().unwrap_or(0),
+                land_impact: (root && point == 0)
+                    .then(|| self.build.costs.objects.get(&id).map(|c| c.linked_set))
+                    .flatten(),
                 ..Row::default()
             };
             for texture in &stats.textures {
@@ -175,7 +230,7 @@ impl App {
             // hover asks for has neither creator nor date
             if let Some(props) = self.build.props.get(&id).filter(|props| props.full).cloned() {
                 row.name = props.name;
-                row.description = props.description;
+                row.description = crate::hover_tips::written(&props.description).to_owned();
                 row.created = props.creation_date / 1_000_000;
                 // LLPermissions::isGroupOwned
                 let group_owned = !props.group_id.is_nil() && (props.owner_id.is_nil() || props.owner_id == props.group_id);
@@ -187,6 +242,7 @@ impl App {
                         .map(|g| g.name.clone())
                         .unwrap_or_else(|| aurora_i18n::tr!("common-group").into());
                     row.owner_name = aurora_i18n::tr!("inspect-group-owner", name = group);
+                    row.owner_group = Some(props.group_id);
                 } else if !props.owner_id.is_nil() {
                     self.world.social.want_name(props.owner_id);
                     (row.owner_name, row.owner) = owner_shown(&self.world, props.owner_id);
@@ -202,6 +258,414 @@ impl App {
         totals.textures = textures.len() as u32;
         (rows, totals)
     }
+}
+
+impl App {
+    /// The Inspect window this frame, and what it asks for.
+    pub(super) fn inspect_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        if !self.inspect_ui.open {
+            return;
+        }
+        self.inspect_arrivals();
+        let (mut rows, totals) = self.inspect_rows();
+        rows.extend(self.inspect_own_body());
+        let objects = self.inspect_ui.subject == Subject::Objects;
+        let people = if objects { Vec::new() } else { self.inspect_people() };
+        let parcel = objects.then(|| self.inspect_parcel(&rows)).flatten();
+        self.inspect_stage(ctx);
+        if objects {
+            self.inspect_costs();
+        }
+        let (name, username, profile) = match self.inspect_ui.subject {
+            Subject::Avatar(id) => {
+                self.world.social.want_name(id);
+                let shown = self.world.rlva_shows_name(NameScope::World, id);
+                (
+                    self.world.social.display_name_in(NameScope::World, &id),
+                    shown
+                        .then(|| crate::ui::profile::web_username(&self.world, NameScope::World, &id))
+                        .flatten(),
+                    shown.then_some(id),
+                )
+            }
+            Subject::Objects => (String::new(), None, None),
+        };
+        let mut columns = if objects {
+            self.settings.inspect_columns
+        } else {
+            self.settings.inspect_avatar_columns
+        };
+        let actions = self.inspect_ui.show(
+            ctx,
+            p,
+            crate::ui::inspect::Frame {
+                rows: &rows,
+                totals: &totals,
+                subject_name: &name,
+                subject_username: username.as_deref(),
+                subject_profile: profile,
+                pics: &self.avatar_pics,
+                point_names: &self.world.avatar_lib.attach_names,
+                max_complexity: self.settings.max_complexity,
+                people: &people,
+                parcel,
+                columns: &mut columns,
+            },
+        );
+        // (the ground of an AURORA_DEMO_INSPECT run is never kept in the
+        // settings, which every viewer of the PC shares)
+        let scripted = self.demo && std::env::var_os("AURORA_DEMO_INSPECT").is_some();
+        let light = self.inspect_ui.stage.light;
+        let stage = !scripted && light != self.settings.stage_light;
+        if stage {
+            self.settings.stage_light = light;
+        }
+        let kept = if objects {
+            &mut self.settings.inspect_columns
+        } else {
+            &mut self.settings.inspect_avatar_columns
+        };
+        if stage || columns != *kept {
+            *kept = columns;
+            self.settings.save();
+        }
+        for action in actions {
+            match action {
+                Action::Profile {
+                    who,
+                    named_here_alone: false,
+                } => self.profile_ui.open(&mut self.world, who),
+                Action::Profile {
+                    who,
+                    named_here_alone: true,
+                } => {
+                    crate::ui::profile::request_open_in(ctx, NameScope::Roster, who);
+                }
+                Action::LookAt(id) => self.inspect_look_at(id),
+                Action::Group(id) => self.group_profile_ui.open(&mut self.world, id),
+            }
+        }
+        if !self.inspect_ui.open {
+            self.inspect_closed();
+        }
+    }
+
+    /// The row of the avatar's own body (often its eyes alone), when some of
+    /// it shows. Aurora's own: it is no object, and the totals leave it out.
+    fn inspect_own_body(&mut self) -> Option<Row> {
+        self.inspect_ui.own_body = false;
+        let Subject::Avatar(id) = self.inspect_ui.subject else {
+            return None;
+        };
+        let avatar = self.world.objects.index_of_uuid(&id)?;
+        // (walks all that is worn: looked at some times a second)
+        let now = std::time::Instant::now();
+        let ui = &mut self.inspect_ui;
+        if ui.own_parts_at.is_none_or(|at| now.duration_since(at).as_millis() > 500) {
+            ui.own_parts = crate::object_stage::own::body_parts(&self.world, &self.scene, avatar);
+            ui.own_parts_at = Some(now);
+        }
+        let parts = self.inspect_ui.own_parts.clone();
+        if parts.is_empty() {
+            return None;
+        }
+        self.inspect_ui.own_body = true;
+        let lib = &self.world.avatar_lib;
+        let eyes = parts.iter().all(|(i, _)| lib.parts[*i].name.starts_with("eye_"));
+        let (owner_name, owner) = owner_shown(&self.world, id);
+        let mut row = Row {
+            id,
+            root: true,
+            name: if eyes {
+                aurora_i18n::tr!("inspect-own-eyes").into()
+            } else {
+                aurora_i18n::tr!("inspect-own-body").into()
+            },
+            description: aurora_i18n::tr!("inspect-own-description").into(),
+            owner_name,
+            owner,
+            creator_name: aurora_i18n::tr!("inspect-own-maker").into(),
+            point: if eyes {
+                crate::ui::inspect::model::OWN_EYES
+            } else {
+                crate::ui::inspect::model::OWN_BODY
+            },
+            faces: parts.len() as u32,
+            ..Row::default()
+        };
+        let mut bakes = HashSet::new();
+        for (i, bake) in &parts {
+            row.vertices += lib.parts[*i].vertices.len() as u32;
+            row.triangles += lib.parts[*i].indices.len() as u32 / 3;
+            if let Some(bake) = bake
+                && bakes.insert(*bake)
+            {
+                let (memory, vram) = self.scene.texture_memory(bake);
+                row.texture_memory += memory;
+                row.vram += vram;
+            }
+        }
+        Some(row)
+    }
+
+    /// Keep the 3D view of the wide window up to date with what is inspected.
+    fn inspect_stage(&mut self, ctx: &egui::Context) {
+        let w = &self.world;
+        let place = match self.inspect_ui.subject {
+            Subject::Avatar(id) => w.objects.index_of_uuid(&id).map_or(Place::World, Place::Worn),
+            // one worn object, or several of one avatar: as they are worn
+            Subject::Objects => wearer_of(w, &self.inspect_ui.roots).map_or(Place::World, Place::Worn),
+        };
+        let group = |root: &Uuid| stage_group(w, root);
+        let now = std::time::Instant::now();
+        let ui = &mut self.inspect_ui;
+        // (first: never among those past the most the view shows)
+        let mut roots = Vec::with_capacity(ui.roots.len() + 1);
+        if let Subject::Avatar(id) = ui.subject
+            && ui.own_body
+        {
+            roots.push(id);
+        }
+        roots.extend(&ui.roots);
+        ui.stage.stage.update(w, &self.scene, &roots, group, place, ctx, now);
+        ui.stage.worn = matches!(place, Place::Worn(_));
+        // (one item does not move)
+        ui.stage.single = ui.roots.len() == 1;
+        ui.stage.light = self.settings.stage_light;
+        ui.demo_stage();
+        let joints = match place {
+            Place::Worn(avatar) if ui.stage.wants_joints() => {
+                let model = ui.stage.stage.model().ok();
+                w.objects
+                    .get(avatar)
+                    .and_then(|o| crate::object_stage::shown_joints(w, &o.full_id, model.map(|m| &**m)))
+            }
+            _ => None,
+        };
+        // (an avatar far away is posed every now and then for the world)
+        if let Place::Worn(avatar) = place
+            && ui.stage.moves()
+            && let Some(wearer) = w.objects.get(avatar)
+        {
+            self.scene.watched.insert(wearer.full_id);
+            let model = ui.stage.stage.model().ok();
+            let own = model.into_iter().flat_map(|m| m.own());
+            self.scene.watched.extend(own.map(|(root, _)| *root));
+        }
+        ui.stage.set_joints(joints);
+    }
+
+    /// The people here and their complexity, as the world names them.
+    fn inspect_people(&mut self) -> Vec<Person> {
+        let own = self.world.agent_id;
+        let seen = self.seen_avatars();
+        // RLVa `@shownearby`: no list of the people around (as Near me)
+        let alone = self.world.rlva.has("shownearby");
+        let subject = match self.inspect_ui.subject {
+            Subject::Avatar(id) => Some(id),
+            Subject::Objects => None,
+        };
+        seen.into_iter()
+            .filter(|s| s.weight > 0 && (!alone || s.id == own || Some(s.id) == subject))
+            .map(|s| {
+                self.world.social.want_name(s.id);
+                let shown = self.world.rlva_shows_name(NameScope::World, s.id);
+                Person {
+                    id: s.id,
+                    pic: shown.then_some(s.id),
+                    name: self.world.social.display_name_in(NameScope::World, &s.id),
+                    complexity: s.weight,
+                    you: s.id == own,
+                    friend: shown && self.world.social.is_friend(&s.id),
+                    drawn: !s.too_complex,
+                }
+            })
+            .collect()
+    }
+
+    /// Land impact used and allowed on our parcel, when every object listed
+    /// stands on it.
+    fn inspect_parcel(&self, rows: &[Row]) -> Option<(i32, i32)> {
+        let parcel = self.world.parcel.as_ref().filter(|p| !p.bitmap.is_empty())?;
+        let origin = self.world.main_origin()?;
+        let now = std::time::Instant::now();
+        let here = rows.iter().filter(|r| r.root).all(|r| {
+            self.world
+                .objects
+                .index_of_uuid(&r.id)
+                .and_then(|idx| crate::scene::Scene::object_transform(&self.world, idx, now, 0))
+                .is_some_and(|xf| {
+                    let (x, y) = crate::ui::minimap::to_global(&self.world, xf.0);
+                    crate::world::landmarks::in_parcel(&parcel.bitmap, origin, glam::DVec3::new(x, y, f64::from(xf.0.z)))
+                })
+        });
+        let max_tasks = self
+            .world
+            .main_region
+            .and_then(|h| self.world.regions.get(&h))
+            .map_or(0, |r| r.max_tasks);
+        let usage = crate::world::land::PrimUsage::of(parcel, max_tasks);
+        here.then_some((usage.used, usage.max))
+    }
+
+    /// Ask for the land impact of the inspected objects not known yet, once
+    /// each (GetObjectCost, as LLSelectMgr asks for its selection).
+    fn inspect_costs(&mut self) {
+        let mut by_region: HashMap<RegionHandle, Vec<Uuid>> = HashMap::new();
+        for id in self.inspect_ui.roots.iter().take(COST_MOST) {
+            let Some(o) = self.world.objects.index_of_uuid(id).and_then(|i| self.world.objects.get(i)) else {
+                continue;
+            };
+            if !o.is_attachment() && self.build.costs.ask_once(o.full_id) {
+                by_region.entry(o.key.region).or_default().push(o.full_id);
+            }
+        }
+        for (handle, ids) in by_region {
+            for batch in ids.chunks(COST_BATCH) {
+                self.build.ask_costs(handle, batch.to_vec());
+            }
+        }
+    }
+
+    /// AURORA_DEMO_INSPECT=wolf|self|objects[:options], the options separated
+    /// by commas (`InspectUi::demo`: item, grow-…, hover, paused, light):
+    /// Inspect on what Violet Wolf or the demo agent wears, or on objects of
+    /// the plaza, once they are in view.
+    pub(super) fn demo_inspect(&mut self) {
+        if !self.demo || self.inspect_ui.demo_done {
+            return;
+        }
+        let Ok(scenario) = std::env::var("AURORA_DEMO_INSPECT") else {
+            self.inspect_ui.demo_done = true;
+            return;
+        };
+        let (who, option) = scenario.split_once(':').unwrap_or((scenario.as_str(), ""));
+        match who {
+            // see-through faces and cut-outs
+            "glass" => {
+                let ids: Vec<Uuid> = self
+                    .world
+                    .objects
+                    .iter()
+                    .filter(|(_, o)| !o.is_avatar() && !o.is_attachment() && o.parent_id == 0)
+                    .filter(|(_, o)| {
+                        o.te.as_ref().is_some_and(|te| {
+                            te.faces
+                                .iter()
+                                .any(|f| (0.02..0.98).contains(&f.color[3]) || !f.material_id.is_nil())
+                        })
+                    })
+                    .map(|(_, o)| o.full_id)
+                    .take(12)
+                    .collect();
+                if ids.len() < 4 {
+                    return;
+                }
+                self.inspect_objects(&ids);
+            }
+            "objects" | "pbr" => {
+                // (`pbr`: those with a PBR material)
+                let ids: Vec<Uuid> = self
+                    .world
+                    .objects
+                    .iter()
+                    .filter(|(_, o)| !o.is_avatar() && !o.is_attachment() && o.parent_id == 0)
+                    .filter(|(_, o)| who == "objects" || !o.extra.render_materials.is_empty())
+                    .map(|(_, o)| o.full_id)
+                    .take(6)
+                    .collect();
+                if ids.len() < if who == "objects" { 6 } else { 1 } {
+                    return;
+                }
+                self.inspect_objects(&ids);
+            }
+            // one worn object of the wolf, as its own menu inspects it
+            "worn" => {
+                let Some(id) = worn_roots(&self.world, &crate::demo::DEMO_LOUP).get(2).copied() else {
+                    return;
+                };
+                self.inspect_object(id);
+            }
+            "market" | "piece" => {
+                let most = if who == "piece" { 1 } else { usize::MAX };
+                let ids: Vec<Uuid> = crate::demo::market::some()
+                    .into_iter()
+                    .filter_map(|local| self.world.objects.iter().find(|(_, o)| o.key.local_id == local))
+                    .map(|(_, o)| o.full_id)
+                    .take(most)
+                    .collect();
+                if ids.is_empty() {
+                    return;
+                }
+                self.inspect_objects(&ids);
+            }
+            // someone of AURORA_DEMO_CROWD: many rigged meshes
+            "crowd" => {
+                let known = [crate::demo::DEMO_AGENT, crate::demo::DEMO_LOUP];
+                let who = self
+                    .world
+                    .objects
+                    .avatars()
+                    .map(|(_, o)| o.full_id)
+                    .find(|id| !known.contains(id) && worn_roots(&self.world, id).len() > 1);
+                let Some(id) = who else { return };
+                self.inspect_avatar(id);
+            }
+            who => {
+                let id = if who == "self" {
+                    crate::demo::DEMO_AGENT
+                } else {
+                    crate::demo::DEMO_LOUP
+                };
+                if worn_roots(&self.world, &id).len() < 2 {
+                    return;
+                }
+                self.inspect_avatar(id);
+            }
+        }
+        option.split(',').for_each(|o| self.inspect_ui.demo(o));
+        self.inspect_ui.demo_done = true;
+    }
+
+    /// Look at: the menu's Zoom on the object, the camera following it (an
+    /// attachment: its avatar), as Area Search's Zoom.
+    fn inspect_look_at(&mut self, id: Uuid) {
+        let now = std::time::Instant::now();
+        let Some(position) = self
+            .world
+            .objects
+            .index_of_uuid(&id)
+            .and_then(|idx| crate::scene::Scene::object_transform(&self.world, idx, now, 0))
+            .map(|xf| xf.0)
+        else {
+            return;
+        };
+        self.on_ctx_action(crate::ui::context::CtxAction::Zoom(position, Some(id)));
+    }
+}
+
+/// The avatar that wears every object of `roots`, if one does.
+fn wearer_of(world: &crate::world::World, roots: &[Uuid]) -> Option<usize> {
+    let mut wearer = None;
+    for root in roots {
+        let object = world.objects.index_of_uuid(root).and_then(|i| world.objects.get(i))?;
+        let parent = world.objects.parent_of(object)?;
+        if !world.objects.get(parent)?.is_avatar() || wearer.is_some_and(|w| w != parent) {
+            return None;
+        }
+        wearer = Some(parent);
+    }
+    wearer
+}
+
+/// An object and its prims, for the 3D views of Inspect and Area Search.
+pub(super) fn stage_group(world: &crate::world::World, root: &Uuid) -> Option<Group> {
+    let idx = world.objects.index_of_uuid(root)?;
+    let prims = crate::build::family(world, idx)
+        .into_iter()
+        .filter(|i| *i == idx || world.objects.get(*i).is_some_and(|o| !o.is_avatar()))
+        .collect();
+    Some(Group { root: *root, prims })
 }
 
 /// The resident who owns a prim as its row names them, and whose profile

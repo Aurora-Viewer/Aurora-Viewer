@@ -180,7 +180,8 @@ impl App {
                 Row::text("about-language", aurora_i18n::language()),
                 Row::text("about-window-size", format!("{w} × {h} px")),
                 Row::text("about-ui-scale", format!("{:.0} %", s.ui_scale * 100.0)),
-                if s.rlva_enabled {
+                // (RlvHandler::isEnabled: what runs, not the preference)
+                if self.rlva_switch.running() {
                     Row::text("about-rlva", crate::world::rlva::VERSION)
                 } else {
                     Row::key("about-rlva", "about-off")

@@ -32,7 +32,9 @@
 // and a pixel is in shadow when one of the depths before it along the ray
 // comes within a surface thickness of its own. Changes from the original:
 // integer texel loads instead of a clamp-to-border sampler (outside the
-// screen reads the far depth), the early-out of a whole wavefront through
+// screen reads the far depth), the two ends of a wavefront placed without
+// going through the light's point when it is very far off screen
+// (`FAR_LIGHT`), the early-out of a whole wavefront through
 // workgroup memory (no wave intrinsics in WGSL), the shadow stored rather
 // than the light, no debug outputs, occluders taken as deep as the ray went
 // under them (up to `tuning.w`) rather than a shell (`depth_delta`), more
@@ -70,6 +72,13 @@ const HARD_SHADOW_SAMPLES: i32 = 4;
 const FADE_OUT_SAMPLES: i32 = 8;
 // Depth reads per thread: SAMPLE_COUNT / WAVE_SIZE + 2.
 const READ_COUNT: i32 = 2;
+// A light's point further off screen than this many pixels (2^20) has its
+// wavefronts placed without Bend's lerp through that point; a nearer one
+// keeps Bend's arithmetic as it is. With the sun overhead and a level view
+// the point is some 1e7 pixels away in a window 2048 high: f32 no longer
+// holds half a pixel there, and that lerp left rows unwritten. Must match
+// FAR_LIGHT in the tests of contact_shadows.rs.
+const FAR_LIGHT: f32 = 1048576.0;
 // Reversed depth: the far plane at 0, the near plane at 1.
 const FAR_DEPTH: f32 = 0.0;
 const NEAR_DEPTH: f32 = 1.0;
@@ -152,8 +161,14 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     let major_axis_end = abs(major_axis) - f32(WAVE_SIZE);
     var ma_light_frac = select(light_xy_fraction.y, light_xy_fraction.x, x_axis_major);
     ma_light_frac = select(ma_light_frac, -ma_light_frac, major_axis > 0.0);
-    let start_xy = xy_f + light_xy;
-    let end_xy = mix(params.light.xy, start_xy, (major_axis_end + ma_light_frac) / (major_axis_start + ma_light_frac));
+    var start_xy = xy_f + light_xy;
+    var end_xy = mix(params.light.xy, start_xy, (major_axis_end + ma_light_frac) / (major_axis_start + ma_light_frac));
+    if (any(abs(params.light.xy) > vec2<f32>(FAR_LIGHT))) {
+        // the wave's first pixel, its centre found in integers, and its
+        // last one a wave's step from it, taken from the offset to the light
+        start_xy = vec2<f32>(xy + vec2<i32>(floor(params.light.xy))) + 0.5;
+        end_xy = start_xy - (xy_f - light_xy_fraction) * (f32(WAVE_SIZE) / (major_axis_start + ma_light_frac));
+    }
     let xy_delta = start_xy - end_xy;
     let thread_step = f32(tid ^ select(u32(WAVE_SIZE - 1), 0u, reverse_direction));
     var pixel_xy = mix(start_xy, end_xy, thread_step / f32(WAVE_SIZE));
