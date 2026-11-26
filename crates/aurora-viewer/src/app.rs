@@ -3455,6 +3455,16 @@ impl App {
         !(self.interface.ui_off || self.director_playing() || self.photo_full_frame())
     }
 
+    /// Whether the build tools run this key press, as the key handler
+    /// decides it (`build_keyboard` there; `Shortcut::takes_press`).
+    fn build_takes_press(&self, key: &winit::keyboard::Key, code: KeyCode, mods: Mods) -> bool {
+        let build_keyboard = self.in_world()
+            && self.windows_drawn()
+            && !self.egui_ctx.egui_wants_keyboard_input()
+            && !egui::Popup::is_any_open(&self.egui_ctx);
+        crate::build::ui::Shortcut::takes_press(key, code, mods, self.build.open, build_keyboard)
+    }
+
     /// Nearby chat in bubbles above the heads (#673); AURORA_DEMO_CHAT_BUBBLES
     /// turns them on for the run, without saving it.
     fn chat_bubbles(&self) -> bool {
@@ -25665,7 +25675,9 @@ impl ApplicationHandler for App {
         let altgr_shortcut = matches!(&event, WindowEvent::KeyboardInput { event: ke, .. }
             if self.altgr_native_key(ke));
         // People is Command/Ctrl+Shift+A. A focused widget otherwise keeps
-        // the key, and egui selects all on any Command+A.
+        // the key, and egui selects all on any Command+A. A press the build
+        // tools run goes to egui, where they read it (Ctrl+L: Link while
+        // building, the address bar otherwise).
         let claim_over_focus = matches!(
             &event,
             WindowEvent::KeyboardInput { event: ke, .. }
@@ -25673,6 +25685,7 @@ impl ApplicationHandler for App {
                     && !ke.repeat
                     && !self.exit_prompt.open
                     && self.options_ui.capture.is_none()
+                    && !matches!(bound_key, Some(code) if self.build_takes_press(&ke.logical_key, code, key_mods))
                     && matches!(bound_key, Some(code)
                         if shortcut_claims_focus(
                             &self.egui_ctx,

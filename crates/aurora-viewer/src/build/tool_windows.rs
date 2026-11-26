@@ -114,7 +114,9 @@ impl BuildTool {
     ///
     /// Aurora style: Camera, Move, Create and Land open or close their own
     /// window from every path (Ctrl+1, 2, 4, 5 too); Edit's menu entry and
-    /// Ctrl+3 open the main window and select Edit.
+    /// Ctrl+3 open the main window on Edit, give Edit back while another
+    /// tool is in use, and close the window when it shows Edit (human
+    /// request, 2026-11-26).
     ///
     /// Legacy style, its single window as the Legacy Viewer has it: Build
     /// opens it on Create (LLToolMgr::enterBuildMode) or closes it; a lit
@@ -137,7 +139,7 @@ impl BuildTool {
             return;
         }
         match mode {
-            None | Some(Tool::Edit) if (toggle || mode.is_none()) && self.lit(mode) => self.close_main(world, s),
+            None | Some(Tool::Edit) if self.lit(mode) && (toggle || mode.is_none() || self.tool == Tool::Edit) => self.close_main(world, s),
             Some(tool) if tool != Tool::Edit && self.tool_window_open(tool) => self.close_tool_window(tool, world, s),
             _ if !allowed => {}
             None => self.open_build(Tool::Edit),

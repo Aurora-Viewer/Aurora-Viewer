@@ -59,13 +59,30 @@ fn aurora_build_opens_and_closes_the_main_window_on_edit() {
     b.button(None);
     assert!(!b.tool.open && !b.tool.main_open);
     assert!(b.lit().is_empty());
-    // Build - Edit's button does the same; Ctrl+3 opens and stays
+    // Build - Edit's button does the same, and so do Ctrl+3 and its menu
+    // entry (human request, 2026-11-26)
     b.button(Some(Tool::Edit));
-    assert!(b.tool.main_open);
-    b.key(Tool::Edit);
     assert!(b.tool.main_open);
     b.button(Some(Tool::Edit));
     assert!(!b.tool.open);
+    b.key(Tool::Edit);
+    assert!(b.tool.open && b.tool.main_open);
+    assert_eq!(b.tool.tool, Tool::Edit);
+    b.key(Tool::Edit);
+    assert!(!b.tool.open, "Ctrl+3 closes the window it opened");
+    b.button(None);
+    b.key(Tool::Edit);
+    assert!(!b.tool.open, "and the one Build opened");
+    // while another tool's window holds the tool, Ctrl+3 first gives Edit
+    // back, then closes
+    b.button(None);
+    b.key(Tool::Focus);
+    assert_eq!(b.tool.tool, Tool::Focus);
+    b.key(Tool::Edit);
+    assert!(b.tool.main_open);
+    assert_eq!(b.tool.tool, Tool::Edit);
+    b.key(Tool::Edit);
+    assert!(!b.tool.main_open);
 }
 
 #[test]

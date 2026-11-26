@@ -99,6 +99,14 @@ impl Shortcut {
         Some(command)
     }
 
+    /// Whether the build tools run this press (`take_native_key`'s
+    /// command). They read it from egui (`shortcuts`): a viewer shortcut
+    /// bound to the same chord must not keep it from egui then, as Ctrl+L,
+    /// the address bar, kept Link from the build tools.
+    pub fn takes_press(key: &NativeKey, code: KeyCode, mods: Mods, open: bool, build_keyboard: bool) -> bool {
+        build_keyboard && crate::keybinds::native_shortcut_key(key, code).is_some_and(|key| Self::from_key(key, mods, open).is_some())
+    }
+
     /// Whether the shortcut keeps its key from the gestures. Menu
     /// accelerators go before gestures, but a disabled menu item lets its
     /// key through (LLViewerWindow::handleKey, LLMenuItemCallGL::
@@ -333,6 +341,34 @@ mod tests {
         let build = Shortcut::take_native_key(&NativeKey::Character("b".into()), KeyCode::KeyB, ctrl, false, true, &mut down);
         assert_eq!(build, Some(Shortcut::ToggleBuild));
         assert!(Shortcut::ToggleBuild.takes_gesture_key(false));
+    }
+
+    /// Ctrl+L is Link while building and the address bar otherwise: the
+    /// build tools take the press while they are open, so that the viewer's
+    /// binding does not keep it from egui, where they read it (human
+    /// report, 2026-11-26).
+    #[test]
+    fn ctrl_l_links_while_building_and_leaves_the_address_bar_otherwise() {
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let l = NativeKey::Character("l".into());
+        assert_eq!(
+            crate::keybinds::KeyBindings::default().triggered(&Input::key(KeyCode::KeyL), ctrl),
+            Some(crate::keybinds::Action::AddressBar)
+        );
+        assert!(Shortcut::takes_press(&l, KeyCode::KeyL, ctrl, true, true));
+        assert!(!Shortcut::takes_press(&l, KeyCode::KeyL, ctrl, false, true), "build tools closed");
+        assert!(
+            !Shortcut::takes_press(&l, KeyCode::KeyL, ctrl, true, false),
+            "a field has the keyboard"
+        );
+        let mut down = HashSet::new();
+        assert_eq!(
+            Shortcut::take_native_key(&l, KeyCode::KeyL, ctrl, true, true, &mut down),
+            Some(Shortcut::Link)
+        );
     }
 
     /// "Place on surface" goes with the object snap, as its button: P does
