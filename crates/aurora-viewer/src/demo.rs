@@ -1780,6 +1780,8 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         "bilibili" => "https://www.bilibili.com/video/BV1B7411m7LV/",
                         "framatube" => "https://framatube.org/w/9c9de5e8-0a1e-484a-b099-e80766180a6d",
                         "twitch" => "https://clips.twitch.tv/IncredulousAbstemiousFennelImGlitch",
+                        "x" => "https://x.com/NASA/status/2042791040516845925",
+                        "youtube" => "https://youtu.be/jNQXAC9IVRw",
                         _ => return Vec::new(),
                     };
                     vec![line(ago(1), name, friend, ChatKind::Im, url)]

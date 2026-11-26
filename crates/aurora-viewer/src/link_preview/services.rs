@@ -630,7 +630,7 @@ pub(super) fn clip_from_post(service: Service, body: &[u8]) -> Option<FoundClip>
         return None;
     }
     let post: serde_json::Value = serde_json::from_slice(body).ok()?;
-    if post["possibly_sensitive"].as_bool() == Some(true) {
+    if post["possibly_sensitive"].as_bool() != Some(false) {
         return None;
     }
     let detail = &post["mediaDetails"][0];

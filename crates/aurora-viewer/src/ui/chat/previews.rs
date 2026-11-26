@@ -659,6 +659,8 @@ impl Previews {
         let minimum = Vec2::new(v.minimum_width, v.minimum_width / v.aspect) + v.chrome;
         let default = window_size(WINDOW_WIDTH, v.chrome, v.aspect, work.height() * 0.8).max(minimum);
         let pos = work.center() - default * 0.5;
+        let browser_tip = link_tip(&v.link, false);
+        let copy_tip = link_tip(&v.link, true);
         let mut floater = crate::ui::widgets::Floater::new(PLAYER_WINDOW, title, pos, default)
             .action(
                 if v.muted { "volume-off" } else { "volume" },
@@ -666,8 +668,8 @@ impl Previews {
                 &mut toggle_sound,
             )
             .action("settings-filled", aurora_i18n::tr!("ui-chat-preview-settings"), &mut settings)
-            .action("external-link-filled", &link_tip(&v.link, false), &mut browser)
-            .action("link-filled", &link_tip(&v.link, true), &mut copy_link)
+            .action("external-link-filled", &browser_tip, &mut browser)
+            .action("link-filled", &copy_tip, &mut copy_link)
             .flush_body()
             .keep_aspect(v.aspect, v.chrome);
         floater.min_size = floater.min_size.max(minimum);
