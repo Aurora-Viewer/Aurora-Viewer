@@ -1785,7 +1785,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         "reddit-post" => {
                             "https://www.reddit.com/r/funnyvideos/comments/15byye8/turning_delay_into_play_these_guys_know_how_to/"
                         }
-                        "dailymotion" => "https://www.dailymotion.com/video/x84sh87",
+                        "dailymotion" => "https://geo.dailymotion.com/player/x8lr5.html?video=x84sh87",
                         "arte" => "https://www.arte.tv/en/videos/135503-000-A/the-polish-silicon-valley/",
                         "niconico" => "https://www.nicovideo.jp/watch/sm8628149",
                         "x" => "https://x.com/NASA/status/2042791040516845925",

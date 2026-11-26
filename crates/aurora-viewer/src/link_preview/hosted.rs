@@ -16,6 +16,8 @@ pub(super) enum Hosted {
     TwitchVideo(String),
     TwitchLive(String),
     KickLive(String),
+    Dailymotion { player: String, video: String },
+    Arte { language: String, id: String },
 }
 
 fn id_ok(id: &str, max: usize) -> bool {
@@ -86,9 +88,27 @@ fn live_channel(name: &str) -> bool {
         )
 }
 
+pub(super) fn arte_id(id: &str) -> bool {
+    let Some((number, variant)) = id.rsplit_once('-') else {
+        return false;
+    };
+    variant.len() == 1
+        && variant.bytes().all(|b| b.is_ascii_uppercase())
+        && number
+            .split_once('-')
+            .is_some_and(|(program, part)| digits(program, 4, 9) && digits(part, 3, 3))
+}
+
+fn dailymotion_id(id: &str) -> bool {
+    id.starts_with('x') && id.len() > 1 && id_ok(id, 24)
+}
+
 impl Hosted {
     pub(super) fn requires_player_click(&self) -> bool {
-        matches!(self, Self::InstagramReel(_) | Self::FacebookReel(_))
+        matches!(
+            self,
+            Self::InstagramReel(_) | Self::FacebookReel(_) | Self::Dailymotion { .. } | Self::Arte { .. }
+        )
     }
     pub(super) fn minimum_width(&self) -> f32 {
         match self {
@@ -108,6 +128,22 @@ impl Hosted {
         let parts: Vec<_> = url.path().trim_end_matches('/').strip_prefix('/')?.split('/').collect();
         let host = url.host_str()?;
         match (host, parts.as_slice()) {
+            ("geo.dailymotion.com", ["player", file]) => {
+                let player = file.strip_suffix(".html").filter(|id| dailymotion_id(id))?;
+                let video = url.query_pairs().find(|(key, _)| key == "video")?.1;
+                return dailymotion_id(&video).then(|| Self::Dailymotion {
+                    player: player.to_owned(),
+                    video: video.into_owned(),
+                });
+            }
+            ("www.arte.tv" | "arte.tv", ["embeds", language, id])
+                if matches!(*language, "en" | "fr" | "de" | "es" | "pl" | "it" | "ro") && arte_id(id) =>
+            {
+                return Some(Self::Arte {
+                    language: (*language).to_owned(),
+                    id: (*id).to_owned(),
+                });
+            }
             ("instagram.com" | "www.instagram.com", ["reel", id]) if instagram_id(id) => {
                 return Some(Self::InstagramReel((*id).to_owned()));
             }
@@ -197,6 +233,7 @@ impl Hosted {
 
     pub(super) fn page(&self) -> String {
         match self {
+            Self::Dailymotion { .. } | Self::Arte { .. } => self.player(),
             Self::InstagramReel(id) => format!("https://www.instagram.com/reel/{id}/"),
             Self::FacebookReel(id) => format!("https://www.facebook.com/reel/{id}/"),
             Self::Framatube(id) => format!("https://framatube.org/w/{id}"),
@@ -214,6 +251,8 @@ impl Hosted {
 
     pub(super) fn player(&self) -> String {
         match self {
+            Self::Dailymotion { player, video } => format!("https://geo.dailymotion.com/player/{player}.html?video={video}"),
+            Self::Arte { language, id } => format!("https://www.arte.tv/embeds/{language}/{id}"),
             Self::InstagramReel(id) => format!("https://www.instagram.com/reel/{id}/embed/"),
             Self::FacebookReel(id) => {
                 format!("https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2Freel%2F{id}%2F&autoplay=false")
@@ -240,6 +279,17 @@ impl Hosted {
 
     pub(super) fn oembed(&self) -> Option<String> {
         let endpoint = match self {
+            Self::Dailymotion { player, video } => {
+                return Url::parse_with_params(
+                    "https://www.dailymotion.com/services/oembed",
+                    [
+                        ("url", format!("https://www.dailymotion.com/video/{video}")),
+                        ("player", player.clone()),
+                    ],
+                )
+                .ok()
+                .map(String::from);
+            }
             Self::Streamable(_) => "https://api.streamable.com/oembed.json",
             Self::Vimeo { .. } => "https://vimeo.com/api/oembed.json",
             Self::TikTok { .. } => "https://www.tiktok.com/oembed",
@@ -250,7 +300,8 @@ impl Hosted {
             | Self::TwitchLive(_)
             | Self::KickLive(_)
             | Self::InstagramReel(_)
-            | Self::FacebookReel(_) => {
+            | Self::FacebookReel(_)
+            | Self::Arte { .. } => {
                 return None;
             }
         };
@@ -270,6 +321,7 @@ impl Hosted {
         }
         let host = parsed.host_str()?;
         let permitted = match self {
+            Self::Dailymotion { .. } => super::in_domain(host, "dmcdn.net"),
             Self::Streamable(_) => matches!(
                 host,
                 "images.streamable.com" | "cdn-cf-east.streamable.com" | "cdn-cf-west.streamable.com"
@@ -283,7 +335,8 @@ impl Hosted {
             | Self::TwitchLive(_)
             | Self::KickLive(_)
             | Self::InstagramReel(_)
-            | Self::FacebookReel(_) => false,
+            | Self::FacebookReel(_)
+            | Self::Arte { .. } => false,
         };
         permitted.then_some(url)
     }

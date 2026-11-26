@@ -452,7 +452,7 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
         ("snapchat.com", ["spotlight", id] | [_, "spotlight", id]) => {
             (8..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
         }
-        ("dailymotion.com", ["video", id]) => id.starts_with('x') && slug(id),
+        ("dailymotion.com", ["video", id]) | ("dai.ly", [id]) => id.starts_with('x') && alnum(id, 2, 24),
         ("arte.tv", [lang, "videos", id, ..]) => {
             lang.len() == 2
                 && id.rsplit_once('-').is_some_and(|(body, variant)| {
@@ -481,7 +481,11 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
         _ => false,
     };
     safe.then(|| {
-        let mut page = url.clone();
+        let mut page = if host == "dai.ly" {
+            Url::parse(&format!("https://www.dailymotion.com/video/{}", parts[0])).expect("validated Dailymotion video ID")
+        } else {
+            url.clone()
+        };
         page.set_query(None);
         page.set_fragment(None);
         if host == "pornhub.com"
@@ -491,6 +495,42 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
         }
         (Service::Site, Step::Publisher(page.into()))
     })
+}
+
+/// Use an ARTE player only when the programme advertises its own embed URL.
+pub(super) fn arte_clip(page: &str, html: &str) -> Option<FoundClip> {
+    let page_url = Url::parse(page).ok()?;
+    if bare_host(&page_url).as_deref() != Some("arte.tv") {
+        return None;
+    }
+    let parts = segments(&page_url);
+    let [language, "videos", id, ..] = parts.as_slice() else {
+        return None;
+    };
+    let embed = metadata(html, &["og:video:secure_url", "og:video", "twitter:player"])?;
+    if embed != format!("https://www.arte.tv/embeds/{language}/{id}") {
+        return None;
+    }
+    let clip = super::Clip::of(&embed)?;
+    let width = metadata(html, &["og:video:width"]).and_then(|s| s.parse().ok());
+    let height = metadata(html, &["og:video:height"]).and_then(|s| s.parse().ok());
+    Some(FoundClip {
+        clip,
+        title: metadata(html, &["og:title", "twitter:title"])?,
+        channel: "ARTE".into(),
+        posters: publisher_poster(page, html).into_iter().collect(),
+        size: width.zip(height),
+    })
+}
+
+#[test]
+fn arte_plays_only_the_embed_advertised_for_that_programme() {
+    let page = "https://www.arte.tv/en/videos/135503-000-A/episode/";
+    let html = r#"<meta property="og:video" content="https://www.arte.tv/embeds/en/135503-000-A">
+        <meta property="og:title" content="An episode">"#;
+    assert_eq!(arte_clip(page, html).unwrap().title, "An episode");
+    assert!(arte_clip(page, &html.replace("/embeds/en/", "/embeds/fr/")).is_none());
+    assert!(arte_clip(page, &html.replace("www.arte.tv", "example.org")).is_none());
 }
 
 /// A public poster at the publisher or one of its own media hosts.

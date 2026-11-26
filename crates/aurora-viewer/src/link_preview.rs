@@ -1230,6 +1230,9 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                 return Ok(Content::Post(post, picture));
             }
             let html = text_head(client, &page, "text/html", "</head>").await.0?;
+            if let Some(found) = services::arte_clip(&page, &html) {
+                return Ok(Content::Clip(fetch_found_clip(client, found).await));
+            }
             let title = services::metadata(&html, &["og:title", "twitter:title"]).ok_or(Failure::Unavailable)?;
             let channel = services::metadata(&html, &["author", "og:site_name"])
                 .or_else(|| host(&page))
