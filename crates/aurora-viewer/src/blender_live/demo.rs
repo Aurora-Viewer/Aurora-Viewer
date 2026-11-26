@@ -46,6 +46,29 @@ pub fn fixture(rig: &Rig, multiple: bool) -> Result<protocol::Prepared, String> 
 }
 
 pub fn static_fixture(rig: &Rig, linked: bool) -> Result<protocol::Prepared, String> {
+    static_with(rig, linked, None)
+}
+
+/// `AURORA_DEMO_BLENDER_LIVE=static-repaint`: the static object with a base
+/// colour texture, its surface colour white as the plug-in sends a textured
+/// surface; `painted` is the same object after a repaint of that texture
+/// alone, a later revision, so its card's thumbnail and time change.
+pub fn repaint_fixture(rig: &Rig, painted: bool) -> Result<protocol::Prepared, String> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let pixel: [u8; 4] = if painted { [140, 70, 235, 255] } else { [26, 204, 166, 255] };
+    let texture = serde_json::json!({
+        "images": [{"width": 1, "height": 1, "rgba": STANDARD.encode(pixel)}],
+        "color": [1.0, 1.0, 1.0, 1.0],
+        "material": {"metallic": 0.0, "roughness": 0.6, "emissive": [0, 0, 0], "double_sided": false,
+            "alpha_mode": "OPAQUE", "textures": [0, null, null, null]},
+        "revision": if painted { 2 } else { 1 },
+    });
+    static_with(rig, false, Some(texture))
+}
+
+/// The static objects, with `texture`'s image, colour and material on the
+/// root's surface when it is given.
+fn static_with(rig: &Rig, linked: bool, texture: Option<serde_json::Value>) -> Result<protocol::Prepared, String> {
     let vertices: Vec<_> = (0..8)
         .map(|i| {
             let p = Vec3::new(
@@ -70,7 +93,14 @@ pub fn static_fixture(rig: &Rig, linked: bool) -> Result<protocol::Prepared, Str
         // Child first also exercises list-order independence in the worker.
         meshes.insert(0, child);
     }
-    let bytes = serde_json::to_vec(&serde_json::json!({"protocol":1,"revision":1,"meshes":meshes})).map_err(|e| e.to_string())?;
+    let mut value = serde_json::json!({"protocol":1,"revision":1,"meshes":meshes});
+    if let Some(texture) = texture {
+        value["images"] = texture["images"].clone();
+        value["revision"] = texture["revision"].clone();
+        value["meshes"][0]["faces"][0]["color"] = texture["color"].clone();
+        value["meshes"][0]["faces"][0]["material"] = texture["material"].clone();
+    }
+    let bytes = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
     let mut snapshot = protocol::prepare(&bytes, &rig.names.keys().cloned().collect())?;
     let rigged = fixture(rig, false)?;
     snapshot.triangles += rigged.triangles;

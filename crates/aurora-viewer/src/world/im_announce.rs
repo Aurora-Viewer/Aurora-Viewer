@@ -58,6 +58,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         log::info!("incoming IM announced (the sender started typing)");
         self.conversation_card(from, line);

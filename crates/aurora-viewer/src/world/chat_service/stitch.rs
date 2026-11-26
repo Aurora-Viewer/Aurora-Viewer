@@ -352,6 +352,48 @@ mod tests {
         assert_eq!(newest.iter().map(|m| m.message.as_str()).collect::<Vec<_>>(), ["b", "c"]);
     }
 
+    /// A service row of `from` recorded at `created` (RFC 3339 UTC), `tail`
+    /// telling apart rows of the same second.
+    fn row_from(from: Uuid, created: &str, text: &str, tail: i8) -> HistoryRow {
+        let secs = created_at_seconds(created).unwrap() as u64;
+        let key = TimeUuidKey {
+            ticks: UUID_EPOCH + secs * 10_000_000,
+            tail: [i8::MIN, tail, 0, 0, 0, 0, 0, 0],
+        };
+        HistoryRow {
+            msg_id: format_time_uuid(&key),
+            key,
+            from_id: from,
+            created_at: created.into(),
+            ..row(0, text)
+        }
+    }
+
+    #[test]
+    fn a_long_sent_line_reopened_is_covered_by_the_rows_of_its_parts() {
+        let agent = Uuid::from_u128(1);
+        // ~1,428 bytes: two IMs on the wire, two service rows
+        let text = (0..238).map(|i| format!("w{i:04}")).collect::<Vec<_>>().join(" ");
+        let parts = aurora_net::message_split::message_parts(&text);
+        assert_eq!(parts.len(), 2);
+        // winter (SLT = PST): the transcript line, ten minutes after the
+        // archive's oldest row, is admitted beside the archive
+        let archive = [
+            row_from(Uuid::from_u128(7), "2026-11-24T19:00:00Z", "the oldest row", 0),
+            row_from(agent, "2026-11-24T19:10:05Z", parts[0], 1),
+            row_from(agent, "2026-11-24T19:10:05Z", parts[1], 2),
+        ];
+        let oldest = created_at_seconds("2026-11-24T19:00:00Z");
+        let legacy = admit_legacy(vec![legacy_message(&entry("2026/11/24 11:10", "You", &text), agent)], oldest);
+        assert_eq!(legacy.len(), 1, "the line is admitted");
+        let all = stitch(legacy, &archive, &[], 0);
+        let texts: Vec<&str> = all.iter().map(|m| m.message.as_str()).collect();
+        assert_eq!(texts, ["the oldest row", parts[0], parts[1]], "the message once, as its parts");
+        // one part missing: the line is not covered and stays
+        let legacy = admit_legacy(vec![legacy_message(&entry("2026/11/24 11:10", "You", &text), agent)], oldest);
+        assert_eq!(stitch(legacy, &archive[..2], &[], 0).len(), 3);
+    }
+
     #[test]
     fn the_family_is_the_undated_file_then_the_months() {
         let dir = std::env::temp_dir().join(format!("aurora-stitch-{}", Uuid::new_v4()));

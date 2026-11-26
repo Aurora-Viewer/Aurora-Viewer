@@ -4,7 +4,10 @@ use aurora_render::{StagedTexture, StagingPool};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+};
 use uuid::Uuid;
 pub const STAGING_BUSY: &str = "AURORA_BLENDER_STAGING_BUSY";
 
@@ -20,9 +23,44 @@ pub struct Image {
 pub struct PreparedImage {
     pub id: Uuid,
     pub pixels: Arc<aurora_assets::DecodedImage>,
+    /// Its mip chain in the staging pool, until the image is on the GPU
+    /// (`Live::release_staged`): a region kept alive pins its chunk, and the
+    /// pool then holds every other upload of the viewer back several frames
+    /// (`StagingPool::prepare`). Staged again from `pixels` when needed.
     pub staged: Option<Arc<StagedTexture>>,
     pub alpha: crate::scene::jobs::AlphaKind,
     pub has_alpha: bool,
+}
+
+/// An image of the listener's last snapshot, kept for the next one: its
+/// pixels, and its staged copy only while a snapshot not yet uploaded still
+/// holds it. The cache never keeps a staged copy alive itself.
+#[derive(Clone)]
+pub struct CachedImage {
+    image: PreparedImage,
+    staged: Weak<StagedTexture>,
+}
+
+impl CachedImage {
+    pub fn of(image: &PreparedImage) -> Self {
+        Self {
+            staged: image.staged.as_ref().map(Arc::downgrade).unwrap_or_default(),
+            image: PreparedImage {
+                staged: None,
+                ..image.clone()
+            },
+        }
+    }
+
+    /// The image for a new snapshot: no staged copy once the one it had is
+    /// gone, that is once it was uploaded (the viewer keeps the image on the
+    /// GPU while its snapshot has it, `Scene::install_preview_images`).
+    pub fn reuse(&self) -> PreparedImage {
+        PreparedImage {
+            staged: self.staged.upgrade(),
+            ..self.image.clone()
+        }
+    }
 }
 
 fn transforms() -> [[f32; 5]; 4] {
@@ -46,7 +84,7 @@ fn invalid() -> String {
     aurora_i18n::tr!("blender-live-invalid-material").into()
 }
 
-pub fn images(images: Vec<Image>, pool: Option<&StagingPool>, cache: &HashMap<Uuid, PreparedImage>) -> Result<Vec<PreparedImage>, String> {
+pub fn images(images: Vec<Image>, pool: Option<&StagingPool>, cache: &HashMap<Uuid, CachedImage>) -> Result<Vec<PreparedImage>, String> {
     if images.len() > 16 {
         return Err(invalid());
     }
@@ -75,10 +113,8 @@ pub fn images(images: Vec<Image>, pool: Option<&StagingPool>, cache: &HashMap<Uu
             let mut id = [0; 16];
             id.copy_from_slice(&digest[..16]);
             let id = Uuid::from_bytes(id);
-            if let Some(cached) = cache.get(&id)
-                && (pool.is_none() || cached.staged.is_some())
-            {
-                return Ok(cached.clone());
+            if let Some(cached) = cache.get(&id) {
+                return Ok(cached.reuse());
             }
             let alpha = crate::scene::jobs::classify_alpha(&rgba);
             let has_alpha = rgba.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 255);

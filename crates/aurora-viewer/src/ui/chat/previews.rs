@@ -1523,6 +1523,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let mut pv = Previews::default();
         let visible = |pv: &Previews, line: &ChatLine| text(Some(pv), line, &line.text, 320.0).into_owned();
@@ -1613,6 +1614,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         assert_eq!(text(Some(&pv), &line, &line.text, 340.0), urls[3]);
         assert_eq!(

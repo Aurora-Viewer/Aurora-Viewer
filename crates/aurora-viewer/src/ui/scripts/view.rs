@@ -158,7 +158,8 @@ fn run(
             e.tools.file_job = Some(files::open(settings.convert_tabs));
         }
         Command::Export => e.tools.file_job = Some(files::save(e.name.clone(), e.source.clone(), e.lua())),
-        Command::Preferences => prefs.preferences.open = true,
+        // shown again, a minimized window expands (LLFloaterReg::showInstance)
+        Command::Preferences => crate::ui::widgets::open_floater(ctx, super::dialogs::Preferences::WINDOW, &mut prefs.preferences.open),
         Command::External => {
             e.tools.file_snapshot.clone_from(&e.source);
             // the script takes the same file again: the watch of the last
