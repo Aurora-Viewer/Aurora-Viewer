@@ -21,7 +21,11 @@ toolbar-align-center = Centre aligned
 
 toolbar-align-middle = Centre aligned
 
-area-search-neighbors = Include neighbouring regions
+toolbar-edit = Customise buttons and menus…
+
+toolbar-interface-edit = Customise interface
+
+build-create-center-on-prim = Centre on prim
 
 director-key-time-tip = When the camera is on this keyframe. Only this keyframe moves, between its two neighbours.
 
@@ -330,7 +334,7 @@ build-mesh-behavior = Object LOD behaviour
 
 ui-land-environment-the-parcel-must-be-at-least-128-square-meters = The parcel must be at least 128 square metres to support an environment.
 
-ui-bars-customize-bars = Customise the bars…
+ui-bars-customize-bars = Customise interface
 
 ui-options-mute-when-minimized = Mute when minimised
 
@@ -782,8 +786,6 @@ inventory-folder-color-custom = Custom colour
 inventory-folder-color-private = Only you see these colours.
 
 inventory-folder-color-none = Select a folder to colour it.
-
-area-search-neighbor-regions = In neighbouring regions
 
 import-folders-enable = Organise upload folders
 
