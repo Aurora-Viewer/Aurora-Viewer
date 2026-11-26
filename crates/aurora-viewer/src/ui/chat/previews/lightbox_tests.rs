@@ -298,7 +298,14 @@ fn autoplay_keeps_its_card_size_between_the_start_and_stop_scroll_boundaries() {
     let lp::Target::Clip(clip) = &target else {
         panic!("a direct video should resolve to a clip");
     };
-    let mut pv = Previews::default();
+    let mut pv = Previews {
+        web: Some(crate::ui::chat::previews::WebEnv {
+            paths: None,
+            browser: aurora_media::BrowserSettings::default(),
+            volume: 1.0,
+        }),
+        ..Default::default()
+    };
     pv.cache.insert(
         url.into(),
         crate::ui::chat::previews::Cached {
