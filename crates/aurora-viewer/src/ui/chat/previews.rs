@@ -669,7 +669,7 @@ impl Previews {
         if crate::outside::native(ctx, egui::Id::unique(PLAYER_WINDOW))
             && v.inline_target.is_some_and(|(seen, fits)| fits && pass.saturating_sub(seen) <= 2)
         {
-            floater = floater.action("layout-sidebar-right", aurora_i18n::tr!("ui-chat-preview-dock"), &mut dock);
+            floater = floater.action("messages-filled", aurora_i18n::tr!("ui-chat-preview-dock"), &mut dock);
         }
         if v.native_video {
             floater = floater.action(
@@ -1551,7 +1551,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                                     dock = crate::ui::widgets::icon_button(
                                         ui,
                                         p,
-                                        "layout-sidebar-right",
+                                        "messages-filled",
                                         aurora_i18n::tr!("ui-chat-preview-dock"),
                                         true,
                                     );
