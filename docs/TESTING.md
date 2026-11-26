@@ -6831,7 +6831,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_RECENT_EMOJIS=1\|<emojis>` | Recent emojis over the chat fields (under them with the Legacy chat style): a full row, or the emojis given |
 | `AURORA_DEMO_FAVORITE_EMOJIS=<emojis>` | Favourite emojis: first in that row, the picker opening on their tab |
-| `AURORA_DEMO_CHAT_INPUT=1\|long\|ime` | Paragraph drafts or Japanese IME composition in chat inputs |
+| `AURORA_DEMO_CHAT_INPUT=1\|long\|ime\|os-ime` | Paragraph drafts, Japanese IME composition in chat inputs, or an empty field for a real input method |
 | `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|clips\|services\|links\|net` | Picture, GIF and YouTube cards; `clips` shows video files and an animated WebP; `links[:gif\|image\|video]` isolates URL actions; `services[:gyazo,…]` shows service pages and social posts; `net` uses real sites |
@@ -7926,6 +7926,32 @@ failure. Grid validation and any paid upload are performed by the human.
   the selection, the prefix and the list focus. `aurora-…` opens the wide
   explorer, where the typed prefix shows in its label; `type-ahead-ime` the
   Legacy tree.
+- **`AURORA_DEMO_INVENTORY=ime|aurora-ime`**: the inventory for a real input
+  method, in the Legacy tree or the wide explorer. Adds the rows "マスク",
+  "ママ服" and "Zipper bag" at the root, clicks "Animations" at frames
+  650–651 so the list holds the keyboard, and sends nothing else: the keys
+  come from the system. From frame 700, once a second, the log says
+  `demo inventory ime:` with the selected row's number (`Some(9702)` is
+  "ママ服"), the type-ahead prefix and the list's focus, and
+  `demo ime output:` with what the viewer asks of the input method in that
+  frame (`on`, `off`, or `interrupt`, which drops a composition) and
+  `interrupts=`, the frames that dropped one since the start: a drop lasts
+  one frame, which the once-a-second sample would miss. Composing "ママ" must
+  keep the selection and end on "ママ服"; "マスク" means the composition was
+  cut short. On Linux, `python3 scripts/test-ime-linux.py` runs it, and
+  `AURORA_DEMO_CHAT_INPUT=os-ime`, against fcitx5 and Mozc without touching
+  the desktop: a headless sway on a private runtime folder and D-Bus, the
+  keys typed by wtype ("mama", F7, Enter), the checks read from the log
+  (`interrupts=` must not grow once the target holds the keyboard), and
+  grim's captures beside the logs in `.scratch/ime-test/<time>/`.
+  The list draws no preedit and a new Mozc dictionary opens no prediction
+  window, so the inventory's captures show no composition: the log is the
+  proof there; the chat field shows it underlined. `--only inventory|aurora-inventory|chat` picks scenarios, `--viewer` a
+  built binary. It exits 0 when every check passed, 1 when one failed and
+  2 when it could not run (a missing tool, a process that did not start).
+  On Arch: `sudo pacman -S --needed sway fcitx5 fcitx5-mozc wtype grim`.
+  Not covered: X11 with XIM, Windows (TSF, IMM32), other input methods,
+  and picking a candidate from the list.
 - **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
   holding the demo object, in the Legacy or Aurora inventory. Check its
   "Locked" tag after the name; the folder itself refuses Delete, Cut and a
@@ -9246,6 +9272,11 @@ failure. Grid validation and any paid upload are performed by the human.
   Windows QA still needs ATOK and Microsoft IME: compose, convert, move the
   active segment, commit and cancel in Conversations, nearby chat and search;
   also check Korean composition and ordinary selection/copy/paste.
+  `os-ime` starts with the same empty field and no synthetic event, for a
+  real input method: from frame 700, once a second, the log says
+  `demo chat os-ime:` with the field's text and focus, and
+  `demo ime output:` as for `AURORA_DEMO_INVENTORY=ime`, whose entry
+  describes `scripts/test-ime-linux.py`.
 - **`AURORA_DEMO_RECENT_EMOJIS=1|<emojis>`**: the row under the chat
   fields (the island's, the Conversations window's), `1` a full row of 20,
   or the emojis given, the last one first. Nothing is saved. A click adds
