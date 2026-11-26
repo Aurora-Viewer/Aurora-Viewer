@@ -15827,6 +15827,7 @@ toolbar-spacer = ブロック間の余白
 toolbar-add-spacer = ブロック間に余白を追加
 toolbar-button-settings = ボタンの設定
 toolbar-block-settings = ブロックの設定
+toolbar-parent-block-settings = 親ブロックの設定
 toolbar-block-edit = ブロックを編集…
 toolbar-block-edit-title = ブロックを編集
 toolbar-block-alignment = 配置

@@ -159,7 +159,7 @@ impl ToolbarUi {
         let screen = ctx.content_rect();
         let w = width(screen);
         let islands = self.islands;
-        super::blocks::show(ctx, p, self, settings, layout);
+        super::blocks::show(ctx, p, settings);
         let dragged = egui::DragAndDrop::payload::<Drag>(ctx);
         let mut open = self.open;
         let mut window = widgets::Floater::new(
@@ -1653,14 +1653,24 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
             state.open = true;
         }
         if mode.starts_with("blocks-settings-") && matches!(frame, 400 | 401) {
-            let (bar, command) = match mode {
-                "blocks-settings-bottom" => (Bar::Bottom, "inventory"),
-                "blocks-settings-left" => (Bar::Left, "worldmap"),
-                "blocks-settings-right" => (Bar::Right, "radar"),
-                _ => (Bar::Top, "location_bar"),
+            // its sections are in its button's right click (no gear)
+            let command = match mode {
+                "blocks-settings-bottom" => "inventory",
+                "blocks-settings-left" => "worldmap",
+                "blocks-settings-right" => "radar",
+                _ => "location_bar",
             };
-            if let Some(rect) = ctx.data(|data| data.get_temp::<Rect>(egui::Id::unique(("toolbar_block_settings", bar, command)))) {
-                return pointer(rect.center(), Some(frame == 400));
+            if let Some(response) = ctx.read_response(crate::ui::bars::tool_button_id(command)) {
+                let pos = response.rect.center();
+                return vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Secondary,
+                        pressed: frame == 400,
+                        modifiers: Default::default(),
+                    },
+                ];
             }
         }
         if mode.starts_with("blocks-context-") && matches!(frame, 400 | 401) {

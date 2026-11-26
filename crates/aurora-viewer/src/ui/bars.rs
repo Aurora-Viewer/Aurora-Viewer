@@ -4300,7 +4300,7 @@ pub(crate) fn toolbar_row(
             painter.set(underlay, egui::Shape::Vec(shapes));
         }
     }
-    super::toolbar::blocks::collect(ui, row.bar, row.style, buttons, &rects);
+    super::toolbar::blocks::collect(ui, row.bar, buttons, &rects);
     rects
 }
 

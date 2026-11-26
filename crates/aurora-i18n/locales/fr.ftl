@@ -15999,6 +15999,7 @@ toolbar-spacer = Espacement entre blocs
 toolbar-add-spacer = Ajouter un espacement entre blocs
 toolbar-button-settings = Réglages du bouton
 toolbar-block-settings = Réglages du bloc
+toolbar-parent-block-settings = Réglages du bloc parent
 toolbar-block-edit = Modifier le bloc…
 toolbar-block-edit-title = Modifier le bloc
 toolbar-block-alignment = Alignement

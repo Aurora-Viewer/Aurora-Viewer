@@ -1085,6 +1085,11 @@ impl ToolbarUi {
         }
     }
 
+    /// A right click, the bars edited or not (human request, 2026-11-26):
+    /// "Button settings" for the button, "Block settings" for the block it
+    /// stands in, or the drawer or floating block it is the button of, and
+    /// "Parent block settings" for the fixed block holding that block's
+    /// button; a block's alignment, sizing and displays are in its window.
     pub fn context(&mut self, response: &Response, p: &Palette, bar: Bar, style: Style, button: Option<&ToolButton>, locked: bool) {
         let settings = appearance::settings(&response.ctx);
         let bar = button
@@ -1092,121 +1097,10 @@ impl ToolbarUi {
             .unwrap_or(bar);
         // Buttons such as Favorites also own a left-click dropdown.
         menu::context_menu_of_button(response, p, |ui| {
-            if !self.open
-                && let Some(button) = button.filter(|button| drawers::is_floating(&settings, &button.command))
-            {
-                floating::context(ui, p, self, &button.command, locked);
-                self.interface_edit_menu(ui, p, Some(&button.command));
-                return;
-            }
-            // a drawer's button (a floating block's while the bars are
-            // edited) is its block: its type and its settings (its shortcut
-            // is in "Edit block…", human request, 2026-11-26)
-            if let Some(button) = button.filter(|button| drawers::is_drawer(&button.command)) {
-                section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
-                // the Interfaces block is a drawer, always
-                if button.command != drawers::INTERFACES {
-                    blocks::kind_menu(ui, p, self, &settings, &button.command, Some((bar, response.rect)));
-                }
-                if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), !locked) {
-                    self.edit_drawer(&button.command);
-                }
-                native_context::start_group(ui, p);
-                self.interface_edit_menu(ui, p, Some(&button.command));
-                return;
-            }
-            // a button's own settings, then its block's (human request,
-            // 2026-11-25: "Button settings" and "Block settings")
-            if !self.open {
-                self.action_options(ui, p, button);
-                let own = button.filter(|button| {
-                    !structure::is_separator(&button.command)
-                        && !structure::is_divider(&button.command)
-                        && !structure::is_block(&button.command)
-                });
-                if own.is_some() {
-                    section(ui, p, aurora_i18n::tr!("toolbar-button-settings"));
-                } else {
-                    native_context::start_group(ui, p);
-                }
-                self.button_appearance_option(ui, p, button, locked);
-                // its shortcut after its look and its icon (human request,
-                // 2026-11-25)
-                if let Some(button) = own.filter(|button| shortcuts::takes(&button.command)) {
-                    self.shortcut_item(ui, p, &settings, &button.command);
-                }
-                if let Some(button) = button.filter(|button| {
-                    !structure::is_separator(&button.command)
-                        && !structure::is_divider(&button.command)
-                        && settings.drawer_of(&button.command).is_none()
-                }) {
-                    section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
-                    blocks::kind_menu(ui, p, self, &settings, &button.command, Some((bar, response.rect)));
-                    // a fixed block's settings, as a drawer's (human request,
-                    // 2026-11-26)
-                    if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), !locked) {
-                        self.edit_block(bar, &button.command, style);
-                    }
-                }
-                native_context::start_group(ui, p);
-                self.interface_edit_menu(ui, p, button.map(|button| button.command.as_str()));
-                return;
-            }
-            if self.open
-                && let Some(button) = button
-            {
-                let (_, buttons) = drawers::contents(&settings, bar, &button.command, &Layout::default());
-                for before in [true, false] {
-                    if structure::is_separator(&button.command) && !before {
-                        continue;
-                    }
-                    if !structure::is_separator(&button.command)
-                        && menu::item_if(
-                            ui,
-                            p,
-                            "separator-vertical",
-                            aurora_i18n::text(if before {
-                                "toolbar-edit-split-before"
-                            } else {
-                                "toolbar-edit-split-after"
-                            }),
-                            !locked && edit_mode::split_allowed(&buttons, &button.command, before),
-                        )
-                    {
-                        self.pending = Some(Edit::Split(bar, button.command.clone(), before));
-                    }
-                    // a separator's own: the blocks on each side of it
-                    if structure::is_separator(&button.command)
-                        && menu::item_if(
-                            ui,
-                            p,
-                            "arrows-join",
-                            aurora_i18n::tr!("toolbar-edit-merge-groups"),
-                            !locked && edit_mode::merge_range(&buttons, &button.command, before).is_some(),
-                        )
-                    {
-                        self.pending = Some(Edit::Merge(bar, button.command.clone(), before));
-                    }
-                }
-                // the block's type, merges and shortcut are in its block's menu
-                // (human request, 2026-11-25)
-                if shortcuts::takes(&button.command) {
-                    self.shortcut_item(ui, p, &settings, &button.command);
-                }
-                menu::separator(ui, p);
-            }
-            if !locked && let Some(button) = button {
-                if menu::item(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-remove")) {
-                    self.pending = Some(Edit::Remove(button.command.clone()));
-                }
-                menu::separator(ui, p);
-            }
-            self.action_options(ui, p, button);
-            if button.is_none_or(|b| settings.drawer_of(&b.command).is_none()) {
-                menu::separator(ui, p);
-                if let Some(button) = button.filter(|button| !structure::is_separator(&button.command)) {
-                    blocks::style_menu(ui, p, self, &settings, bar, &button.command, style);
-                } else {
+            match button {
+                Some(button) => self.button_sections(ui, p, &settings, bar, style, button, response.rect, locked),
+                // the bar's own background, while the bars are edited
+                None if self.open => {
                     let mut next = None;
                     for (align, icon, label) in align_rows(bar) {
                         if menu::check(ui, p, icon, label, style.align == align, true) {
@@ -1222,15 +1116,118 @@ impl ToolbarUi {
                         self.pending = Some(Edit::Style(bar, next));
                     }
                 }
+                None => {}
             }
-            menu::separator(ui, p);
-            if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("toolbar-locked"), locked, true) {
-                self.pending = Some(Edit::Lock);
+            if self.open {
+                native_context::start_group(ui, p);
+                if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("toolbar-locked"), locked, true) {
+                    self.pending = Some(Edit::Lock);
+                }
             }
             native_context::start_group(ui, p);
-            self.button_appearance_option(ui, p, button, locked);
             self.interface_edit_menu(ui, p, button.map(|button| button.command.as_str()));
         });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn button_sections(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        settings: &ToolbarSettings,
+        bar: Bar,
+        style: Style,
+        button: &ToolButton,
+        rect: Rect,
+        locked: bool,
+    ) {
+        let layout = Layout::default();
+        let command = button.command.as_str();
+        let separator = structure::is_separator(command);
+        // the button's own: a drawer's or a floating block's is its block
+        if !drawers::is_drawer(command) {
+            section(ui, p, aurora_i18n::tr!("toolbar-button-settings"));
+            self.action_options(ui, p, Some(button));
+            self.button_appearance_option(ui, p, Some(button), locked);
+            // its shortcut after its look and its icon (human request,
+            // 2026-11-25)
+            if shortcuts::takes(command) {
+                self.shortcut_item(ui, p, settings, command);
+            }
+            if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-remove"), !locked) {
+                self.pending = Some(Edit::Remove(command.into()));
+            }
+        }
+        // the block it is, or stands in
+        let block = if drawers::is_drawer(command) {
+            Some(command)
+        } else {
+            settings.drawer_of(command)
+        };
+        section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
+        match block {
+            Some(id) => self.drawer_items(ui, p, settings, id, bar, rect, locked),
+            // a separator's own: the blocks on each side of it
+            None if separator => {
+                let buttons = settings.bar(bar, &layout);
+                if menu::item_if(
+                    ui,
+                    p,
+                    "arrows-join",
+                    aurora_i18n::tr!("toolbar-edit-merge-groups"),
+                    !locked && edit_mode::merge_range(buttons, command, true).is_some(),
+                ) {
+                    self.pending = Some(Edit::Merge(bar, command.into(), true));
+                }
+            }
+            None => blocks::group_items(ui, p, self, settings, &layout, bar, command, style, rect),
+        }
+        // the fixed block holding the button of that block: a drawer's, or
+        // a floating block's when that button is the one clicked
+        if let Some(id) = block
+            && (id == command || !drawers::is_floating(settings, id))
+            && let Some(parent) = settings.location(id, &layout)
+            && settings.bar(parent, &layout).iter().any(|button| button.command == id)
+        {
+            section(ui, p, aurora_i18n::tr!("toolbar-parent-block-settings"));
+            blocks::group_items(ui, p, self, settings, &layout, parent, id, style, rect);
+        }
+    }
+
+    /// The right click of a floating block's glass: its block's settings
+    /// (its button and its shortcut show and hide it: no Show/Hide here,
+    /// human request, 2026-11-25).
+    pub(super) fn floating_context(&mut self, ui: &mut egui::Ui, p: &Palette, id: &str) {
+        let settings = appearance::settings(ui.ctx());
+        section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
+        self.drawer_items(ui, p, &settings, id, Bar::Top, Rect::NOTHING, settings.locked);
+        if self.open {
+            native_context::start_group(ui, p);
+            if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("toolbar-locked"), settings.locked, true) {
+                self.pending = Some(Edit::Lock);
+            }
+        }
+        native_context::start_group(ui, p);
+        self.interface_edit_menu(ui, p, Some(id));
+    }
+
+    /// A drawer's or a floating block's part of a right click: its type
+    /// (the Interfaces block stays a drawer), "Edit block…", and a drawer's
+    /// removal (a floating block goes once emptied).
+    #[allow(clippy::too_many_arguments)]
+    fn drawer_items(&mut self, ui: &mut egui::Ui, p: &Palette, settings: &ToolbarSettings, id: &str, bar: Bar, rect: Rect, locked: bool) {
+        let floating = drawers::is_floating(settings, id);
+        if id != drawers::INTERFACES {
+            let from = settings.location(id, &Layout::default()).unwrap_or(bar);
+            blocks::kind_menu(ui, p, self, settings, id, (!floating).then_some((from, rect)));
+        }
+        if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), !locked) {
+            self.edit_drawer(id);
+        }
+        if !floating && id != drawers::INTERFACES && menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-block-remove"), !locked)
+        {
+            self.pending = Some(Edit::Remove(id.into()));
+        }
     }
 
     pub fn button(&mut self, response: &Response, bar: Bar, style: Style, button: &ToolButton, p: &Palette, locked: bool) {

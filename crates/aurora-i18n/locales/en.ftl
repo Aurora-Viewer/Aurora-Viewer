@@ -15990,6 +15990,7 @@ toolbar-spacer = Block spacing
 toolbar-add-spacer = Add block spacing
 toolbar-button-settings = Button settings
 toolbar-block-settings = Block settings
+toolbar-parent-block-settings = Parent block settings
 toolbar-block-edit = Edit block…
 toolbar-block-edit-title = Edit block
 toolbar-block-alignment = Alignment

@@ -33,19 +33,6 @@ pub(crate) fn window_id(id: &str) -> String {
     }
 }
 
-/// The right click of a floating block, on its glass or its button (its
-/// button and its shortcut show and hide it: no Show/Hide here, human
-/// request, 2026-11-25; its settings window keeps Delete, the menu does not,
-/// 2026-11-26).
-pub(super) fn context(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, id: &str, locked: bool) {
-    let settings = super::appearance::settings(ui.ctx());
-    super::section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
-    super::blocks::kind_menu(ui, p, toolbar, &settings, id, None);
-    if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), !locked) {
-        toolbar.edit_drawer(id);
-    }
-}
-
 /// Every floating block shown, or all of them while the bars are edited;
 /// `import_shown` is the quick import bar's display.
 #[allow(clippy::too_many_arguments)]
@@ -192,7 +179,7 @@ pub fn show(
             if let Some(rect) = glass {
                 let background = ui.interact(rect, Id::unique(("floating_glass", id)), egui::Sense::click());
                 menu::context_menu_of_button(&background, p, |ui| {
-                    context(ui, p, toolbar, id, settings.locked);
+                    toolbar.floating_context(ui, p, id);
                 });
             }
             // the glass is a bar block's, drawn by the row around its

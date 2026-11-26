@@ -6593,14 +6593,17 @@ the visual editor, which opens at frame 300.
 `proximity-isolated-left` and `proximity-isolated-top` drag an already separated
 Radar back near its own group; existing gaps and their sizes must not grow or
 change. `proximity-free` shows the detached glass drag window.
-`blocks-settings-top/bottom/left/right` open the block gear popup. The dotted
-handle and gear are icon-only, equally button-sized and centered together along
-the block axis, facing inward;
-neither control overlaps the block buttons. The menu changes the whole block,
-retains locks and ends with Customize interface. `blocks-context-button` and
-`blocks-context-aurora` show that same final action outside the editing session.
-Repeat real clicks on gears and drags on grips, including singleton blocks and
-adjacent blocks, display/size/fold/remove and split/merge. Gear clicks must never drag.
+`blocks-settings-top/bottom/left/right` right-click a block's button: Button
+settings, then Block settings (type, split, merge, Edit block…, shortcut,
+removal), and Parent block settings for a drawer's button; the block's
+alignment, sizing and displays are in its Edit block window. The dotted grip,
+icon-only and button-sized, faces inward centred on the block, shows only with
+the pointer near the block or over it, and never overlaps the block buttons.
+The menu changes the whole block, retains locks and ends with Customize
+interface. `blocks-context-button` and `blocks-context-aurora` show the same
+sections outside the editing session. Repeat real drags on grips, including
+singleton blocks and adjacent blocks, and the right click's fold/remove and
+split/merge.
 `blocks-alignment` places three independently anchored blocks on every edge,
 including the native chat, address field, FPS and volume. `blocks-alignment-edit`
 adds the edit guides and grips. Check left/center/right and top/center/bottom in

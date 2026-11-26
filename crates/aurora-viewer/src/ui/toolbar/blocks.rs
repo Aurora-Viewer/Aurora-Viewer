@@ -59,40 +59,6 @@ pub(super) fn normalize_styles(settings: &mut ToolbarSettings, layout: &Layout, 
     settings.block_styles = next;
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn style_menu(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    toolbar: &mut ToolbarUi,
-    settings: &ToolbarSettings,
-    bar: Bar,
-    command: &str,
-    base: Style,
-) {
-    let saved = settings.block_styles.get(command).copied().unwrap_or_default();
-    let mut next = BarStyle::default();
-    for (mode, icon, label) in super::mode_rows() {
-        if menu::check(ui, p, icon, label, saved.mode.unwrap_or(base.mode) == mode, !settings.locked) {
-            next.mode = Some(mode);
-        }
-    }
-    menu::separator(ui, p);
-    for (align, icon, label) in super::align_rows(bar) {
-        if menu::check(ui, p, icon, label, saved.align.unwrap_or(base.align) == align, !settings.locked) {
-            next.align = Some(align);
-        }
-    }
-    menu::separator(ui, p);
-    for (sizing, icon, label) in super::sizing_rows() {
-        if menu::check(ui, p, icon, label, saved.sizing.unwrap_or(base.sizing) == sizing, !settings.locked) {
-            next.sizing = Some(sizing);
-        }
-    }
-    if next != BarStyle::default() {
-        toolbar.pending = Some(Edit::BlockStyle(bar, command.into(), next));
-    }
-}
-
 #[derive(Clone, Copy)]
 pub(super) enum Destination<'a> {
     Bar(Bar, usize, bool),
@@ -196,7 +162,6 @@ pub(super) fn move_to(
 #[derive(Clone)]
 struct Target {
     bar: Bar,
-    style: Style,
     rect: Rect,
     members: Vec<ToolButton>,
 }
@@ -209,7 +174,7 @@ pub(super) fn prepare(ctx: &egui::Context) {
     ctx.data_mut(|data| data.insert_temp(targets_id(), Vec::<Target>::new()));
 }
 
-pub(crate) fn collect(ui: &egui::Ui, bar: Bar, style: Style, buttons: &[ToolButton], rects: &[Rect]) {
+pub(crate) fn collect(ui: &egui::Ui, bar: Bar, buttons: &[ToolButton], rects: &[Rect]) {
     if !ToolbarUi::editing(ui.ctx()) || ToolbarUi::dragging(ui.ctx()) {
         return;
     }
@@ -233,7 +198,6 @@ pub(crate) fn collect(ui: &egui::Ui, bar: Bar, style: Style, buttons: &[ToolButt
             if rect.is_positive() {
                 targets.push(Target {
                     bar,
-                    style,
                     rect,
                     members: members.to_vec(),
                 });
@@ -248,12 +212,7 @@ pub(crate) fn collect(ui: &egui::Ui, bar: Bar, style: Style, buttons: &[ToolButt
 const CONTROL_SIZE: f32 = 22.0;
 
 fn control_bounds(bar: Bar, block: Rect, screen: Rect) -> Rect {
-    let size = if bar.vertical() {
-        Vec2::new(CONTROL_SIZE, CONTROL_SIZE * 2.0)
-    } else {
-        Vec2::new(CONTROL_SIZE * 2.0, CONTROL_SIZE)
-    }
-    .min(screen.size());
+    let size = Vec2::splat(CONTROL_SIZE).min(screen.size());
     let start = match bar {
         Bar::Top => egui::pos2(block.center().x - size.x / 2.0, block.bottom() + 2.0),
         Bar::Bottom => egui::pos2(block.center().x - size.x / 2.0, block.top() - size.y - 2.0),
@@ -343,10 +302,14 @@ fn float_position(bar: Bar, rect: Rect) -> egui::Pos2 {
     }
 }
 
-/// The settings gear acts on the complete canonical block, including temporarily
-/// hidden native controls. Every mutation uses the same guarded commit path.
+/// A fixed block's part of a right click (human request, 2026-11-26: the
+/// gear gave way to the right click's sections): its type, unless it holds
+/// a drawer, which stays one, its splits and merges, "Edit block…" (its
+/// alignment, sizing and displays are there), its shortcut and its removal.
+/// It acts on the complete canonical block, including temporarily hidden
+/// native controls; every mutation uses the same guarded commit path.
 #[allow(clippy::too_many_arguments)]
-fn settings_menu(
+pub(super) fn group_items(
     ui: &mut egui::Ui,
     p: &Palette,
     toolbar: &mut ToolbarUi,
@@ -360,16 +323,11 @@ fn settings_menu(
     let buttons = settings.bar(bar, layout);
     let Some(range) = edit_mode::group(buttons, command) else { return };
     let members = &buttons[range];
-    let Some(first) = members.first() else { return };
     let unlocked = !settings.locked;
-    menu::info(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-block-settings"));
-    style_menu(ui, p, toolbar, settings, bar, command, base);
-    menu::separator(ui, p);
-    // a drawer's or a floating block's button stands for it in its bar
-    let single = (members.len() == 1 && drawers::is_drawer(&first.command)).then_some(first.command.as_str());
-    let own = single.unwrap_or(command);
-    kind_menu(ui, p, toolbar, settings, own, Some((bar, rect)));
-    menu::separator(ui, p);
+    if !members.iter().any(|button| drawers::is_drawer(&button.command)) {
+        kind_menu(ui, p, toolbar, settings, command, Some((bar, rect)));
+        menu::separator(ui, p);
+    }
     let splits: Vec<_> = members
         .iter()
         .enumerate()
@@ -412,60 +370,47 @@ fn settings_menu(
             toolbar.pending = Some(Edit::Merge(bar, command.into(), before));
         }
     }
-    // one entry for the three types (human request, 2026-11-26)
     if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), unlocked) {
-        match single {
-            Some(id) => toolbar.edit_drawer(id),
-            None => toolbar.edit_block(bar, command, base),
-        }
+        toolbar.edit_block(bar, command, base);
     }
     // a fixed block's shortcut, which works once it is a drawer or a
     // floating block; theirs is in "Edit block…" (human request, 2026-11-26)
-    if single.is_none()
-        && let Some(key) = super::shortcuts::block_of(settings, buttons, command)
-    {
+    if let Some(key) = super::shortcuts::block_of(settings, buttons, command) {
         toolbar.block_shortcut_item(ui, p, settings, &key);
     }
-    menu::separator(ui, p);
     if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-block-remove"), unlocked) {
         toolbar.pending = Some(Edit::RemoveBlock(members.iter().map(|button| button.command.clone()).collect()));
     }
-    if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("toolbar-locked"), settings.locked, true) {
-        toolbar.pending = Some(Edit::Lock);
-    }
-    super::native_context::start_group(ui, p);
-    toolbar.interface_edit_menu(ui, p, Some(command));
 }
 
-pub(super) fn show(ctx: &egui::Context, p: &Palette, toolbar: &mut ToolbarUi, settings: &ToolbarSettings, layout: &Layout) {
+/// The pointer near a block, or over its grip, shows its grip while the
+/// bars are edited (human request, 2026-11-26): no gear, its settings are
+/// in the right click.
+const NEAR: f32 = 12.0;
+
+pub(super) fn show(ctx: &egui::Context, p: &Palette, settings: &ToolbarSettings) {
     if !ToolbarUi::editing(ctx) || ToolbarUi::dragging(ctx) {
         return;
     }
+    let pointer = ctx.pointer_hover_pos();
     let targets = ctx.data(|data| data.get_temp::<Vec<Target>>(targets_id())).unwrap_or_default();
     for target in targets {
         let Some(first) = target.members.iter().find(|button| !structure::is_divider(&button.command)) else {
             continue;
         };
         let rect = control_bounds(target.bar, target.rect, ctx.content_rect());
+        let near = target.rect.union(rect).expand(NEAR);
+        if !pointer.is_some_and(|pos| near.contains(pos)) {
+            continue;
+        }
         egui::Area::new(Id::unique(("toolbar_block_grip_area", target.bar, &first.command)))
             .order(egui::Order::Foreground)
             .fixed_pos(rect.min)
             .constrain(false)
             .fade_in(false)
             .show(ctx, |ui| {
-                let (rect, _) = ui.allocate_exact_size(rect.size(), egui::Sense::hover());
-                ui.painter().add(widgets::overlay_frame(ctx, p).paint(rect));
-                let (grip, gear) = if target.bar.vertical() {
-                    (
-                        Rect::from_min_max(rect.min, rect.right_bottom() - Vec2::new(0.0, CONTROL_SIZE)),
-                        Rect::from_min_max(rect.left_bottom() - Vec2::new(0.0, CONTROL_SIZE), rect.max),
-                    )
-                } else {
-                    (
-                        Rect::from_min_max(rect.min, rect.right_bottom() - Vec2::new(CONTROL_SIZE, 0.0)),
-                        Rect::from_min_max(rect.right_top() - Vec2::new(CONTROL_SIZE, 0.0), rect.max),
-                    )
-                };
+                let (grip, _) = ui.allocate_exact_size(rect.size(), egui::Sense::hover());
+                ui.painter().add(widgets::overlay_frame(ctx, p).paint(grip));
                 let response = ui.interact(
                     grip,
                     Id::unique(("toolbar_block_grip", target.bar, &first.command)),
@@ -482,45 +427,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, toolbar: &mut ToolbarUi, se
                     14.0,
                     if settings.locked { p.muted_dim } else { p.ink },
                 );
-                let mut child = ui.new_child(
-                    egui::UiBuilder::new()
-                        .id_salt(("block_settings", target.bar, &first.command))
-                        .max_rect(gear),
-                );
-                let settings_button = widgets::action_button(&mut child, p, "settings-filled", "", widgets::ActionKind::Flat, gear.size())
-                    .on_hover_text(aurora_i18n::tr!("toolbar-block-settings"));
-                ctx.data_mut(|data| {
-                    data.insert_temp(
-                        Id::unique(("toolbar_block_settings", target.bar, &first.command)),
-                        settings_button.rect,
-                    )
-                });
-                let place = match target.bar {
-                    Bar::Top => egui::RectAlign::BOTTOM_START,
-                    Bar::Bottom => egui::RectAlign::TOP_START,
-                    Bar::Left => egui::RectAlign::RIGHT,
-                    Bar::Right => egui::RectAlign::LEFT,
-                };
-                let opened = menu::dropdown_placed(
-                    &settings_button,
-                    p,
-                    egui::PopupCloseBehavior::CloseOnClickOutside,
-                    Some((place, 6.0)),
-                    |ui| {
-                        settings_menu(
-                            ui,
-                            p,
-                            toolbar,
-                            settings,
-                            layout,
-                            target.bar,
-                            &first.command,
-                            target.style,
-                            target.rect,
-                        );
-                    },
-                );
-                if response.hovered() || settings_button.hovered() || opened {
+                if response.hovered() {
                     ctx.layer_painter(ui.layer_id()).rect_stroke(
                         target.rect,
                         ui.visuals().widgets.inactive.corner_radius,

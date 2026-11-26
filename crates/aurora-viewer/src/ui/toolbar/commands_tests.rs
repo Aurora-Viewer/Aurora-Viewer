@@ -31,24 +31,43 @@ fn block_controls_fixture(bar: Bar, classic: bool, locked: bool) -> Bench {
     bench
 }
 
+/// A block's settings are in its buttons' right click, the bars edited or
+/// not: the gear is gone (human request, 2026-11-26).
 fn open_block_settings(bench: &mut Bench, bar: Bar, command: &str) {
+    assert_eq!(bench.settings.location(command, &Layout::default()), Some(bar));
     let point = bench
         .ctx
-        .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_block_settings", bar, command))))
-        .expect("settings gear")
+        .read_response(bars::tool_button_id(command))
+        .expect("its button")
+        .rect
         .center();
-    bench.pointer(point, Some(true));
-    bench.pointer(point, Some(false));
+    right_click_at(bench, point);
     for _ in 0..3 {
         bench.frame(Vec::new());
     }
-    assert!(!ToolbarUi::dragging(&bench.ctx), "the gear must not start a drag");
-    assert!(
-        bench
-            .text
-            .iter()
-            .any(|(text, _)| text == aurora_i18n::tr!("toolbar-block-settings"))
-    );
+    assert!(!ToolbarUi::dragging(&bench.ctx), "the right click must not start a drag");
+    // its section's heading, in capitals
+    let heading = aurora_i18n::tr!("toolbar-block-settings").to_uppercase();
+    assert!(bench.text.iter().any(|(text, _)| text.to_uppercase() == heading));
+}
+
+/// The grip of the block of `command` in `bar`, which shows with the
+/// pointer over the block (human request, 2026-11-26).
+fn block_grip(bench: &mut Bench, bar: Bar, command: &str) -> Rect {
+    let over = bench
+        .ctx
+        .read_response(bars::tool_button_id(command))
+        .expect("its button")
+        .rect
+        .center();
+    for _ in 0..2 {
+        bench.pointer(over, None);
+    }
+    bench
+        .ctx
+        .read_response(Id::unique(("toolbar_block_grip", bar, command)))
+        .expect("its grip shows")
+        .rect
 }
 
 /// Scrolls the block window until the row `label` shows, and returns its
@@ -490,8 +509,10 @@ fn normal_native_contexts_share_one_customization_entry_and_select_the_clicked_c
                         let shortcut = menu_point(&bench, aurora_i18n::tr!("toolbar-shortcut"));
                         assert!(shortcut.y > icon.bottom() && shortcut.y < floating.y, "{shortcut:?} {icon:?}");
                         // then "Edit block…" (human request, 2026-11-26)
+                        // then its removal, before the shared entry
                         let edit = menu_point(&bench, aurora_i18n::tr!("toolbar-block-edit"));
-                        assert!(edit.y > floating.y && entries[0].1.top() - edit.y < 30.0);
+                        let remove = menu_point(&bench, aurora_i18n::tr!("toolbar-block-remove"));
+                        assert!(edit.y > floating.y && remove.y > edit.y && entries[0].1.top() > remove.y);
                     }
                     if command == "report_bug" {
                         let copy = menu_point(&bench, aurora_i18n::tr!("bug-copy-version"));
@@ -586,32 +607,25 @@ fn block_controls_stay_outside_buttons_and_highlight_the_whole_block() {
         for bar in Bar::ALL {
             for locked in [false, true] {
                 let mut bench = block_controls_fixture(bar, classic, locked);
-                let grip = bench
-                    .ctx
-                    .read_response(Id::unique(("toolbar_block_grip", bar, "inventory")))
-                    .expect("grip")
-                    .rect;
-                let gear = bench
-                    .ctx
-                    .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_block_settings", bar, "inventory"))))
-                    .expect("gear");
+                // away from the block, no grip
+                for _ in 0..2 {
+                    bench.pointer(bench.screen.to_pos2() / 2.0, None);
+                }
+                assert!(
+                    bench
+                        .ctx
+                        .read_response(Id::unique(("toolbar_block_grip", bar, "inventory")))
+                        .is_none_or(|response| !response.rect.is_positive()),
+                    "{bar:?}: the grip waits for the pointer"
+                );
+                let grip = block_grip(&mut bench, bar, "inventory");
                 let body = bench
                     .ctx
                     .read_response(bars::tool_button_id("inventory"))
                     .expect("inventory")
                     .rect
                     .union(bench.ctx.read_response(bars::tool_button_id("people")).expect("people").rect);
-                assert!(!grip.intersect(gear).is_positive(), "overlapping controls: {grip:?}, {gear:?}");
-                assert!(
-                    (grip.size() - gear.size()).abs().max_elem() <= 1.0,
-                    "the grip stays button-sized: {grip:?}, {gear:?}"
-                );
-                let controls = grip.union(gear);
-                assert!(if bar.vertical() {
-                    gear.top() >= grip.bottom()
-                } else {
-                    gear.left() >= grip.right()
-                });
+                let controls = grip;
                 assert!(
                     match bar {
                         Bar::Top => grip.top() >= body.bottom(),
@@ -1022,59 +1036,36 @@ fn block_alignment_anchors_independently_on_every_edge_and_keeps_canonical_rects
 }
 
 #[test]
-fn block_gears_change_only_their_block_and_split_at_the_chosen_boundary() {
+/// A block's right click leaves its display, sizing and alignment to its
+/// "Edit block…" window, which it opens (human request, 2026-11-26), and
+/// splits it at the chosen boundary.
+fn block_right_clicks_leave_display_to_the_block_window_and_split_at_the_chosen_boundary() {
     for classic in [false, true] {
         for bar in Bar::ALL {
-            for locked in [false, true] {
-                for (label, change) in mode_rows()
-                    .map(|(mode, _, label)| {
-                        (
-                            label,
-                            BarStyle {
-                                mode: Some(mode),
-                                ..Default::default()
-                            },
-                        )
-                    })
-                    .into_iter()
-                    .chain(sizing_rows().map(|(sizing, _, label)| {
-                        (
-                            label,
-                            BarStyle {
-                                sizing: Some(sizing),
-                                ..Default::default()
-                            },
-                        )
-                    }))
-                    .chain(align_rows(bar).map(|(align, _, label)| {
-                        (
-                            label,
-                            BarStyle {
-                                align: Some(align),
-                                ..Default::default()
-                            },
-                        )
-                    }))
-                {
-                    let mut bench = block_controls_fixture(bar, classic, locked);
-                    let before = bench.settings.clone();
-                    open_block_settings(&mut bench, bar, "inventory");
-                    assert!(!bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-edit-move")));
-                    let choice = menu_point(&bench, label);
-                    bench.pointer(choice, Some(true));
-                    bench.pointer(choice, Some(false));
-                    if locked {
-                        assert_eq!(bench.settings, before);
-                    } else {
-                        assert_eq!(bench.settings.block_styles["inventory"], change);
-                        assert_eq!(bench.settings.block_styles["people"], change);
-                        assert!(!bench.settings.block_styles.contains_key("preferences"));
-                        for bar in Bar::ALL {
-                            assert_eq!(bench.settings.style(bar), before.style(bar));
-                        }
-                    }
-                }
+            let mut bench = block_controls_fixture(bar, classic, false);
+            let before = bench.settings.clone();
+            open_block_settings(&mut bench, bar, "inventory");
+            assert!(!bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-edit-move")));
+            let labels = mode_rows()
+                .map(|(_, _, label)| label)
+                .into_iter()
+                .chain(sizing_rows().map(|(_, _, label)| label))
+                .chain(align_rows(bar).map(|(_, _, label)| label));
+            for label in labels {
+                assert!(!bench.text.iter().any(|(text, _)| text == label), "{label}: in the block's window");
             }
+            let edit = menu_point(&bench, aurora_i18n::tr!("toolbar-block-edit"));
+            bench.pointer(edit, Some(true));
+            bench.pointer(edit, Some(false));
+            assert!(
+                bench
+                    .state
+                    .block_editor
+                    .as_ref()
+                    .is_some_and(|(at, command, _)| *at == bar && command == "inventory"),
+                "{bar:?}, classic={classic}"
+            );
+            assert_eq!(bench.settings, before);
         }
     }
     {
@@ -1267,12 +1258,7 @@ fn block_handles_move_all_members_on_every_edge_in_both_styles() {
             for _ in 0..4 {
                 bench.frame(Vec::new());
             }
-            let source = bench
-                .ctx
-                .read_response(egui::Id::unique(("toolbar_block_grip", Bar::Top, "inventory")))
-                .expect("block handle")
-                .rect
-                .center();
+            let source = block_grip(&mut bench, Bar::Top, "inventory").center();
             let target = match bar {
                 Bar::Top => egui::pos2(420.0, 20.0),
                 Bar::Bottom => egui::pos2(1300.0, 880.0),
@@ -1939,12 +1925,7 @@ fn drawer_icon_drops_move_children_and_whole_blocks_without_losing_order_or_over
     for _ in 0..4 {
         bench.frame(Vec::new());
     }
-    let handle = bench
-        .ctx
-        .read_response(egui::Id::unique(("toolbar_block_grip", Bar::Top, "inventory")))
-        .expect("block grip")
-        .rect
-        .center();
+    let handle = block_grip(&mut bench, Bar::Top, "inventory").center();
     let target = bench.ctx.read_response(bars::tool_button_id(&id)).expect("target").rect.center();
     bench.pointer(handle, Some(true));
     bench.pointer(handle + Vec2::new(12.0, 0.0), None);
@@ -5106,6 +5087,60 @@ fn an_interfaces_shortcut_applies_it_from_its_right_click_even_closed() {
     bench.settings.hidden_interfaces.clear();
     bench.settings.top.clear();
     assert_eq!(shortcuts::target(&bench.settings, &layout, &binding), None);
+}
+
+/// A right click shows "Button settings", then "Block settings", then
+/// "Parent block settings" for a block's button standing in a block, the
+/// bars edited or not (human request, 2026-11-26).
+#[test]
+fn a_right_click_shows_the_button_its_block_and_the_parent_block_edited_or_not() {
+    let headings = |bench: &Bench| {
+        ["toolbar-button-settings", "toolbar-block-settings", "toolbar-parent-block-settings"].map(|key| {
+            let heading = aurora_i18n::text(key).to_uppercase();
+            bench
+                .text
+                .iter()
+                .rev()
+                .find(|(text, _)| text.to_uppercase() == heading)
+                .map(|(_, rect)| rect.center().y)
+        })
+    };
+    for editing in [false, true] {
+        for inside in [false, true] {
+            let mut bench = Bench {
+                native_top: true,
+                screen: Vec2::new(1600.0, 900.0),
+                ..Default::default()
+            };
+            bench.settings.compose_top();
+            let id = drawers::create(&mut bench.settings, Bar::Bottom, &Layout::default());
+            bench.state.pending = Some(Edit::DrawerInsert(id.clone(), bars::top::button("inventory", "folder-filled"), 0));
+            assert!(bench.state.commit(&Layout::default(), &mut bench.settings));
+            bench.state.open = editing;
+            if inside {
+                drawers::set_open(&bench.ctx, &id, true);
+            }
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let clicked = if inside { "inventory" } else { id.as_str() };
+            let point = bench
+                .ctx
+                .read_response(bars::tool_button_id(clicked))
+                .expect("its button")
+                .rect
+                .center();
+            right_click_at(&mut bench, point);
+            let [button, block, parent] = headings(&bench);
+            let (block, parent) = (block.expect("block settings"), parent.expect("parent block settings"));
+            assert!(block < parent, "editing={editing}, inside={inside}");
+            if inside {
+                assert!(button.expect("button settings") < block, "editing={editing}");
+            } else {
+                assert_eq!(button, None, "a drawer's button is its block");
+            }
+        }
+    }
 }
 
 /// An interface's name too long for its button beside its eye ends with

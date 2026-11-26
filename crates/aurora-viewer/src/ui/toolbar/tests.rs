@@ -1512,7 +1512,8 @@ fn favorites_left_grid_and_normal_customization_menu_stay_separate_on_every_bar(
             let floating = bench.text(aurora_i18n::tr!("toolbar-block-kind-floating"));
             let edit = bench.text(aurora_i18n::tr!("toolbar-block-edit"));
             assert!(appearance.y < floating.y && floating.y < edit.y && edit.y < customize.y);
-            assert!(customize.y - edit.y < 40.0, "shared customization group has no internal separator");
+            let remove = bench.text(aurora_i18n::tr!("toolbar-block-remove"));
+            assert!(edit.y < remove.y && remove.y < customize.y, "the block's removal ends its settings");
             bench.pointer(customize, true, false);
             bench.pointer(customize, false, false);
             assert!(bench.state.open);
