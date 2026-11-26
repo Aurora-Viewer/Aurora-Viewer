@@ -398,11 +398,12 @@ pub fn search_text_edit_with_margin(
 /// text, so the next character replaces the old search instead of
 /// continuing it: when a window hands it the keyboard (the Inventory,
 /// Preferences and Outfits on opening, Ctrl+F, Tab), and on the first click
-/// into it, whose press and drag keep the whole text selected. A second
-/// click, into the field that holds the keyboard, places the caret.
+/// into it, whose drag selects nothing else. A second click, into the field
+/// that holds the keyboard, places the caret, and its drag selects.
 /// Port of LLLineEditor's `mSelectAllonFocusReceived`
 /// (indra/llui/lllineeditor.cpp: `setFocus` selects all, `handleMouseDown`
-/// skips the caret placement while the field does not hold the keyboard),
+/// skips the caret placement and the mouse capture while the field does not
+/// hold the keyboard),
 /// which the Legacy Viewer's search and filter fields set
 /// (`select_on_focus` in search_editor.xml and filter_editor.xml).
 pub fn select_on_focus(ui: &egui::Ui, response: &egui::Response, text: &str) {
@@ -440,23 +441,30 @@ pub fn select_on_focus(ui: &egui::Ui, response: &egui::Response, text: &str) {
     let focused = !away && ui.memory(|m| m.has_focus(response.id));
     let held = focused || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
     let had = last.is_some_and(|last| last.held);
-    // The press that gave the field the keyboard, until its release: egui
-    // puts the caret at the pointer on the press and moves the selection
-    // with its drag, where the Legacy Viewer leaves the whole text selected.
     let gained = focused && !had;
-    let pressing = gained || (focused && last.is_some_and(|last| last.pressing));
-    ctx.data_mut(|d| {
-        d.insert_temp(
-            key,
-            Hold {
-                frame,
-                held,
-                pressing: pressing && response.is_pointer_button_down_on(),
-                away,
-            },
-        );
-    });
-    if !pressing || text.is_empty() {
+    ctx.data_mut(|d| d.insert_temp(key, Hold { frame, held, away }));
+    if !gained {
+        return;
+    }
+    // The press that gave the field the keyboard: egui put the caret at the
+    // pointer, and its drag would move the selection's end with the pointer
+    // where the Legacy Viewer leaves the whole text selected
+    // (`LLLineEditor::setFocus` ends `mIsSelecting`). egui's drag of that
+    // press is let go, so nothing moves the selection until the release.
+    // Only the field's own: under a press of this pass on the field, nothing
+    // else is dragged yet, and a field that takes no drag (egui's on a touch
+    // screen, before it has the keyboard) leaves the press to what scrolls
+    // under it. The rest of the press is nobody's, as `handleMouseDown`
+    // takes no mouse capture for it: what is under the pointer shows its
+    // hover, and nothing takes a click, a drag or a drop of it.
+    if response.sense.senses_drag()
+        && response.is_pointer_button_down_on()
+        && ui.input(|i| i.pointer.any_pressed())
+        && ctx.dragged_id().is_none()
+    {
+        ctx.stop_dragging();
+    }
+    if text.is_empty() {
         return;
     }
     let mut state = egui::TextEdit::load_state(ctx, response.id).unwrap_or_default();
@@ -471,8 +479,6 @@ struct Hold {
     frame: u64,
     /// It held the keyboard (or let it go to Enter, for a find bar).
     held: bool,
-    /// The press that gave it the keyboard was still down.
-    pressing: bool,
     /// Another window of the viewer had the system's focus.
     away: bool,
 }
@@ -976,6 +982,8 @@ mod search_tests {
         time: f64,
         /// The viewer's window has the system's focus.
         in_front: bool,
+        /// What the last frame painted.
+        shapes: Vec<egui::epaint::ClippedShape>,
     }
 
     impl Lone {
@@ -990,6 +998,7 @@ mod search_tests {
                 ctx,
                 time: 0.0,
                 in_front: true,
+                shapes: Vec::new(),
             }
         }
 
@@ -1014,7 +1023,13 @@ mod search_tests {
                 },
             );
             output.textures_delta.clear();
+            self.shapes = output.shapes;
             field.expect("the field is drawn every frame")
+        }
+
+        /// The part of `text` the last frame painted selected.
+        fn painted(&self, text: &str) -> Painted {
+            painted_selection(&self.ctx, &self.shapes, text)
         }
 
         fn idle(&mut self, text: &mut String) -> egui::Response {
@@ -1041,6 +1056,50 @@ mod search_tests {
         }
     }
 
+    /// What a frame painted of a field's text: the span of its selection, in
+    /// points from the text's start (None: no selection), the text's width,
+    /// and where the text starts on the screen.
+    #[derive(Debug)]
+    struct Painted {
+        selected: Option<(f32, f32)>,
+        width: f32,
+        at: egui::Pos2,
+    }
+
+    impl Painted {
+        fn whole(&self) -> bool {
+            self.selected.is_some_and(|(from, to)| from <= 0.5 && to >= self.width - 0.5)
+        }
+    }
+
+    fn painted_selection(ctx: &egui::Context, shapes: &[egui::epaint::ClippedShape], text: &str) -> Painted {
+        let color = ctx.global_style().visuals.selection.bg_fill;
+        let shape = shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(shape) if shape.galley.job.text == text => Some(shape),
+                _ => None,
+            })
+            .expect("the field's text is painted");
+        let row = &shape.galley.rows[0];
+        // (TextEdit paints the selection as a flat quad of that colour in the row)
+        let selected = row
+            .row
+            .visuals
+            .mesh
+            .vertices
+            .iter()
+            .filter(|v| v.color == color && v.uv == egui::epaint::WHITE_UV)
+            .fold(None, |span: Option<(f32, f32)>, v| {
+                Some(span.map_or((v.pos.x, v.pos.x), |(from, to)| (from.min(v.pos.x), to.max(v.pos.x))))
+            });
+        Painted {
+            selected,
+            width: row.row.size.x,
+            at: shape.pos + row.pos.to_vec2(),
+        }
+    }
+
     #[test]
     fn a_search_that_takes_the_keyboard_selects_its_text_so_typing_replaces_it() {
         let mut f = Lone::new();
@@ -1063,16 +1122,28 @@ mod search_tests {
         let all = Some(egui::text::CCursorRange::select_all_str("old search"));
         let field = f.idle(&mut text);
         let start = field.rect.left_center() + egui::vec2(12.0, 0.0);
-        let end = field.rect.right_center() - egui::vec2(30.0, 0.0);
-        // pressed near the start of the text, dragged past its end, released there
+        // the middle of the text: a drag selection from its start would stop there
+        let painted = f.painted("old search");
+        let middle = egui::pos2(painted.at.x + painted.width / 2.0, field.rect.center().y);
+        // pressed near the start of the text, dragged to its middle and on,
+        // released there (the press's own frame still shows the caret egui
+        // put at the pointer: the field paints before select_on_focus runs)
         f.frame(&mut text, click(start, true), |_, _| {});
         assert!(f.focused(), "the click gives the field the keyboard");
         assert_eq!(f.range(), all, "the press selects the whole search");
-        f.frame(&mut text, vec![egui::Event::PointerMoved(end)], |_, _| {});
-        assert_eq!(f.range(), all, "the drag of that press keeps it whole");
-        f.frame(&mut text, click(end, false), |_, _| {});
+        for step in 1..=4 {
+            let at = start + (middle - start) * (step as f32 / 4.0);
+            f.frame(&mut text, vec![egui::Event::PointerMoved(at)], |_, _| {});
+            let shown = f.painted("old search");
+            assert!(shown.whole(), "its drag shows the whole search selected: {shown:?}");
+            assert_eq!(f.range(), all, "and keeps it");
+            assert!(!f.ctx.is_being_dragged(Lone::id()), "that press drags no selection");
+        }
+        f.frame(&mut text, click(middle, false), |_, _| {});
+        assert!(f.painted("old search").whole(), "so does its release");
         f.idle(&mut text);
-        assert_eq!(f.range(), all, "and so does its release");
+        assert_eq!(f.range(), all);
+        assert!(f.painted("old search").whole());
         // A second click, past a double click's delay, into the field that
         // holds the keyboard: the caret goes where it lands.
         f.time += 1.0;
@@ -1084,6 +1155,42 @@ mod search_tests {
         f.frame(&mut text, vec![egui::Event::Text("x".into())], |_, _| {});
         assert_eq!(text.chars().count(), 11, "typing goes in at the caret: {text}");
         assert!(!text.ends_with('x'), "the caret is where the click landed, not at the end: {text}");
+    }
+
+    #[test]
+    fn a_drag_in_a_search_that_holds_the_keyboard_selects_as_it_goes() {
+        // egui's drag selection, as LLLineEditor::handleHover's once the
+        // field has the keyboard
+        let mut f = Lone::new();
+        let mut text = "old search".to_owned();
+        let field = f.idle(&mut text);
+        let start = field.rect.left_center() + egui::vec2(12.0, 0.0);
+        let painted = f.painted("old search");
+        let middle = egui::pos2(painted.at.x + painted.width / 2.0, field.rect.center().y);
+        f.frame(&mut text, click(start, true), |_, _| {});
+        f.frame(&mut text, click(start, false), |_, _| {});
+        f.idle(&mut text);
+        assert!(f.focused());
+        f.time += 1.0;
+        f.frame(&mut text, click(start, true), |_, _| {});
+        for step in 1..=4 {
+            let at = start + (middle - start) * (step as f32 / 4.0);
+            f.frame(&mut text, vec![egui::Event::PointerMoved(at)], |_, _| {});
+        }
+        let shown = f.painted("old search");
+        assert!(
+            shown.selected.is_some() && !shown.whole(),
+            "the drag shows part of the search: {shown:?}"
+        );
+        f.frame(&mut text, click(middle, false), |_, _| {});
+        f.idle(&mut text);
+        let range = f.range().expect("the field has a selection");
+        assert!(!range.is_empty(), "the drag selected something");
+        assert_ne!(
+            Some(range),
+            Some(egui::text::CCursorRange::select_all_str("old search")),
+            "but not all of it"
+        );
     }
 
     #[test]
