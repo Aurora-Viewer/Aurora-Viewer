@@ -14398,7 +14398,6 @@ rlva-hidden-region = (Ukryty region)
 rlva-hidden-parcel = (Ukryta działka)
 rlva-enable = Włącz RLVa
 rlva-enable-hint = Pozwala obiektom sterować działaniami przeglądarki za pomocą poleceń RestrainedLove. Zablokowana sesja może wymagać zalogowania w ostatniej pozycji. Domyślnie wyłączone.
-rlva-session-hint = Wyłączenie RLVa natychmiast zwalnia wszystkie ograniczenia i usuwa ograniczenie następnego logowania.
 rlva-blocked = Ta akcja jest ograniczona przez RLVa.
 rlva-active = Aktywne ograniczenia
 rlva-none = Brak aktywnych ograniczeń

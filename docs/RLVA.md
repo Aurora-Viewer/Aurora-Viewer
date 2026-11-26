@@ -4,11 +4,17 @@ The `rlva` task implements the Legacy Viewer's RLVa 2.4.2 command families,
 targeting RLV protocol 3.4.3, referenced by issue #687. Human grid validation
 is pending. Preferences > RLVa > Enable RLVa is
 off by default, including settings written before the option existed.
-Disabling it releases all session restrictions and discards queued commands.
+RLVa starts with the viewer when it is on, and once it runs it never stops
+before the viewer quits, as in the Legacy Viewer (RlvHandler::setEnabled,
+RlvSettings::onChangedSettingMain; `world/rlva/switch.rs`, #1866): turning
+it off shows "RLVa will be disabled after you restart" and the restrictions
+stay for the whole session. Turning it on is instant on the login screen,
+before a login starts, and otherwise waits for the next start too. Starting
+with it off releases all restrictions and discards queued commands.
 The preference persists; object locks never do. The native next-login flag
 persists separately by avatar UUID after tploc or a locked sitting session,
 forcing the last position while RLVa remains enabled. It initially defaults
-to the last position, as in the reference. Disabling clears that flag too.
+to the last position, as in the reference. A start with RLVa off ignores it.
 Its ordered, coalesced writes run off the frame thread and flush at shutdown;
 offline demos never read or write this catalogue.
 
@@ -19,10 +25,11 @@ Legacy Viewer (originally LGPL 2.1, Kitty Barnett). The upstream
 script authors; the command lists below describe this branch specifically.
 
 The rule is the Legacy Viewer's behaviour, neither stricter nor looser, with
-three exceptions: RLVa can be turned off during a session (the human's
-decision), a control the Legacy Viewer does not have follows the restriction
-of its nearest neighbour, and an asset id is never shown where the creators'
-permission rule hides it.
+two exceptions: a control the Legacy Viewer does not have follows the
+restriction of its nearest neighbour, and an asset id is never shown where
+the creators' permission rule hides it. (RLVa could be turned off during a
+session until #1866; it now waits for the next start, as in the Legacy
+Viewer.)
 
 ## Current command families
 
@@ -533,7 +540,9 @@ The `sitting` FR capture and its native demo log confirm one object sit,
 one stand and then `ground_sit=true, object_seated=false`. Fixture actions
 are delivered once per rendered frame, even when native updates repeat.
 
-`AURORA_DEMO_RLVA=enabled|disabled|released` opens the native preference page
-and delivers synthetic object commands through `World::apply`. Capture after
-frame 800. The three modes show active locks, ignored commands and locks
-released by the global switch. These fixtures do not establish grid parity.
+`AURORA_DEMO_RLVA=enabled|disabled|released|restart` opens the native
+preference page and delivers synthetic object commands through `World::apply`.
+Capture after frame 800. The modes show active locks, ignored commands, locks
+released at the next start with RLVa off (the demo stops it in place), and
+the switch turned off in the session with its restart alert and the locks
+kept. These fixtures do not establish grid parity.

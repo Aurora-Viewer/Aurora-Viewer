@@ -14063,7 +14063,6 @@ rlva-hidden-region = (Gizli bölge)
 rlva-hidden-parcel = (Gizli parsel)
 rlva-enable = RLVa'yı etkinleştir
 rlva-enable-hint = Nesnelerin RestrainedLove komutlarıyla görüntüleyici eylemlerini denetlemesine izin verir. Kilitli bir oturum, son konumda oturum açmayı gerektirebilir. Varsayılan olarak devre dışıdır.
-rlva-session-hint = RLVa'yı kapatmak tüm kısıtlamaları hemen kaldırır ve sonraki oturum açma kısıtlamasını temizler.
 rlva-blocked = Bu eylem RLVa tarafından kısıtlanır.
 rlva-active = Etkin kısıtlamalar
 rlva-none = Etkin kısıtlama yok

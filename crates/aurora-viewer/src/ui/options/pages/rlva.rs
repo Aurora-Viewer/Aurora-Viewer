@@ -11,7 +11,13 @@ pub fn page(cx: &mut Cx) {
     cx.group(tr!("rlva-title"), |cx| {
         cx.keywords("RLVa RLV RestrainedLove")
             .toggle(tr!("rlva-enable"), tr!("rlva-enable-hint"), &field!(rlva_enabled));
-        cx.note(tr!("rlva-session-hint"));
+        // once RLVa runs, a change waits for the next start (the Legacy
+        // Viewer's "(requires restart)" beside its checkbox)
+        cx.note(match (cx.s.rlva_enabled, cx.st.rlva_running) {
+            (true, false) => tr!("rlva-toggle-enabled-restart"),
+            (false, true) => tr!("rlva-toggle-disabled-restart"),
+            _ => tr!("rlva-restart-hint"),
+        });
         cx.keywords("RLVa RLV console locks exceptions modifiers").row_with(
             tr!("rlva-tools-title"),
             tr!("rlva-tools-hint"),

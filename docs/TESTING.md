@@ -6726,6 +6726,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PEOPLE_FILTER=<text>` | Initial name filter for a People demo scenario |
 | `AURORA_DEMO_ANTI_SPAM=1\|off\|global\|text\|burst` | Synthetic offer, script prompt and sound floods with Protections controls; `burst` many sources at once, one grouped notice |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > RLVa |
+| `AURORA_DEMO_RLVA=restart` | RLVa turned off in the session: the restart alert, the restrictions kept |
 | `AURORA_DEMO_RLVA=selftest` | Runs the RLVa self-test (Dev Toolbox T1), both phases, against the demo's simulated region |
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, the system font list, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
@@ -6953,8 +6954,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 - **`AURORA_DEMO_RLVA`**: `enabled` opens Preferences > RLVa and
   applies synthetic object restrictions at frame 700. `disabled` delivers
   the same commands while the global opt-in stays off; `released` enables
-  them, then switches RLVa off at frame 760. Capture after frame 800 in EN
-  and FR: verify the switch, the active list and the empty released list.
+  them, then stops RLVa at frame 760 as the next start of the viewer would.
+  Capture after frame 800 in EN and FR: verify the switch, the active list
+  and the empty released list. `restart` turns the switch off at frame 760
+  as the user would: the "RLVa will be disabled after you restart" alert
+  shows, the page says the same under the switch, and the restrictions stay
+  (the log's `restrictions kept=true` at frame 800); capture after frame 800.
   This scenario never saves the opt-in to the normal viewer's preferences.
   `im-query` applies fly/IM restrictions and delivers an online synthetic
   `@list` request at frame 740. The native permission card offers sharing

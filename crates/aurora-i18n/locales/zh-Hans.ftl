@@ -14033,7 +14033,6 @@ rlva-hidden-region = （隐藏区域）
 rlva-hidden-parcel = （隐藏地块）
 rlva-enable = 启用 RLVa
 rlva-enable-hint = 允许物件通过 RestrainedLove 命令控制查看器行为。锁定状态下的会话可能要求在上次离线位置登录。默认禁用。
-rlva-session-hint = 关闭 RLVa 会立即解除所有限制并清除下次登录的限制。
 rlva-blocked = 此操作受 RLVa 限制。
 rlva-active = 生效中的限制
 rlva-none = 无生效的限制

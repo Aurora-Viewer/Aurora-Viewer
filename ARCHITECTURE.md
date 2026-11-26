@@ -1771,6 +1771,8 @@ value keep their own guards against `inf` and `nan`. `rlva/dictionary.rs` is
 the Legacy behaviour dictionary in registration order, which @getcommand
 lists. `rlva/startup.rs` keeps the settings RLVa reads once when it starts
 (at the login) and retains the commands received before the login completes.
+`rlva/switch.rs` holds whether RLVa runs in this start of the viewer, apart
+from its saved switch: once it runs, a change applies at the next start.
 `collection.rs` is shared by forced wear and worn-inventory queries:
 it folds point folders and single-level folder links, includes gestures,
 honors shared-wear and prefix preferences, and reports missing targets for
