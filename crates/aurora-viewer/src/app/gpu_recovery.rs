@@ -99,6 +99,12 @@ impl App {
 /// Losses closer than this count together.
 const LOSS_SPAN: Duration = Duration::from_secs(5 * 60);
 
+/// Starts of the renderer after a loss whose device is lost again while it
+/// starts, and the wait between them: time for the driver to finish
+/// resetting the card (#4508).
+const RESTART_ATTEMPTS: u32 = 2;
+const RESTART_WAIT: Duration = Duration::from_secs(2);
+
 /// What a device loss leads to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LossStep {
@@ -161,6 +167,7 @@ impl App {
     /// Before the lost renderer goes: what the scene and the app hold on it.
     fn forget_gpu_scene(&mut self, old: &mut Renderer) {
         self.scene.forget_gpu(old);
+        self.blender_live.forget_gpu();
         self.probes.reset();
         self.forget_gpu_requests();
     }
@@ -189,10 +196,12 @@ impl App {
             region.terrain_surface.gpu_reset();
         }
         self.media.gpu_reset();
-        // the local images of the imports, the wearable editor and Blender Live
+        // Blender Live's images first, while the new pool is empty: they are
+        // staged here, and no chunk comes back before the next frame
+        self.blender_live.gpu_reset(self.scene.textures.staging.clone());
+        // the local images of the imports and the wearable editor
         self.republish_local_imports();
         self.wearable_ui.preview.gpu_reset();
-        self.blender_live.gpu_reset(self.scene.textures.staging.as_deref());
         // AURORA_DEMO_STREAM's textures arrive decoded, with no data the
         // streamer could load them again from
         if let Some(demo) = &mut self.stream_demo {
@@ -257,6 +266,63 @@ impl App {
         true
     }
 
+    /// The renderer after a loss. The card may still be resetting, and its
+    /// new device lost again while the renderer starts (#4508: "loss 2:
+    /// nothing submitted yet"): wgpu answers that with a panic in the first
+    /// buffer made (`aurora_render::start_guarded`), or the renderer finds
+    /// the device lost once its objects are made (`RenderError::DeviceLost`).
+    /// Either start is made again once, after `RESTART_WAIT`, on a window of
+    /// its own: the failed start may have left its configured surface to the
+    /// process (`lost_at_start` in aurora-render renderer.rs, #1650), and a
+    /// window keeps one swapchain (the reason the recovery opens a new
+    /// window at all). The failed window was never shown, except on macOS.
+    /// None when no renderer could be made: the caller closes as before, and
+    /// reports the loss (`crash::gpu_lost`; for the VR reopen, when the new
+    /// device was lost).
+    ///
+    /// The wait holds the event loop, as the whole recovery does (it made
+    /// the new renderer in up to 11 s in the crash reports): on this path
+    /// the viewer used to end. Making the recovery wait in the event loop
+    /// instead is noted in TASKS.md.
+    fn open_renderer_after_loss(&mut self, event_loop: &ActiveEventLoop, plan: &WindowPlan) -> Option<(Arc<Window>, Renderer)> {
+        // AURORA_DEMO_GPU_RESTART_FAIL=1: the first start fails as on a
+        // device lost while it starts, with wgpu's panic (docs/TESTING.md)
+        let demo_fail = self.demo && std::env::var_os("AURORA_DEMO_GPU_RESTART_FAIL").is_some();
+        for attempt in 1..=RESTART_ATTEMPTS {
+            let window = match self.open_window(event_loop, plan) {
+                Ok(w) => w,
+                Err(e) => {
+                    log::error!("GPU recovery: cannot create a window: {e}");
+                    return None;
+                }
+            };
+            match aurora_render::start_guarded(|| {
+                if demo_fail && attempt == 1 {
+                    panic!(
+                        "Failed to get mapped range for buffer created with mapped_at_creation: Buffer with '' label is invalid (AURORA_DEMO_GPU_RESTART_FAIL)"
+                    );
+                }
+                self.open_renderer(&window)
+            }) {
+                Ok(Ok(renderer)) => return Some((window, renderer)),
+                Ok(Err(aurora_render::RenderError::DeviceLost)) => {
+                    log::error!("GPU recovery: the new device was lost while the renderer started (attempt {attempt})");
+                }
+                Ok(Err(e)) => {
+                    log::error!("GPU recovery: no new renderer: {e}");
+                    return None;
+                }
+                Err(panic) => {
+                    log::error!("GPU recovery: the new device failed while the renderer started (attempt {attempt}): {panic}");
+                }
+            }
+            if attempt < RESTART_ATTEMPTS {
+                std::thread::sleep(RESTART_WAIT);
+            }
+        }
+        None
+    }
+
     /// A new window and renderer in place of the current ones, the session
     /// and the world kept, the scene reloaded on the new device; with the
     /// safe graphics level when `safe`. When it began, or None when no new
@@ -286,20 +352,7 @@ impl App {
         if safe {
             self.safe_graphics_after_losses();
         }
-        let window = match self.open_window(event_loop, &plan) {
-            Ok(w) => w,
-            Err(e) => {
-                log::error!("GPU recovery: cannot create a window: {e}");
-                return None;
-            }
-        };
-        let mut renderer = match self.open_renderer(&window) {
-            Ok(r) => r,
-            Err(e) => {
-                log::error!("GPU recovery: no new renderer: {e}");
-                return None;
-            }
-        };
+        let (window, mut renderer) = self.open_renderer_after_loss(event_loop, &plan)?;
         renderer.apply_settings(self.photo_render_settings());
         self.adopt_gpu_scene(&mut renderer);
         self.note_gpus(&renderer);

@@ -58,6 +58,10 @@ const RETRY_AFTER: Duration = Duration::from_secs(30);
 /// recently is not requested again.
 const MIN_RETRY: Duration = Duration::from_secs(5);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
+/// The longest restore the tests drive (each stage giving up as late as it
+/// can); the hover height's hold waits longer than this.
+#[cfg(test)]
+pub const SLOWEST_RESTORE_TESTED: Duration = Duration::from_secs(200);
 const BAKE_RETRIES: u32 = 3;
 /// Times the objects the region took off are asked for again.
 const REWEAR_ROUNDS: u32 = 3;
@@ -276,6 +280,25 @@ impl OutfitRestore {
         self.stage == Stage::Done
     }
 
+    /// The restore has left its wait for the region and the inventory.
+    pub fn started(&self) -> bool {
+        self.stage != Stage::Waiting
+    }
+
+    /// The restore is putting the missing objects on (or waiting to ask
+    /// again).
+    pub fn is_attaching(&self) -> bool {
+        matches!(self.stage, Stage::Attaching { .. })
+    }
+
+    /// Every object the restore puts on (but those taken off on purpose)
+    /// is among `worn`, the objects worn now: only its retry window is
+    /// left. `worn` is the live set, not the one `update` last saw, which
+    /// is up to an outfit poll old.
+    pub fn attachments_worn(&self, worn: &HashSet<Uuid>) -> bool {
+        self.is_attaching() && self.objects.iter().all(|id| worn.contains(id) || self.user_removed.contains(id))
+    }
+
     /// The first login's outfit, once: the app wears it.
     pub fn take_initial_outfit(&mut self) -> Option<InitialOutfit> {
         self.initial.take()
@@ -301,6 +324,21 @@ impl OutfitRestore {
             self.cof_version = v;
             self.bake_requested = Some(v);
             self.commands.push(NetCommand::RequestServerAppearance { cof_version: v });
+        }
+    }
+
+    /// A restore putting `objects` on, of which `worn` are worn (tests of
+    /// what waits for it).
+    #[cfg(test)]
+    pub fn attaching(objects: &[Uuid], worn: &[Uuid]) -> Self {
+        OutfitRestore {
+            stage: Stage::Attaching {
+                since: Instant::now(),
+                retried: false,
+            },
+            objects: objects.to_vec(),
+            worn_objects: worn.iter().copied().collect(),
+            ..Default::default()
         }
     }
 
@@ -935,6 +973,43 @@ mod tests {
         assert!(r.commands.is_empty());
     }
 
+    /// The slowest restore: the Current Outfit fetch failing late twice,
+    /// its third answer late, an item looked up late, then an object still
+    /// missing at the retry. It still ends by itself, within
+    /// `SLOWEST_RESTORE_TESTED` (what the hover height's hold waits for at
+    /// least).
+    #[test]
+    fn the_slowest_restore_still_ends_by_itself() {
+        let mut inv = unfetched_cof();
+        let mut r = OutfitRestore::default();
+        let t0 = Instant::now();
+        let late = Duration::from_secs(29);
+        r.update(inputs(&mut inv, &[]), t0);
+        let mut t = t0;
+        for _ in 0..2 {
+            t += late;
+            inv.folders.get_mut(&Uuid::from_u128(11)).unwrap().state = FetchState::Failed;
+            r.update(inputs(&mut inv, &[]), t);
+        }
+        assert!(matches!(r.stage, Stage::FetchCof { attempts: 3, .. }), "{:?}", r.stage);
+        t += late;
+        fetch_cof(&mut inv, &[200, 201, 202]);
+        inv.items.remove(&Uuid::from_u128(202));
+        r.update(inputs(&mut inv, &[]), t);
+        assert!(matches!(r.stage, Stage::FetchItems { .. }), "{:?}", r.stage);
+        t += FETCH_TIMEOUT - Duration::from_millis(500);
+        inv.items
+            .insert(Uuid::from_u128(202), item(202, Uuid::from_u128(10), ASSET_OBJECT, INV_OBJECT, 0));
+        while !r.is_done() && t < t0 + SLOWEST_RESTORE_TESTED * 2 {
+            r.update(inputs(&mut inv, &[200, 201]), t);
+            t += Duration::from_millis(500);
+        }
+        assert!(r.is_done());
+        let took = t - t0;
+        assert!(took > Duration::from_secs(150), "not the slow path: {took:?}");
+        assert!(took <= SLOWEST_RESTORE_TESTED, "{took:?}");
+    }
+
     /// The region puts its own object back on a point after the requests
     /// left (a pause longer than QUIET): the object added there comes off.
     /// It keeps its COF link and is asked for again once the region is
@@ -948,22 +1023,34 @@ mod tests {
         fetch_cof(&mut inv, &[200, 201, 202, 203]);
         r.update(inputs(&mut inv, &[200]), t0);
         r.commands.clear();
+        let worn = |ids: &[u128]| ids.iter().map(|&i| Uuid::from_u128(i)).collect::<HashSet<_>>();
+        assert!(!r.attachments_worn(&worn(&[200])), "the region is still restoring");
         let asked = t0 + SETTLE;
         r.update(inputs(&mut inv, &[200]), asked);
         assert_eq!(requested(&r.commands), vec![201, 202, 203]);
+        assert!(!r.attachments_worn(&worn(&[200])), "requested, not worn");
         r.commands.clear();
         r.update(inputs(&mut inv, &[200, 201, 202, 203]), asked + Duration::from_secs(1));
+        assert!(
+            r.attachments_worn(&worn(&[200, 201, 202, 203])),
+            "all worn: only the retry window is left"
+        );
+        // what is worn now counts, not what the last poll saw
+        assert!(!r.attachments_worn(&worn(&[200, 202, 203])), "201 came off before the next poll");
         // the resident takes 203 off; the region's late object replaces 201
         r.on_detach_requested(&[Uuid::from_u128(203)]);
         assert!(r.keeps_cof_link(Uuid::from_u128(201)));
         assert!(!r.keeps_cof_link(Uuid::from_u128(203)));
         let late = asked + Duration::from_secs(2);
         r.update(inputs(&mut inv, &[200, 202]), late);
+        assert!(!r.attachments_worn(&worn(&[200, 202])), "201 came off");
         r.update(inputs(&mut inv, &[200, 202]), late + QUIET - Duration::from_millis(1));
         assert!(r.commands.is_empty(), "not while the region is busy: {:?}", r.commands);
         r.update(inputs(&mut inv, &[200, 202]), late + QUIET);
         assert_eq!(requested(&r.commands), vec![201]);
         r.commands.clear();
+        r.update(inputs(&mut inv, &[200, 201, 202]), late + QUIET + Duration::from_secs(1));
+        assert!(r.attachments_worn(&worn(&[200, 201, 202])), "203 was taken off on purpose");
         r.update(inputs(&mut inv, &[200, 201, 202]), asked + RETRY_AFTER);
         assert!(r.is_done(), "203 is not missing: it was taken off on purpose");
         assert!(r.commands.is_empty());

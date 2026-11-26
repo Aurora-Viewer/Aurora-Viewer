@@ -187,8 +187,12 @@ pub fn build(library: &AvatarLibrary, bytes: &[u8], id: Uuid, name: &str) -> Res
             "inverse_bind": world.inverse().to_cols_array(), "reference_bind": reference.to_cols_array()})
         })
         .collect();
+    // The same shape as the Legacy Viewer's appearance XML (the shape
+    // editor's Save as XML), for tools that import shapes that way: the Maya
+    // plug-in hands it to MayaStar. Covered by the same Modify check.
+    let archetype = crate::shape_editor::xml_export::document(name, 0, &params, &library.shape_params);
     let data = json!({"id": id, "name": name.chars().take(128).collect::<String>(), "params": params,
-        "joints": joints, "names": names, "parts": parts});
+        "joints": joints, "names": names, "parts": parts, "archetype": archetype});
     if serde_json::to_vec(&data).map_err(|e| e.to_string())?.len() > MAX_BYTES {
         return Err(aurora_i18n::tr!("blender-shape-too-large").into());
     }
@@ -243,6 +247,13 @@ mod tests {
         assert_eq!(payload["params"]["80"], 1.0);
         assert_eq!(payload["joints"].as_array().expect("joints").len(), 159);
         assert_eq!(payload["parts"].as_array().expect("body").len(), 6);
+        // The same shape as an appearance XML, for MayaStar's import.
+        let archetype = payload["archetype"].as_str().expect("appearance XML");
+        assert!(archetype.contains("<linden_genepool version=\"1.0\">"));
+        assert!(
+            archetype.contains("id=\"80\"") && archetype.contains(" u8=\""),
+            "the sex driver, as bytes"
+        );
         assert!(serde_json::to_vec(&payload).expect("JSON").len() < MAX_BYTES);
         let params = wearable.params;
         let shape = lib

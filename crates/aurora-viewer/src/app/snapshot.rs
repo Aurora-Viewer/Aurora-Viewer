@@ -1669,7 +1669,7 @@ impl App {
                 self.world.inventory.add_items(vec![item]);
                 // the inventory shows the new photo (upload_done_callback,
                 // openInventoryPanelAndSetSelection)
-                self.panels.inventory = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
                 self.inventory_ui.show_original(&self.world.inventory, id);
                 self.snapshots.message = Some((aurora_i18n::tr!("photo-uploaded").to_owned(), false));
                 self.snapshots.message_item = Some(id);
@@ -2033,7 +2033,9 @@ impl App {
                     self.settings.save();
                 }
             }
-            Action::PersonalLighting => self.panels.personal_lighting = true,
+            Action::PersonalLighting => {
+                crate::ui::widgets::open_floater(&self.egui_ctx, "personal_lighting", &mut self.panels.personal_lighting)
+            }
             Action::KeepLight => self.keep_photo_light(),
             Action::Controls => {
                 if !self.panels.camera_controls && !self.panels.movement_controls {
@@ -2045,7 +2047,7 @@ impl App {
             }
             Action::ShowItem => {
                 if let Some(id) = self.snapshots.message_item {
-                    self.panels.inventory = true;
+                    crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
                     self.inventory_ui.show_original(&self.world.inventory, id);
                 }
             }

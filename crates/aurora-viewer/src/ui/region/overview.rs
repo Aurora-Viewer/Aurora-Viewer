@@ -142,9 +142,13 @@ fn tile(ui: &mut egui::Ui, p: &Palette, v: &View, world: &World, pics: &Pictures
     if let Some(uv) = uv
         && v.same_region
     {
-        let size = world.regions.get(&v.handle).map_or(256.0, |r| r.heightmap.size_x.max(256) as f32);
+        let (size_x, size_y) = world
+            .regions
+            .get(&v.handle)
+            .map_or((256.0, 256.0), |r| (r.heightmap.size_x as f32, r.heightmap.size_y as f32));
         let pos = world.agent.position;
-        let (u, t) = (pos.x / size, 1.0 - pos.y / size);
+        let (x, y) = crate::ui::map_tiles::region_pin(pos.x, pos.y, size_x, size_y);
+        let (u, t) = (x, 1.0 - y);
         if uv.x_range().contains(u) && uv.y_range().contains(t) {
             let at = egui::pos2(
                 rect.left() + (u - uv.min.x) / uv.width() * rect.width(),
@@ -700,7 +704,7 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &m
                 .on_hover_text(top)
                 .clicked()
             {
-                super::top_objects::open(s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
+                super::top_objects::open(ui.ctx(), s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
             }
             let restart = aurora_i18n::tr!("region-restart");
             if action(ui, p, "refresh", label(restart), SoftDanger, true)
@@ -831,7 +835,7 @@ fn health_card(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world
         && r.clicked()
         && !world.estate.top_waiting
     {
-        super::top_objects::open(s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
+        super::top_objects::open(ui.ctx(), s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
     }
     let stats = world.estate.stats_of(v.handle).cloned();
     let get = |id: u32| stats.as_ref().and_then(|s| s.get(id));

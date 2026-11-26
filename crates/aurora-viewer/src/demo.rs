@@ -51,6 +51,9 @@ pub mod about;
 pub mod alpha_mask_ab;
 #[path = "demo_alpha_sort.rs"]
 pub mod alpha_sort;
+/// Two inventory animations at once (AURORA_DEMO_INVENTORY=animation-play-two).
+#[path = "demo_animation_layers.rs"]
+pub mod animation_layers;
 /// AURORA_DEMO_ARRIVAL: an arrival in a busy region, every asset downloaded.
 #[path = "demo_arrival.rs"]
 pub mod arrival;
@@ -142,6 +145,10 @@ pub mod env;
 pub mod experience;
 #[path = "demo_floating_text.rs"]
 pub mod floating_text;
+/// A trail of footprints in the snow, then Footprints turned off
+/// (AURORA_DEMO_FOOTPRINTS_OFF, #4019).
+#[path = "demo_footprints.rs"]
+pub mod footprints;
 /// A prop derezzed and particles started while the photo mode holds the
 /// world still (AURORA_DEMO_FREEZE_WORLD).
 #[path = "demo_freeze_world.rs"]
@@ -194,6 +201,9 @@ pub mod land;
 /// (AURORA_DEMO_LEGACY_BUMP).
 #[path = "demo_legacy_bump.rs"]
 pub mod legacy_bump;
+/// A Legacy Viewer's lists to import (AURORA_DEMO_LEGACY_LISTS).
+#[path = "demo_legacy_lists.rs"]
+pub mod legacy_lists;
 #[path = "demo_link.rs"]
 pub mod link;
 /// A Mask of cutoff 255 over an alpha just under opaque (AURORA_DEMO_MASK_255).
@@ -2463,6 +2473,42 @@ pub fn lure_scene() -> Option<LureScene> {
     }
 }
 
+/// `AURORA_DEMO_TELEPORT_FAILED=<reason>[,hypergrid]`: every teleport is
+/// refused with that reason (a code of teleport_strings.xml or a simulator's
+/// text), as a region's TeleportFailed; `,hypergrid` puts the agent on
+/// another OpenSim grid for the explanation line. `empty` sends an empty
+/// reason, as OpenSim's EntityTransferModule does.
+pub fn teleport_failure() -> Option<(String, bool)> {
+    let value = std::env::var("AURORA_DEMO_TELEPORT_FAILED").ok()?;
+    teleport_failure_value(&value)
+}
+
+fn teleport_failure_value(value: &str) -> Option<(String, bool)> {
+    let value = value.trim();
+    let (reason, hypergrid) = match value.rsplit_once(',') {
+        Some((reason, "hypergrid")) => (reason.trim(), true),
+        _ => (value, false),
+    };
+    match reason {
+        "" => None,
+        "empty" => Some((String::new(), hypergrid)),
+        _ => Some((reason.to_owned(), hypergrid)),
+    }
+}
+
+#[cfg(test)]
+mod teleport_failure_tests {
+    #[test]
+    fn the_demo_teleport_failure_reads_its_reason_and_hypergrid() {
+        use super::teleport_failure_value as read;
+        assert_eq!(read("no_host"), Some(("no_host".into(), false)));
+        assert_eq!(read("Unauthorized,hypergrid"), Some(("Unauthorized".into(), true)));
+        assert_eq!(read("empty"), Some((String::new(), false)));
+        assert_eq!(read("empty,hypergrid"), Some((String::new(), true)));
+        assert_eq!(read("  "), None);
+    }
+}
+
 /// AURORA_DEMO_SLURLS=1: place links in every form, in Tess Touch's
 /// conversation, in the chat console and in a notification: the plaza
 /// (General, connected), the lagoon (Moderate) and Nordheim (Adult) known
@@ -3435,9 +3481,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // a lure accepted offline: the teleport starts, then has nowhere to go
         aurora_net::NetCommand::AcceptLure { .. } => vec![
             NetEvent::TeleportStarted { flags: 0 },
-            NetEvent::TeleportFailed {
-                reason: aurora_i18n::tr!("demo-no-teleport-offline").into(),
-            },
+            NetEvent::viewer_teleport_failed(aurora_i18n::tr!("demo-no-teleport-offline")),
         ],
         aurora_net::NetCommand::AgentAnimation { anim, start: false }
             if *anim == SEAT_ANIM

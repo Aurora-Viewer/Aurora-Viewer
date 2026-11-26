@@ -160,7 +160,16 @@ mod tests {
         let mut actions = Vec::new();
         let mut frame = |events| {
             let mut output = ctx.run_ui(input(events), |ui| {
-                super::super::context::new_menu(ui, &theme.palette(), uuid::Uuid::nil(), false, &mut st, &mut prefs, &mut actions);
+                super::super::context::new_menu(
+                    ui,
+                    &theme.palette(),
+                    uuid::Uuid::nil(),
+                    false,
+                    false,
+                    &mut st,
+                    &mut prefs,
+                    &mut actions,
+                );
             });
             output.textures_delta.clear();
             output
