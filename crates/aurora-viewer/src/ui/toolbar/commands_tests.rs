@@ -4909,6 +4909,48 @@ fn the_interfaces_block_is_a_drawer_of_the_presets_its_eyes_keep() {
     assert!(settings.drawers[drawers::INTERFACES].buttons.is_empty());
 }
 
+/// "Interfaces" sits before "Separator" in the window, out of the searched
+/// catalogue, and rests once placed (human request, 2026-11-26).
+#[test]
+fn the_interfaces_tile_sits_before_the_separator_and_rests_once_placed() {
+    let mut bench = Bench {
+        screen: Vec2::new(1600.0, 1000.0),
+        ..Default::default()
+    };
+    bench.state.open = true;
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let tile = |bench: &Bench, command: &str| {
+        bench
+            .ctx
+            .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_catalogue", command))))
+            .unwrap_or_else(|| panic!("{command}"))
+    };
+    let interfaces = tile(&bench, drawers::INTERFACES);
+    let separator = tile(&bench, structure::DIVIDER);
+    assert!(interfaces.right() <= separator.left(), "{interfaces:?} before {separator:?}");
+    assert!((interfaces.center().y - separator.center().y).abs() < 1.0, "on its row");
+    let entries = catalogue_view::entries(&Layout::default(), &bench.settings, &Default::default());
+    assert!(!entries.iter().any(|entry| entry.button.command == drawers::INTERFACES));
+    // a click places it, in the bottom bar as the separator's does
+    bench.pointer(interfaces.center(), Some(true));
+    bench.pointer(interfaces.center(), Some(false));
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert!(bench.settings.drawers.contains_key(drawers::INTERFACES));
+    assert!(bench.settings.location(drawers::INTERFACES, &Layout::default()).is_some());
+    let placed = bench.settings.clone();
+    let interfaces = tile(&bench, drawers::INTERFACES);
+    bench.pointer(interfaces.center(), Some(true));
+    bench.pointer(interfaces.center(), Some(false));
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert_eq!(bench.settings, placed, "placed, its tile does nothing");
+}
+
 /// Each preset's button in the editor has an eye, open by default: a click
 /// on it hides the preset from the Interfaces block, or shows it again,
 /// without applying it (human request, 2026-11-26).

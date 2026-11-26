@@ -312,7 +312,9 @@ impl Tile {
 pub(crate) fn entries(layout: &Layout, settings: &ToolbarSettings, menu: &commands::Catalogue) -> Vec<Tile> {
     let mut tiles: Vec<_> = catalogue(layout)
         .into_iter()
-        .filter(|button| button.command != super::structure::DIVIDER && button.command != super::drawers::FLOATING)
+        .filter(|button| {
+            ![super::structure::DIVIDER, super::drawers::FLOATING, super::drawers::INTERFACES].contains(&button.command.as_str())
+        })
         .map(|button| Tile {
             category: category(&button.command),
             button,

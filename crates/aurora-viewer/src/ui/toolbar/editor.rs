@@ -320,8 +320,9 @@ impl ToolbarUi {
                 });
                 ui.add_space(16.0);
                 // Structural tools stay outside the searchable command catalogue:
-                // the separator, and a new floating block beside it
-                for id in [super::structure::DIVIDER, super::drawers::FLOATING] {
+                // the Interfaces block before the separator (human request,
+                // 2026-11-26), and a new floating block after it
+                for id in [super::drawers::INTERFACES, super::structure::DIVIDER, super::drawers::FLOATING] {
                     let command = catalogue::find(id).expect("built-in structural tool");
                     let tool = ToolButton {
                         command: command.id.into(),
@@ -329,17 +330,19 @@ impl ToolbarUi {
                         tooltip: String::new(),
                     };
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(180.0, TILE_H), egui::Sense::hover());
+                    // the Interfaces block is one: placed, its tile rests
+                    let placed = settings.locked || (id == super::drawers::INTERFACES && settings.drawers.contains_key(id));
                     let response = tile(
                         ui,
                         p,
                         rect,
                         &tool,
                         label(&tool),
-                        if settings.locked { Tile::Placed } else { Tile::Free },
+                        if placed { Tile::Placed } else { Tile::Free },
                         false,
                     );
                     ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("toolbar_catalogue", &tool.command)), rect));
-                    if !settings.locked {
+                    if !placed {
                         if response.drag_started_by(egui::PointerButton::Primary) {
                             response.dnd_set_drag_payload(Drag {
                                 button: tool.clone(),
