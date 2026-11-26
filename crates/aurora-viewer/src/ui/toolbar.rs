@@ -1098,7 +1098,10 @@ impl ToolbarUi {
             // is in "Edit block…", human request, 2026-11-26)
             if let Some(button) = button.filter(|button| drawers::is_drawer(&button.command)) {
                 section(ui, p, aurora_i18n::tr!("toolbar-block-settings"));
-                blocks::kind_menu(ui, p, self, &settings, &button.command, Some((bar, response.rect)));
+                // the Interfaces block is a drawer, always
+                if button.command != drawers::INTERFACES {
+                    blocks::kind_menu(ui, p, self, &settings, &button.command, Some((bar, response.rect)));
+                }
                 if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-block-edit"), !locked) {
                     self.edit_drawer(&button.command);
                 }
@@ -1234,11 +1237,15 @@ impl ToolbarUi {
         }
     }
 
-    /// `button`, or a floating block's button (`floating`): there a drag
-    /// moves the whole block, never the button (human request, 2026-11-25).
-    /// While the bars are edited its gaps and separators move like its
-    /// buttons (human request, 2026-11-25): only its glass moves the block.
-    #[allow(clippy::too_many_arguments)]
+    /// An Interfaces block's button's right click: its shortcut only, its
+    /// block's content being its own (human request, 2026-11-26).
+    pub(crate) fn interface_context(&mut self, response: &Response, p: &Palette, command: &str) {
+        let settings = appearance::settings(&response.ctx);
+        menu::context_menu_of_button(response, p, |ui| {
+            self.shortcut_item(ui, p, &settings, command);
+        });
+    }
+
     /// A click on an Interfaces block's button (`drawers::INTERFACE_PREFIX`
     /// and its key): its preset, or its personal interface, is applied.
     pub(crate) fn interface_clicked(&mut self, key: &str) {
@@ -1249,6 +1256,11 @@ impl ToolbarUi {
         }
     }
 
+    /// `button`, or a floating block's button (`floating`): there a drag
+    /// moves the whole block, never the button (human request, 2026-11-25).
+    /// While the bars are edited its gaps and separators move like its
+    /// buttons (human request, 2026-11-25): only its glass moves the block.
+    #[allow(clippy::too_many_arguments)]
     pub fn button_in(
         &mut self,
         response: &Response,
@@ -1392,6 +1404,18 @@ impl ToolbarUi {
     fn apply_edit(&mut self, layout: &Layout, settings: &mut ToolbarSettings, provisional: bool) -> bool {
         let Some(edit) = self.pending.take() else { return false };
         match &edit {
+            // the Interfaces block stays, a drawer, its content its own
+            // (human request, 2026-11-26): only its name, its icon and its
+            // shortcuts change
+            Edit::Remove(command) | Edit::Unfold(_, command) | Edit::Float(_, command, _) if command == drawers::INTERFACES => {
+                return false;
+            }
+            // "Customize interface" alone is no button any more
+            Edit::Insert(_, button, _) | Edit::InsertGroup(_, button, _) | Edit::DrawerInsert(_, button, _)
+                if catalogue::retired(&button.command) =>
+            {
+                return false;
+            }
             Edit::DrawerFromDrop(bar, target, sources, mode) => {
                 return drawers::group_drop(settings, layout, *bar, target, sources, *mode);
             }

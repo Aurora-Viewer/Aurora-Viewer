@@ -19821,6 +19821,13 @@ impl App {
                     ui::toolbar::shortcuts::Fallback::None => {}
                     ui::toolbar::shortcuts::Fallback::Changed => toolbar_changed = true,
                     ui::toolbar::shortcuts::Fallback::ImportBar => a.bar = BarAction::ImportBar,
+                    ui::toolbar::shortcuts::Fallback::Interface(key) => {
+                        if key == ui::toolbar::drawers::INTERFACE_CUSTOMIZE {
+                            a.bar = BarAction::CustomizeBars;
+                        } else {
+                            self.toolbar_ui.interface_clicked(&key);
+                        }
+                    }
                 }
                 if toolbar_changed && previous_conversations != conversation_slot(toolbar_settings) {
                     self.settings.chat_thumbnails = if conversation_slot(toolbar_settings).is_some() {

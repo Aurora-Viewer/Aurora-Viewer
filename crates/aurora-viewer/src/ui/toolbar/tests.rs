@@ -1927,12 +1927,12 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
     // every command but bar_account and bar_system, which stay out of the catalogue
-    assert_eq!(all.len(), 130);
+    assert_eq!(all.len(), 129);
     assert!(
         !all.iter()
             .any(|button| matches!(button.command.as_str(), "bar_account" | "bar_system"))
     );
-    assert_eq!(COMMANDS.len(), 132);
+    assert_eq!(COMMANDS.len(), 131);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
@@ -2673,6 +2673,45 @@ fn customize_interface_on_a_bar_becomes_the_interfaces_block() {
     assert!(settings.migrate_interfaces());
     assert!(settings.left.is_empty());
     assert_eq!(commands(&settings.top), ["people", drawers::INTERFACES]);
+}
+
+/// "Customize interface" alone is no button any more: out of the
+/// catalogue, refused on a bar or in a drawer, dropped from saved drawers,
+/// and its main menu entry's copy on a bar becomes the Interfaces block
+/// (human request, 2026-11-26).
+#[test]
+fn customize_interface_alone_is_no_button_any_more() {
+    assert!(catalogue::find(drawers::EDIT_INTERFACE).is_none());
+    assert!(catalogue::retired(drawers::EDIT_INTERFACE));
+    assert!(catalogue::retired(drawers::EDIT_INTERFACE_MENU));
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(vec![button("inventory")]),
+        top: vec![button(drawers::EDIT_INTERFACE_MENU)],
+        ..Default::default()
+    };
+    settings.drawers.insert(
+        "drawer:mine".into(),
+        drawers::Drawer {
+            buttons: vec![button("people"), button(drawers::EDIT_INTERFACE)],
+            ..Default::default()
+        },
+    );
+    settings.left = vec![button("drawer:mine")];
+    settings.sanitize();
+    assert_eq!(commands(&settings.top), [drawers::INTERFACES]);
+    assert_eq!(commands(&settings.drawers["drawer:mine"].buttons), ["people"]);
+    for edit in [
+        Edit::Insert(Bar::Bottom, button(drawers::EDIT_INTERFACE), 0),
+        Edit::InsertGroup(Bar::Bottom, button(drawers::EDIT_INTERFACE_MENU), 0),
+        Edit::DrawerInsert("drawer:mine".into(), button(drawers::EDIT_INTERFACE), 0),
+    ] {
+        let mut state = ToolbarUi {
+            pending: Some(edit),
+            ..Default::default()
+        };
+        assert!(!state.commit(&Layout::default(), &mut settings));
+    }
 }
 
 /// The import bar takes its buttons once, out of a drawer included (the

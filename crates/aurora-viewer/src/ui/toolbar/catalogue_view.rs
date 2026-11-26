@@ -137,8 +137,7 @@ pub(super) fn category(command: &str) -> Category {
         | "import_advanced"
         | "import_settings"
         | "blender_live" => Creation,
-        "edit_interface"
-        | "aurora_menu"
+        "aurora_menu"
         | "preferences"
         | "graphics_preferences"
         | "quickprefs"
@@ -221,7 +220,6 @@ pub(super) fn alias(command: &str) -> Option<&'static str> {
         "menu:common-help/grid_status" => "gridstatus",
         "menu:common-advanced/debug-settings" => "settings_debug",
         "menu:common-advanced/graphics" => "graphics_preferences",
-        "menu:toolbar-interface-edit" => "edit_interface",
         _ => return None,
     })
 }
@@ -238,7 +236,6 @@ fn primary(command: &str) -> bool {
     matches!(
         alias(command).unwrap_or(command),
         "conversations"
-            | "edit_interface"
             | "speak"
             | "move"
             | "view"
@@ -313,14 +310,7 @@ pub(crate) fn entries(layout: &Layout, settings: &ToolbarSettings, menu: &comman
     let mut tiles: Vec<_> = catalogue(layout)
         .into_iter()
         .filter(|button| {
-            // "Customize interface" ends the Interfaces block
-            ![
-                super::structure::DIVIDER,
-                super::drawers::FLOATING,
-                super::drawers::INTERFACES,
-                super::drawers::EDIT_INTERFACE,
-            ]
-            .contains(&button.command.as_str())
+            ![super::structure::DIVIDER, super::drawers::FLOATING, super::drawers::INTERFACES].contains(&button.command.as_str())
         })
         .map(|button| Tile {
             category: category(&button.command),
@@ -330,7 +320,12 @@ pub(crate) fn entries(layout: &Layout, settings: &ToolbarSettings, menu: &comman
         .collect();
     let indices: std::collections::HashMap<_, _> = tiles.iter().enumerate().map(|(i, tile)| (tile.button.command.clone(), i)).collect();
     for entry in &menu.entries {
-        if entry.info || entry.separator || !entry.button.command.starts_with(commands::PREFIX) {
+        // "Customize interface" ends the Interfaces block, never alone
+        if entry.info
+            || entry.separator
+            || !entry.button.command.starts_with(commands::PREFIX)
+            || super::catalogue::retired(&entry.button.command)
+        {
             continue;
         }
         if !entry.group

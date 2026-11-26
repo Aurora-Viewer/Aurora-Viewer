@@ -137,7 +137,9 @@ pub(super) fn protect(ctx: &egui::Context, rect: Rect, layer: LayerId) {
 }
 
 pub(super) fn removal(ctx: &egui::Context, drag: &Drag, settings: &ToolbarSettings) -> bool {
-    drag.from.is_some() && free_spot(ctx, settings).is_some()
+    // the Interfaces block stays (human request, 2026-11-26)
+    let interfaces = drag.members.is_empty() && drag.button.command == super::drawers::INTERFACES;
+    drag.from.is_some() && !interfaces && free_spot(ctx, settings).is_some()
 }
 
 /// The catalogue's "Floating block" let go over the world, out of every bar,

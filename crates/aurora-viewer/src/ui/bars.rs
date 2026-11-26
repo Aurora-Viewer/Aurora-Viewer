@@ -2939,9 +2939,6 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
     if let Some(choice) = super::toolbar::presets::import_choice(cmd) {
         return BarAction::ImportType(choice);
     }
-    if cmd == "edit_interface" {
-        return BarAction::CustomizeBars;
-    }
     if cmd.starts_with(super::toolbar::commands::PREFIX) {
         super::toolbar::commands::request(ctx, cmd);
         return BarAction::None;
@@ -4190,6 +4187,7 @@ pub(crate) fn toolbar_row(
         // an Interfaces block's interface: applied by a click, never dragged
         // nor edited alone (`drawers::INTERFACES`)
         if let Some(key) = b.command.strip_prefix(super::toolbar::drawers::INTERFACE_PREFIX) {
+            toolbar.interface_context(&response, p, &b.command);
             if response.clicked() && !row.editing {
                 if key == super::toolbar::drawers::INTERFACE_CUSTOMIZE {
                     *action = BarAction::CustomizeBars;

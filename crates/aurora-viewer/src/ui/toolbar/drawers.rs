@@ -36,9 +36,15 @@ pub const INTERFACE_PREFIX: &str = "interface:";
 /// The key of the Interfaces block's last button, "Customize interface",
 /// which opens the editor as the command it replaces on the bars did.
 pub const INTERFACE_CUSTOMIZE: &str = "customize";
-/// "Customize interface": on a bar, it becomes the Interfaces block, which
-/// ends with it (`migrate_interfaces`).
+/// "Customize interface", and its main menu entry's copy: no button any
+/// more (`catalogue::retired`); on a bar, it becomes the Interfaces block,
+/// which ends with it (`migrate_interfaces`).
 pub const EDIT_INTERFACE: &str = "edit_interface";
+pub const EDIT_INTERFACE_MENU: &str = "menu:toolbar-interface-edit";
+
+fn customizes(command: &str) -> bool {
+    command == EDIT_INTERFACE || command == EDIT_INTERFACE_MENU
+}
 /// The Interfaces block's button.
 pub const INTERFACES_ICON: &str = "layout-dashboard-filled";
 /// The catalogue's "Floating block": dropped on the screen, or on a bar with
@@ -172,9 +178,7 @@ pub(super) fn interface_buttons<'a>(
     });
     let customize = ToolButton {
         command: format!("{INTERFACE_PREFIX}{INTERFACE_CUSTOMIZE}"),
-        icon: super::catalogue::find(EDIT_INTERFACE)
-            .map_or("layout-grid-filled", |command| command.icon)
-            .into(),
+        icon: "layout-grid-filled".into(),
         tooltip: aurora_i18n::tr!("toolbar-interface-edit").into(),
     };
     builtin
@@ -200,7 +204,7 @@ pub(super) fn migrate_interfaces(settings: &mut ToolbarSettings) -> bool {
             .chain(settings.buttons.iter())
             .flatten()
     };
-    if !bars().any(|button| button.command == EDIT_INTERFACE) {
+    if !bars().any(|button| customizes(&button.command)) {
         return false;
     }
     let mut placed = bars().any(|button| button.command == INTERFACES);
@@ -210,7 +214,7 @@ pub(super) fn migrate_interfaces(settings: &mut ToolbarSettings) -> bool {
         .chain([&mut settings.left, &mut settings.right, &mut settings.top]);
     for buttons in lists {
         buttons.retain_mut(|button| {
-            if button.command != EDIT_INTERFACE {
+            if !customizes(&button.command) {
                 return true;
             }
             if placed {
@@ -222,16 +226,33 @@ pub(super) fn migrate_interfaces(settings: &mut ToolbarSettings) -> bool {
         });
     }
     settings.drawers.entry(INTERFACES.into()).or_default();
-    if let Some(look) = settings.appearance.remove(EDIT_INTERFACE) {
-        settings.appearance.entry(INTERFACES.into()).or_insert(look);
-    }
-    if let Some(style) = settings.block_styles.remove(EDIT_INTERFACE) {
-        settings.block_styles.entry(INTERFACES.into()).or_insert(style);
-    }
-    if let Some(profile) = settings.block_profiles.remove(EDIT_INTERFACE) {
-        settings.block_profiles.entry(INTERFACES.into()).or_insert(profile);
+    for key in [EDIT_INTERFACE, EDIT_INTERFACE_MENU] {
+        if let Some(look) = settings.appearance.remove(key) {
+            settings.appearance.entry(INTERFACES.into()).or_insert(look);
+        }
+        if let Some(style) = settings.block_styles.remove(key) {
+            settings.block_styles.entry(INTERFACES.into()).or_insert(style);
+        }
+        if let Some(profile) = settings.block_profiles.remove(key) {
+            settings.block_profiles.entry(INTERFACES.into()).or_insert(profile);
+        }
+        if let Some(binding) = settings.shortcuts.remove(key) {
+            settings.shortcuts.entry(INTERFACES.into()).or_insert(binding);
+        }
     }
     true
+}
+
+/// The name of the interface `key` for a shortcut's warnings: a preset's,
+/// "Customize interface", or the block's for a personal interface.
+pub(super) fn interface_name(key: &str) -> String {
+    if let Some(preset) = super::presets::Preset::from_key(key) {
+        preset.label().to_owned()
+    } else if key == INTERFACE_CUSTOMIZE {
+        aurora_i18n::tr!("toolbar-interface-edit").to_owned()
+    } else {
+        aurora_i18n::tr!("toolbar-interfaces").to_owned()
+    }
 }
 
 /// Opens or closes the eye of the interface `key` (`Preset::key` or a

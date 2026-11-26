@@ -33,7 +33,6 @@ pub const COMMANDS: &[Command] = commands![
     "toolbar_floating", "app-window-filled", "toolbar-floating-new", true;
     // the presets in a drawer (human request, 2026-11-26; drawers::INTERFACES)
     "drawer:interfaces", "layout-dashboard-filled", "toolbar-interfaces", true;
-    "edit_interface", "layout-grid-filled", "toolbar-interface-edit", true;
     "bar_navigation", "map-pin-filled", "toolbar-block-navigation", true;
     "bar_account", "user-filled", "toolbar-block-account", true;
     "bar_system", "gauge-filled", "toolbar-block-system", true;
@@ -193,7 +192,10 @@ impl Command {
 /// Commands the Legacy Viewer dropped: only stale entries of its skins'
 /// toolbars.xml name them, and it skips them. A saved layout (older Aurora,
 /// imported) that still has one drops it, with no empty button.
-const RETIRED: &[&str] = &["howto"];
+/// "Customize interface" alone, and its main menu entry's copy, are no
+/// button any more: the Interfaces block ends with it (human request,
+/// 2026-11-26; `drawers::migrate_interfaces` turns one on a bar into it).
+const RETIRED: &[&str] = &["howto", "edit_interface", "menu:toolbar-interface-edit"];
 
 /// Whether `id` names a command that no longer exists.
 pub fn retired(id: &str) -> bool {

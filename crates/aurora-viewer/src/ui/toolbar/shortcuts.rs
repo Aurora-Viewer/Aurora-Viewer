@@ -269,6 +269,9 @@ pub fn name(settings: &ToolbarSettings, layout: &Layout, key: &str) -> String {
     if let Some(floating) = settings.drawers.get(key).and_then(|drawer| drawer.floating.as_ref()) {
         return super::label(&floating.button(key)).to_owned();
     }
+    if let Some(interface) = key.strip_prefix(drawers::INTERFACE_PREFIX) {
+        return drawers::interface_name(interface);
+    }
     let button = ToolButton {
         command: key.into(),
         icon: String::new(),
@@ -286,6 +289,10 @@ pub fn active(settings: &ToolbarSettings, layout: &Layout, key: &str) -> bool {
     }
     if drawers::is_drawer(key) {
         return drawers::is_floating(settings, key) || (settings.drawers.contains_key(key) && settings.placed(key, layout));
+    }
+    // an interface's, while the Interfaces block is placed and its eye open
+    if let Some(interface) = key.strip_prefix(drawers::INTERFACE_PREFIX) {
+        return !settings.hidden_interfaces.contains(interface) && active(settings, layout, drawers::INTERFACES);
     }
     settings.placed(key, layout)
 }
@@ -366,6 +373,9 @@ pub enum Fallback {
     Changed,
     /// The import bar, shown by the import preference.
     ImportBar,
+    /// An interface of the Interfaces block, by its key
+    /// (`drawers::INTERFACE_PREFIX`), applied as its click does.
+    Interface(String),
 }
 
 pub fn fallback(ctx: &egui::Context, settings: &mut ToolbarSettings) -> Fallback {
@@ -391,6 +401,9 @@ pub fn fallback(ctx: &egui::Context, settings: &mut ToolbarSettings) -> Fallback
         let open = drawers::is_open(ctx, &key);
         drawers::set_open(ctx, &key, !open);
         return Fallback::None;
+    }
+    if let Some(interface) = key.strip_prefix(drawers::INTERFACE_PREFIX) {
+        return Fallback::Interface(interface.to_owned());
     }
     super::commands::request(ctx, &key);
     ctx.request_repaint();

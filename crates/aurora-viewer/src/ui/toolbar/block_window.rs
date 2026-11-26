@@ -223,13 +223,19 @@ fn fields(ui: &mut egui::Ui, p: &Palette, toolbar: &mut ToolbarUi, settings: &To
     ui.add_space(8.0);
     toolbar.drawer_appearance_editor.icon_button(ui, p, &view.button, &options.look);
     ui.add_space(12.0);
+    let shortcut = view.shortcut.as_ref().and_then(|key| settings.shortcuts.get(key));
+    // the Interfaces block: its name, its icon and its shortcut only
+    // (human request, 2026-11-26)
+    if key == drawers::INTERFACES {
+        shortcut_row(ui, p, toolbar, view, shortcut);
+        return false;
+    }
     let check = widgets::checkbox(ui, p, &mut options.closes, aurora_i18n::tr!("toolbar-drawer-closes"));
     #[cfg(test)]
     ui.ctx()
         .data_mut(|data| data.insert_temp(Id::unique(("drawer_closes_check", key)), check.rect));
     let _ = check;
     ui.add_space(8.0);
-    let shortcut = view.shortcut.as_ref().and_then(|key| settings.shortcuts.get(key));
     shortcut_row(ui, p, toolbar, view, shortcut);
     ui.add_space(12.0);
     ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-block-button-mode")).strong());
@@ -370,7 +376,20 @@ pub(super) fn apply(settings: &mut ToolbarSettings, layout: &Layout, change: &Ch
     if settings.locked {
         return false;
     }
-    let (before, after) = (&change.before, &change.after);
+    let (before, mut after) = (&change.before, &change.after);
+    // the Interfaces block takes only its name and its icon
+    let kept;
+    if matches!(&change.target, Target::Drawer(id) if id == drawers::INTERFACES) {
+        kept = Options {
+            name: after.name.clone(),
+            look: super::appearance::Appearance {
+                icon: after.look.icon.clone(),
+                ..before.look.clone()
+            },
+            ..before.clone()
+        };
+        after = &kept;
+    }
     let name: String = after.name.chars().take(80).collect();
     let old = settings.clone();
     match &change.target {

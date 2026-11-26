@@ -4951,6 +4951,175 @@ fn the_interfaces_tile_sits_before_the_separator_and_rests_once_placed() {
     assert_eq!(bench.settings, placed, "placed, its tile does nothing");
 }
 
+/// The Interfaces block stays, a drawer: neither removed nor made a fixed
+/// or a floating block, and its "Edit block…" changes only its name and
+/// its icon (human request, 2026-11-26).
+#[test]
+fn the_interfaces_block_stays_and_only_its_name_and_icon_change() {
+    let mut bench = Bench {
+        native_top: true,
+        screen: Vec2::new(1600.0, 900.0),
+        ..Default::default()
+    };
+    bench.settings.composed = true;
+    bench.settings.buttons = Some(Vec::new());
+    bench.settings.top = vec![tests::button("inventory")];
+    let toggle = ToolButton {
+        command: drawers::INTERFACES.into(),
+        icon: drawers::INTERFACES_ICON.into(),
+        tooltip: String::new(),
+    };
+    bench.state.pending = Some(Edit::Insert(Bar::Top, toggle, 1));
+    assert!(bench.state.commit(&Layout::default(), &mut bench.settings));
+    let layout = Layout::default();
+    for edit in [
+        Edit::Remove(drawers::INTERFACES.into()),
+        Edit::Unfold(Bar::Top, drawers::INTERFACES.into()),
+        Edit::Float(Bar::Top, drawers::INTERFACES.into(), Pos2::new(400.0, 400.0)),
+    ] {
+        bench.state.pending = Some(edit);
+        assert!(!bench.state.commit(&layout, &mut bench.settings));
+    }
+    // a block's removal keeps it
+    bench.state.pending = Some(Edit::RemoveBlock(vec!["inventory".into(), drawers::INTERFACES.into()]));
+    assert!(bench.state.commit(&layout, &mut bench.settings));
+    assert_eq!(bench.settings.location(drawers::INTERFACES, &layout), Some(Bar::Top));
+    assert_eq!(bench.settings.location("inventory", &layout), None);
+    let before = bench.settings.drawers[drawers::INTERFACES].clone();
+    bench.state.pending = Some(block_window::edit_of(
+        &bench.settings,
+        &layout,
+        block_window::Target::Drawer(drawers::INTERFACES.into()),
+        |o| {
+            o.name = "Looks".into();
+            o.look.icon = Some("star-filled".into());
+            o.look.mode = Some(ButtonMode::TextOnly);
+            o.mode = ButtonMode::TextOnly;
+            o.closes = !o.closes;
+            o.vertical = !o.vertical;
+            o.hides_button = !o.hides_button;
+            o.close_button = !o.close_button;
+        },
+    ));
+    assert!(bench.state.commit(&layout, &mut bench.settings));
+    assert_eq!(bench.settings.drawers[drawers::INTERFACES], before, "nothing else");
+    let look = &bench.settings.appearance[drawers::INTERFACES];
+    assert_eq!((look.icon.as_deref(), look.mode), (Some("star-filled"), None));
+    let placed = bench
+        .settings
+        .top
+        .iter()
+        .find(|button| button.command == drawers::INTERFACES)
+        .expect("placed");
+    assert_eq!(placed.tooltip, "Looks");
+    // its right click has no type to choose
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    let point = bench
+        .ctx
+        .read_response(bars::tool_button_id(drawers::INTERFACES))
+        .expect("its button")
+        .rect
+        .center();
+    right_click_at(&mut bench, point);
+    assert!(bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-block-edit")));
+    assert!(
+        !bench
+            .text
+            .iter()
+            .any(|(text, _)| text == aurora_i18n::text("toolbar-block-kind-fixed"))
+    );
+}
+
+/// Each interface takes a shortcut from its right click, which applies it
+/// even with the block closed, while the block is placed and its eye open
+/// (human request, 2026-11-26).
+#[test]
+fn an_interfaces_shortcut_applies_it_from_its_right_click_even_closed() {
+    let mut bench = Bench {
+        native_top: true,
+        screen: Vec2::new(1600.0, 900.0),
+        ..Default::default()
+    };
+    bench.settings.composed = true;
+    bench.settings.buttons = Some(Vec::new());
+    bench.settings.top = vec![ToolButton {
+        command: drawers::INTERFACES.into(),
+        icon: drawers::INTERFACES_ICON.into(),
+        tooltip: String::new(),
+    }];
+    bench.settings.drawers.insert(drawers::INTERFACES.into(), Default::default());
+    let key = format!("{}{}", drawers::INTERFACE_PREFIX, presets::Preset::OldSchool.key());
+    drawers::set_open(&bench.ctx, drawers::INTERFACES, true);
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let point = bench
+        .ctx
+        .read_response(bars::tool_button_id(&key))
+        .expect("Old School")
+        .rect
+        .center();
+    right_click_at(&mut bench, point);
+    assert!(!bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-remove")));
+    let row = menu_point(&bench, aurora_i18n::tr!("toolbar-shortcut"));
+    bench.pointer(row, Some(true));
+    bench.pointer(row, Some(false));
+    assert_eq!(
+        bench.state.shortcut_editor.as_ref().map(|editor| editor.key.as_str()),
+        Some(key.as_str())
+    );
+    assert_eq!(bench.state.preset_request, None, "the right click does not apply it");
+    bench.state.shortcut_editor = None;
+    let binding = crate::keybinds::Binding {
+        input: crate::keybinds::Input::Key("KeyO".into()),
+        ctrl: true,
+        shift: true,
+        alt: false,
+    };
+    bench.state.pending = Some(Edit::Shortcut(key.clone(), Some(binding.clone())));
+    assert!(bench.state.commit(&Layout::default(), &mut bench.settings));
+    let layout = Layout::default();
+    assert_eq!(shortcuts::target(&bench.settings, &layout, &binding), Some(key.clone()));
+    assert_eq!(shortcuts::name(&bench.settings, &layout, &key), presets::Preset::OldSchool.label());
+    // drawn, its button takes it
+    bench.pointer(point, None);
+    drawers::set_open(&bench.ctx, drawers::INTERFACES, true);
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert!(
+        bench
+            .ctx
+            .read_response(bars::tool_button_id(&key))
+            .is_some_and(|response| response.rect.is_positive())
+    );
+    shortcuts::press(&bench.ctx, key.clone());
+    bench.frame(Vec::new());
+    assert_eq!(bench.state.preset_request.take(), Some(presets::Preset::OldSchool));
+    assert_eq!(shortcuts::fallback(&bench.ctx, &mut bench.settings), shortcuts::Fallback::None);
+    // closed, the frame hands it on
+    drawers::set_open(&bench.ctx, drawers::INTERFACES, false);
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    shortcuts::press(&bench.ctx, key.clone());
+    bench.frame(Vec::new());
+    assert_eq!(
+        shortcuts::fallback(&bench.ctx, &mut bench.settings),
+        shortcuts::Fallback::Interface(presets::Preset::OldSchool.key().into())
+    );
+    bench.state.interface_clicked(presets::Preset::OldSchool.key());
+    assert_eq!(bench.state.preset_request, Some(presets::Preset::OldSchool));
+    // its eye closed, or the block gone, it does nothing
+    bench.settings.hidden_interfaces.insert(presets::Preset::OldSchool.key().into());
+    assert_eq!(shortcuts::target(&bench.settings, &layout, &binding), None);
+    bench.settings.hidden_interfaces.clear();
+    bench.settings.top.clear();
+    assert_eq!(shortcuts::target(&bench.settings, &layout, &binding), None);
+}
+
 /// Each preset's button in the editor has an eye, open by default: a click
 /// on it hides the preset from the Interfaces block, or shows it again,
 /// without applying it (human request, 2026-11-26).
