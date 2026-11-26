@@ -84,7 +84,8 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
 - **`main` is protected**, for everyone, admins included: nobody pushes to it
   directly; everything goes through a PR, then through the merge queue.
 - **CI** (GitHub Actions, on Windows) has two stages:
-  - on each PR, the quick checks: formatting, clippy, secret scan (the
+  - on each PR, the quick checks: formatting, clippy, secret scan, and
+    the translation catalogues' tests, which take seconds (the other
     tests, the agent already ran them on its machine);
   - in the merge queue, everything, tests included, on the PR combined with
     the latest `main`: what lands on `main` is exactly what was tested.
