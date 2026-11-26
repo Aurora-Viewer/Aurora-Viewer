@@ -331,12 +331,14 @@ pub(crate) fn write_packed_u8(regions: &[Region<'_>], mct: Mct, w: usize, h: usi
 }
 
 /// The regions finished into planes of int32, one a component: `dsts[c]`
-/// starts at the regions' first sample in component `c`'s plane, its rows
-/// `dst_stride` samples apart.
-pub(crate) fn write_planes(regions: &[Region<'_>], mct: Mct, w: usize, h: usize, dsts: &mut [&mut [i32]], dst_stride: usize) {
+/// starts at the regions' first sample in component `c`'s plane, with that
+/// plane's row stride (each plane's own: a sub-sampled component's plane is
+/// narrower than the others, even where its tile region is the same).
+pub(crate) fn write_planes(regions: &[Region<'_>], mct: Mct, w: usize, h: usize, dsts: &mut [(&mut [i32], usize)]) {
     finish_regions(regions, mct, w, h, |j, at, buf, n| {
-        for (dst, b) in dsts.iter_mut().zip(buf) {
-            dst[j * dst_stride + at..j * dst_stride + at + n].copy_from_slice(&b[..n]);
+        for ((dst, stride), b) in dsts.iter_mut().zip(buf) {
+            let from = j * *stride + at;
+            dst[from..from + n].copy_from_slice(&b[..n]);
         }
     });
 }
