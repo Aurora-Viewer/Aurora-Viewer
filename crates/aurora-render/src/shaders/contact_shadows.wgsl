@@ -32,7 +32,8 @@
 // and a pixel is in shadow when one of the depths before it along the ray
 // comes within a surface thickness of its own. Changes from the original:
 // integer texel loads instead of a clamp-to-border sampler (outside the
-// screen reads the far depth), the early-out of a whole wavefront through
+// screen reads the far depth), the pixels of a wavefront placed without
+// going through the light's point (exact however far off screen it is), the early-out of a whole wavefront through
 // workgroup memory (no wave intrinsics in WGSL), the shadow stored rather
 // than the light, no debug outputs, occluders taken as deep as the ray went
 // under them (up to `tuning.w`) rather than a shell (`depth_delta`), more
@@ -149,14 +150,17 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     let x_axis_major = abs(xy_f.x) > abs(xy_f.y);
     let major_axis = select(xy_f.y, xy_f.x, x_axis_major);
     let major_axis_start = abs(major_axis);
-    let major_axis_end = abs(major_axis) - f32(WAVE_SIZE);
     var ma_light_frac = select(light_xy_fraction.y, light_xy_fraction.x, x_axis_major);
     ma_light_frac = select(ma_light_frac, -ma_light_frac, major_axis > 0.0);
-    let start_xy = xy_f + light_xy;
-    let end_xy = mix(params.light.xy, start_xy, (major_axis_end + ma_light_frac) / (major_axis_start + ma_light_frac));
-    let xy_delta = start_xy - end_xy;
+    // The wave's first pixel, its centre found in integers, and one wave's
+    // step along the ray, taken from the offset to the light. Bend lerps
+    // from the light's point to the first pixel and back: with the sun
+    // overhead and a level view that point is some 1e7 pixels off screen,
+    // where f32 no longer holds half a pixel, and rows were left unwritten.
+    let start_xy = vec2<f32>(xy + vec2<i32>(floor(params.light.xy))) + 0.5;
+    let xy_delta = (xy_f - light_xy_fraction) * (f32(WAVE_SIZE) / (major_axis_start + ma_light_frac));
     let thread_step = f32(tid ^ select(u32(WAVE_SIZE - 1), 0u, reverse_direction));
-    var pixel_xy = mix(start_xy, end_xy, thread_step / f32(WAVE_SIZE));
+    var pixel_xy = start_xy - xy_delta * (thread_step / f32(WAVE_SIZE));
     let pixel_distance = major_axis_start - thread_step + ma_light_frac;
 
     // ---- the depths along the ray

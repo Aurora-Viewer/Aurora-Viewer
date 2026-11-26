@@ -7,7 +7,6 @@
 
 struct Wave {
     start_xy: vec2<f32>,
-    end_xy: vec2<f32>,
     xy_delta: vec2<f32>,
     x_axis_major: bool,
     reverse_direction: bool,
@@ -21,7 +20,7 @@ fn stored_depth(w: Wave, index: i32) -> f32 {
     let i = index / WAVE_SIZE;
     let tid = u32(index % WAVE_SIZE);
     let thread_step = f32(tid ^ select(u32(WAVE_SIZE - 1), 0u, w.reverse_direction));
-    var pixel_xy = mix(w.start_xy, w.end_xy, thread_step / f32(WAVE_SIZE));
+    var pixel_xy = w.start_xy - w.xy_delta * (thread_step / f32(WAVE_SIZE));
     for (var k = 0; k < i; k++) {
         pixel_xy += w.xy_delta * w.direction;
     }
