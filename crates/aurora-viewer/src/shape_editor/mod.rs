@@ -4,7 +4,7 @@
 pub mod camera;
 pub mod catalog;
 pub mod demo;
-mod material;
+pub(crate) mod material;
 mod preview;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -126,8 +126,6 @@ pub struct State {
     pub xml: xml_import::Import,
     /// Export of the draft to an appearance XML.
     pub xml_export: xml_export::Export,
-    /// Appearance > Export shape XML of our avatar's menu.
-    pub xml_menu: xml_export::MenuExport,
 }
 impl Default for State {
     fn default() -> Self {
@@ -174,7 +172,6 @@ impl Default for State {
             model_requested: Instant::now() - Duration::from_secs(1),
             xml: xml_import::Import::default(),
             xml_export: xml_export::Export::default(),
-            xml_menu: xml_export::MenuExport::default(),
         }
     }
 }

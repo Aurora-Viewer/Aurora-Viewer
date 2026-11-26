@@ -114,7 +114,9 @@ impl Locks {
             "camera.preset" | "camera.camera_offset" | "camera.focus_offset" | "camera.offset_scale" => self.camera_preset,
             "camera.fov" => self.camera_fov,
             "autoresponse.dnd_text" => self.sendim,
-            "rlva_enabled" => self.restricted,
+            // (RLVa's own switch is free: a change applies at the next
+            // start, world/rlva/switch.rs)
+            "rlva_enabled" => false,
             _ => self.restricted && key.starts_with("rlva."),
         }
     }
@@ -494,7 +496,9 @@ mod tests {
             restricted: true,
             ..Locks::default()
         };
-        assert!(held.locked("rlva_enabled") && held.locked("rlva.allow_ooc"));
+        assert!(held.locked("rlva.allow_ooc"));
+        // the switch waits for the next start instead
+        assert!(!held.locked("rlva_enabled"));
         assert!(!held.locked("rlva_something_else") && !held.locked("show_huds"));
     }
 }

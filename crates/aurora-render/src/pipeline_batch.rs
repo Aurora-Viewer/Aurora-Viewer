@@ -210,7 +210,7 @@ mod tests {
                 a2c: false,
                 samples: 4,
                 format: Some(wgpu::TextureFormat::Rgba16Float),
-                gbuf: true,
+                gbuf: Some(wgpu::TextureFormat::Rgba16Unorm),
                 range: None,
                 depth_format: Some(wgpu::TextureFormat::Depth32Float),
                 depth_bias: Default::default(),
@@ -228,7 +228,8 @@ mod tests {
         );
         // the rest as written
         assert_eq!(owned.rest.samples, 4);
-        assert!(owned.rest.gbuf && owned.rest.unclipped_depth && !owned.rest.depth_write);
+        assert_eq!(owned.rest.gbuf, Some(wgpu::TextureFormat::Rgba16Unorm));
+        assert!(owned.rest.unclipped_depth && !owned.rest.depth_write);
         assert_eq!(owned.rest.cull, Some(wgpu::Face::Back));
         assert_eq!(owned.rest.format, Some(wgpu::TextureFormat::Rgba16Float));
     }

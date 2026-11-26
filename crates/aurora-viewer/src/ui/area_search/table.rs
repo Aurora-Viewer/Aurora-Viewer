@@ -20,6 +20,7 @@ pub(crate) enum Column {
     PrimCount,
 }
 impl Column {
+    /// As the settings keep them, and as the tables show them.
     pub const ALL: [Self; 10] = [
         Self::Distance,
         Self::Name,
@@ -32,10 +33,33 @@ impl Column {
         Self::Creator,
         Self::LastOwner,
     ];
+    /// Left to right: the name first, kept in view.
+    pub const SHOWN: [Self; 10] = [
+        Self::Name,
+        Self::Distance,
+        Self::LandImpact,
+        Self::Owner,
+        Self::Description,
+        Self::Price,
+        Self::PrimCount,
+        Self::Group,
+        Self::Creator,
+        Self::LastOwner,
+    ];
+
+    /// Its place in the settings.
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|c| *c == self).unwrap_or(0)
+    }
+
+    pub fn numeric(self) -> bool {
+        matches!(self, Self::Distance | Self::Price | Self::LandImpact | Self::PrimCount)
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Distance => aurora_i18n::tr!("area-search-range"),
-            Self::Name => aurora_i18n::tr!("inspect-col-name"),
+            Self::Name => aurora_i18n::tr!("inspect-col-item"),
             Self::Owner => aurora_i18n::tr!("inspect-col-owner"),
             Self::Description => aurora_i18n::tr!("inspect-col-description"),
             Self::Price => aurora_i18n::tr!("area-search-price"),
@@ -49,6 +73,12 @@ impl Column {
 }
 
 pub(crate) use crate::settings::area_search::Filters;
+
+/// A distance: to a tenth while it is under ten metres.
+pub(super) fn metres(distance: f32) -> String {
+    let digits = usize::from(distance < 9.95);
+    aurora_i18n::tr!("area-search-metres", n = aurora_i18n::number(f64::from(distance), digits))
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct Row {
@@ -86,7 +116,7 @@ pub(crate) struct Row {
 impl Row {
     pub fn cell(&self, column: Column) -> String {
         match column {
-            Column::Distance => format!("{:.0} m", self.distance),
+            Column::Distance => metres(self.distance),
             Column::Name => {
                 if self.loaded {
                     self.name.clone()
@@ -98,12 +128,23 @@ impl Row {
             Column::Group => self.group.clone(),
             Column::Creator => self.creator.clone(),
             Column::LastOwner => self.last_owner.clone(),
-            Column::LandImpact => self.land_impact.map_or_else(|| "…".into(), |n| format!("{n:.1}")),
-            Column::PrimCount => self.prim_count.to_string(),
+            Column::LandImpact => self.land_impact_text(),
+            Column::PrimCount => aurora_i18n::integer(i64::from(self.prim_count)),
             Column::Owner => self.owner.clone(),
             Column::Price => self.price.map_or_else(String::new, |n| format!("{} {n}", aurora_i18n::currency())),
         }
     }
+    /// Whole as a rule: the region rounds what it counts.
+    pub fn land_impact_text(&self) -> String {
+        self.land_impact
+            .map_or_else(|| "…".into(), |n| aurora_i18n::integer(n.round() as i64))
+    }
+
+    /// A group owns it.
+    pub fn group_owned(&self) -> bool {
+        !self.group_id.is_nil() && self.owner_id == self.group_id
+    }
+
     fn normalize(&mut self) {
         let resident = |id: Uuid| if self.names_hidden { String::new() } else { id.to_string() };
         self.keys = [
@@ -120,6 +161,12 @@ impl Row {
             resident(self.last_owner_id),
         ];
     }
+    /// The distance range alone: the chart counts what every other filter keeps.
+    fn in_range(&self, f: &Filters) -> bool {
+        !f.distance_on || self.distance >= f.min_distance && self.distance <= f.max_distance
+    }
+
+    /// Every filter but the distance range.
     fn matches(&self, f: &Filters, patterns: &[Option<fancy_regex::Regex>], limit: &AtomicBool) -> bool {
         // A failed expression invalidates the batch. Other workers can stop
         // before repeating the same expensive failure on every remaining row.
@@ -139,6 +186,10 @@ impl Row {
             && (!f.media || self.media)
             && (!f.probe || self.probe)
             && (!f.exclude_probes || !self.probe)
+            && (!f.exclude_locked || (self.loaded && self.owner_mask & aurora_net::build::perm::MOVE != 0))
+            && (!f.exclude_phantom || self.flags & (1 << 10) == 0)
+            && (!f.exclude_media || !self.media)
+            && (!f.exclude_sale || self.price.is_none())
             && (!f.exclude_physical || self.flags & 1 == 0)
             && (!f.exclude_temporary || self.flags & (1 << 29) == 0)
             && match f.click_action {
@@ -150,7 +201,6 @@ impl Row {
             && (!f.physical || self.flags & 1 != 0)
             && (!f.phantom || self.flags & (1 << 10) != 0)
             && (!f.temporary || self.flags & (1 << 29) != 0)
-            && (!f.distance_on || self.distance >= f.min_distance && self.distance <= f.max_distance)
             && (f.query.is_empty() || self.keys.iter().any(|s| s.contains(&f.query)))
             && if f.regex {
                 // FSAreaSearch::matchObject uses case-sensitive whole-field regex matching.
@@ -491,7 +541,14 @@ pub(crate) struct Table {
     /// Counts the recomputed result lists (the selection is checked once each).
     pub generation: u64,
     pub regex_error: Option<String>,
+    /// The owner the list is narrowed to (a click on one of the owners).
+    pub owner: Option<Uuid>,
+    /// The results before that: the other owners stay to be picked instead.
+    pub unpicked: Vec<usize>,
+    /// Distances of what every filter but the distance keeps.
+    pub distances: Vec<f32>,
     applied: Option<Filters>,
+    applied_owner: Option<Uuid>,
     compiled: Option<CompiledFilters>,
 }
 impl Table {
@@ -500,8 +557,15 @@ impl Table {
         self.rows = rows;
         self.dirty = true;
     }
+    /// A click on a column's heading: sort on it, or the other way round.
+    pub fn sort_by(&mut self, column: Column) {
+        self.descending = self.sort == column && !self.descending;
+        self.sort = column;
+        self.dirty = true;
+    }
+
     pub fn prepare(&mut self) {
-        if !self.dirty && self.applied.as_ref() == Some(&self.filters) {
+        if !self.dirty && self.applied.as_ref() == Some(&self.filters) && self.applied_owner == self.owner {
             return;
         }
         if self.applied.as_ref() != Some(&self.filters) || self.compiled.is_none() {
@@ -512,7 +576,7 @@ impl Table {
         };
         self.regex_error.clone_from(&compiled.error);
         let limit = AtomicBool::new(false);
-        self.visible = self
+        let mut kept: Vec<usize> = self
             .rows
             .par_iter()
             .enumerate()
@@ -520,9 +584,14 @@ impl Table {
             .collect();
         if limit.load(Ordering::Relaxed) {
             self.regex_error = Some(aurora_i18n::tr!("area-search-regex-limit").into());
-            self.visible.clear();
+            kept.clear();
         }
         let rows = &self.rows;
+        let picked = |i: &usize| self.owner.is_none_or(|o| rows[*i].owner_id == o);
+        self.distances = kept.iter().filter(|i| picked(i)).map(|i| rows[*i].distance).collect();
+        kept.retain(|i| rows[*i].in_range(&compiled.normalized));
+        self.visible = kept.iter().copied().filter(|i| picked(i)).collect();
+        self.unpicked = kept;
         let sort = self.sort;
         let descending = self.descending;
         self.visible.par_sort_unstable_by(|a, b| {
@@ -542,6 +611,7 @@ impl Table {
             (if descending { order.reverse() } else { order }).then(a.id.cmp(&b.id))
         });
         self.applied = Some(self.filters.clone());
+        self.applied_owner = self.owner;
         self.dirty = false;
         self.generation += 1;
     }
