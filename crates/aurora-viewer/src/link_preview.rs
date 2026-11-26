@@ -106,7 +106,7 @@ pub struct Settings {
     pub blur_groups: bool,
     pub load: Load,
     pub player: Player,
-    /// Play eligible video cards as they come into view, with sound off.
+    /// Play eligible video cards as they come into view.
     pub autoplay_video: bool,
     pub size: Size,
     /// Sites whose links get no preview (a link's menu adds them).
@@ -343,8 +343,7 @@ fn attribute_text(s: &str) -> String {
 /// browser's own controls. It sends no referrer, starts at the volume kept
 /// and reports the changes made with its slider (`/volume`, as YouTube's
 /// player does, #848), and reports the clip's shape once known
-/// (`/aspect`): a link names no size. A browser that refuses to start a
-/// clip with sound starts it muted.
+/// (`/aspect`): a link names no size. The built-in controls handle playback.
 fn clip_page(clip: &Clip, volume: u8, key: u64) -> String {
     let src = attribute_text(&clip.player());
     if clip.hosted() {
@@ -411,7 +410,7 @@ fn clip_page(clip: &Clip, volume: u8, key: u64) -> String {
          new Image().src='/aspect?k={key}&w='+v.videoWidth+'&h='+v.videoHeight;}});\
          v.addEventListener('volumechange',function(){{var n=Math.round(v.volume*100);\
          if(n!==l){{l=n;new Image().src='/volume?v='+n;}}}});\
-         var p=v.play();if(p&&p.catch)p.catch(function(){{v.muted=true;v.play();}});}})();</script>\
+         }})();</script>\
          </body></html>"
     )
 }

@@ -242,7 +242,7 @@ fn close_accelerator_dismisses_the_image_before_its_conversation() {
 }
 
 #[test]
-fn hosted_video_waits_for_a_play_click() {
+fn hosted_video_rearms_after_autoplay_is_enabled() {
     let ctx = Context::default();
     let p = crate::theme::Theme::default().palette();
     let url = "https://streamable.com/Demo42";
@@ -281,11 +281,12 @@ fn hosted_video_waits_for_a_play_click() {
     pv.playing = None;
     pv.settings.autoplay_video = true;
     let _ = run_ui(&ctx, input(vec![]), |ui| card(ui, &p, &mut pv, 7, url, &target, start));
-    assert!(!pv.playing());
+    assert!(pv.playing.as_ref().is_some_and(|v| !v.muted && v.automatic));
+    pv.playing = None;
     let _ = run_ui(&ctx, input(vec![]), |ui| card(ui, &p, &mut pv, 8, url, &target, lp::Start::Ask));
     assert!(!pv.playing());
     let _ = run_ui(&ctx, input(vec![]), |ui| card(ui, &p, &mut pv, 8, url, &target, start));
-    assert!(pv.playing.as_ref().is_some_and(|v| v.muted && v.automatic && !v.window));
+    assert!(pv.playing.as_ref().is_some_and(|v| !v.muted && v.automatic && !v.window));
 }
 
 #[test]

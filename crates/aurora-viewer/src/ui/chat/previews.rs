@@ -234,8 +234,8 @@ pub struct Previews {
     hidden: HashSet<u64>,
     /// Blurred pictures clicked.
     revealed: HashSet<u64>,
-    /// Cards already played during this session, so closing a player does not restart it.
-    played: HashSet<u64>,
+    /// A card explicitly stopped while it remains visible.
+    stopped: Option<(u64, u64)>,
     playing: Option<Playing>,
     lightbox: Option<Lightbox>,
     image_window: Option<Lightbox>,
@@ -265,7 +265,7 @@ impl Default for Previews {
             asked: HashSet::new(),
             hidden: HashSet::new(),
             revealed: HashSet::new(),
-            played: HashSet::new(),
+            stopped: None,
             playing: None,
             lightbox: None,
             image_window: None,
@@ -644,6 +644,9 @@ impl Previews {
         {
             self.playing = None;
         }
+        if self.stopped.is_some_and(|(_, seen)| pass.saturating_sub(seen) > 2) {
+            self.stopped = None;
+        }
         let Some(v) = self.playing.as_mut().filter(|v| v.window) else {
             return;
         };
@@ -663,12 +666,15 @@ impl Previews {
         let pos = work.center() - default * 0.5;
         let browser_tip = link_tip(&v.link, false);
         let copy_tip = link_tip(&v.link, true);
-        let mut floater = crate::ui::widgets::Floater::new(PLAYER_WINDOW, title, pos, default)
-            .action(
+        let mut floater = crate::ui::widgets::Floater::new(PLAYER_WINDOW, title, pos, default);
+        if v.native_video {
+            floater = floater.action(
                 if v.muted { "volume-off" } else { "volume" },
                 sound_action(v.muted),
                 &mut toggle_sound,
-            )
+            );
+        }
+        floater = floater
             .action("settings-filled", aurora_i18n::tr!("ui-chat-preview-settings"), &mut settings)
             .action("external-link-filled", &browser_tip, &mut browser)
             .action("link-filled", &copy_tip, &mut copy_link)
@@ -1341,22 +1347,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                     if visible || !v.automatic {
                         v.drawn = pass;
                     }
-                    let button = egui::Rect::from_min_size(visible_area.right_top() + Vec2::new(-32.0, 6.0), Vec2::splat(26.0));
-                    let speaker = !provider_click
-                        && video.is_none()
-                        && (v.muted || ui.rect_contains_pointer(visible_area))
-                        && visible_area.contains_rect(button);
-                    if speaker {
-                        v.web.exclude_pointer_over(button);
-                    }
                     web.show(v, &mut child, p, size);
-                    if speaker {
-                        let icon = if v.muted { "volume-off" } else { "volume" };
-                        if overlay_button(ui, p, button, icon, sound_action(v.muted)) {
-                            v.muted = !v.muted;
-                            v.automatic = false;
-                        }
-                    }
                 }
                 _ => {
                     let ui = &mut child;
@@ -1437,6 +1428,9 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                 ui.horizontal(|ui| {
                     ui.add_space(8.0);
                     native_video_control(ui, &mut v.web);
+                    if crate::ui::widgets::icon_button(ui, p, if v.muted { "volume-off" } else { "volume" }, sound_action(v.muted), true) {
+                        v.muted = !v.muted;
+                    }
                 });
             }
             egui::Frame::new()
@@ -1450,28 +1444,15 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                     ui.horizontal(|ui| {
                         // room kept for the buttons while it plays here, so
                         // the title does not move when they appear
-                        // YouTube's controls and picture stay clear of overlays.
-                        let youtube = here == Some(false) && video.is_some();
-                        let buttons = (if here == Some(false) { 5.0 } else { 2.0 } + if youtube { 1.0 } else { 0.0 }) * (20.0 + 6.0);
+                        let buttons = if here == Some(false) { 5.0 } else { 2.0 } * (20.0 + 6.0);
                         ui.vertical(|ui| {
                             ui.set_width((ui.available_width() - buttons).max(60.0));
                             ui.spacing_mut().item_spacing.y = 2.0;
                             ui.add(egui::Label::new(RichText::new(&title).size(13.5).strong().color(p.ink)).truncate());
                             ui.add(egui::Label::new(RichText::new(&channel).size(11.5).color(p.muted)).truncate());
                         });
-                        let sound_visible = youtube && pv.playing.as_ref().is_some_and(|v| v.muted || over);
-                        if shown > 0.01 || sound_visible {
+                        if shown > 0.01 {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if sound_visible && let Some(v) = &mut pv.playing {
-                                    let icon = if v.muted { "volume-off" } else { "volume" };
-                                    if crate::ui::widgets::icon_button(ui, p, icon, sound_action(v.muted), true) {
-                                        v.muted = !v.muted;
-                                        v.automatic = false;
-                                    }
-                                }
-                                if shown <= 0.01 {
-                                    return;
-                                }
                                 ui.multiply_opacity(shown);
                                 if crate::ui::widgets::icon_button(ui, p, "external-link-filled", &link_tip(url, false), true) {
                                     super::open_web_link(ui.ctx(), url);
@@ -1513,6 +1494,13 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
     if pv.demo && pv.demo_zoom.as_deref() == Some("links") {
         note_link_hover(ui, resp.rect, egui::pos2(resp.rect.right() - 18.0, resp.rect.bottom() - 26.0));
     }
+    let stopped = pv
+        .stopped
+        .filter(|(key, seen)| *key == k && pass.saturating_sub(*seen) <= 2)
+        .is_some();
+    if stopped && visible {
+        pv.stopped = Some((k, pass));
+    }
     let demo = pv.playing.is_none().then(|| pv.demo_play.take()).flatten();
     let automatic = !play
         && demo.is_none()
@@ -1524,7 +1512,8 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
         && !provider_click
         && !native_video
         && pv.playing.is_none()
-        && !pv.played.contains(&k)
+        && !stopped
+        && video.is_none()
         && crate::link_trust::classify(url) == crate::link_trust::Trust::Trusted;
     let needs_browser = play && minimum_width > 0.0 && {
         let work = crate::ui::layout::work_area(ui.ctx());
@@ -1533,7 +1522,9 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
     if needs_browser {
         super::open_web_link(ui.ctx(), url);
     } else if play || demo.is_some() || automatic {
-        pv.played.insert(k);
+        if stopped {
+            pv.stopped = None;
+        }
         let mut options = pv.settings.player_options(aurora_i18n::language());
         // AURORA_DEMO_VIDEO_VOLUME=<0-100>: the level a video starts at,
         // as if kept from an earlier one
@@ -1561,7 +1552,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                 web
             },
             window: minimum_width > 0.0 || demo.unwrap_or(pv.settings.player) == lp::Player::Window,
-            muted: automatic,
+            muted: false,
             automatic,
             native_video,
             drawn: pass,
@@ -1578,6 +1569,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
         v.fitted = false;
     }
     if stop {
+        pv.stopped = Some((k, pass));
         pv.playing = None;
     }
     if settings {
@@ -1646,6 +1638,7 @@ fn card_menu(resp: &egui::Response, p: &Palette, pv: &mut Previews, k: u64, url:
                 true,
             ) {
                 pv.settings.autoplay_video = !pv.settings.autoplay_video;
+                pv.stopped = None;
                 pv.autoplay_change = Some(pv.settings.autoplay_video);
             }
             if crate::ui::menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-chat-preview-settings")) {
