@@ -1819,7 +1819,7 @@ fn card_menu(resp: &egui::Response, p: &Palette, pv: &mut Previews, k: u64, url:
             pv.hide_site = Some(site.clone());
         }
     });
-    super::line_menu::inline(resp);
+    super::line_menu::inline_popup(&resp.ctx, resp.id.with("context_menu"));
 }
 
 #[cfg(test)]
