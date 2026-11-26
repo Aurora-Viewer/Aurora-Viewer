@@ -452,7 +452,7 @@ fn without_shared(mut src: String) -> String {
         &mut src,
         "    // ---- early out of a wavefront",
         "    if (skip_pixel) {\n        store_lit(write_xy);\n        return;\n    }\n",
-        "    let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;\n    if (skip_pixel) {\n        store_lit(write_xy);\n        return;\n    }\n    let wave = Wave(start_xy, xy_delta, x_axis_major, reverse_direction, major_axis_start, ma_light_frac, direction, z_sign);\n",
+        "    let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;\n    if (skip_pixel) {\n        store_lit(write_xy);\n        return;\n    }\n    let wave = Wave(start_xy, end_xy, xy_delta, x_axis_major, reverse_direction, major_axis_start, ma_light_frac, direction, z_sign);\n",
     );
     let reads = src.matches("depth_data[sample_index + i]").count();
     assert_eq!(reads, 3, "contact shadows variant: the shared reads");
@@ -971,20 +971,28 @@ mod tests {
                         let f = [xy[0] as f32, xy[1] as f32];
                         let x_major = f[0].abs() > f[1].abs();
                         let major = if x_major { f[0] } else { f[1] };
-                        let start_m = major.abs();
+                        let (start_m, end_m) = (major.abs(), major.abs() - wave as f32);
                         let mut ma = if x_major { frac[0] } else { frac[1] };
                         if major > 0.0 {
                             ma = -ma;
                         }
-                        let start = [
-                            (xy[0] + light[0].floor() as i32) as f32 + 0.5,
-                            (xy[1] + light[1].floor() as i32) as f32 + 0.5,
-                        ];
-                        let per_wave = wave as f32 / (start_m + ma);
-                        let delta = [(f[0] - frac[0]) * per_wave, (f[1] - frac[1]) * per_wave];
+                        let mut start = [f[0] + light_xy[0], f[1] + light_xy[1]];
+                        let t = (end_m + ma) / (start_m + ma);
+                        let mut end = [light[0] + (start[0] - light[0]) * t, light[1] + (start[1] - light[1]) * t];
+                        if light[0].abs() > FAR_LIGHT || light[1].abs() > FAR_LIGHT {
+                            start = [
+                                (xy[0] + light[0].floor() as i32) as f32 + 0.5,
+                                (xy[1] + light[1].floor() as i32) as f32 + 0.5,
+                            ];
+                            let per_wave = wave as f32 / (start_m + ma);
+                            end = [start[0] - (f[0] - frac[0]) * per_wave, start[1] - (f[1] - frac[1]) * per_wave];
+                        }
                         for tid in 0..wave {
-                            let step = (tid ^ if reverse { 0 } else { wave - 1 }) as f32 / wave as f32;
-                            let p = [start[0] - delta[0] * step, start[1] - delta[1] * step];
+                            let step = (tid ^ if reverse { 0 } else { wave - 1 }) as f32;
+                            let p = [
+                                start[0] + (end[0] - start[0]) * step / wave as f32,
+                                start[1] + (end[1] - start[1]) * step / wave as f32,
+                            ];
                             each(p[0].floor() as i32, p[1].floor() as i32);
                         }
                     }
@@ -992,6 +1000,10 @@ mod tests {
             }
         }
     }
+
+    /// FAR_LIGHT of contact_shadows.wgsl: beyond it, in pixels, a light's
+    /// point no longer goes through Bend's lerp.
+    const FAR_LIGHT: f32 = 1_048_576.0;
 
     /// The clip height of the direction straight up through a level view of
     /// 60° (cot 30°): the sun overhead as mouselook starts.
@@ -1040,8 +1052,15 @@ mod tests {
     /// frame's shadow (the target is never emptied).
     #[test]
     fn a_light_far_off_screen_covers_every_pixel_of_a_tall_window() {
+        assert!(
+            include_str!("shaders/contact_shadows.wgsl").contains("const FAR_LIGHT: f32 = 1048576.0;"),
+            "FAR_LIGHT of the shader and of these tests"
+        );
         for (w, h) in [(1920, 1080), (2560, 1440), (3840, 2048), (3840, 2160), (5120, 2880)] {
-            for light_w in [0.0, -0.0, 1e-7, -1e-7, 1e-5, -1e-5, 1e-4, -1e-4, 1e-3, -1e-3, 1e-2] {
+            // the last ones on either side of FAR_LIGHT in the windows 2048 high
+            for light_w in [
+                0.0, -0.0, 1e-7, -1e-7, 1e-5, -1e-5, 1e-4, -1e-4, 1e-3, -1e-3, 1.6e-3, 1.7e-3, -1.7e-3, 1e-2,
+            ] {
                 let (missed, list) = coverage([0.0, STRAIGHT_UP, 0.0, light_w], w, h);
                 assert_eq!(missed, 0, "{w}x{h}, w {light_w}: the light at {:?}", list.light);
             }
@@ -1544,7 +1563,8 @@ mod tests {
         let Some(rig) = Rig::new(w, h, "return max(0.00005 * (pos.y - 1024.0), 0.0);") else {
             return;
         };
-        for light_w in [0.0, -0.0, 1e-7, -1e-7, 1e-5, -1e-5, 1e-3, -1e-3] {
+        // the last four on either side of FAR_LIGHT: Bend's lerp just under it
+        for light_w in [0.0, -0.0, 1e-7, -1e-7, 1e-5, -1e-5, 1e-3, -1e-3, 1.6e-3, -1.6e-3, 1.7e-3, -1.7e-3] {
             for variant in [Variant::Bend, Variant::NoShared] {
                 let (raw, _) = rig.run(variant, 1.0, [0.0, STRAIGHT_UP, 0.0, light_w], 77);
                 let wrong = raw.iter().filter(|&&v| v != 0).count();
