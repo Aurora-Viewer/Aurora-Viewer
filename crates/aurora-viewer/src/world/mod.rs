@@ -6813,8 +6813,11 @@ impl World {
                     flying: false,
                     step_back: walking,
                     turn_speed,
-                    rotate_threshold_slow: 60.0,
-                    rotate_threshold_fast: 2.0,
+                    // every avatar drawn, like the turn speed: the Legacy
+                    // Viewer reads both settings for each
+                    // (LLVOAvatar::updateRootPositionAndRotation)
+                    rotate_threshold_slow,
+                    rotate_threshold_fast,
                 }
             };
             let no_rotate = self

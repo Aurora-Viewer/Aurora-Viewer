@@ -4573,9 +4573,11 @@ mod tests {
         assert_eq!(migrated.avatar_rotate_threshold_slow, 60.0);
         assert_eq!(migrated.avatar_rotate_threshold_fast, 2.0);
 
-        let mut changed = Settings::default();
-        changed.avatar_rotate_threshold_slow = 13.5;
-        changed.avatar_rotate_threshold_fast = 37.25;
+        let mut changed = Settings {
+            avatar_rotate_threshold_slow: 13.5,
+            avatar_rotate_threshold_fast: 37.25,
+            ..Settings::default()
+        };
 
         let saved = serde_json::to_value(&changed).expect("save custom thresholds");
         let loaded: Settings = serde_json::from_value(saved).expect("reload custom thresholds");
@@ -4588,9 +4590,11 @@ mod tests {
         assert_eq!(clamped.avatar_rotate_threshold_slow, 0.0);
         assert_eq!(clamped.avatar_rotate_threshold_fast, 180.0);
 
-        let mut invalid = Settings::default();
-        invalid.avatar_rotate_threshold_slow = f32::NAN;
-        invalid.avatar_rotate_threshold_fast = f32::INFINITY;
+        let invalid = Settings {
+            avatar_rotate_threshold_slow: f32::NAN,
+            avatar_rotate_threshold_fast: f32::INFINITY,
+            ..Settings::default()
+        };
         let repaired = invalid.sanitized();
         assert_eq!(repaired.avatar_rotate_threshold_slow, 60.0);
         assert_eq!(repaired.avatar_rotate_threshold_fast, 2.0);
