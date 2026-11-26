@@ -25963,9 +25963,12 @@ impl ApplicationHandler for App {
             return;
         }
         // egui-winit drops text while Ctrl is held. Preserve a real Windows
-        // layout character (Ctrl+Alt+2 -> @) for its focused text field.
+        // layout character (Ctrl+Alt+2 -> @) for its focused text field. A
+        // key a window outside hands on is not typed in this one: its own
+        // fields are read in `outside_ctrl_alt_text`.
         #[cfg(target_os = "windows")]
-        if let WindowEvent::KeyboardInput { event: key, .. } = &event
+        if !from_outside
+            && let WindowEvent::KeyboardInput { event: key, .. } = &event
             && let Some(text) = self.ctrl_alt_text(key)
         {
             // typing like any other: activity for auto-away, and the pointer

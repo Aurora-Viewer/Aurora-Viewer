@@ -66,15 +66,26 @@ fn ctrl_alt_character<'a>(
 }
 
 impl App {
+    /// The character a Ctrl+Alt press types in the viewer's own window.
     #[cfg(target_os = "windows")]
     pub(super) fn ctrl_alt_text(&self, key: &KeyEvent) -> Option<String> {
-        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
-        if key.state != ElementState::Pressed || self.options_ui.capture.is_some() || self.web_has_focus() || self.media.focus.is_some() {
+        if self.web_has_focus() || self.media.focus.is_some() {
             return None;
         }
         // a focused text field, not any focused widget (a button reached with
         // Tab, a list): only a text field takes the character
-        let text_field = self.egui_ctx.text_edit_focused();
+        self.ctrl_alt_text_in(key, self.egui_ctx.text_edit_focused())
+    }
+
+    /// The character a Ctrl+Alt press types in the window it was pressed
+    /// in, whose text field has the keyboard when `text_field`: the viewer's
+    /// own window, or a window outside (`outside_ctrl_alt_text`).
+    #[cfg(target_os = "windows")]
+    pub(super) fn ctrl_alt_text_in(&self, key: &KeyEvent, text_field: bool) -> Option<String> {
+        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+        if key.state != ElementState::Pressed || self.options_ui.capture.is_some() {
+            return None;
+        }
         let bound = match key.physical_key {
             winit::keyboard::PhysicalKey::Code(code) => self
                 .settings
