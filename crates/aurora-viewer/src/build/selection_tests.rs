@@ -2498,6 +2498,16 @@ fn rekeys_are_followed_in_order_and_leave_other_keys_alone() {
     let mut faces = HashMap::from([(key(1, 10), vec![1u8]), (key(4, 4), vec![3])]);
     rekey_map(&mut faces, &pairs);
     assert_eq!(faces, HashMap::from([(key(3, 7), vec![1u8]), (key(4, 4), vec![3])]));
+    // the physics values (by local id) follow the whole chain: two crossings
+    // in one frame move 10's entry to 7, not to 50 nor nowhere
+    let selected = HashSet::from([key(3, 7)]);
+    assert_eq!(local_id_moves(&pairs, &selected), [(10, 7)]);
+    assert!(
+        local_id_moves(&pairs, &HashSet::from([key(2, 50)])).is_empty(),
+        "not the selected key any more"
+    );
+    // a crossing that keeps its local id moves nothing
+    assert!(local_id_moves(&[(key(1, 10), key(2, 10))], &HashSet::from([key(2, 10)])).is_empty());
 }
 
 #[test]

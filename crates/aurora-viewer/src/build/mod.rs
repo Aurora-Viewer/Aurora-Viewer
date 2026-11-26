@@ -949,6 +949,25 @@ pub(crate) fn rekeyed(key: ObjKey, pairs: &[(ObjKey, ObjKey)]) -> ObjKey {
     pairs.iter().fold(key, |k, &(old, new)| if k == old { new } else { k })
 }
 
+/// The local ids a map kept by local id moves from and to after the key
+/// changes `pairs`, for the objects now in `selected`: each chain is taken
+/// whole from its first key, as [`rekeyed`] does, so two crossings in one
+/// frame (A to B, then B to C) move A's entry to C, where pair by pair the
+/// first would be skipped (B is not selected) and the second find nothing
+/// under B.
+pub(crate) fn local_id_moves(pairs: &[(ObjKey, ObjKey)], selected: &HashSet<ObjKey>) -> Vec<(u32, u32)> {
+    pairs
+        .iter()
+        .enumerate()
+        // a chain starts at a key no earlier change led to
+        .filter(|&(i, &(old, _))| !pairs[..i].iter().any(|&(_, new)| new == old))
+        .filter_map(|(_, &(old, _))| {
+            let now = rekeyed(old, pairs);
+            (now.local_id != old.local_id && selected.contains(&now)).then_some((old.local_id, now.local_id))
+        })
+        .collect()
+}
+
 /// [`rekeyed`] on every key of a list.
 pub(crate) fn rekey_all(keys: &mut [ObjKey], pairs: &[(ObjKey, ObjKey)]) {
     for k in keys {
@@ -1930,15 +1949,19 @@ impl BuildTool {
             .into_iter()
             .filter_map(|(i, _)| world.objects.get(i).map(|o| o.key))
             .collect();
-        for &(old, new) in pairs {
-            if old.local_id != new.local_id
-                && selected.contains(&new)
-                && let Some(params) = self.physics.remove(&old.local_id)
-            {
-                self.physics.insert(new.local_id, params);
-                if self.physics_materials_known.remove(&old.local_id) {
-                    self.physics_materials_known.insert(new.local_id);
-                }
+        // every entry is taken out before any goes back in, so one move
+        // never lands on the local id another is about to leave
+        let moved: Vec<_> = local_id_moves(pairs, &selected)
+            .into_iter()
+            .filter_map(|(from, to)| {
+                let params = self.physics.remove(&from)?;
+                Some((to, params, self.physics_materials_known.remove(&from)))
+            })
+            .collect();
+        for (to, params, known) in moved {
+            self.physics.insert(to, params);
+            if known {
+                self.physics_materials_known.insert(to);
             }
         }
         self.manip.follow_rekeyed(world, pairs);
