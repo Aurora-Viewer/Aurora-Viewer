@@ -1438,7 +1438,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
     let demo = pv.playing.is_none().then(|| pv.demo_play.take()).flatten();
     let autoplay = autoplay_ready
         && start == Start::Load
-        && pv.settings.player == lp::Player::Card
+        && pv.settings.player == lp::Player::InCard
         && (pv.place != Place::Group || !pv.settings.blur_groups)
         && pv.web.is_some()
         && ui.is_enabled()
