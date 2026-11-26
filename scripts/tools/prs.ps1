@@ -48,11 +48,14 @@ $GitHubWatch = $null
 $PrSeen = $null       # last snapshot, to notice what changed (notifications)
 $PrSeenVersion = 0
 
-# owner/name of the repository, from its origin remote
+# owner/name of the main repository (Get-MainRepo, scripts/common.ps1:
+# origin, or upstream in a clone of a personal fork)
 function Get-RepoSlug {
-    $origin = (git -C $Paths.Repo remote get-url origin 2>$null)
-    if ($origin -match 'github\.com[:/](?<owner>[^/]+)/(?<name>[^/]+?)(\.git)?$') {
-        [pscustomobject]@{ Owner = $Matches.owner; Name = $Matches.name; Slug = "$($Matches.owner)/$($Matches.name)" }
+    . (Join-Path (Split-Path $PSScriptRoot -Parent) 'common.ps1')
+    $slug = Get-MainRepo $Paths.Repo
+    if ($slug) {
+        $owner, $name = $slug -split '/', 2
+        [pscustomobject]@{ Owner = $owner; Name = $name; Slug = $slug }
     }
 }
 
@@ -277,8 +280,17 @@ function Get-PrSummary {
     $segments
 }
 
-# A Windows notification (toast); a beep when they are not available.
+# A desktop notification (a toast on Windows); a beep when they are not available.
 function Send-Toast([string]$Title, [string]$Text) {
+    if ($IsLinux) {
+        $sent = $false
+        if (Get-Command notify-send -CommandType Application -ErrorAction SilentlyContinue) {
+            notify-send --app-name='Aurora Tools' -- $Title $Text 2>$null
+            $sent = $LASTEXITCODE -eq 0
+        }
+        if (-not $sent) { [Console]::Beep() }
+        return
+    }
     try {
         [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
         [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
@@ -409,7 +421,7 @@ function Show-PrPanel {
                     'UpArrow' { if ($rows) { $sel = ($sel - 1 + $rows.Count) % $rows.Count } }
                     'DownArrow' { if ($rows) { $sel = ($sel + 1) % $rows.Count } }
                     { $_ -in 'Escape', 'Backspace' } { return }
-                    { $_ -in 'Enter', 'O' } { if ($rows) { Start-Process $rows[[Math]::Min($sel, $rows.Count - 1)].Url } }
+                    { $_ -in 'Enter', 'O' } { if ($rows) { Open-External $rows[[Math]::Min($sel, $rows.Count - 1)].Url } }
                     'R' { $GitHub.Force = $true }
                 }
                 $lastDraw = [DateTime]::MinValue

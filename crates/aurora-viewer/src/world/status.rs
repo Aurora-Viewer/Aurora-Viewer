@@ -496,6 +496,7 @@ impl World {
                         blocked: false,
                         beyond_range: false,
                         speaker: Default::default(),
+                        private_history: false,
                     };
                     let (line_time, line_text) = (line.time, line.text.clone());
                     self.conversation_push(from, line, true);
@@ -549,6 +550,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         self.conversation_push(im.from_agent_id, line, false);
     }

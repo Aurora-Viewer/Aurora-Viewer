@@ -379,3 +379,27 @@ fn ik_edit_commit_is_reversible_and_updates_one_goal_per_selected_bone() {
     editor.select(rig.pelvis, rig, &frame);
     assert_eq!(editor.mode, Mode::Direct);
 }
+
+/// The IK Edit toolbar button or Build › IK Edit on a minimized window
+/// expands it (LLFloaterReg::toggleInstance), and a window closed while
+/// minimized opens expanded.
+#[test]
+fn the_ik_edit_button_expands_a_minimized_window() {
+    let ctx = egui::Context::default();
+    let mut editor = Editor::default();
+    editor.toggle_ik(&ctx);
+    assert!(editor.open);
+    let window = editor.window_id();
+    crate::ui::widgets::minimize_floater(&ctx, window);
+    editor.toggle_ik(&ctx);
+    assert!(editor.open, "a minimized window does not close");
+    assert!(crate::ui::widgets::floater_expand_asked(&ctx, window));
+    // closed while minimized (the demo's release), then opened again
+    crate::ui::widgets::cancel_expand(&ctx, window);
+    editor.toggle();
+    assert!(!editor.open);
+    assert!(crate::ui::widgets::floater_minimized(&ctx, window));
+    editor.toggle_ik(&ctx);
+    assert!(editor.open);
+    assert!(crate::ui::widgets::floater_expand_asked(&ctx, window));
+}

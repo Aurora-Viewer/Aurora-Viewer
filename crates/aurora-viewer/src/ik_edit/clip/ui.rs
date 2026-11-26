@@ -927,7 +927,7 @@ impl Editor {
             .filter(|(_, object)| {
                 object.is_avatar()
                     && object.full_id != world.agent_id
-                    && !world.is_mirror(&object.full_id)
+                    && !world.is_local_copy(&object.full_id)
                     && poser_consent::nearby(world, object.full_id)
             })
             .map(|(_, object)| {

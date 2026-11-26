@@ -607,6 +607,21 @@ impl Editor {
         self.gizmo.cancel();
         self.poser.scale_gizmo.cancel();
     }
+    /// The IK Edit toolbar button and Build › IK Edit
+    /// (LLFloaterReg::toggleInstance): a minimized window expands, a shown
+    /// one closes, a closed one opens expanded.
+    pub fn toggle_ik(&mut self, ctx: &egui::Context) {
+        let window = self.window_id();
+        if self.open && !self.poser.active && crate::ui::widgets::floater_minimized(ctx, window) {
+            crate::ui::widgets::expand_floater(ctx, window);
+            return;
+        }
+        self.toggle();
+        if self.open {
+            let window = self.window_id();
+            crate::ui::widgets::open_floater(ctx, window, &mut self.open);
+        }
+    }
     pub fn open_ik(&mut self) {
         if self.poser.active || !self.open {
             self.toggle();

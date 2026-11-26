@@ -86,6 +86,24 @@ pub enum DrawnMode {
     /// Left button: legacy alpha > 32/255 threshold on world Blend objects only.
     Left,
     LeftVisible,
+    /// Left press through Ignore Object, before the main view's occlusion.
+    WorldPress {
+        camera: bool,
+    },
+}
+
+impl DrawnMode {
+    pub(crate) fn through_ignored(self) -> bool {
+        matches!(self, Self::WorldPress { .. })
+    }
+
+    pub(crate) fn alpha_mode(self) -> Self {
+        match self {
+            Self::WorldPress { camera: true } => Self::LeftVisible,
+            Self::WorldPress { camera: false } => Self::Left,
+            mode => mode,
+        }
+    }
 }
 
 /// A request: its ticket, pixel and transparency rule.

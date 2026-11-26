@@ -1301,7 +1301,7 @@ fn outfit_list(
                                     st.outfit_selection.single(*id);
                                 }
                                 st.select_item(&response, *id, it.id, &order);
-                                items::double_click(&response, world, it, worn.contains_key(&it.id), actions);
+                                items::double_click(&response, world, it, worn.contains_key(&it.id), Some(*id), actions);
                                 let selected = st.selected_items(*id, it.id, &order);
                                 items::context_menu(&response, p, world, st, items::List::Outfit(*id), it, &selected, actions);
                             });
@@ -1482,7 +1482,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                 st.layers.row(it.id, it.flags & 0xff, &resp);
             }
             let removable = locks.can_remove(it.id);
-            items::double_click(&resp, world, it, true, actions);
+            items::double_click(&resp, world, it, true, None, actions);
             if edit {
                 if resp.clicked() {
                     clipboard::request_focus(ui.ctx());
@@ -1745,14 +1745,15 @@ fn add_folder(
             if !matches!(it.asset_type, 5 | 6 | 13) || worn.contains(&it.id) {
                 continue;
             }
-            let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
-            widgets::reveal_search_selection(ui, &response, st.selected_item == Some(it.id));
+            let entry = model::wear_entry(inv, id, it.id);
+            let response = row(ui, p, it, "", st.selected_item == Some(entry), None);
+            widgets::reveal_search_selection(ui, &response, st.selected_item == Some(entry));
             row_gap(ui);
             if response.clicked() {
-                st.selected_item = Some(it.id);
+                st.selected_item = Some(entry);
             }
-            if response.double_clicked() && locks.wear(inv, it.id, 0).add {
-                actions.push(Action::Add(it.id));
+            if response.double_clicked() && locks.wear(inv, entry, 0).add {
+                actions.push(Action::Add(entry));
                 st.adding = false;
             }
         }
@@ -3605,8 +3606,13 @@ mod tests {
                     actions.extend(draw(&ctx, &mut world, &mut st, None));
                 }
             }
+            let entry = if world.inventory.items[&item].asset_type == 5 {
+                second
+            } else {
+                item
+            };
             assert!(
-                matches!(&actions[..], [Action::WearItem { item: id, replace: false, point: 0 }] if *id == item),
+                matches!(&actions[..], [Action::WearItem { item: id, replace: false, point: 0 }] if *id == entry),
                 "{actions:?}"
             );
         }
@@ -3958,7 +3964,10 @@ mod tests {
         else {
             panic!("{actions:?}");
         };
-        assert_eq!(items.iter().copied().collect::<HashSet<_>>(), HashSet::from(targets));
+        assert_eq!(
+            items.iter().copied().collect::<HashSet<_>>(),
+            HashSet::from([Uuid::from_u128(990), targets[1]])
+        );
         assert!(model::plan(&world.inventory, actions[0].clone(), &HashMap::new()).is_ok());
         click_row(
             &ctx,
@@ -4981,7 +4990,6 @@ mod tests {
             model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
             let id = Uuid::from_u128(target);
             let name = world.inventory.items[&id].name.clone();
-            let before = world.inventory.generation;
             let mut st = AppearanceUi::default();
             st.open(2, false);
             for _ in 0..5 {
@@ -4995,6 +5003,9 @@ mod tests {
                 egui::Modifiers::NONE,
                 egui::PointerButton::Secondary,
             );
+            // Read after the draws: opening the window asks for its folders,
+            // and each folder read changes the generation.
+            let before = world.inventory.generation;
             let actions = click_menu(&ctx, &mut world, &mut st, aurora_i18n::tr!("ui-appearance-items-show-original"));
             assert!(
                 matches!(actions.as_slice(), [Action::ShowOriginal(actual)] if *actual == id),

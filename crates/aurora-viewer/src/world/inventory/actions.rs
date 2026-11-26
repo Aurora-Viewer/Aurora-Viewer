@@ -443,7 +443,10 @@ pub fn original(inv: &Inventory, mut id: Uuid) -> Option<Uuid> {
     None
 }
 pub fn default_folder(inv: &Inventory, id: Uuid) -> Option<Uuid> {
-    let kind = original(inv, id).and_then(|id| inv.items.get(&id)).map(|it| it.asset_type);
+    let item = original(inv, id).and_then(|id| inv.items.get(&id));
+    // a snapshot goes to the Photo Album, not to Textures
+    // (LLItemBridge::restoreItem: IT_SNAPSHOT → FT_SNAPSHOT_CATEGORY)
+    let kind = item.map(|it| if it.inv_type == 15 { 15 } else { it.asset_type });
     kind.and_then(|kind| system(inv, kind)).or(Some(inv.root).filter(|id| !id.is_nil()))
 }
 /// get_is_favorite / toggle_favorite (llinventoryfunctions.cpp): links show
