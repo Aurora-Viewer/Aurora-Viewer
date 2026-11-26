@@ -43,17 +43,12 @@ fn channels() -> [&'static str; 7] {
 
 pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot) {
     let n = &s.net;
-    super::heading(
-        ui,
-        p,
-        tr!("monitor-tab-network"),
-        &tr!(
-            "monitor-network-sub",
-            circuits = s.regions.len() as i64,
-            active = i64::from(n.http_active)
-        ),
-        |_| {},
+    let circuits = s.regions.len() as i64;
+    let summary = n.http_active.map_or_else(
+        || tr!("monitor-network-circuits", circuits = circuits),
+        |active| tr!("monitor-network-sub", circuits = circuits, active = active as i64),
     );
+    super::heading(ui, p, tr!("monitor-tab-network"), &summary, |_| {});
     egui::ScrollArea::vertical()
         .id_salt("monitor-network")
         .auto_shrink([false, false])
@@ -72,7 +67,7 @@ fn traffic(ui: &mut egui::Ui, p: &Palette, m: &Monitor, s: &Snapshot) {
     draw::card(ui, p, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            draw::text(ui, tr!("ui-perf-throughput"), 13.0, p.ink);
+            draw::text(ui, tr!("ui-perf-throughput"), 13.0, p.ink).on_hover_text(tr!("monitor-network-scope"));
             widgets::status_dot(ui, p.teal);
             draw::text(
                 ui,
@@ -149,11 +144,11 @@ fn traffic(ui: &mut egui::Ui, p: &Palette, m: &Monitor, s: &Snapshot) {
                 ),
             ),
             (
-                tr!("ui-perf-downloaded").to_owned(),
+                tr!("monitor-asset-downloads").to_owned(),
                 tr!(
                     "monitor-downloaded",
-                    size = fmt::bytes(n.downloaded as f64),
-                    failed = n.http_failed.to_string()
+                    size = fmt::bytes(n.assets_downloaded as f64),
+                    failed = n.assets_failed.to_string()
                 ),
             ),
         ];
@@ -168,11 +163,7 @@ fn http(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
             ui,
             p,
             tr!("monitor-http-title"),
-            &tr!(
-                "ui-perf-active-queued",
-                value0 = n.http_active.to_string(),
-                value1 = n.http_queued.to_string()
-            ),
+            &tr!("monitor-asset-queue", count = i64::from(n.assets_queued)),
         );
         let cols = [
             Col::new(tr!("monitor-col-type"), 0.0, false),
@@ -191,7 +182,7 @@ fn http(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
         };
         let secs = f64::from(probes.secs.max(1e-3));
         for (kind, k) in HTTP_KINDS.iter().zip(&probes.http.kinds) {
-            if k.started == 0 && k.in_flight == 0 && k.done == 0 && k.bytes == 0 {
+            if !k.has_activity() {
                 continue;
             }
             let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
@@ -209,15 +200,7 @@ fn http(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
                 p.ink,
                 draw::BODY,
             );
-            draw::cell_text(
-                ui,
-                r[3],
-                cy,
-                &fmt::kbps(k.bytes as f64 * 8.0 / 1000.0 / secs),
-                true,
-                p.ink,
-                draw::BODY,
-            );
+            draw::cell_text(ui, r[3], cy, &fmt::kbps(k.received_kbps(probes.secs)), true, p.ink, draw::BODY);
             let latency = if k.latency.count() > 0 {
                 fmt::ms(f64::from(k.latency.percentile(50.0)))
             } else {

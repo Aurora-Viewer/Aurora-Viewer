@@ -62,7 +62,7 @@ pub struct GeometryInfo {
     pub journal_frame: u64,
 }
 
-/// The link with the simulators over the last second.
+/// Simulator UDP link and the latest monitored HTTP sample.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct NetInfo {
     pub in_kbps: f32,
@@ -76,18 +76,30 @@ pub struct NetInfo {
     pub unacked: u32,
     pub input_delay_ms: Option<f32>,
     pub loop_ms: f32,
-    pub http_active: u32,
-    pub http_queued: u32,
+    /// In-flight requests in the same HTTP sample as the by-kind rows.
+    pub http_active: Option<u64>,
+    pub assets_queued: u32,
     /// Corrections of the agent's position this session, and the largest
     /// (m); the longest an event waited over the last second (ms).
     pub corrections: (u64, f32),
     pub event_wait_ms: f32,
-    /// Downloaded over HTTP this session (bytes), requests failed.
-    pub downloaded: u64,
-    pub http_failed: u64,
+    /// Asset fetcher session totals (body bytes and failed requests).
+    pub assets_downloaded: u64,
+    pub assets_failed: u64,
     /// Asked of the simulator (kb/s) and the setting.
     pub throttle_asked: u32,
     pub throttle_setting: u32,
+}
+
+impl NetInfo {
+    /// Add the same HTTP sample as the by-kind rows, once, to the UDP rate.
+    pub fn with_http(mut self, probes: Option<&ProbeTotals>) -> Self {
+        if let Some(p) = probes {
+            self.in_kbps += p.http.kinds.iter().map(|kind| kind.received_kbps(p.secs)).sum::<f64>() as f32;
+            self.http_active = Some(p.http.kinds.iter().map(|kind| u64::from(kind.in_flight)).sum());
+        }
+        self
+    }
 }
 
 /// One simulator the viewer has a circuit with.
@@ -351,6 +363,41 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incoming_and_active_include_every_http_kind_in_the_displayed_sample() {
+        use aurora_net::probe::HttpKind;
+
+        let mut sample = ProbeTotals::default();
+        let inventory = &mut sample.http.kinds[HttpKind::Inventory as usize];
+        inventory.bytes = 8_687_500;
+        inventory.in_flight = 5;
+        let texture = &mut sample.http.kinds[HttpKind::Texture as usize];
+        texture.bytes = 156_250;
+        texture.in_flight = 2;
+        let cap = &mut sample.http.kinds[HttpKind::Cap as usize];
+        cap.bytes = 31_250;
+        cap.in_flight = 1;
+        sample.secs = 1.25;
+
+        let udp = NetInfo {
+            in_kbps: 852.0,
+            out_kbps: 4.0,
+            assets_queued: 3,
+            ..NetInfo::default()
+        };
+        let net = udp.with_http(Some(&sample));
+        assert_eq!(net.in_kbps, 57_652.0);
+        assert_eq!(net.http_active, Some(8));
+        assert_eq!(net.out_kbps, 4.0);
+        assert_eq!(net.assets_queued, 3);
+        assert_eq!(udp.with_http(None), udp);
+
+        sample.http = Default::default();
+        let net = udp.with_http(Some(&sample));
+        assert_eq!(net.in_kbps, udp.in_kbps);
+        assert_eq!(net.http_active, Some(0));
+    }
 
     #[test]
     fn the_history_keeps_a_minute() {

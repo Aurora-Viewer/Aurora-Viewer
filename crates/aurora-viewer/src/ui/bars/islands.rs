@@ -750,8 +750,8 @@ fn system(
 }
 
 /// Firestorm's traffic indicator (ShowNetStats, off by default): the
-/// network's last minute as the Performance window draws it
-/// (`perf::net_curve`, the same data), its icon in the colour of the
+/// last minute of simulator UDP and asset downloads (`perf::net_curve`),
+/// its icon in the colour of the
 /// packets lost at Firestorm's thresholds; a click opens Performance on its
 /// Network section. Firestorm draws two instant gauges (bandwidth, losses):
 /// the curve tells the same over a minute.
@@ -1022,7 +1022,7 @@ fn tip_body(
         fps_color(p, st.fps),
     );
 
-    // the network: its row and the Performance window's curve, one button
+    // UDP loss and UDP/asset throughput, with a shortcut to the Network section
     let (rate_in, _) = crate::ui::perf::last_rates(st.perf);
     let network = format!("{} · {}", loss_text(st.net_loss), rate_text(rate_in));
     let w = ui.available_width();
@@ -1051,6 +1051,7 @@ fn tip_body(
     );
     let curve = Rect::from_min_size(Pos2::new(rect.left(), row_rect.bottom() + 2.0), Vec2::new(w, TIP_CURVE));
     crate::ui::perf::net_curve(&ui.painter().with_clip_rect(curve.expand(1.0)), p, curve, 2.0, st.perf);
+    let resp = resp.on_hover_text(aurora_i18n::tr!("ui-bars-tip-network-scope"));
     if resp.clicked() {
         crate::ui::perf::place_under(ui.ctx(), island);
         *action = BarAction::NetworkGraph;

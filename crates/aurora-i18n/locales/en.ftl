@@ -5384,6 +5384,7 @@ ui-bars-graphics-presets = Graphics presets
 ui-bars-camera-presets = Camera presets
 ui-bars-open-graphics-preferences = Graphics preferences…
 ui-bars-performance-window = Performance…
+ui-bars-tip-network-scope = Losses are measured on simulator UDP. The graph shows simulator UDP and asset downloads.
 ui-bars-network-window = Network graph…
 ui-bars-camera-controls = Camera controls…
 ui-bars-show-in-island = Show in the island
@@ -10200,6 +10201,13 @@ monitor-palettes-sent = Skeleton palettes written
 monitor-cull-sent = Culling tables written
 monitor-journal = Render thread journal
 monitor-per-frame = { $value } per frame
+monitor-network-circuits = { $circuits ->
+    [one] 1 UDP circuit
+   *[other] { $circuits } UDP circuits
+    }
+monitor-network-scope = Incoming includes simulator UDP and monitored HTTP response bodies, credited when requests finish. Outgoing measures simulator UDP.
+monitor-asset-queue = { $count } queued for asset download
+monitor-asset-downloads = Asset downloads
 monitor-network-sub = { $circuits ->
     [one] 1 UDP circuit
    *[other] { $circuits } UDP circuits

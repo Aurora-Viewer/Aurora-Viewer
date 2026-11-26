@@ -574,6 +574,18 @@ pub struct HttpPeriod {
     pub wait: Durations,
 }
 
+impl HttpPeriod {
+    /// Rate of response body bytes credited on request completion.
+    pub fn received_kbps(&self, secs: f32) -> f64 {
+        self.bytes as f64 * 8.0 / 1000.0 / f64::from(secs.max(1e-3))
+    }
+
+    /// Whether this sample has anything to show in the by-kind table.
+    pub fn has_activity(&self) -> bool {
+        self.started != 0 || self.done != 0 || self.bytes != 0 || self.in_flight != 0 || self.failed.iter().any(|&n| n != 0)
+    }
+}
+
 /// Everything HTTP over a period.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct HttpTotals {
@@ -807,6 +819,15 @@ mod tests {
         // a bake: no parameter, a texture by what it accepts
         assert_eq!(HttpKind::of_asset("https://bake/texture/a/b/c", "image/x-j2c"), HttpKind::Texture);
         assert_eq!(HttpKind::of_asset("https://h/x", "*/*"), HttpKind::Asset);
+    }
+
+    #[test]
+    fn an_http_failure_without_bytes_or_a_new_start_still_has_activity() {
+        let mut period = HttpPeriod::default();
+        assert!(!period.has_activity());
+        period.failed[0] = 1;
+        assert!(period.has_activity());
+        assert_eq!(period.received_kbps(1.0), 0.0);
     }
 
     #[test]
