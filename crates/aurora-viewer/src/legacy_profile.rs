@@ -43,15 +43,22 @@ const XDG_APPS: [&str; 1] = ["alchemynext"];
 /// account's beta-grid folder when none exists yet.
 const BETA_SUFFIX: &str = ".second_life_beta";
 
-/// Whether `label`, after `<first_last>.`, names the beta grid: a viewer
-/// writes its grid label there, lower-cased with spaces as `_`
-/// (LLDir::setPerAccountChatLogsDir), and the beta grid's labels in the
-/// viewers' grid lists name it "Second Life Beta" or "Aditi". Another
-/// grid's label (an OpenSim grid, the demo) does not, so its files never mix
-/// with the beta grid's.
+/// The beta grid's labels as viewers write them after `<first_last>.`, its
+/// label lower-cased with spaces as `_` (LLDir::setLindenUserDir and
+/// setPerAccountChatLogsDir, given LLGridManager::getGridLabel in
+/// llstartup.cpp): `second_life_beta` for "Second Life Beta"
+/// (SECOND_LIFE_BETA_LABEL, indra/newview/llviewernetwork.h; the `gridname`
+/// of `util.aditi.lindenlab.com` in app_settings/grids.xml), and `aditi`,
+/// the grid's nick there and its id in LLGridManager::initialize. The
+/// "(Aditi)" names of strings.xml are only shown at the login.
+const BETA_LABELS: [&str; 2] = ["second_life_beta", "aditi"];
+
+/// Whether `label`, after `<first_last>.`, is one of the beta grid's labels
+/// (`BETA_LABELS`, any case). Any other label, an OpenSim grid's or the
+/// demo's, even one holding "beta", is not: its files never mix with the
+/// beta grid's.
 fn is_beta_label(label: &str) -> bool {
-    let label = label.to_ascii_lowercase();
-    label.contains("beta") || label.contains("aditi")
+    BETA_LABELS.iter().any(|beta| label.eq_ignore_ascii_case(beta))
 }
 
 /// The account's beta-grid folders in `root` (`<base>.<beta label>`, any
@@ -423,11 +430,17 @@ mod tests {
                 "{root}"
             );
         }
-        // the beta grid's labels, never another grid's nor the main grid's
+        // the beta grid's labels, never another grid's nor the main grid's,
+        // even one that holds "beta" or "aditi"
         for (name, beta) in [
             ("jane_doe.second_life_beta", true),
             ("Jane_Doe.Aditi", true),
-            ("jane_doe.second_life_beta_(aditi)", true),
+            ("JANE_DOE.SECOND_LIFE_BETA", true),
+            ("jane_doe.second_life_beta_(aditi)", false),
+            ("jane_doe.second_life_beta_test_grid_(aditi)", false),
+            ("jane_doe.beta", false),
+            ("jane_doe.my_beta_grid", false),
+            ("jane_doe.aditi_beta", false),
             ("jane_doe", false),
             ("jane_doe.", false),
             ("jane_doe.osgrid", false),
@@ -437,6 +450,14 @@ mod tests {
             assert_eq!(beta_label_of(name, "jane_doe").is_some(), beta, "{name}");
             assert_eq!(aditi.owns(name), beta, "{name}");
         }
+        // on another grid, any label but the beta grid's: an OpenSim grid
+        // whose label holds "beta" is its own
+        let other = account("custom_beta_example_org");
+        assert!(other.owns("jane_doe.my_beta_grid"));
+        assert!(other.owns("jane_doe.osgrid"));
+        assert!(!other.owns("jane_doe.second_life_beta"));
+        assert!(!other.owns("jane_doe.aditi"));
+        assert!(!other.owns("jane_doe"));
         // several: the most recently changed, then by name
         let at = |s| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s);
         assert_eq!(
