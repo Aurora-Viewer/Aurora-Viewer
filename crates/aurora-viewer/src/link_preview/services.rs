@@ -599,6 +599,19 @@ pub(super) fn clip_from_head(service: Service, page: &str, html: &str) -> Option
     })
 }
 
+/// The first entry may link to the Reddit-hosted video, separately from its poster.
+pub(super) fn clip_from_feed(xml: &str) -> Option<FoundClip> {
+    let entry = xml.split("<entry").nth(1)?.split("</entry>").next()?;
+    let content = unescape(entry.split("<content").nth(1)?.split("</content>").next()?);
+    let url = content.split_once("href=\"https://v.redd.it/")?.1.split('"').next()?;
+    let clip = super::Clip::of(&format!("https://v.redd.it/{url}")).filter(super::Clip::native_video)?;
+    Some(FoundClip {
+        clip,
+        posters: from_feed(xml).into_iter().collect(),
+        size: None,
+    })
+}
+
 /// The picture of a Reddit post's feed: its entry's `media:thumbnail`
 /// (Reddit's preview, at most 640 wide). A text post has none.
 pub(super) fn from_feed(xml: &str) -> Option<String> {

@@ -219,6 +219,7 @@ pub struct Clip(ClipSource);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum ClipSource {
     File(String),
+    Reddit(String),
     Hosted(hosted::Hosted),
 }
 
@@ -233,6 +234,24 @@ impl Clip {
         if let Some(video) = hosted::Hosted::of(&parsed) {
             return (crate::link_trust::classify(url) == Trust::Trusted && crate::link_trust::classify(&video.page()) == Trust::Trusted)
                 .then_some(Self(ClipSource::Hosted(video)));
+        }
+        if parsed.host_str() == Some("v.redd.it") {
+            let mut segments = parsed.path().trim_matches('/').split('/');
+            let id = segments.next()?;
+            let rendition = segments.next();
+            let valid_rendition = rendition.is_none_or(|name| {
+                matches!(name, "HLSPlaylist.m3u8" | "DASHPlaylist.mpd")
+                    || name
+                        .strip_prefix("DASH_")
+                        .and_then(|name| name.strip_suffix(".mp4"))
+                        .is_some_and(|height| (2..=4).contains(&height.len()) && height.bytes().all(|b| b.is_ascii_digit()))
+            });
+            return ((6..=20).contains(&id.len())
+                && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                && valid_rendition
+                && segments.next().is_none()
+                && crate::link_trust::classify(url) == Trust::Trusted)
+                .then(|| Self(ClipSource::Reddit(id.to_owned())));
         }
         let path = parsed.path().to_lowercase();
         if path.ends_with(".gifv") && matches!(parsed.host_str(), Some("imgur.com" | "www.imgur.com" | "i.imgur.com")) {
@@ -255,14 +274,23 @@ impl Clip {
     fn source(&self) -> std::borrow::Cow<'_, str> {
         match &self.0 {
             ClipSource::File(file) => std::borrow::Cow::Borrowed(file),
+            ClipSource::Reddit(id) => std::borrow::Cow::Owned(format!("https://v.redd.it/{id}")),
             ClipSource::Hosted(video) => std::borrow::Cow::Owned(video.page()),
         }
+    }
+
+    pub fn native_video(&self) -> bool {
+        matches!(self.0, ClipSource::Reddit(_))
+    }
+
+    pub fn requires_player_click(&self) -> bool {
+        matches!(&self.0, ClipSource::Hosted(video) if video.requires_player_click())
     }
 
     pub fn minimum_width(&self) -> f32 {
         match &self.0 {
             ClipSource::Hosted(video) => video.minimum_width(),
-            ClipSource::File(_) => 0.0,
+            ClipSource::File(_) | ClipSource::Reddit(_) => 0.0,
         }
     }
 
@@ -274,6 +302,9 @@ impl Clip {
     /// this machine (`clip_page`), which reports the clip's shape under
     /// `key`; the file alone when that page cannot be served.
     pub fn player_page(&self, options: &PlayerOptions, key: u64) -> String {
+        if self.native_video() {
+            return self.player();
+        }
         match player_server() {
             Some(port) => {
                 let base = format!("http://127.0.0.1:{port}/clip");
@@ -293,6 +324,7 @@ impl Clip {
     fn player(&self) -> String {
         match &self.0 {
             ClipSource::File(file) => file.clone(),
+            ClipSource::Reddit(id) => format!("https://v.redd.it/{id}/HLSPlaylist.m3u8"),
             ClipSource::Hosted(video) => video.player(),
         }
     }
@@ -395,7 +427,7 @@ fn clip_answer(request: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(&format!("http://127.0.0.1{path}")).ok()?;
     let param = |name: &str| parsed.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned());
     let src = param("src")?;
-    let clip = Clip::of(&src).filter(|c| c.source() == src.as_str())?;
+    let clip = Clip::of(&src).filter(|c| !c.native_video() && c.source() == src.as_str())?;
     let key = param("k").and_then(|v| v.parse::<u64>().ok())?;
     let volume = param("vol").and_then(|v| v.parse::<u8>().ok()).unwrap_or(100);
     Some(clip_page(&clip, volume, key))
@@ -1114,6 +1146,9 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
             if let (Some(pause), Ok(mut until)) = (pause, REDDIT_PAUSE.lock()) {
                 *until = Some(now + pause);
             }
+            if let Some(found) = answer.as_ref().ok().and_then(|xml| services::clip_from_feed(xml)) {
+                return Ok(Content::Clip(fetch_found_clip(client, found).await));
+            }
             answer.ok().and_then(|xml| services::from_feed(&xml))
         }
     };
@@ -1504,6 +1539,17 @@ mod tests {
     }
 
     #[test]
+    fn reddit_video_uses_the_combined_stream_instead_of_a_silent_rendition() {
+        let url = "https://v.redd.it/5o5cu4n0upeb1";
+        let clip = Clip::of(url).expect("Reddit video");
+        assert_eq!(Clip::of(&format!("{url}/DASH_1080.mp4?source=fallback")), Some(clip.clone()));
+        assert_eq!(clip.player_page(&PlayerOptions::default(), 0), format!("{url}/HLSPlaylist.m3u8"));
+        assert!(blurred_until_clicked(url));
+        assert!(Clip::of(&format!("{url}/DASH_AUDIO_128.mp4")).is_none());
+        assert!(Clip::of("https://v.redd.it.evil.example/5o5cu4n0upeb1").is_none());
+    }
+
+    #[test]
     fn regional_video_players_use_provider_owned_urls() {
         let cases = [
             (
@@ -1521,6 +1567,14 @@ mod tests {
             (
                 "https://framatube.org/w/9c9de5e8-0a1e-484a-b099-e80766180a6d",
                 "https://framatube.org/videos/embed/9c9de5e8-0a1e-484a-b099-e80766180a6d?autoplay=1&muted=0&p2p=0",
+            ),
+            (
+                "https://instagram.com/reel/DfF3eqGSKKc/?igsh=tracking",
+                "https://www.instagram.com/reel/DfF3eqGSKKc/embed/",
+            ),
+            (
+                "https://m.facebook.com/reel/1557618349384047/",
+                "https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2Freel%2F1557618349384047%2F&autoplay=false",
             ),
             (
                 "https://www.twitch.tv/videos/123456",

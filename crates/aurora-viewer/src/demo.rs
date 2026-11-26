@@ -1782,6 +1782,9 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         "twitch" => "https://clips.twitch.tv/IncredulousAbstemiousFennelImGlitch",
                         "x" => "https://x.com/NASA/status/2042791040516845925",
                         "youtube" => "https://youtu.be/jNQXAC9IVRw",
+                        "instagram" => "https://www.instagram.com/reel/DfF3eqGSKKc/",
+                        "facebook" => "https://www.facebook.com/reel/1557618349384047/",
+                        "reddit" => "https://v.redd.it/5o5cu4n0upeb1",
                         _ => return Vec::new(),
                     };
                     vec![line(ago(1), name, friend, ChatKind::Im, url)]

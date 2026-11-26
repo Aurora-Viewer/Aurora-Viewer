@@ -162,6 +162,7 @@ struct Playing {
     window: bool,
     muted: bool,
     automatic: bool,
+    native_video: bool,
     /// The pass its card last drew it in.
     drawn: u64,
     /// Width over height of the video: the card and the window keep it.
@@ -606,6 +607,7 @@ impl Previews {
             window: true,
             muted: false,
             automatic: false,
+            native_video: false,
             drawn: 0,
             aspect: DEFAULT_ASPECT,
             minimum_width: 0.0,
@@ -674,8 +676,15 @@ impl Previews {
             .keep_aspect(v.aspect, v.chrome);
         floater.min_size = floater.min_size.max(minimum);
         let body = floater.show(ctx, p, &mut open, |ui| {
-            let size = ui.available_size().max(Vec2::splat(64.0));
+            let mut size = ui.available_size();
+            if v.native_video {
+                size.y -= ui.spacing().interact_size.y;
+            }
+            let size = size.max(Vec2::splat(64.0));
             web.show(v, ui, p, size);
+            if v.native_video {
+                native_video_control(ui, &mut v.web);
+            }
             size
         });
         // the window keeps the video's shape (#848): its edges hold it at
@@ -1270,6 +1279,8 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
     let aspect = *aspect;
     let clip = clip.clone();
     let minimum_width = clip.as_ref().map_or(0.0, lp::Clip::minimum_width);
+    let provider_click = clip.as_ref().is_some_and(lp::Clip::requires_player_click);
+    let native_video = clip.as_ref().is_some_and(lp::Clip::native_video);
     if clip.is_none() && video.is_none() {
         return;
     }
@@ -1302,9 +1313,10 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
     let last = ui.ctx().data(|d| d.get_temp::<egui::Rect>(hover_id));
     let over = last.is_some_and(|r| ui.rect_contains_pointer(r));
     let shown = ui.ctx().animate_bool(hover_id, over);
-    let blur_poster = pv.place == Place::Group
-        && pv.settings.blur_groups
-        && (clip.as_ref().is_some_and(lp::Clip::hosted) || matches!(target, Target::Page(lp::Service::Imgur)));
+    let blur_poster = lp::blurred_until_clicked(url)
+        || (pv.place == Place::Group
+            && pv.settings.blur_groups
+            && (clip.as_ref().is_some_and(lp::Clip::hosted) || matches!(target, Target::Page(lp::Service::Imgur))));
     let mut play = false;
     let mut visible = false;
     let (mut detach, mut stop, mut settings) = (false, false, false);
@@ -1390,7 +1402,11 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                         );
                         if resp
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .on_hover_text(aurora_i18n::tr!("ui-chat-preview-play"))
+                            .on_hover_text(if provider_click {
+                                aurora_i18n::tr!("ui-chat-preview-load-player")
+                            } else {
+                                aurora_i18n::tr!("ui-chat-preview-play")
+                            })
                             .clicked()
                         {
                             play = true;
@@ -1403,6 +1419,9 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             {
                 ui.horizontal(|ui| {
                     ui.add_space(8.0);
+                    if v.native_video {
+                        native_video_control(ui, &mut v.web);
+                    }
                     if ui.small_button(sound_action(v.muted)).clicked() {
                         v.muted = !v.muted;
                         v.automatic = false;
@@ -1478,6 +1497,8 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
         && pv.settings.autoplay_video
         && pv.settings.player == lp::Player::InCard
         && minimum_width == 0.0
+        && !provider_click
+        && !native_video
         && pv.playing.is_none()
         && !pv.played.contains(&k)
         && crate::link_trust::classify(url) == crate::link_trust::Trust::Trusted;
@@ -1502,7 +1523,14 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             web: {
                 let mut web = WebView::default();
                 match (&clip, video) {
-                    (Some(clip), _) => web.navigate(&clip.player_page(&options, k)),
+                    (Some(clip), _) => {
+                        let page = clip.player_page(&options, k);
+                        if native_video {
+                            web.navigate_video(&page);
+                        } else {
+                            web.navigate(&page);
+                        }
+                    }
                     (None, Some(video)) => web.navigate(&video.player_page(&options)),
                     (None, None) => {}
                 }
@@ -1511,6 +1539,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             window: minimum_width > 0.0 || demo.unwrap_or(pv.settings.player) == lp::Player::Window,
             muted: automatic,
             automatic,
+            native_video,
             drawn: pass,
             aspect,
             minimum_width,
@@ -1532,6 +1561,24 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
     }
     let right_click = ui.rect_contains_pointer(resp.rect) && ui.input(|input| input.pointer.secondary_clicked());
     card_menu(&resp, p, pv, k, url, true, right_click);
+}
+
+fn native_video_control(ui: &mut egui::Ui, web: &mut WebView) {
+    if let Some(plugin) = web.plugin_mut() {
+        let playing = plugin.status() == aurora_media::MediaStatus::Playing;
+        let label = if playing {
+            aurora_i18n::tr!("ui-chat-preview-pause")
+        } else {
+            aurora_i18n::tr!("ui-chat-preview-play")
+        };
+        if ui.small_button(label).clicked() {
+            if playing {
+                plugin.pause();
+            } else {
+                plugin.start(1.0);
+            }
+        }
+    }
 }
 
 fn sound_action(muted: bool) -> &'static str {
