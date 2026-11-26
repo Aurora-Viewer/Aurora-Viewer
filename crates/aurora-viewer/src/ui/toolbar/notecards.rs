@@ -361,51 +361,66 @@ impl State {
             // the interface lock never stops a change of interface (human
             // request, 2026-11-26): only the eyes keep to it
             let enabled = !self.busy() && self.catalog.can_preview;
-            egui::ScrollArea::vertical()
-                .id_salt("toolbar_saved_interfaces")
-                .max_height(100.0)
-                .show(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        for entry in &self.catalog.entries {
-                            ui.push_id(entry.id, |ui| {
-                                let current = active.and_then(|source| source.personal(self.catalog.owner)) == Some(entry.id);
-                                let response = ui
-                                    .add_enabled_ui(enabled && entry.available, |ui| {
-                                        widgets::action_button_trailing(
-                                            ui,
-                                            p,
-                                            "file-text-filled",
-                                            &entry.name,
-                                            if current {
-                                                widgets::ActionKind::Primary
-                                            } else {
-                                                widgets::ActionKind::Flat
-                                            },
-                                            egui::vec2(190.0, 30.0),
-                                            super::editor::EYE_ROOM,
-                                        )
-                                    })
-                                    .inner;
-                                let key = entry.id.to_string();
-                                let shown = !hidden.contains(&key);
-                                ui.add_enabled_ui(!locked, |ui| {
-                                    if let Some(shown) = super::editor::interface_eye(ui, p, response.rect, &key, shown, current) {
-                                        toggled = Some((key.clone(), shown));
-                                    }
-                                });
-                                #[cfg(test)]
-                                ui.ctx().data_mut(|data| {
-                                    data.insert_temp(egui::Id::unique(("toolbar_saved_interface", entry.id)), response.rect)
-                                });
-                                if response.clicked() {
-                                    self.selected_profile = Some(entry.id);
-                                }
-                            });
+            // no scroll area of their own: the editor's interface section
+            // scrolls, and one inside it hid the rows past its 100 points
+            // (human report, 2026-11-26)
+            ui.horizontal_wrapped(|ui| {
+                for entry in &self.catalog.entries {
+                    ui.push_id(entry.id, |ui| {
+                        let current = active.and_then(|source| source.personal(self.catalog.owner)) == Some(entry.id);
+                        let response = ui
+                            .add_enabled_ui(enabled && entry.available, |ui| {
+                                widgets::action_button_trailing(
+                                    ui,
+                                    p,
+                                    "file-text-filled",
+                                    &entry.name,
+                                    if current {
+                                        widgets::ActionKind::Primary
+                                    } else {
+                                        widgets::ActionKind::Flat
+                                    },
+                                    egui::vec2(190.0, 30.0),
+                                    super::editor::EYE_ROOM,
+                                )
+                            })
+                            .inner;
+                        let key = entry.id.to_string();
+                        let shown = !hidden.contains(&key);
+                        ui.add_enabled_ui(!locked, |ui| {
+                            if let Some(shown) = super::editor::interface_eye(ui, p, response.rect, &key, shown, current) {
+                                toggled = Some((key.clone(), shown));
+                            }
+                        });
+                        #[cfg(test)]
+                        ui.ctx()
+                            .data_mut(|data| data.insert_temp(egui::Id::unique(("toolbar_saved_interface", entry.id)), response.rect));
+                        if response.clicked() {
+                            self.selected_profile = Some(entry.id);
                         }
                     });
-                });
+                }
+            });
         }
         toggled
+    }
+
+    /// Personal interfaces named `names`, without an inventory.
+    #[cfg(test)]
+    pub(super) fn test_interfaces(&mut self, names: &[&str]) -> Vec<Uuid> {
+        self.catalog.can_preview = true;
+        self.catalog.entries = names
+            .iter()
+            .map(|name| library::Entry {
+                id: Uuid::new_v4(),
+                name: (*name).into(),
+                available: true,
+                writable: true,
+                removable: true,
+                asset: Uuid::new_v4(),
+            })
+            .collect();
+        self.catalog.entries.iter().map(|entry| entry.id).collect()
     }
 
     fn load(&mut self, inv: &Inventory, toolbar: &ToolbarSettings, islands: bool, item: Uuid) -> Option<NetCommand> {

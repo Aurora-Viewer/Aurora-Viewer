@@ -253,13 +253,19 @@ impl ToolbarUi {
                 }
             });
             ui.add_space(4.0);
-            // Keep the command controls and one catalogue row reachable on short windows.
-            let preset_height = (ui.available_height() - 290.0).max(48.0);
+            // Keep the command controls and one catalogue row reachable on
+            // short windows, the interfaces having at least half of the room
+            // (human report, 2026-11-26: the saved ones past their first row
+            // were cut).
+            let room = ui.available_height();
+            let preset_height = (room - 290.0).max(room * 0.5).max(48.0);
             egui::ScrollArea::vertical()
                 .id_salt("toolbar_preset_section")
                 .max_height(preset_height)
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
+                    #[cfg(test)]
+                    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("toolbar_preset_clip"), ui.clip_rect()));
                     widgets::section_header(ui, p, "layout-grid-filled", aurora_i18n::tr!("toolbar-presets"));
                     ui.add_enabled_ui(!settings.locked, |ui| {
                         ui.horizontal_wrapped(|ui| {

@@ -1181,6 +1181,7 @@ struct Bench {
     islands: bool,
     /// Our avatar sits, for the bars' Row.
     seated: bool,
+    screen: Vec2,
 }
 
 #[test]
@@ -1276,6 +1277,7 @@ impl Default for Bench {
             action: bars::BarAction::None,
             islands: false,
             seated: false,
+            screen: Vec2::new(900.0, 650.0),
         }
     }
 }
@@ -1294,7 +1296,7 @@ impl Bench {
         let layout = layout();
         let mut output = self.ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(900.0, 650.0))),
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, self.screen)),
                 events,
                 ..Default::default()
             },
@@ -3177,5 +3179,40 @@ fn a_loaded_personal_interface_leaves_the_editor_as_it_was() {
         state.profile_applied(&ctx);
         assert_eq!(state.open, open);
         assert!(state.pending.is_none());
+    }
+}
+
+/// Every saved interface shows in the editor, past its first row, on a
+/// usual screen (human report, 2026-11-26: four of six were seen).
+#[test]
+fn the_editor_shows_every_saved_interface() {
+    for screen in [Vec2::new(1600.0, 900.0), Vec2::new(1920.0, 1080.0)] {
+        let mut bench = Bench {
+            screen,
+            ..Default::default()
+        };
+        bench.state.open = true;
+        let ids = bench.state.notecards.test_interfaces(&[
+            "Aurora Builder",
+            "Aurora OldSchool",
+            "Aurora Photographer",
+            "Aurora Test",
+            "Legacy",
+            "Legacy2",
+        ]);
+        for _ in 0..8 {
+            bench.frame(vec![]);
+        }
+        let clip = bench
+            .ctx
+            .data(|data| data.get_temp::<Rect>(egui::Id::unique("toolbar_preset_clip")))
+            .expect("interface section");
+        for id in ids {
+            let rect = bench
+                .ctx
+                .data(|data| data.get_temp::<Rect>(egui::Id::unique(("toolbar_saved_interface", id))))
+                .expect("saved interface");
+            assert!(clip.contains_rect(rect), "{screen:?}: {rect:?} outside {clip:?}");
+        }
     }
 }
