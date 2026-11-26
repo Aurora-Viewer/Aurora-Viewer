@@ -1056,7 +1056,7 @@ fn overlay_button(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, 
         egui::Rect::from_center_size(rect.center(), Vec2::splat(15.0)),
         p.ink,
     );
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
     resp.on_hover_text(tip).clicked()
 }
 
