@@ -1344,6 +1344,15 @@ fn reddit_permalink_channel(page: &str, author: Option<&str>) -> String {
 }
 
 #[test]
+fn dailymotion_needs_explicit_player_and_video_ids_for_inline_playback() {
+    let embed = "https://geo.dailymotion.com/player/x8lr5.html?video=x84sh87";
+    assert!(matches!(target(embed), Some(Target::Clip(clip)) if clip.player() == embed && clip.requires_player_click()));
+    assert!(matches!(target("https://www.dailymotion.com/video/x84sh87"), Some(Target::Page(_))));
+    assert!(target("https://geo.dailymotion.com/player.html?video=x84sh87").is_none());
+    assert!(target("https://geo.dailymotion.com.invalid.example/player/x8lr5.html?video=x84sh87").is_none());
+}
+
+#[test]
 fn reddit_preview_byline_uses_the_community_of_the_permalink() {
     assert_eq!(
         reddit_permalink_channel("https://www.reddit.com/r/funnyvideos/comments/15byye8/example/", Some("example")),
