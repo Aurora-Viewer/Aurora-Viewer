@@ -104,6 +104,9 @@ pub struct AoUi {
     /// Where the animation picker adds: a stack or a layer of the open
     /// slot, `None` for its main list.
     pick_into: Option<Uuid>,
+    /// The slot of `state` is unfolded on its page; a group's page opens
+    /// with all its slots folded, a click on a slot's title unfolds it.
+    slot_open: bool,
     preview: preview::Preview,
     /// The preview's 3D stage: our outfit, posed by the preview's skeleton
     /// (app/ao_preview.rs), drawn as Inspect draws an avatar.
@@ -137,6 +140,7 @@ impl AoUi {
     pub fn interface_demo(&mut self, mode: &str, catalog: &inventory::Catalog) {
         let Some(set) = catalog.selected(self.selected_set) else { return };
         self.tab = 0;
+        self.slot_open = true;
         self.state = match mode {
             "interface-running" => State::Running,
             "interface-jumping" => State::Jumping,
@@ -176,8 +180,15 @@ impl AoUi {
         self.cycle_edit = None;
     }
 
-    /// Opens a slot on its group's page, its main list shown.
+    /// Opens a slot on its group's page, unfolded, its main list shown.
     fn select_state(&mut self, item: State) {
+        self.point_at(item);
+        self.slot_open = true;
+    }
+
+    /// Makes `item` the slot the window works on (and previews), folded.
+    fn point_at(&mut self, item: State) {
+        self.slot_open = false;
         if self.state != item {
             self.preview = Default::default();
         }
@@ -260,11 +271,15 @@ pub(super) fn enabled(ui: &mut egui::Ui, p: &Palette, runtime: &mut Runtime, acc
 /// Width of the left column, and of the preview on the right.
 const SIDEBAR: f32 = 252.0;
 const PREVIEW: f32 = 340.0;
-/// Below this width the preview column folds away.
-const PREVIEW_ROOM: f32 = 1000.0;
+/// The narrowest the preview gets as the window narrows: it never folds
+/// away.
+const PREVIEW_LEAST: f32 = 230.0;
+/// A saved window narrower than this is the old one-column AO window's.
+const OLD_WIDTH: f32 = 1000.0;
 /// The window's first size, and the least it can be made.
 const SIZE: Vec2 = Vec2::new(1240.0, 760.0);
-const MIN_SIZE: Vec2 = Vec2::new(760.0, 520.0);
+/// (the sidebar, a middle column of 400 and the narrowest preview)
+const MIN_SIZE: Vec2 = Vec2::new(SIDEBAR + 400.0 + PREVIEW_LEAST, 520.0);
 
 /// A window saved at the size of the old one-column AO window (560 wide)
 /// opens once at the size of the three columns; a size chosen after that
@@ -276,7 +291,7 @@ fn widen_once(ctx: &egui::Context) {
     }
     // Until the window has been laid out once, its saved size is unknown.
     let Some(size) = widgets::floater_size(ctx, "ao") else { return };
-    if size.x < PREVIEW_ROOM {
+    if size.x < OLD_WIDTH {
         widgets::size_floater(ctx, "ao", SIZE);
     }
     ctx.data_mut(|d| d.insert_persisted(done, true));
@@ -324,7 +339,8 @@ pub fn show(
     floater.flush_body().show(ctx, p, open, |ui| {
         let full = ui.available_rect_before_wrap();
         ui.allocate_rect(full, egui::Sense::hover());
-        let preview_w = if full.width() >= PREVIEW_ROOM { PREVIEW } else { 0.0 };
+        // the preview narrows with the window, never folding away
+        let preview_w = (full.width() - SIDEBAR - 400.0).clamp(PREVIEW_LEAST, PREVIEW);
         let side = egui::Rect::from_min_size(full.min, Vec2::new(SIDEBAR, full.height()));
         let right = egui::Rect::from_min_max(egui::pos2(full.right() - preview_w, full.top()), full.max);
         let middle = egui::Rect::from_min_max(egui::pos2(side.right(), full.top()), egui::pos2(right.left(), full.bottom()));
@@ -346,7 +362,7 @@ pub fn show(
                 first_run::show(ui, p, inv, catalog, state, &mut out);
             }
         });
-        if preview_w > 0.0 {
+        {
             column(ui, "ao_preview", right, egui::Margin::ZERO, |ui| {
                 preview::show(ui, p, selected, runtime, state);
             });

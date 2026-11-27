@@ -41,6 +41,8 @@ impl Fixture {
             quick: None,
             manager_open: true,
         };
+        // (the slots open on a click; most tests work in Standing's)
+        fixture.state.slot_open = true;
         fixture.settle();
         fixture
     }

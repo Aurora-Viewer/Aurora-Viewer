@@ -41,7 +41,7 @@ pub(super) fn show(
                 .states()
                 .find(|s| page::ESSENTIALS.contains(s))
                 .unwrap_or(State::Standing);
-            state.select_state(first);
+            state.point_at(first);
         }
     }
     let hint = if state.essentials {
@@ -66,26 +66,16 @@ pub(super) fn show(
                 .or_else(|| states.iter().copied().find(|s| *s == category.initial_state()))
                 .unwrap_or(states[0]);
             if !on {
-                state.select_state(target);
+                state.point_at(target);
             }
             state.tab = 0;
         }
     }
     // Movement and Stands and turns at the column's foot, as the board has it
-    let foot = GROUP_ROW + ui.spacing().interact_size.y + 3.0 * ui.spacing().item_spacing.y;
+    let foot = 36.0 + ui.spacing().interact_size.y + 3.0 * ui.spacing().item_spacing.y;
     ui.add_space((ui.available_height() - foot).max(4.0));
     let on = state.tab == 1;
-    let tag = aurora_i18n::tr!("ao-experimental");
-    if group_row(
-        ui,
-        p,
-        aurora_i18n::tr!("ao-tab-movement-short"),
-        aurora_i18n::tr!("ao-movement-line"),
-        tag,
-        on,
-    )
-    .clicked()
-    {
+    if movement_row(ui, p, on).clicked() {
         state.tab = 1;
     }
     // Stands and turns pause for the session only (AOEngine::setOverrideStands
@@ -180,6 +170,34 @@ fn group_row(ui: &mut egui::Ui, p: &Palette, name: &str, line: &str, count: &str
         room,
         egui::FontId::proportional(11.0),
         quiet,
+    );
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, name));
+    response
+}
+
+/// Movement: its icon and name on one line, its EXPERIMENTAL tag at the
+/// end; chosen, in the accent like a group.
+fn movement_row(ui: &mut egui::Ui, p: &Palette, on: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), egui::Sense::click());
+    let radius = ui.visuals().window_corner_radius;
+    if on {
+        ui.painter().rect_filled(rect, radius, p.violet);
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, radius, super::shades(p).slot);
+    }
+    let ink = if on { p.on_accent } else { p.ink };
+    let y = rect.center().y;
+    widgets::paint_glyph(ui.painter(), "gauge-filled", egui::pos2(rect.left() + 18.0, y), 15.0, ink);
+    let title = egui::FontId::new(13.5, super::super::fonts::semibold(ui.ctx()));
+    let name = aurora_i18n::tr!("ao-tab-movement-short");
+    let tag_left = page::experimental_tag(ui, p, egui::pos2(rect.right() - 10.0, y), on);
+    widgets::paint_elided(
+        ui,
+        name,
+        egui::pos2(rect.left() + 34.0, y),
+        tag_left - rect.left() - 42.0,
+        title,
+        ink,
     );
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, name));
     response

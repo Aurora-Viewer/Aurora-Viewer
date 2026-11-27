@@ -10,19 +10,21 @@
 use super::*;
 use crate::ao::{StateConfig, Track, inventory::editor::List};
 
-#[derive(Clone, Copy, Debug)]
-struct EntryDrag {
-    set: Uuid,
-    state: State,
-    list: List,
-    entry: Uuid,
+/// What a row shows.
+struct RowSpec<'a> {
+    id: Uuid,
+    names: Vec<&'a str>,
+    together: bool,
+    playing: bool,
+    previewed: bool,
 }
 
 /// The slider's stops: "Each time" (0, AOEngine's cycle without a timer: the
 /// next one at each entry into the state), then seconds.
 pub(super) const STOPS: [f32; 6] = [0.0, 10.0, 20.0, 30.0, 60.0, 120.0];
-/// Height of an entry's row.
+/// Height of an entry's row, and the room between two.
 const ROW: f32 = 34.0;
+const ROW_GAP: f32 = 5.0;
 
 /// How the entries of a list take turns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -372,17 +374,22 @@ impl Editor<'_> {
                         ui.painter()
                             .circle_stroke(ring.center(), 15.0, egui::Stroke::new(2.5, tint.gamma_multiply(0.85)));
                         widgets::paint_glyph(ui.painter(), order.icon(), ring.center(), 15.0, tint);
-                        let right = 140.0;
-                        let middle = (ui.available_width() - right - ui.spacing().item_spacing.x).max(120.0);
+                        // (the columns share the card: a narrow window keeps
+                        // it inside its slot)
+                        let room = ui.available_width();
+                        let right = (room * 0.42).min(140.0);
+                        let middle = (room - right - 2.0 * ui.spacing().item_spacing.x).max(60.0);
                         ui.vertical(|ui| {
                             ui.set_width(middle);
                             ui.spacing_mut().item_spacing.y = 2.0;
                             ui.horizontal(|ui| {
                                 ui.set_height(28.0);
                                 if order == Order::Manual {
-                                    ui.label(aurora_i18n::tr!("ao-turns-manual"));
+                                    ui.add(egui::Label::new(aurora_i18n::tr!("ao-turns-manual")).truncate());
                                 } else if edit.seconds > 0.0 {
-                                    ui.label(aurora_i18n::tr!("ao-turns-every"));
+                                    // (the seconds' field keeps its room after it)
+                                    let room = (ui.available_width() - 64.0).max(20.0);
+                                    ui.add(widgets::elided_label(ui, aurora_i18n::tr!("ao-turns-every"), room));
                                     let response = ui.add(
                                         egui::DragValue::new(&mut edit.seconds)
                                             // (a saved 0.5 s stays as it is:
@@ -394,7 +401,7 @@ impl Editor<'_> {
                                     );
                                     commit |= response.drag_stopped() || response.lost_focus();
                                 } else {
-                                    ui.label(aurora_i18n::tr!("ao-turns-each-time"));
+                                    ui.add(egui::Label::new(aurora_i18n::tr!("ao-turns-each-time")).truncate());
                                 }
                             });
                             ui.horizontal(|ui| {
@@ -402,7 +409,18 @@ impl Editor<'_> {
                                 ui.label(RichText::new(aurora_i18n::tr!("ao-each-time")).small().color(p.muted));
                                 let mut stop = stop_of(edit.seconds);
                                 let before = stop;
-                                ui.spacing_mut().slider_width = (ui.available_width() - 44.0).max(60.0);
+                                // the slider takes what its end label leaves
+                                let end = ui
+                                    .painter()
+                                    .layout_no_wrap(
+                                        aurora_i18n::tr!("ao-two-minutes").to_owned(),
+                                        egui::TextStyle::Small.resolve(ui.style()),
+                                        p.muted,
+                                    )
+                                    .size()
+                                    .x;
+                                let room = ui.available_width() - end - 2.0 * ui.spacing().item_spacing.x;
+                                ui.spacing_mut().slider_width = room.max(24.0);
                                 let response = ui.add_enabled(
                                     order != Order::Manual,
                                     egui::Slider::new(&mut stop, 0..=STOPS.len() - 1).show_value(false),
@@ -496,26 +514,34 @@ impl Editor<'_> {
     /// the world (FloaterAO's list click, `AOEngine::selectAnimation`).
     fn main_list(&mut self, ui: &mut egui::Ui, c: &StateConfig) {
         let playing = self.runtime.index(self.state.state, c.folder);
-        for (index, step) in c.steps.iter().enumerate() {
-            ui.push_id(step.id, |ui| {
-                let names: Vec<&str> = if step.group {
+        let specs: Vec<RowSpec<'_>> = c
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(index, step)| RowSpec {
+                id: step.id,
+                names: if step.group {
                     step.members.iter().map(|m| m.name.as_str()).collect()
                 } else {
                     vec![step.name.as_str()]
-                };
-                let previewed = self.state.preview.previews(None, index);
-                let (response, remove) = self.row(ui, step.id, index, &names, step.group, List::Main, playing == index, previewed);
-                if remove {
-                    self.remove(ui, step.id);
-                }
-                self.entry_menu(&response, c, step, index);
-                if in_world(ui, &response) {
-                    self.runtime.choose(self.state.state, c.folder, index);
-                    self.state.preview.show_entry(index);
-                } else if response.clicked() {
-                    self.state.preview.show_entry(index);
-                }
-            });
+                },
+                together: step.group,
+                playing: playing == index,
+                previewed: self.state.preview.previews(None, index),
+            })
+            .collect();
+        let rows = self.rows(ui, List::Main, &specs);
+        for (index, (step, (response, remove))) in c.steps.iter().zip(rows).enumerate() {
+            if remove {
+                self.remove(ui, step.id);
+            }
+            self.entry_menu(&response, c, step, index);
+            if in_world(ui, &response) {
+                self.runtime.choose(self.state.state, c.folder, index);
+                self.state.preview.show_entry(index);
+            } else if response.clicked() {
+                self.state.preview.show_entry(index);
+            }
         }
     }
 
@@ -580,86 +606,133 @@ impl Editor<'_> {
     /// entry, a double click or Shift+click plays it in the world.
     fn members(&mut self, ui: &mut egui::Ui, track: &Track) {
         let playing = self.runtime.index(self.state.state, track.id);
-        for (index, member) in track.members.iter().enumerate() {
-            ui.push_id(member.link, |ui| {
-                let previewed = self.state.preview.previews(Some(track.id), index);
-                let names = [member.name.as_str()];
-                let (response, remove) = self.row(
-                    ui,
-                    member.link,
-                    index,
-                    &names,
-                    false,
-                    List::Members(track.id),
-                    playing == index,
-                    previewed,
-                );
-                if remove {
+        let specs: Vec<RowSpec<'_>> = track
+            .members
+            .iter()
+            .enumerate()
+            .map(|(index, member)| RowSpec {
+                id: member.link,
+                names: vec![member.name.as_str()],
+                together: false,
+                playing: playing == index,
+                previewed: self.state.preview.previews(Some(track.id), index),
+            })
+            .collect();
+        let rows = self.rows(ui, List::Members(track.id), &specs);
+        for (index, (member, (response, remove))) in track.members.iter().zip(rows).enumerate() {
+            if remove {
+                self.remove(ui, member.link);
+            }
+            let p = self.p;
+            let busy = self.busy();
+            super::super::menu::context_menu(&response, p, |ui| {
+                if super::super::menu::item(ui, p, "eye-filled", aurora_i18n::tr!("ao-preview")) {
+                    self.state.preview.show_layer(track.id, index);
+                }
+                if super::super::menu::item(ui, p, "player-play-filled", aurora_i18n::tr!("ao-play-in-world")) {
+                    self.runtime.choose(self.state.state, track.id, index);
+                }
+                super::super::menu::separator(ui, p);
+                if super::super::menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !busy) {
                     self.remove(ui, member.link);
                 }
-                let p = self.p;
-                let busy = self.busy();
-                super::super::menu::context_menu(&response, p, |ui| {
-                    if super::super::menu::item(ui, p, "eye-filled", aurora_i18n::tr!("ao-preview")) {
-                        self.state.preview.show_layer(track.id, index);
-                    }
-                    if super::super::menu::item(ui, p, "player-play-filled", aurora_i18n::tr!("ao-play-in-world")) {
-                        self.runtime.choose(self.state.state, track.id, index);
-                    }
-                    super::super::menu::separator(ui, p);
-                    if super::super::menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !busy) {
-                        self.remove(ui, member.link);
-                    }
-                });
-                if in_world(ui, &response) {
-                    self.runtime.choose(self.state.state, track.id, index);
-                    self.state.preview.show_layer(track.id, index);
-                } else if response.clicked() {
-                    self.state.preview.show_layer(track.id, index);
-                }
             });
+            if in_world(ui, &response) {
+                self.runtime.choose(self.state.state, track.id, index);
+                self.state.preview.show_layer(track.id, index);
+            } else if response.clicked() {
+                self.state.preview.show_layer(track.id, index);
+            }
         }
         if track.members.is_empty() {
             ui.label(RichText::new(aurora_i18n::tr!("ao-combine-empty")).small().color(self.p.muted));
         }
     }
 
-    /// One entry: its number, its name (a stack's members joined by "+"),
-    /// whether it plays in the world, and its remove button at the end; the
-    /// previewed one stands out. Drag it to change its place. Returns its
-    /// response and whether its remove button was clicked.
-    #[allow(clippy::too_many_arguments)]
-    fn row(
+    /// The rows of a list, dragged to reorder them as the photo filters'
+    /// cards are (`widgets::reorder`): the row held lifts as a card as wide
+    /// as its name, under the pointer, the others glide out of its way and
+    /// show the places they take; let go, the inventory takes the new order.
+    /// Returns each row's response and whether its remove button was clicked.
+    fn rows(&mut self, ui: &mut egui::Ui, list: List, specs: &[RowSpec<'_>]) -> Vec<(egui::Response, bool)> {
+        let width = ui.available_width();
+        let busy = self.busy();
+        let responses: Vec<egui::Response> = ui
+            .scope(|ui| {
+                ui.spacing_mut().item_spacing.y = ROW_GAP;
+                specs
+                    .iter()
+                    .map(|spec| {
+                        let (_, rect) = ui.allocate_space(Vec2::new(width, ROW));
+                        ui.interact(rect, ui.scope_id().with(("ao_row", spec.id)), egui::Sense::click_and_drag())
+                    })
+                    .collect()
+            })
+            .inner;
+        let keys: Vec<Uuid> = specs.iter().map(|s| s.id).collect();
+        let id = ui.scope_id().with(("ao_rows", format!("{list:?}")));
+        let layout = widgets::reorder::update(ui, id, &keys, &responses, !busy, None);
+        let mut out = Vec::with_capacity(specs.len());
+        for (i, spec) in specs.iter().enumerate() {
+            let rect = layout.rect(i, responses[i].rect);
+            let place = layout.held.map_or(i, |(from, to)| widgets::reorder::place_in(i, from, to));
+            let remove = if layout.lifted == Some(i) {
+                // the card in the hand: as wide as what it says
+                let font = egui::FontId::proportional(13.0);
+                let text = spec.names.join(" + ");
+                let text_w = ui.painter().layout_no_wrap(text, font, self.p.ink).size().x;
+                let card = egui::Rect::from_min_size(rect.min, Vec2::new((text_w + 64.0).min(rect.width()), ROW));
+                let p = self.p;
+                widgets::reorder::lifted_card(ui, p, id.with(i), card, |ui| {
+                    self.paint_row(ui, card, &responses[i], place, spec, true);
+                });
+                false
+            } else {
+                self.paint_row(ui, rect, &responses[i], place, spec, layout.busy())
+            };
+            out.push((responses[i].clone(), remove));
+        }
+        if let Some((from, to)) = layout.moved
+            && let (Some(&source), Some(&target)) = (keys.get(from), keys.get(to))
+        {
+            match inventory::editor::reorder(self.inv, self.set, self.state.state, list, source, target, to > from) {
+                Ok(change) if !change.operations.is_empty() => self.out.push(Action::Edit(change, None)),
+                Ok(_) => {}
+                Err(reason) => self.state.message = reason,
+            }
+        }
+        out
+    }
+
+    /// One entry at `rect`: its place, its name (a stack's members joined
+    /// by "+"), "Preview" and "Playing", and its remove button at the end.
+    /// The previewed one stands out in the accent. `quiet`: carried, or
+    /// another is: no hover and no remove button. Returns whether its
+    /// remove button was clicked.
+    fn paint_row(
         &mut self,
         ui: &mut egui::Ui,
-        id: Uuid,
-        index: usize,
-        names: &[&str],
-        together: bool,
-        list: List,
-        playing: bool,
-        previewed: bool,
-    ) -> (egui::Response, bool) {
+        rect: egui::Rect,
+        response: &egui::Response,
+        place: usize,
+        spec: &RowSpec<'_>,
+        quiet: bool,
+    ) -> bool {
         let p = self.p;
-        let sense = if self.busy() {
-            egui::Sense::click()
-        } else {
-            egui::Sense::click_and_drag()
-        };
-        let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), sense);
-        let radius = ui.visuals().widgets.inactive.corner_radius;
-        // each entry on a card of its own, a stack's tinted, the previewed
-        // one outlined (the board's rows)
         let shade = super::shades(p);
-        let fill = if together {
+        let radius = ui.visuals().widgets.inactive.corner_radius;
+        let hovered = response.hovered() && !quiet;
+        let fill = if spec.previewed {
+            p.bar.lerp_to_gamma(p.violet, 0.32)
+        } else if spec.together {
             shade.stack
-        } else if response.hovered() {
+        } else if hovered {
             shade.item_hot
         } else {
             shade.item
         };
-        let edge = if previewed {
-            egui::Stroke::new(1.0, shade.edge)
+        let edge = if spec.previewed {
+            egui::Stroke::new(1.0, p.violet_light)
         } else {
             egui::Stroke::NONE
         };
@@ -669,12 +742,12 @@ impl Editor<'_> {
         let mut x = rect.left() + 8.0;
         let number = ui
             .painter()
-            .layout_no_wrap((index + 1).to_string(), egui::FontId::proportional(11.5), p.muted);
+            .layout_no_wrap((place + 1).to_string(), egui::FontId::proportional(11.5), p.muted);
         widgets::paint_row_text(ui.painter(), number, x, y, p.muted);
         x += 18.0;
         // the remove button's room at the end
-        let mut right = rect.right() - 32.0;
-        if playing {
+        let mut right = rect.right() - if quiet { 8.0 } else { 32.0 };
+        if spec.playing {
             let galley = ui
                 .painter()
                 .layout_no_wrap(aurora_i18n::tr!("ao-playing").to_owned(), egui::FontId::proportional(11.0), p.teal);
@@ -682,7 +755,17 @@ impl Editor<'_> {
             widgets::paint_row_text(ui.painter(), galley, right, y, p.teal);
             right -= 10.0;
         }
-        if together {
+        if spec.previewed {
+            let galley = ui.painter().layout_no_wrap(
+                aurora_i18n::tr!("ao-preview").to_owned(),
+                egui::FontId::proportional(11.0),
+                p.ink.gamma_multiply(0.7),
+            );
+            right -= galley.size().x;
+            widgets::paint_row_text(ui.painter(), galley, right, y, p.ink.gamma_multiply(0.7));
+            right -= 10.0;
+        }
+        if spec.together {
             let tag = aurora_i18n::tr!("ao-together").to_uppercase();
             let galley = ui
                 .painter()
@@ -692,7 +775,7 @@ impl Editor<'_> {
             right -= 10.0;
         }
         let font = egui::FontId::proportional(13.0);
-        for (i, name) in names.iter().enumerate() {
+        for (i, name) in spec.names.iter().enumerate() {
             if x >= right - 20.0 {
                 break;
             }
@@ -702,57 +785,35 @@ impl Editor<'_> {
                 widgets::paint_row_text(ui.painter(), plus, x, y, p.violet_light);
                 x += w + 6.0;
             }
-            let pad = if together { 6.0 } else { 0.0 };
+            let pad = if spec.together { 6.0 } else { 0.0 };
             let galley = widgets::elided_galley(ui, RichText::new(*name).font(font.clone()).color(p.ink), right - x - 2.0 * pad);
             let w = galley.size().x;
-            if together {
+            if spec.together {
                 let face = egui::Rect::from_min_size(egui::pos2(x, y - 11.0), Vec2::new(w + 2.0 * pad, 22.0));
                 ui.painter().rect_filled(face, radius, p.violet.gamma_multiply(0.28));
             }
             widgets::paint_row_text(ui.painter(), galley, x + pad, y, p.ink);
             x += w + 2.0 * pad + 6.0;
         }
-        let full = names.join(" + ");
-        let response = response.on_hover_text(format!("{full}\n\n{}", aurora_i18n::tr!("ao-row-help")));
-        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, previewed, &full));
-        if !self.busy() {
-            response.dnd_set_drag_payload(EntryDrag {
-                set: self.set.id,
-                state: self.state.state,
-                list,
-                entry: id,
-            });
-            if let Some(drag) = egui::DragAndDrop::payload::<EntryDrag>(ui.ctx())
-                && drag.set == self.set.id
-                && drag.state == self.state.state
-                && drag.list == list
-                && drag.entry != id
-                && response.contains_pointer()
-                && let Some(pointer) = ui.ctx().pointer_hover_pos()
-            {
-                let after = pointer.y >= rect.center().y;
-                let line = if after { rect.bottom() } else { rect.top() };
-                ui.painter().hline(rect.x_range(), line, egui::Stroke::new(2.0, p.violet_light));
-                if response.dnd_release_payload::<EntryDrag>().is_some() {
-                    match inventory::editor::reorder(self.inv, self.set, self.state.state, list, drag.entry, id, after) {
-                        Ok(change) if !change.operations.is_empty() => self.out.push(Action::Edit(change, None)),
-                        Ok(_) => {}
-                        Err(reason) => self.state.message = reason,
-                    }
-                }
-            }
+        if quiet {
+            return false;
         }
+        let full = spec.names.join(" + ");
+        response
+            .clone()
+            .on_hover_text(format!("{full}\n\n{}", aurora_i18n::tr!("ao-row-help")));
+        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, spec.previewed, &full));
         // its remove button, where the row ends
         let bin = egui::Rect::from_center_size(egui::pos2(rect.right() - 16.0, y), Vec2::splat(24.0));
         let hit = ui
-            .interact(bin, ui.scope_id().with(("ao_row_remove", id)), egui::Sense::click())
+            .interact(bin, ui.scope_id().with(("ao_row_remove", spec.id)), egui::Sense::click())
             .on_hover_text(aurora_i18n::tr!("common-remove"));
         if hit.hovered() {
             ui.painter().rect_filled(bin, radius, p.raised);
         }
         let ink = if hit.hovered() { p.danger } else { p.muted };
         widgets::paint_glyph(ui.painter(), "trash-filled", bin.center(), 13.0, ink);
-        (response, hit.clicked() && !self.busy())
+        hit.clicked() && !self.busy()
     }
 
     /// The box that takes new animations: a drop from the inventory (the

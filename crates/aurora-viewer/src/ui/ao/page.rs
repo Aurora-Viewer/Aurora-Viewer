@@ -18,6 +18,8 @@ pub(super) const ESSENTIALS: [State; 6] = [
 
 /// Height of a slot's title line.
 const HEADER: f32 = 40.0;
+/// How long a slot takes to unfold or fold (seconds).
+const REVEAL: f32 = 0.2;
 /// Chips shown in a closed slot before "+N more".
 const PEEK: usize = 4;
 
@@ -118,7 +120,7 @@ pub(super) fn show(
     if !states.contains(&state.state)
         && let Some(first) = states.first()
     {
-        state.select_state(*first);
+        state.point_at(*first);
     }
     state.category_states[category.index()] = Some(state.state);
     ui.spacing_mut().item_spacing.y = 8.0;
@@ -335,7 +337,12 @@ fn section(
     state: &mut AoUi,
     out: &mut Vec<Action>,
 ) -> egui::Response {
-    let open = state.state == item && state.tab == 0;
+    let open = state.state == item && state.slot_open && state.tab == 0;
+    // unfolding and folding glide (`reveal`)
+    let time = if ui.style().animation_time > 0.0 { REVEAL } else { 0.0 };
+    let t = ui
+        .ctx()
+        .animate_bool_with_time(ui.scope_id().with(("ao_slot_open", item.name())), open, time);
     let count = slot_animations(set, item);
     let background = ui.painter().add(egui::Shape::Noop);
     let top = ui.cursor().min;
@@ -345,16 +352,17 @@ fn section(
             ui.set_width(width);
             ui.spacing_mut().item_spacing.y = 6.0;
             let header = header(ui, p, runtime, item, count, open);
-            if open {
-                ui.add_space(2.0);
-                egui::Frame::new()
-                    .inner_margin(egui::Margin {
-                        left: 10,
-                        right: 10,
-                        top: 0,
-                        bottom: 10,
-                    })
-                    .show(ui, |ui| slot::show(ui, p, inv, set, runtime, state, out));
+            if t > 0.0 {
+                reveal(ui, ui.scope_id().with(("ao_slot_body", item.name())), t, |ui| {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: 10,
+                            right: 10,
+                            top: 2,
+                            bottom: 10,
+                        })
+                        .show(ui, |ui| slot::show(ui, p, inv, set, runtime, state, out));
+                });
             } else {
                 peek(ui, p, set, item);
             }
@@ -363,7 +371,7 @@ fn section(
         .inner;
     let rect = egui::Rect::from_min_size(top, Vec2::new(width, ui.min_rect().bottom() - top.y));
     let radius = ui.visuals().window_corner_radius;
-    let shape = if open {
+    let shape = if open || t > 0.0 {
         egui::Shape::Rect(egui::epaint::RectShape::new(
             rect,
             radius,
@@ -377,16 +385,43 @@ fn section(
         egui::Shape::Rect(egui::epaint::RectShape::filled(rect, radius, super::shades(p).slot))
     };
     ui.painter().set(background, shape);
-    if count == 0 && !open {
+    if count == 0 && !open && t == 0.0 {
         widgets::dashed_outline(ui.painter(), rect, p.muted.gamma_multiply(0.45));
     }
-    if inner.clicked() && !open {
-        state.select_state(item);
+    // a click on the title unfolds the slot, and folds it again
+    if inner.clicked() {
+        if open {
+            state.slot_open = false;
+        } else {
+            state.select_state(item);
+        }
     }
     // The whole slot takes animations from the inventory.
     let container = if open { state.container } else { None };
     slot::inventory_drop(ui, p, inv, set, item, container, rect, state, out);
     inner
+}
+
+/// The body of a slot unfolding (`t` from 0 folded to 1 open): drawn whole,
+/// shown down to that share of its height, the rest of the page following.
+fn reveal(ui: &mut egui::Ui, id: egui::Id, t: f32, body: impl FnOnce(&mut egui::Ui)) {
+    let height_id = id.with("height");
+    let full: f32 = ui.data(|d| d.get_temp(height_id)).unwrap_or(0.0);
+    let start = ui.cursor().min;
+    let width = ui.available_width();
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(egui::Rect::from_min_size(start, Vec2::new(width, f32::INFINITY)))
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    if t < 1.0 {
+        child.set_clip_rect(egui::Rect::from_min_size(start, Vec2::new(width, full * t)).intersect(ui.clip_rect()));
+    }
+    body(&mut child);
+    let measured = child.min_rect().height();
+    ui.data_mut(|d| d.insert_temp(height_id, measured));
+    let shown = if t < 1.0 { (full * t).min(measured) } else { measured };
+    ui.allocate_rect(egui::Rect::from_min_size(start, Vec2::new(width, shown)), egui::Sense::hover());
 }
 
 /// Up and Down on a slot's title move to the slot before or after it, inside
@@ -520,6 +555,27 @@ fn peek(ui: &mut egui::Ui, p: &Palette, set: &Set, item: State) {
     ui.add_space(4.0);
 }
 
+/// The EXPERIMENTAL tag, its right edge at `right` (vertically centred on
+/// it): small capitals in a thin border. `on`: on the accent. Returns its
+/// left edge.
+pub(super) fn experimental_tag(ui: &egui::Ui, p: &Palette, right: egui::Pos2, on: bool) -> f32 {
+    let ink = if on { p.on_accent } else { p.violet_pale };
+    let font = egui::FontId::new(10.0, super::super::fonts::semibold(ui.ctx()));
+    let galley = ui
+        .painter()
+        .layout_no_wrap(aurora_i18n::tr!("ao-experimental").to_uppercase(), font, ink);
+    let size = galley.size() + Vec2::new(12.0, 6.0);
+    let rect = egui::Rect::from_min_size(egui::pos2(right.x - size.x, right.y - size.y / 2.0), size);
+    ui.painter().rect_stroke(
+        rect,
+        ui.visuals().widgets.inactive.corner_radius,
+        egui::Stroke::new(1.0, ink.gamma_multiply(0.7)),
+        egui::StrokeKind::Inside,
+    );
+    widgets::paint_ink_centered(ui.painter(), galley, rect.center(), ink);
+    rect.left()
+}
+
 /// The Movement page: the experimental enhancements, apart from the AO.
 pub(super) fn movement(
     ui: &mut egui::Ui,
@@ -531,12 +587,9 @@ pub(super) fn movement(
     out: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(aurora_i18n::tr!("ao-tab-movement-short")).size(20.0).strong());
-        ui.label(
-            RichText::new(aurora_i18n::tr!("ao-experimental").to_uppercase())
-                .small()
-                .color(p.amber),
-        );
+        ui.label(RichText::new(aurora_i18n::tr!("ao-tab-movement-short")).size(22.0).strong());
+        let (tag, _) = ui.allocate_exact_size(Vec2::new(96.0, 22.0), egui::Sense::hover());
+        experimental_tag(ui, p, egui::pos2(tag.right() - 4.0, tag.center().y), false);
     });
     ui.label(RichText::new(aurora_i18n::tr!("ao-movement-intro")).color(p.muted));
     let actions = egui::ScrollArea::vertical()
