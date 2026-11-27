@@ -531,11 +531,57 @@ fn mainland_mobile_links_map_to_the_public_watch_page() {
     }
 }
 
+fn naver_clip_page(url: &Url) -> Option<String> {
+    if url.path() != "/contents" {
+        return None;
+    }
+    let query = |name: &str| url.query_pairs().find(|(key, _)| key == name).map(|(_, value)| value);
+    let seed = query("seedMediaId")?;
+    if !(24..=80).contains(&seed.len()) || !seed.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let context = query("recId").filter(|value| value.len() <= 512)?;
+    let data: serde_json::Value = serde_json::from_str(&context).ok()?;
+    let profile = data["targetProfileId"].as_str()?;
+    if !(1..=80).contains(&profile.len()) || !profile.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')) {
+        return None;
+    }
+    let context = serde_json::json!({ "targetProfileId": profile, "open": true }).to_string();
+    Url::parse_with_params(
+        "https://clip.naver.com/contents",
+        [
+            ("recType", "CLIP_PC"),
+            ("recId", &context),
+            ("mediaType", "ALL"),
+            ("serviceType", "CLIP"),
+            ("seedMediaId", &seed),
+            ("seedMediaType", "SHORT_FORM"),
+        ],
+    )
+    .ok()
+    .map(String::from)
+}
+
+#[test]
+fn naver_clip_keeps_only_the_item_id_and_profile_context() {
+    let raw = "https://clip.naver.com/contents?seedMediaId=11D069478E37849F788A539917A6A68D3809&recId=%7B%22targetProfileId%22%3A%22example-id%22%2C%22extra%22%3A%22ignore%22%7D&tracking=remove";
+    let (_, Step::Publisher(page)) = recognize(raw).unwrap() else {
+        panic!("expected a Naver Clip page")
+    };
+    assert!(page.contains("seedMediaId=11D069478E37849F788A539917A6A68D3809"));
+    assert!(page.contains("targetProfileId"));
+    assert!(!page.contains("tracking") && !page.contains("extra"));
+    assert!(recognize("https://clip.naver.com/@example-id").is_none());
+}
+
 fn publisher_page(url: &Url) -> Option<(Service, Step)> {
     if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
         return None;
     }
     let host = bare_host(url)?;
+    if host == "clip.naver.com" {
+        return Some((Service::Site, Step::Publisher(naver_clip_page(url)?)));
+    }
     let parts = segments(url);
     let slug = |id: &str| (1..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'='));
     let digits = |id: &str| (1..=24).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit());
@@ -667,7 +713,7 @@ pub(super) fn publisher_poster(page: &str, html: &str) -> Option<String> {
         "ardmediathek.de" => &["ardmediathek.de"],
         "tver.jp" => &["tver.jp", "tver-static.com"],
         "nicovideo.jp" => &["nimg.jp", "nicovideo.jp"],
-        "tv.naver.com" | "chzzk.naver.com" => &["pstatic.net"],
+        "tv.naver.com" | "chzzk.naver.com" | "clip.naver.com" => &["pstatic.net"],
         "vod.sooplive.co.kr" | "vod.sooplive.com" => &["sooplive.co.kr", "sooplive.com", "afreecatv.com"],
         "tv.kakao.com" => &["kakaocdn.net"],
         "douyin.com" => &["douyinpic.com", "pstatp.com"],

@@ -1800,6 +1800,9 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             "https://www.ardmediathek.de/video/Y3JpZDovL3RhZ2Vzc2NoYXUuZGUvN2Y0NzZkMDgtNzlhNC00Njk5LWExY2QtYmZhNGEwN2I1ODgxLVNFTkRVTkdTVklERU8"
                         }
                         "niconico" => "https://www.nicovideo.jp/watch/sm8628149",
+                        "naver-clip" => {
+                            "https://clip.naver.com/contents?recType=CLIP_PC&recId=%7B%22targetProfileId%22%3A%22pVCXiYAaDLKBBOO3ZZN-%22%2C%22open%22%3Atrue%7D&mediaType=ALL&serviceType=CLIP&seedMediaId=11D069478E37849F788A539917A6A68D3809&seedMediaType=SHORT_FORM"
+                        }
                         "x" => "https://x.com/NASA/status/2042791040516845925",
                         "youtube" => "https://youtu.be/jNQXAC9IVRw",
                         "instagram" => "https://www.instagram.com/reel/DfF3eqGSKKc/",
