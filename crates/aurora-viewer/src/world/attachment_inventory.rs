@@ -162,7 +162,11 @@ impl World {
             // inventory never uses up the attempts)
             // (nor a given-up original: `send_from` would drop its read, and
             // an attempt never sent must not be spent)
-            if self.inventory.items.contains_key(id) || self.inventory.item_reading(*id, true, now) || self.inventory.broken(id) {
+            if self.inventory.items.contains_key(id)
+                || self.inventory.item_reading(*id, true, now)
+                || self.inventory.broken(id)
+                || self.inventory.read_exhausted(id)
+            {
                 continue;
             }
             let round = self.inventory.give_up_rounds.get(id).copied().unwrap_or(0);
@@ -526,9 +530,11 @@ mod tests {
             world.apply(NetEvent::InventoryItemsFailed {
                 items: vec![item.id],
                 attachment: true,
+                coalesced: false,
             });
         }
-        assert!(world.inventory.broken(&item.id));
+        assert!(world.inventory.read_exhausted(&item.id));
+        assert!(!world.inventory.broken(&item.id));
         assert!(world.update_attachment_inventory(now + RETRY_GAP * 10, true).is_empty());
         let at = world.inventory.gave_up_at.get_mut(&item.id).expect("given up");
         *at -= crate::world::inventory::ITEM_GIVE_UP;
@@ -547,6 +553,7 @@ mod tests {
             world.apply(NetEvent::InventoryItemsFailed {
                 items: vec![item.id],
                 attachment: true,
+                coalesced: false,
             });
             assert!(
                 world
@@ -988,6 +995,7 @@ mod tests {
             world.apply(NetEvent::InventoryItemsFailed {
                 items: vec![item.id],
                 attachment: true,
+                coalesced: false,
             });
         }
         assert!(
@@ -1214,7 +1222,10 @@ mod tests {
         let objects = item.parent;
         let lost = with_lost_folder(&mut world, &item);
         item.parent = Uuid::nil();
-        world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+        world.apply(NetEvent::AttachmentInventoryItems {
+            items: vec![item.clone()],
+            coalesced: false,
+        });
         assert_eq!(world.inventory.items[&item.id].parent, objects);
         assert!(world.inventory.folders[&objects].items.contains(&item.id));
         assert!(!world.inventory.folders[&lost].items.contains(&item.id));
@@ -1242,7 +1253,10 @@ mod tests {
         let old = item.parent;
         let lost = with_lost_folder(&mut world, &item);
         item.parent = Uuid::nil();
-        world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+        world.apply(NetEvent::AttachmentInventoryItems {
+            items: vec![item.clone()],
+            coalesced: false,
+        });
         assert_eq!(world.inventory.items[&item.id].parent, old);
         assert!(world.inventory.folders[&lost].items.is_empty());
         let locked = Uuid::from_u128(90_083);
@@ -1316,7 +1330,10 @@ mod tests {
                 folders: Vec::new(),
                 items: vec![item.clone()],
             };
-            let readback = NetEvent::AttachmentInventoryItems(vec![item.clone()]);
+            let readback = NetEvent::AttachmentInventoryItems {
+                items: vec![item.clone()],
+                coalesced: false,
+            };
             for event in if notification_first {
                 [notification, readback]
             } else {
@@ -1367,7 +1384,10 @@ mod tests {
             }
             assert!(world.worn_attachment(&item.id).is_none());
             item.parent = Uuid::nil();
-            world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+            world.apply(NetEvent::AttachmentInventoryItems {
+                items: vec![item.clone()],
+                coalesced: false,
+            });
             assert_eq!(world.inventory.items[&item.id].parent, objects);
             assert!(!world.inventory.folders[&lost].items.contains(&item.id));
             assert!(

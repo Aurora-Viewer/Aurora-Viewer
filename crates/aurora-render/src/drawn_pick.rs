@@ -75,6 +75,13 @@ pub struct Drawn {
     /// The nearest alpha-blended face, or Mask cutout for a left interaction,
     /// in front of the visible opaque surface.
     pub blend: Option<DrawnFace>,
+    /// The pointer's ray at the pixel, through the camera of the frame that
+    /// drew it (without the TAA jitter): what [`crate::Renderer::cursor_ray`]
+    /// gave while that frame was the last. The faces are measured along it:
+    /// the camera may have moved since the pixel was asked (back from far
+    /// away after Esc, #5021). None when no frame drew it (off the window,
+    /// abandoned, or the read back failed).
+    pub ray: Option<(Vec3, Vec3)>,
 }
 
 /// Button-specific alpha rules. Interaction/Visible retain the menu and
@@ -207,10 +214,23 @@ fn face(bytes: &[u8], px: PickPixel) -> Option<DrawnFace> {
     Some(face)
 }
 
+/// The answer read back for `px`: the faces of both targets, and the
+/// pointer's ray at the pixel through `pointer`, the camera of that frame.
+fn answer(bytes: &[u8], px: PickPixel, pointer: Mat4) -> Drawn {
+    let (opaque, blend) = bytes.split_at((TARGET_BYTES as usize).min(bytes.len()));
+    Drawn {
+        opaque: face(opaque, px),
+        blend: face(blend, px),
+        ray: crate::pick::pixel_ray(pointer, (px.width, px.height), px.x as f32 + 0.5, px.y as f32 + 0.5),
+    }
+}
+
 struct Slot {
     buffer: wgpu::Buffer,
     state: Arc<AtomicU8>,
-    pending: Option<(u64, PickPixel)>,
+    /// The ticket, the pixel as drawn and the pointer's camera of that frame
+    /// (inverse, without the jitter).
+    pending: Option<(u64, PickPixel, Mat4)>,
 }
 
 pub struct DrawnPick {
@@ -284,7 +304,9 @@ impl DrawnPick {
 
     /// The request this frame draws for, if any and if a readback is free:
     /// its pixel. One a frame; the others wait for the next.
-    pub fn begin(&mut self, size: (u32, u32), inv_view_proj: Mat4, curvature: Curvature) -> Option<(u32, u32, DrawnMode)> {
+    /// `inv_view_proj`: the camera the faces are drawn with; `pointer`: the
+    /// same without the TAA jitter, the one of the pointer's rays.
+    pub fn begin(&mut self, size: (u32, u32), inv_view_proj: Mat4, pointer: Mat4, curvature: Curvature) -> Option<(u32, u32, DrawnMode)> {
         while let Some(&(ticket, x, y, mode)) = self.waiting.0.first() {
             if x >= size.0 || y >= size.1 {
                 self.waiting.0.remove(0);
@@ -303,6 +325,7 @@ impl DrawnPick {
                     inv_view_proj,
                     curvature,
                 },
+                pointer,
             ));
             self.encoded = Some(i);
             return Some((x, y, mode));
@@ -313,7 +336,7 @@ impl DrawnPick {
     /// A frame that cannot be drawn answers what it began with nothing.
     pub fn abandon(&mut self) {
         if let Some(i) = self.encoded.take()
-            && let Some((ticket, _)) = self.slots[i].pending.take()
+            && let Some((ticket, ..)) = self.slots[i].pending.take()
         {
             self.answers.push((ticket, Drawn::default()));
         }
@@ -364,7 +387,7 @@ impl DrawnPick {
     /// Read the answers the GPU has delivered (after a poll of the device).
     pub fn harvest(&mut self) {
         for (i, s) in self.slots.iter_mut().enumerate() {
-            let Some((ticket, px)) = s.pending else {
+            let Some((ticket, px, pointer)) = s.pending else {
                 continue;
             };
             if self.encoded == Some(i) {
@@ -372,13 +395,7 @@ impl DrawnPick {
             }
             let drawn = match s.state.load(Ordering::Acquire) {
                 MAPPED => {
-                    let drawn = s.buffer.get_mapped_range(..).ok().map(|view| {
-                        let (opaque, blend) = view.split_at((TARGET_BYTES as usize).min(view.len()));
-                        Drawn {
-                            opaque: face(opaque, px),
-                            blend: face(blend, px),
-                        }
-                    });
+                    let drawn = s.buffer.get_mapped_range(..).ok().map(|view| answer(&view, px, pointer));
                     s.buffer.unmap();
                     drawn.unwrap_or_default()
                 }
@@ -521,5 +538,39 @@ mod tests {
         edge[TEXEL as usize..TEXEL as usize + 4].copy_from_slice(&7u32.to_le_bytes());
         let f = face(&edge, px).expect("a face");
         assert_eq!((f.record, f.normal, f.binormal), (41, Vec3::ZERO, Vec3::ZERO));
+    }
+
+    /// The answer's ray is the pointer's of the frame that drew it, without
+    /// the TAA jitter the faces are drawn with: the ray `cursor_ray` gave
+    /// that frame at the pixel's centre, where the hover asks from
+    /// (hover_pick.rs), to the bit, and the face drawn lies on it. The hover
+    /// measures the faces along it, not along the ray it asked with a
+    /// frame or more before (#5021).
+    #[test]
+    fn an_answer_carries_the_pointer_ray_of_the_camera_that_drew_it() {
+        let (proj, view) = camera();
+        let pointer = proj * view;
+        // half a pixel of jitter, as TAA moves the drawn image
+        let drawn_with = Mat4::from_translation(Vec3::new(0.5 * 2.0 / 800.0, -0.5 * 2.0 / 600.0, 0.0)) * pointer;
+        let px = PickPixel {
+            x: 400,
+            y: 300,
+            width: 800,
+            height: 600,
+            inv_view_proj: drawn_with.inverse(),
+            curvature: Curvature::FLAT,
+        };
+        let mut bytes = target(41, px, drawn_with, 2.0, |_| Vec2::ZERO);
+        bytes.resize(TARGET_BYTES as usize * 2, 0);
+        let drawn = answer(&bytes, px, pointer.inverse());
+        let ray = drawn.ray.expect("a ray");
+        assert_eq!(Some(ray), crate::pick::pixel_ray(pointer.inverse(), (800, 600), 400.5, 300.5));
+        assert_ne!(Some(ray), crate::pick::pixel_ray(drawn_with.inverse(), (800, 600), 400.5, 300.5));
+        // the wall 7 m ahead, within the jitter's half pixel (9 mm there) of the ray
+        let point = drawn.opaque.expect("the wall").point;
+        let along = (point - ray.0).dot(ray.1);
+        assert!((6.5..7.5).contains(&along), "{along}");
+        assert!((point - ray.0 - ray.1 * along).length() < 0.02, "{point:?}");
+        assert_eq!(drawn.blend, None);
     }
 }

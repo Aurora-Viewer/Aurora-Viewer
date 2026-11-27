@@ -2610,6 +2610,7 @@ pub(crate) fn chat_text_marked(
         world,
         scope,
         want_names,
+        None,
         text,
         size,
         color,
@@ -2617,6 +2618,121 @@ pub(crate) fn chat_text_marked(
         mark,
         false,
     );
+}
+
+/// The sender's name an emote's action follows (`emote_text_marked`).
+#[derive(Clone, Copy)]
+pub(crate) struct EmoteName<'a> {
+    /// The name as the line shows it.
+    pub name: &'a str,
+    pub line: &'a crate::world::ChatLine,
+    /// The names the conversation shows (`LineEnv::names`).
+    pub names: NameScope,
+    /// The conversation's menu of a line (`LineEnv::menu`).
+    pub menu: Option<egui::Id>,
+}
+
+/// An emote's action with its sender's name before it, a link like the
+/// name of the line's header (`name_label`). `appendMessage`
+/// (indra/newview/llchathistory.cpp) writes that name as plain text, so the
+/// Legacy Viewer links an emote's name only in its header; Aurora links the
+/// name in the text too (#4757), to what the header's leads to and no more
+/// (`emote_name`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emote_text_marked(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    emoji: &mut super::emoji::Emoji,
+    world: &World,
+    scope: TextScope,
+    want_names: &mut HashSet<uuid::Uuid>,
+    sender: EmoteName,
+    action: &str,
+    size: f32,
+    color: Color32,
+    emphasis: impl Into<super::fonts::TextEmphasis>,
+    mark: Option<Mark>,
+) {
+    chat_text_all(
+        ui,
+        p,
+        emoji,
+        world,
+        scope,
+        want_names,
+        Some(sender),
+        action,
+        size,
+        color,
+        emphasis.into(),
+        mark,
+        false,
+    );
+}
+
+/// The action of an emote ("/me smiles"), which follows the name the line
+/// shows. None for another line.
+pub(crate) fn emote_action(line: &crate::world::ChatLine) -> Option<&str> {
+    line.text
+        .strip_prefix("/me")
+        .filter(|rest| rest.starts_with(' ') || rest.starts_with('\''))
+}
+
+/// The sender's name before an emote's action, leading where the name of
+/// the line's header leads (`sender_link`): a resident's profile and menu
+/// as the conversation names its people (`EmoteName::names`: `open_in`
+/// refuses a resident `@shownames` hides in the nearby chat, as for the
+/// header), an object's inspector and menu, and plain text for a speaker
+/// hidden when the line arrived. The matches of a searched text are washed
+/// as in the action.
+#[allow(clippy::too_many_arguments)]
+fn emote_name(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    emote: EmoteName,
+    size: f32,
+    color: Color32,
+    emphasis: super::fonts::TextEmphasis,
+    mark: Option<Mark>,
+) {
+    let target = sender_link(world, emote.line);
+    let mut pieces = Vec::new();
+    let mut at = 0;
+    for m in mark.map(|mark| view::find_ci(emote.name, mark.needle)).unwrap_or_default() {
+        pieces.push((at..m.start, None));
+        at = m.end;
+        pieces.push((m, mark.map(|mark| mark.wash)));
+    }
+    pieces.push((at..emote.name.len(), None));
+    for (range, wash) in pieces {
+        if range.is_empty() {
+            continue;
+        }
+        let mut text = emphasis.rich_text(ui.ctx(), &emote.name[range], size, color);
+        if let Some(wash) = wash {
+            text = text.background_color(wash);
+        }
+        match target {
+            None => {
+                select::label(ui, text);
+            }
+            Some(SenderLink::Object(_)) => {
+                let r = select::label_with_sense(ui, text.into(), egui::Sense::click());
+                line_object_sender(r, p, world, emote.line, emote.menu);
+            }
+            Some(SenderLink::Resident(id)) => {
+                let r = select::label_with_sense(ui, text.into(), egui::Sense::click());
+                line_name_menu(&r, p, world, id, emote.names, emote.line, emote.menu);
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(aurora_i18n::tr!("common-view-profile"))
+                    .clicked()
+                {
+                    super::profile::request_open_in(ui.ctx(), emote.names, id);
+                }
+            }
+        }
+    }
 }
 
 /// `chat_text_marked` for a system line, in brackets around it when
@@ -2646,6 +2762,7 @@ pub(crate) fn chat_text_bracketed(
         world,
         scope,
         want_names,
+        None,
         text,
         size,
         color,
@@ -2674,6 +2791,7 @@ fn chat_text_all(
     world: &World,
     scope: TextScope,
     want_names: &mut HashSet<uuid::Uuid>,
+    emote: Option<EmoteName>,
     text: &str,
     size: f32,
     color: Color32,
@@ -2692,9 +2810,10 @@ fn chat_text_all(
     let hide = |t: &str| world.rlva_filter_text_in(wording, t).into_owned();
     let filtered = world.rlva_filter_text_in(wording, text);
     let segs = segments(text);
+    let searched = mark;
     // only a text that has a match is cut into runs
     let mark = mark.filter(|m| !view::find_ci(filtered.as_ref(), m.needle).is_empty());
-    if !brackets && mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
+    if emote.is_none() && !brackets && mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
         emoji.rich_text(ui, filtered.as_ref(), size, color, emphasis);
         return;
     }
@@ -2704,6 +2823,9 @@ fn chat_text_all(
     super::emoji::text_rows_in(ui, size, rtl, |ui| {
         if !open.is_empty() {
             emoji.inline(ui, open, size, color, emphasis);
+        }
+        if let Some(emote) = emote {
+            emote_name(ui, p, world, emote, size, color, emphasis, searched);
         }
         for s in segs {
             match s {
@@ -2951,10 +3073,26 @@ pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
     }
 }
 
+/// A line read back whose sender's name is looked up each time it is drawn,
+/// as a live line's (`cached_line_sender`): one of a private conversation's
+/// history, in the conversation or in its History window
+/// (`ChatLine::private_history`, decided when the history loads, where the
+/// other resident is known: `World::private_peer`), the other resident's or
+/// ours. Both sides resolve when drawn, so a name option changed while the
+/// conversation is open renames them together. Every other history line
+/// keeps the file's name: the nearby chat's, a group's or a conference's
+/// (whose members' names may be cached too, so the line alone cannot
+/// tell), in the conversation and in the History window.
+pub(crate) fn log_names_resolve(line: &crate::world::ChatLine) -> bool {
+    line.origin == Origin::Log && line.private_history
+}
+
 /// The name a line gives its sender
 /// (FSChatHistoryHeader): the display name looked up, mine, else the name
 /// the line came with. A line read back from a transcript keeps the name
-/// the file gives it, under RLVa's `@shownames` and `@showloc` too:
+/// the file gives it (but for a private conversation's, whose names are
+/// looked up as the live lines': `cached_line_sender`), under RLVa's
+/// `@shownames` and `@showloc` too:
 /// FSChatHistory::appendMessage (indra/newview/fschathistory.cpp) writes
 /// `mFromName` as it is for a `message_from_log`, and nothing sets
 /// `mRlvNamesFiltered` on it (`ChatLine::wording`).
@@ -2965,22 +3103,52 @@ pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
 /// and an object the name it was given then, whatever the restriction
 /// became since (FSChatHistory::appendMessage writes `chat.mFromName` once).
 pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
-    if line.origin != Origin::Live || line.anonymous() {
+    if line.anonymous() {
         return line.from.clone();
     }
-    match cached_chat_sender(world, line) {
+    match cached_line_sender(world, line) {
         Some(n) => n.display(&world.social.avatar_names.options),
-        None if line.kind.is_own() => own_name.to_owned(),
+        // (one of our history lines: the file's name, as `draw_line`)
+        None if line.kind.is_own() && line.origin == Origin::Live => own_name.to_owned(),
         None => line.from.clone(),
     }
 }
 
-fn cached_chat_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
-    if line.origin != Origin::Live || line.anonymous() || matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
+/// The cached name of a line's sender, which its header and its text show
+/// (`sender_name`, `draw_line`), in `NameScope::Roster`, which `@shownames`
+/// never hides: a live line's, ours or the other resident's (#4675), and a
+/// private conversation's history line's (`log_names_resolve`). None for an
+/// object, a speaker `@shownames` hid and every other history line: they
+/// keep the name they came with. A name not cached yet is queued by
+/// `get_in`, and the line shows the name it came with until it arrives.
+///
+/// The other resident's history line takes the cached name only when the
+/// name the file gives is theirs (`AvatarName::has_user_name` of its legacy
+/// form, the test that finds a transcript's sender by name): a line whose
+/// name was not recognised took the conversation's other resident as its
+/// source, for its picture and its profile (`World::history_lines`,
+/// `World::service_lines`), and one we wrote under an earlier account name
+/// would show theirs. Ours were told by their name when they loaded
+/// (`World::is_own_log_name`, which also knows "You" and our display name).
+fn cached_line_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
+    let live = line.origin == Origin::Live;
+    if (!live && !log_names_resolve(line)) || line.anonymous() || matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
         return None;
     }
-    let id = if line.kind.is_own() { &world.agent_id } else { &line.source };
-    world.social.avatar_names.get_in(NameScope::Roster, id)
+    let own = line.kind.is_own();
+    let names = &world.social.avatar_names;
+    let cached = names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })?;
+    let written = || cached.has_user_name(&crate::world::names::build_legacy_name(&line.from, names.options.trim_resident));
+    (live || own || written()).then_some(cached)
+}
+
+/// `cached_line_sender` for a live line only: the username a header adds
+/// (`chat_header_name`), which a history line's leaves out (`draw_line`).
+fn cached_chat_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
+    if line.origin != Origin::Live {
+        return None;
+    }
+    cached_line_sender(world, line)
 }
 
 /// Visible header label in Aurora, Compact and Bubbles. Preserve the text
@@ -3640,8 +3808,10 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let (p, world) = (env.p, env.world);
     ui.spacing_mut().item_spacing.y = 2.0;
     let w = ui.available_width();
-    // history lines: greyed, their name as written (message_from_log); their
-    // sender, when its name was cached, gives the picture and the profile
+    // history lines: greyed, their name as written (message_from_log) but
+    // in a private conversation, where it is the resident's
+    // (`cached_line_sender`); their sender, when its name was cached or as
+    // that conversation's other resident, gives the picture and the profile
     let logged = line.origin != Origin::Live;
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
     if let Some((year, month, day)) = look.marker {
@@ -3704,7 +3874,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     // FSChatHistoryHeader: the display name, then " - username" in small
     let names = &world.social.avatar_names;
-    let cached = cached_chat_sender(world, line);
+    let cached = cached_line_sender(world, line);
     let name = match cached {
         Some(n) => n.display(&names.options),
         None if own && !logged => env.own_name.to_owned(),
@@ -3712,7 +3882,13 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     };
     if look.header {
         ui.add_space(6.0);
-        let username = cached.and_then(|n| n.chat_username(&names.options));
+        // A history line's header names its sender without the " - username"
+        // a live header adds, a private conversation's resolved name too:
+        // history is a record, and the short form keeps it readable. The
+        // Legacy Viewer's history header shows no user name either
+        // (FSChatHistoryHeader::setup cuts " (username)" from a
+        // CHAT_STYLE_HISTORY line's name, fschathistory.cpp).
+        let username = cached.filter(|_| !logged).and_then(|n| n.chat_username(&names.options));
         egui::Frame::new()
             .fill(p.raised.gamma_multiply(0.55))
             .corner_radius(ui.visuals().window_corner_radius)
@@ -3788,19 +3964,45 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
         })
         .show(ui, |ui| {
             if !visible.is_empty() {
-                chat_text_marked(
-                    ui,
-                    p,
-                    env.emoji,
-                    world,
-                    line.wording(env.names),
-                    env.want_names,
-                    &visible,
-                    super::fonts::chat_size(ui.ctx(), 13.5),
-                    tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
-                    line_emphasis(env, line, italics),
-                    mark,
-                );
+                let size = super::fonts::chat_size(ui.ctx(), 13.5);
+                let color = tone.unwrap_or_else(|| super::colors::chat_color(line, world));
+                let emphasis = line_emphasis(env, line, italics);
+                if let Some(action) = emote_action(line) {
+                    let action = previews::text(env.previews.as_deref(), line, action, ui.available_width() - 8.0);
+                    emote_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        world,
+                        line.wording(env.names),
+                        env.want_names,
+                        EmoteName {
+                            name: shown_name(line, &name),
+                            line,
+                            names: env.names,
+                            menu: env.menu,
+                        },
+                        &action,
+                        size,
+                        color,
+                        emphasis,
+                        mark,
+                    );
+                } else {
+                    chat_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        world,
+                        line.wording(env.names),
+                        env.want_names,
+                        &visible,
+                        size,
+                        color,
+                        emphasis,
+                        mark,
+                    );
+                }
             }
             // Aurora also offers its previews in Lines (#976), extending
             // LLChatHistory::appendMessage (indra/newview/llchathistory.cpp).
@@ -4177,7 +4379,11 @@ pub fn show(
         .attention(conversations_waiting(world))
         .attention_flash(st.button_flash.bar(ctx.input(|i| i.time)))
         .steady_size();
-    if st.contacts {
+    if minimized {
+        // Not on the minimized bar: nothing shows to detach, and the
+        // window's name keeps room (the human's report of 2026-11-23 on
+        // #4756: "Convers…").
+    } else if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
     } else {
@@ -4605,6 +4811,13 @@ fn classic_pane(
         .horizontal(|ui| {
             // the edges of the lines above, half the theme's spacing between
             ui.spacing_mut().item_spacing.x *= 0.5;
+            // the recent emojis' arrow, before the emoji button
+            // (`emoji::recent`): up shows the row, down hides it
+            let (arrow, tip) = st.recent_emojis.arrow();
+            if tool_resp(ui, p, icons, arrow, false).on_hover_text(tip).clicked() {
+                st.recent_emojis.ask_toggle();
+                st.conv_focus_request = true;
+            }
             let b = tool_resp(ui, p, icons, "mood-smile-filled", st.emoji_open);
             emoji_btn = Some(b.rect);
             if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
@@ -4696,7 +4909,11 @@ fn classic_pane(
                         st.recent_emojis.toggle_favorite(c);
                     }
                     if let Some(c) = picked.chosen {
-                        draft.push(c);
+                        // at the caret, which follows it, as a recent
+                        // emoji's click: pushed at the end with the caret
+                        // left where it was, what was typed next went
+                        // before the emoji
+                        super::emoji::recent::place(ui.ctx(), conv_input, &mut draft, c);
                         close = !ui.input(|i| i.modifiers.shift);
                     }
                     close |= picked.escape;
@@ -4961,15 +5178,19 @@ impl Held {
     /// vertical offset of the area's anchor. The clip reaches a screen
     /// lower: in the frame a line arrives, the lines are laid out below the
     /// bar before they are moved up, and egui paints nothing of a card or a
-    /// label laid out wholly outside the clip.
-    fn new(ui: &mut egui::Ui, lift: f32) -> Self {
+    /// label laid out wholly outside the clip. It starts at `ceiling`: the
+    /// oldest lines of a stack higher than its room are cut there, and
+    /// never leave the screen nor go under the top bar.
+    fn new(ui: &mut egui::Ui, lift: f32, ceiling: f32) -> Self {
         let clip = ui.clip_rect();
-        ui.set_clip_rect(clip.with_max_y(clip.bottom() + ui.ctx().content_rect().height()));
-        let layer = ui.layer_id();
+        ui.set_clip_rect(
+            clip.with_min_y(clip.top().max(ceiling))
+                .with_max_y(clip.bottom() + ui.ctx().content_rect().height()),
+        );
         Self {
             room: ui.ctx().content_rect().bottom(),
             lift,
-            start: ui.ctx().graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0)),
+            start: painted(ui),
         }
     }
 
@@ -4984,19 +5205,9 @@ impl Held {
             .round_to_pixels(ui.pixels_per_point())
             .round_ui();
         let shift = egui::vec2(0.0, top - ui.max_rect().top());
-        if shift.y != 0.0 {
-            let moved = egui::emath::TSTransform::from_translation(shift);
-            let layer = ui.layer_id();
-            ui.ctx().graphics_mut(|g| {
-                let list = g.entry(layer);
-                for i in self.start..list.next_idx().0 {
-                    // the shapes alone: the clip stays the area's, the
-                    // screen's (moved too, it could cut off a line that just
-                    // arrived)
-                    list.mutate_shape(egui::layers::ShapeIdx(i), |s| s.shape.transform(moved));
-                }
-            });
-        }
+        // the shapes alone: the clip stays the area's, the screen's (moved
+        // too, it could cut off a line that just arrived)
+        move_painted(ui, self.start, shift);
         shift
     }
 
@@ -5016,6 +5227,236 @@ impl Held {
     }
 }
 
+/// The lines hung under the chat bar: their top stays under it, and when
+/// they reach `limit` (the bottom bar) the oldest go under the chat bar's
+/// edge, cut there, so that the newest stay in sight. No frame to make up
+/// for as `Held` does: an area placed by its top lays its lines out from
+/// there in the frame it draws them.
+struct Hung {
+    limit: f32,
+    start: usize,
+}
+
+impl Hung {
+    /// Before the lines; `top` is where they start. The clip starts there
+    /// and reaches lower than the screen: the lines over `limit` are laid
+    /// out there before they are moved up.
+    fn new(ui: &mut egui::Ui, top: f32, limit: f32) -> Self {
+        let clip = ui.clip_rect();
+        let lower = clip.bottom() + ui.ctx().content_rect().height() * 2.0;
+        ui.set_clip_rect(egui::Rect::from_min_max(
+            egui::pos2(clip.left(), top),
+            egui::pos2(clip.right(), lower),
+        ));
+        Self { limit, start: painted(ui) }
+    }
+
+    /// After the lines: moves what they painted up by what passes `limit`,
+    /// and returns the move, for the click areas laid over them.
+    fn settle(self, ui: &egui::Ui) -> egui::Vec2 {
+        use egui::emath::GuiRounding as _;
+        let over = (ui.min_rect().bottom() - self.limit)
+            .max(0.0)
+            .round_to_pixels(ui.pixels_per_point());
+        let shift = egui::vec2(0.0, -over);
+        move_painted(ui, self.start, shift);
+        shift
+    }
+}
+
+/// Where the nearby chat lines stand over the world: by the chat bar,
+/// wherever the interface's edit mode put it, above it or hung under it.
+/// Aurora's own: the Legacy Viewer's console stays at the bottom left
+/// (`LLConsole`), where its chat bar is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LinesPlace {
+    /// Their left edge; None, the screen's with the usual 8 px.
+    left: Option<f32>,
+    /// The edge they end on instead, each line aligned on it, when there
+    /// is no room from their left edge (a block at the right end of its
+    /// bar, or of a bar of the right side).
+    right: Option<f32>,
+    /// Their bottom, or their top when they hang `down`.
+    edge: f32,
+    down: bool,
+    /// How low lines hung down may go.
+    limit: f32,
+    /// How high lines going up may go.
+    ceiling: f32,
+}
+
+impl LinesPlace {
+    /// The room between the lines and what they stand by.
+    const GAP: f32 = 6.0;
+    /// Less room than this is no room for a line: a direction asked for
+    /// that has less gives way to the other.
+    const ROOM: f32 = 64.0;
+
+    /// At the bottom left, over `bottom` (the top of the bottom bar): where
+    /// they stand when no bar draws the chat block.
+    pub fn above(bottom: f32) -> Self {
+        Self {
+            left: None,
+            right: None,
+            edge: bottom - Self::GAP,
+            down: false,
+            limit: bottom - Self::GAP,
+            ceiling: f32::NEG_INFINITY,
+        }
+    }
+
+    /// By the chat `block`, on `screen`; `room` is the top and the bottom
+    /// of what the bars leave (`layout::bars_room`).
+    ///
+    /// - The lines are above the block or under it, on a side bar too,
+    ///   never beside it (the human's choice, 2026-11-27). They start at
+    ///   its left, or end on its right when there is no room from its left
+    ///   (`column`).
+    /// - Automatic: where there is more room, so under a bar moved to the
+    ///   upper half of the screen. A direction asked for is kept unless it
+    ///   has no room for a line and the other has more.
+    pub fn by(
+        block: crate::ui::bars::chrome::ChatPlace,
+        direction: crate::settings::ChatLinesDirection,
+        screen: egui::Rect,
+        room: (f32, f32),
+    ) -> Self {
+        use crate::settings::ChatLinesDirection as Direction;
+        use crate::ui::bars::islands::{MARGIN, PAD};
+        use crate::ui::toolbar::Bar;
+        let surface = block.rect.expand(PAD);
+        let docked = !block.floating;
+        let limit = room.1 - Self::GAP;
+        let up = if docked && block.bar == Bar::Bottom {
+            // what the bottom bar keeps free, its other rows included
+            limit
+        } else {
+            surface.top() - MARGIN - Self::GAP
+        };
+        let under = surface.bottom() + MARGIN;
+        let down = if docked && block.bar == Bar::Top {
+            under.max(room.0)
+        } else {
+            under
+        } + Self::GAP;
+        // going up, the lines stop under the top bar; those of a block
+        // that stands over it, at the top of the screen
+        let ceiling = if up > room.0 { room.0 } else { screen.top() };
+        let (above, below) = (up - ceiling, limit - down);
+        let down_wanted = match direction {
+            Direction::Auto => below > above,
+            Direction::Up => above < Self::ROOM && below > above,
+            Direction::Down => !(below < Self::ROOM && above > below),
+        };
+        Self {
+            left: Some(surface.left()),
+            right: Some(surface.right()),
+            edge: if down_wanted { down } else { up },
+            down: down_wanted,
+            limit,
+            ceiling,
+        }
+    }
+
+    /// The left of a column `width` wide for the lines, kept on the
+    /// screen, and whether they are aligned on its right.
+    fn column(&self, screen: egui::Rect, width: f32) -> (f32, bool) {
+        let least = screen.left() + 8.0;
+        let most = (screen.right() - 8.0 - width).max(least);
+        match (self.left, self.right) {
+            (Some(left), _) if left <= most => (left.max(least), false),
+            (_, Some(right)) => ((right - width).clamp(least, most), true),
+            (Some(_), None) => (most, false),
+            (None, None) => (least, false),
+        }
+    }
+}
+
+/// How many shapes `ui`'s layer holds: what is painted next starts there.
+fn painted(ui: &egui::Ui) -> usize {
+    let layer = ui.layer_id();
+    ui.ctx().graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0))
+}
+
+/// Moves what was painted on `ui`'s layer since `start` (`painted`). The
+/// shapes alone: their clip stays the area's.
+fn move_painted(ui: &egui::Ui, start: usize, by: egui::Vec2) {
+    if by == egui::Vec2::ZERO {
+        return;
+    }
+    let moved = egui::emath::TSTransform::from_translation(by);
+    let layer = ui.layer_id();
+    ui.ctx().graphics_mut(|g| {
+        let list = g.entry(layer);
+        for i in start..list.next_idx().0 {
+            list.mutate_shape(egui::layers::ShapeIdx(i), |s| s.shape.transform(moved));
+        }
+    });
+}
+
+/// A card or a line just laid out at `rect`, in lines aligned on `right`
+/// (`LinesPlace::column`; None, on their left as laid out): moves what it
+/// painted since `start` and the click areas it added, and returns where it
+/// stands. A layout aligned on the right would align the content of the
+/// card too.
+fn align_line(
+    ui: &egui::Ui,
+    right: Option<f32>,
+    start: usize,
+    rect: egui::Rect,
+    links: &mut [(egui::Rect, Link, Color32)],
+    names: &mut [(egui::Rect, &crate::world::ChatLine)],
+) -> egui::Rect {
+    use egui::emath::GuiRounding as _;
+    let Some(right) = right else {
+        return rect;
+    };
+    let by = egui::vec2((right - rect.right()).round_to_pixels(ui.pixels_per_point()), 0.0);
+    move_painted(ui, start, by);
+    for (r, ..) in links.iter_mut() {
+        *r = r.translate(by);
+    }
+    for (r, _) in names.iter_mut() {
+        *r = r.translate(by);
+    }
+    rect.translate(by)
+}
+
+/// The area of the nearby chat lines at `place`, at most `width` wide:
+/// `lines` draws them in it, and aligns each on the edge it is given
+/// (`align_line`). Returns what they were moved by after their layout, for
+/// the click areas laid over them.
+fn lines_area(ctx: &egui::Context, place: LinesPlace, width: f32, lines: impl FnOnce(&mut egui::Ui, Option<f32>)) -> egui::Vec2 {
+    let screen = ctx.content_rect();
+    let (left, aligned) = place.column(screen, width);
+    let right = aligned.then_some(left + width);
+    let mut shift = egui::Vec2::ZERO;
+    let area = egui::Area::new(egui::Id::unique("chat_toasts"))
+        .interactable(false)
+        .order(egui::Order::Background);
+    if place.down {
+        area.fixed_pos(egui::pos2(left, place.edge)).constrain(false).show(ctx, |ui| {
+            let hung = Hung::new(ui, place.edge, place.limit);
+            ui.set_max_width(width);
+            lines(ui, right);
+            shift = hung.settle(ui);
+        });
+    } else {
+        let lift = place.edge - screen.bottom();
+        area.anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(left - screen.left(), lift))
+            .show(ctx, |ui| {
+                // a line that leaves or arrives moves the others in this
+                // frame only (#2544)
+                let held = Held::new(ui, lift, place.ceiling);
+                ui.set_max_width(width);
+                lines(ui, right);
+                shift = held.settle(ui);
+            });
+    }
+    Held::publish(ctx, shift);
+    shift
+}
+
 /// Recent chat lines floating above the chat bar (fade out after 20 s);
 /// names of linked avatars and pictures of the senders are asked through
 /// `want_names` / `wanted_pics`. `cards`: Aurora's cards grouped by sender
@@ -5025,11 +5466,12 @@ impl Held {
 pub fn toasts(
     ctx: &egui::Context,
     p: &Palette,
+    emoji: &mut super::emoji::Emoji,
     world: &World,
     pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
     want_names: &mut HashSet<uuid::Uuid>,
     wanted_pics: &mut HashSet<uuid::Uuid>,
-    bottom: f32,
+    place: LinesPlace,
     seconds: f32,
     max_lines: u32,
     times: bool,
@@ -5042,11 +5484,12 @@ pub fn toasts(
         console::cards(
             ctx,
             p,
+            emoji,
             world,
             pics,
             want_names,
             wanted_pics,
-            bottom,
+            place,
             seconds,
             max_lines,
             times,
@@ -5080,106 +5523,93 @@ pub fn toasts(
     }
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &crate::world::ChatLine)> = Vec::new();
-    let mut shift = egui::Vec2::ZERO;
-    let lift = -(ctx.content_rect().bottom() - bottom) - 6.0;
-    egui::Area::new(egui::Id::unique("chat_toasts"))
-        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, lift))
-        .interactable(false)
-        .order(egui::Order::Background)
-        .show(ctx, |ui| {
-            // a line that leaves or arrives moves the others in this frame
-            // only (#2544)
-            let held = Held::new(ui, lift);
-            ui.set_max_width(560.0);
-            // the islands' pills: the mockup's 12 px text, 9 × 4 margins and
-            // 4 px between two lines
-            let (size, margin, gap) = if pills {
-                (super::fonts::chat_size(ui.ctx(), 12.0), egui::Margin::symmetric(9, 4), 4.0)
-            } else {
-                (super::fonts::chat_size(ui.ctx(), 13.0), egui::Margin::symmetric(6, 2), 2.0)
-            };
-            let family = pills.then(|| super::fonts::semibold(ui.ctx()));
-            if pills {
-                ui.spacing_mut().item_spacing.y = 0.0;
-            }
-            for line in recent {
-                let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
-                let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
-                // the line's own, dimmed from beyond the say range: its
-                // text and picture, never its glass
-                let shown = alpha * super::colors::beyond_range_alpha(line);
-                let (console_tint, console_blur) =
-                    crate::ui::surface_opacity::relative(crate::ui::surface_opacity::console(), crate::ui::surface_opacity::CONSOLE);
-                let tint =
-                    Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * console_tint * alpha).min(255.0) as u8);
-                let radius = ui.visuals().window_corner_radius;
-                let glass = p.panel_alpha < 255;
-                let mut slot = None;
-                let bubble = egui::Frame::new()
-                    .fill(if glass { Color32::TRANSPARENT } else { tint })
-                    .corner_radius(radius)
-                    .inner_margin(margin)
-                    .show(ui, |ui| {
-                        slot = Some(ui.painter().add(egui::Shape::Noop));
-                        let BubbleJob {
-                            mut job,
-                            links: line_links,
-                            badges,
-                            sender,
-                            name,
-                        } = line_job(
-                            ui.ctx(),
-                            line,
-                            p,
-                            world,
-                            want_names,
-                            540.0,
-                            size,
-                            times,
-                            family.as_ref().map_or(JobLook::Line, JobLook::Pill),
-                        );
-                        for s in job.sections.iter_mut() {
-                            s.format.color = s.format.color.gamma_multiply(shown);
-                        }
-                        let base = bidi_base(&name, &line.from);
-                        let visual = ui.ctx().fonts_mut(|f| super::bidi::layout(f, job, base));
-                        let galley = visual.galley.clone();
-                        let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-                        let painter = ui.painter();
-                        painter.galley(rect.min, galley.clone(), p.ink);
-                        // the sender's picture (or the object cube) in the room
-                        // left before its name
-                        if let Some((at, who)) = sender {
-                            let side = pic_side(size);
-                            // at the left of the name, whatever its direction
-                            let c = visual.left_edge(name.clone().unwrap_or(at..at)).translate(rect.min.to_vec2());
-                            let r =
-                                egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
-                            bubble_sender(painter, p, pics, wanted_pics, r, &who, line, shown);
-                        }
-                        // the islands' pills: the sender's name acts like the
-                        // conversations' (Firestorm's toast links it)
-                        if pills
-                            && let Some(range) = name
-                            && let Some(r) = visual.range_rects(rect.min, range).first().copied()
-                        {
-                            names.push((r, line));
-                        }
-                        let col = color_for(line.kind, p).gamma_multiply(shown);
-                        line_extras(ui, p, world, &visual, rect.min, size, shown, badges, line_links, col, &mut links);
-                    });
-                if glass && let Some(slot) = slot {
-                    let rect = bubble.response.rect;
-                    ui.painter().set(
-                        slot,
-                        aurora_render::glass_panel_faded(rect, f32::from(radius.nw), tint, alpha * console_blur),
+    let shift = lines_area(ctx, place, 560.0, |ui, right| {
+        // the islands' pills: the mockup's 12 px text, 9 × 4 margins and
+        // 4 px between two lines
+        let (size, margin, gap) = if pills {
+            (super::fonts::chat_size(ui.ctx(), 12.0), egui::Margin::symmetric(9, 4), 4.0)
+        } else {
+            (super::fonts::chat_size(ui.ctx(), 13.0), egui::Margin::symmetric(6, 2), 2.0)
+        };
+        let family = pills.then(|| super::fonts::semibold(ui.ctx()));
+        if pills {
+            ui.spacing_mut().item_spacing.y = 0.0;
+        }
+        for line in recent {
+            let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
+            let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
+            // the line's own, dimmed from beyond the say range: its
+            // text and picture, never its glass
+            let shown = alpha * super::colors::beyond_range_alpha(line);
+            let (console_tint, console_blur) =
+                crate::ui::surface_opacity::relative(crate::ui::surface_opacity::console(), crate::ui::surface_opacity::CONSOLE);
+            let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * console_tint * alpha).min(255.0) as u8);
+            let radius = ui.visuals().window_corner_radius;
+            let glass = p.panel_alpha < 255;
+            let mut slot = None;
+            let (start, link0, name0) = (painted(ui), links.len(), names.len());
+            let bubble = egui::Frame::new()
+                .fill(if glass { Color32::TRANSPARENT } else { tint })
+                .corner_radius(radius)
+                .inner_margin(margin)
+                .show(ui, |ui| {
+                    slot = Some(ui.painter().add(egui::Shape::Noop));
+                    let BubbleJob {
+                        mut job,
+                        links: line_links,
+                        badges,
+                        sender,
+                        name,
+                    } = line_job(
+                        ui.ctx(),
+                        line,
+                        p,
+                        world,
+                        want_names,
+                        540.0,
+                        size,
+                        times,
+                        family.as_ref().map_or(JobLook::Line, JobLook::Pill),
                     );
-                }
-                ui.add_space(gap);
+                    for s in job.sections.iter_mut() {
+                        s.format.color = s.format.color.gamma_multiply(shown);
+                    }
+                    let base = bidi_base(&name, &line.from);
+                    let visual = ui.ctx().fonts_mut(|f| super::bidi::layout(f, job, base));
+                    let galley = visual.galley.clone();
+                    let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+                    let painter = ui.painter();
+                    emoji.paint_galley(painter, rect.min, galley.clone(), size, p.ink, shown);
+                    // the sender's picture (or the object cube) in the room
+                    // left before its name
+                    if let Some((at, who)) = sender {
+                        let side = pic_side(size);
+                        // at the left of the name, whatever its direction
+                        let c = visual.left_edge(name.clone().unwrap_or(at..at)).translate(rect.min.to_vec2());
+                        let r = egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
+                        bubble_sender(painter, p, pics, wanted_pics, r, &who, line, shown);
+                    }
+                    // the islands' pills: the sender's name acts like the
+                    // conversations' (the Legacy Viewer's toast links it)
+                    if pills
+                        && let Some(range) = name
+                        && let Some(r) = visual.range_rects(rect.min, range).first().copied()
+                    {
+                        names.push((r, line));
+                    }
+                    let col = color_for(line.kind, p).gamma_multiply(shown);
+                    line_extras(ui, p, world, &visual, rect.min, size, shown, badges, line_links, col, &mut links);
+                });
+            let rect = align_line(ui, right, start, bubble.response.rect, &mut links[link0..], &mut names[name0..]);
+            if glass && let Some(slot) = slot {
+                ui.painter().set(
+                    slot,
+                    aurora_render::glass_panel_faded(rect, f32::from(radius.nw), tint, alpha * console_blur),
+                );
             }
-            shift = held.settle(ui);
-        });
-    Held::publish(ctx, shift);
+            ui.add_space(gap);
+        }
+    });
     for (k, (rect, link, col)) in links.iter().enumerate() {
         bubble_link(ctx, p, world, k, rect.translate(shift), link, *col);
     }
@@ -6888,6 +7318,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let job = |l: &crate::world::ChatLine, pill: Option<&egui::FontFamily>| {
             line_job(
@@ -6937,6 +7368,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let mine = message_color(&line, &p, &world);
         for text in ["/me waves", "/me's hat"] {
@@ -6974,6 +7406,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let id = uuid::Uuid::from_u128;
         assert_eq!(
@@ -7011,13 +7444,15 @@ mod tests {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             });
         }
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
         let p = crate::theme::Theme::default().palette();
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1536.0, 864.0));
-        let frame = |events: Vec<egui::Event>| {
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut frame = |events: Vec<egui::Event>| {
             let mut out = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(screen),
@@ -7028,11 +7463,12 @@ mod tests {
                     toasts(
                         ui.ctx(),
                         &p,
+                        &mut emoji,
                         &world,
                         &HashMap::new(),
                         &mut HashSet::new(),
                         &mut HashSet::new(),
-                        800.0,
+                        crate::ui::chat::LinesPlace::above(800.0),
                         20.0,
                         40,
                         false,
@@ -7699,6 +8135,7 @@ mod tests {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             });
             world.chat_clock.pushed_back();
         }
@@ -7801,6 +8238,7 @@ mod tests {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             });
             world.chat_clock.pushed_back();
         }

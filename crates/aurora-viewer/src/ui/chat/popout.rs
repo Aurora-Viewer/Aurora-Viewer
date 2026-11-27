@@ -748,6 +748,7 @@ mod tests {
                         blocked: false,
                         beyond_range: false,
                         speaker: Default::default(),
+                        private_history: false,
                     },
                 );
             }
@@ -876,6 +877,7 @@ mod tests {
                         blocked: false,
                         beyond_range: false,
                         speaker: Default::default(),
+                        private_history: false,
                     },
                 );
                 kit.st.popped.pop_out(Some(id), false, false, false);
@@ -1164,6 +1166,7 @@ mod tests {
                             blocked: false,
                             beyond_range: false,
                             speaker: Default::default(),
+                            private_history: false,
                         },
                     );
                     kit.world.social.focus_im = Some(JANE);
@@ -1278,6 +1281,7 @@ mod tests {
                     blocked: false,
                     beyond_range: false,
                     speaker: Default::default(),
+                    private_history: false,
                 },
             );
             kit.main_open = true;

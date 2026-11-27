@@ -5,7 +5,7 @@ use crate::build::task_inventory::{self, TransferKind, TransferRequest};
 use aurora_net::build::TaskItem;
 
 /// The dragged rows, one request each in list order
-/// (LLFolderViewModelInventory::startDrag â†’ beginMultiDrag).
+/// (LLFolderViewModelInventory::startDrag → beginMultiDrag).
 #[derive(Clone)]
 pub struct TaskDrag {
     pub requests: Vec<TransferRequest>,

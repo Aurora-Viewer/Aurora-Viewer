@@ -1443,7 +1443,11 @@ pub enum NetEvent {
     InventoryItems(Vec<crate::inventory::InvItem>),
     /// Original records requested to recover simulator-arrived attachments.
     /// Keep the creation context even if the object detaches before readback.
-    AttachmentInventoryItems(Vec<crate::inventory::InvItem>),
+    AttachmentInventoryItems {
+        items: Vec<crate::inventory::InvItem>,
+        /// The same read also satisfied ordinary inventory demand.
+        coalesced: bool,
+    },
     InventoryOrphansFetched {
         request: u64,
         owner: Uuid,
@@ -1455,11 +1459,14 @@ pub enum NetEvent {
         items: Vec<Uuid>,
         /// Read for a worn attachment (`FetchAttachmentItems`).
         attachment: bool,
+        /// The same AIS read also satisfied the other delivery kind.
+        coalesced: bool,
     },
     /// Items the server answered do not exist: broken links' originals.
     InventoryItemsMissing {
         items: Vec<Uuid>,
         attachment: bool,
+        coalesced: bool,
     },
     /// Answer to `UploadBake`: the new texture.
     BakeUploaded {
@@ -1595,7 +1602,7 @@ pub struct AttachRequest {
 
 /// What the simulator sends of its region (LLViewerRegion::setInterestListMode,
 /// indra/newview/llviewerregion.cpp, originally LGPL 2.1): the camera's
-/// view by default, everything while the 360° snapshot window is open.
+/// view by default, everything while the 360° photo or Area Search is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InterestListMode {
     #[default]
@@ -1863,7 +1870,7 @@ pub enum NetCommand {
     /// The interest list mode (LLAgent::changeInterestListMode): posted to
     /// the InterestList capability of every region that has it, and again
     /// to the agent's region when its capabilities arrive while the mode is
-    /// not the default (the 360° snapshot window).
+    /// not the default (the 360° photo, Area Search).
     SetInterestListMode(InterestListMode),
     /// Controls that changed enough to be sent now (`NetClient::set_controls`).
     /// Every change of the control flags comes through here, in order: a
@@ -2330,6 +2337,11 @@ pub enum NetCommand {
         folders: Vec<Uuid>,
         owner: Uuid,
         library: bool,
+    },
+    /// Internal acknowledgement after model validation of inventory records.
+    InventoryItemsKnown {
+        items: Vec<Uuid>,
+        owner: Uuid,
     },
     /// Fetch items by id (FetchInventory2).
     FetchItems {
