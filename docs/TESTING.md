@@ -490,6 +490,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:open][:menu][:replace][:folded][:favorites][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora, a LUT or a creator's LUT), the last one's strength and settings, the before / after line, the filter panel and its cards' states |
 | `AURORA_DEMO_WORLD_LOOK=<look>[+<look>…][:window]` | The world filters switched on with those looks, on the whole 3D view outside the photo mode, and their window (see Details) |
+| `AURORA_DEMO_PICTURE_VIEWER=1[:<option>,…]` | The Picture viewer opened on a test picture made by the viewer (or `file=<path>`), cropped, turned, lit, filtered or shown as a 3D card with a relief (see Details) |
 | `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|compact-close\|compact-move-back\|movement-compact\|classic\|classic-compact\|views\|classic-views\|position\|classic-position\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, a view saved and given back, the camera position window, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
 
@@ -1044,6 +1045,21 @@ view takes them, the interface does not; with `AURORA_DEMO_SNAPSHOT` too,
 the photo window's own looks replace them while it is open. Not saved to
 the settings. The log gives `world look demo: <looks> (window <bool>)`.
 Capture from frame 620.
+
+`AURORA_DEMO_PICTURE_VIEWER` (World › Picture viewer): at frame 600 the
+window opens on a 1024×768 test picture the viewer makes (a colour wheel's
+hues across, light to dark down, a bright disc, a grid every 64 pixels), or
+on `file=<path>`, a picture of the computer. The options, separated by
+commas after the first colon: `rotate` (a quarter turn right), `flip`
+(horizontally), `crop=<w>:<h>` (the middle at that ratio), `bright=<-1..1>`,
+`warm=<-1..1>`, `look=<id>[+<id>…]` (the ids of `AURORA_DEMO_PHOTO_LOOK`,
+drawn by the GPU over the picture), `3d` (the picture as a card) and
+`relief=<0..1>` (the bright disc comes forward). For example
+`1:crop=16:9,bright=0.15,look=Sepia`, or `1:3d,relief=0.8`. The edits are one
+step of the window's history (Undo goes back to the picture as opened).
+Nothing is saved. The log gives `picture viewer demo: <name> 3d=<bool>
+relief=<n> looks=<n>`. The edits and the card are made on worker threads:
+capture from frame 700 (760 with a look in 3D, read back from the GPU first).
 
 `AURORA_DEMO_CAMERA_PRESETS` (with `AURORA_DEMO_SNAPSHOT=viewfinder`, steps
 joined by `-`): the presets panel opens at frame 600. `save` saves three
