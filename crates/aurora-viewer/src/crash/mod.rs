@@ -9,6 +9,7 @@ pub mod github;
 #[cfg(target_os = "linux")]
 mod linux;
 mod native;
+mod open_files;
 mod os_events;
 pub mod privacy;
 // Bug report form (disabled, see main.rs):
@@ -202,6 +203,9 @@ pub fn start() {
 }
 
 fn start_inner() -> anyhow::Result<()> {
+    // the census of open files at a GPU loss needs its directory opened
+    // while descriptors are still free (open_files.rs, #2970)
+    open_files::prime();
     std::fs::create_dir_all(root())?;
     recover();
     let settings = crate::settings::Settings::load();
@@ -328,9 +332,22 @@ pub fn thread_died() -> Option<&'static str> {
 
 pub fn finished(success: bool) {
     if let Some(session) = SESSION.get() {
-        let marker = if success { "normal" } else { "failed" };
-        let _ = std::fs::write(session.dir.join(marker), []);
+        end_session(&session.dir, success, GPU_LOST.get().map(Vec::as_slice));
     }
+}
+
+/// The session's end marker. A device lost for good ends it as failed
+/// whatever the event loop returned, with the loss marked again: when the
+/// loss came from running out of open files (#2970), the markers written
+/// at the loss failed, and only `normal` would have reached the disk, a
+/// clean close whose folder the next start deletes.
+fn end_session(dir: &Path, success: bool, gpu_lost: Option<&[u8]>) {
+    if let Some(when) = gpu_lost {
+        write_gpu_lost(dir, when);
+        return;
+    }
+    let marker = if success { "normal" } else { "failed" };
+    let _ = std::fs::write(dir.join(marker), []);
 }
 
 pub fn failure(message: &str) {
@@ -354,6 +371,13 @@ pub fn gpu_stalled(seconds: u64) {
 pub fn gpu_lost() {
     gpu_loss_snapshot();
     mark_gpu_lost(b"");
+}
+
+/// The viewer noticed a device loss (app/gpu_stall.rs), once per loss: an
+/// open-file limit reached looks like video memory out (#2970), so the
+/// log says what held the descriptors, for the crash report.
+pub fn open_files_at_loss() {
+    open_files::log_at_loss();
 }
 
 /// The renderer reported a confirmed device loss, including one the viewer
@@ -412,16 +436,26 @@ const GPU_LOST_AT_START: &str = "start";
 /// The same before the first frame (app.rs): reported under its own title,
 /// apart from the driver resets of a running session.
 pub fn gpu_lost_at_start() {
+    open_files_at_loss();
     gpu_loss_snapshot();
     mark_gpu_lost(GPU_LOST_AT_START.as_bytes());
 }
 
+/// The device was lost for good, with the text of `gpu-lost.txt`: kept in
+/// memory as well, for [`finished`] to write again ([`end_session`]).
+static GPU_LOST: OnceLock<Vec<u8>> = OnceLock::new();
+
 fn mark_gpu_lost(when: &[u8]) {
+    let _ = GPU_LOST.set(when.to_vec());
     if let Some(session) = SESSION.get() {
-        let _ = std::fs::write(session.dir.join("gpu-lost.txt"), when);
-        let _ = std::fs::write(session.dir.join("failed"), []);
-        ending_in_gpu_trouble(&session.dir);
+        write_gpu_lost(&session.dir, when);
     }
+}
+
+fn write_gpu_lost(dir: &Path, when: &[u8]) {
+    let _ = std::fs::write(dir.join("gpu-lost.txt"), when);
+    let _ = std::fs::write(dir.join("failed"), []);
+    ending_in_gpu_trouble(dir);
 }
 
 /// In the session folder while the photo window's "Photo quality" holds
@@ -529,6 +563,39 @@ fn ending_in_gpu_trouble(dir: &Path) {
 /// whose watcher died with it.
 pub fn take_gpu_trouble() -> bool {
     std::fs::remove_file(root().join(GPU_TROUBLE)).is_ok()
+}
+
+/// How long the watcher of a viewer an update started waits for the
+/// update's helper to say it rolled the update back.
+#[cfg(windows)]
+const UPDATE_ROLLBACK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A viewer an update's helper ended itself, when no first frame came within
+/// its wait: the helper then restores the previous version, which says that
+/// the update did not complete. That is no crash: nothing is reported. Only
+/// the helper's own end (`TerminateProcess` leaves exit code 1), with no
+/// record of the viewer's own ([`own_record`]), and `ended` (the helper's rollback
+/// note, `aurora_updater::install::ended_by_update`). The "ended from
+/// outside, window never shown, 90 s" reports were these. Windows only, as
+/// the helper is; the tests run it everywhere.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn ended_by_update(dir: &Path, exit_code: u32, ended: impl FnOnce() -> bool) -> bool {
+    exit_code == 1 && !own_record(dir) && ended()
+}
+
+/// Whether the session holds a record of its own end: the `failed` marker
+/// (written empty on purpose), or a trace with something in it. Every session
+/// opens `panic.txt`, `native.txt` and `oom.txt` empty at start, as the
+/// crash window and the report read an empty one as none (`len() > 0`). A GPU
+/// stall before the first frame (`gpu-stall.txt`, after 6 s) or a freeze is
+/// the viewer's too: its report and the safe graphics offered at the next
+/// start must stay.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn own_record(dir: &Path) -> bool {
+    dir.join("failed").exists()
+        || ["panic.txt", "native.txt", "oom.txt", "gpu-stall.txt", "freeze.txt"]
+            .iter()
+            .any(|name| std::fs::metadata(dir.join(name)).is_ok_and(|m| m.len() > 0))
 }
 
 /// A viewer stopped by Windows ending the session (shutdown, restart, sign
@@ -983,6 +1050,30 @@ mod tests {
     }
 
     #[test]
+    fn a_session_ending_after_a_lost_device_is_reported_as_one() {
+        let root = std::env::temp_dir().join(format!("aurora-crash-test-{}", uuid::Uuid::new_v4()));
+        let dir = root.join("session");
+        std::fs::create_dir_all(&dir).unwrap();
+        // the markers written at the loss failed (no open file left, #2970);
+        // the event loop then returned Ok
+        end_session(&dir, true, Some(b""));
+        assert!(!dir.join("normal").exists());
+        assert!(dir.join("failed").exists());
+        assert!(dir.join("gpu-lost.txt").exists());
+        // (on Windows the watcher marks it once the viewer is gone)
+        #[cfg(not(windows))]
+        assert!(root.join(GPU_TROUBLE).exists());
+        assert!(should_report(&dir, 0));
+        // with no loss, the same end is a clean close
+        let clean = root.join("clean");
+        std::fs::create_dir(&clean).unwrap();
+        end_session(&clean, true, None);
+        assert!(clean.join("normal").exists());
+        assert!(!should_report(&clean, 0));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn normal_exit_and_crashes_are_distinct() {
         let dir = std::env::temp_dir().join(format!("aurora-crash-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&dir).unwrap();
@@ -992,6 +1083,36 @@ mod tests {
         assert!(should_report(&dir, 0xC0000005));
         std::fs::write(dir.join("failed"), []).unwrap();
         assert!(should_report(&dir, 0));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_an_update_helpers_own_end_is_kept_from_the_reports() {
+        let dir = std::env::temp_dir().join(format!("aurora-crash-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        // ended by the helper, which rolled the update back
+        assert!(ended_by_update(&dir, 1, || true));
+        // the traces every session opens empty at start are no record
+        for name in ["panic.txt", "native.txt", "oom.txt"] {
+            std::fs::write(dir.join(name), []).unwrap();
+        }
+        assert!(ended_by_update(&dir, 1, || true), "the empty traces of a start");
+        // no rollback said, or another exit code (a crash's exception)
+        assert!(!ended_by_update(&dir, 1, || false));
+        assert!(!ended_by_update(&dir, 0xC0000005, || true));
+        assert!(!ended_by_update(&dir, 0, || true));
+        // the viewer's own crash, panic, out-of-memory, GPU stall or freeze,
+        // even then: a trace with something in it, or the `failed` marker
+        for name in ["native.txt", "panic.txt", "oom.txt", "gpu-stall.txt", "freeze.txt"] {
+            std::fs::write(dir.join(name), b"trace").unwrap();
+            assert!(!ended_by_update(&dir, 1, || true), "{name}");
+            std::fs::write(dir.join(name), []).unwrap();
+        }
+        std::fs::write(dir.join("failed"), []).unwrap();
+        assert!(!ended_by_update(&dir, 1, || true), "failed");
+        std::fs::remove_file(dir.join("failed")).unwrap();
+        // the helper is not even asked when the exit already says no
+        assert!(!ended_by_update(&dir, 3, || panic!("not asked")));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

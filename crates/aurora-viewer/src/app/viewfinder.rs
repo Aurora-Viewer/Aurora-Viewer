@@ -60,6 +60,7 @@ impl App {
         self.snapshots.view_kept = (!self.camera.mouselook()).then(|| vf::KeptView {
             eye: crate::camera::presets::to_global(origin, self.camera.position),
             at: crate::camera::presets::to_global(origin, self.camera.target),
+            avatar: crate::camera::presets::to_global(origin, self.world.agent.position),
             fov: self.settings.camera.fov,
             free: self.camera.free().is_some(),
         });
@@ -69,21 +70,24 @@ impl App {
     /// it last closed (`vf_keep_view`), with its field of view, flown by
     /// the free camera again if it was. Not in mouselook, nor while RLVa
     /// holds the camera (as for a preset), nor past the draw distance (as
-    /// for a place preset): the view stays where it is then.
-    fn vf_view_back(&mut self) {
+    /// for a place preset), nor once the avatar has moved away from where
+    /// it stood (#4604, `vf::KEPT_VIEW_MOVE_MAX`): the view stays where it
+    /// is then. Whether the view came back (its tilt follows it:
+    /// `vf::tilt_back`).
+    fn vf_view_back(&mut self) -> bool {
         let Some(kept) = self.snapshots.view_kept else {
-            return;
+            return false;
         };
         if !self.in_world() || self.camera.mouselook() || self.world.rlva.camera_preset_locked(uuid::Uuid::nil()) {
-            return;
+            return false;
         }
         let Some(origin) = self.world.main_origin() else {
-            return;
+            return false;
         };
         let reach = self.settings.draw_distance.max(64.0);
         let Some((eye, at)) = kept.back(origin, self.world.agent.position, reach) else {
-            log::info!("viewfinder: the view it closed on is out of reach, kept where it is");
-            return;
+            log::info!("viewfinder: the view it closed on is out of reach or the avatar moved, kept where it is");
+            return false;
         };
         if kept.fov.is_finite() {
             self.settings.camera.fov = kept.fov;
@@ -102,6 +106,7 @@ impl App {
             "viewfinder: view back at {eye:.1?}{}",
             if self.camera.free().is_some() { " (free camera)" } else { "" }
         );
+        true
     }
 
     /// Each frame, before it is laid out: the depth that came back under
@@ -124,14 +129,11 @@ impl App {
                 // "Keep the framing" off: the photo mode opens on the camera
                 // as it is (the framing is still noted, for when it is on)
                 let keep = self.settings.snapshot.viewfinder.keep_framing;
-                if keep {
-                    self.vf_view_back();
-                }
-                // the tilt it had when it closed, unless the camera controls
-                // tilted the view meanwhile (theirs is kept)
-                if keep && self.camera.roll == 0.0 && self.snapshots.roll_kept != 0.0 {
-                    self.camera.roll = self.snapshots.roll_kept;
-                    log::info!("viewfinder: tilt back to {:.1}°", self.camera.roll.to_degrees());
+                let view_back = keep && self.vf_view_back();
+                // the tilt it had when it closed, with its view only
+                if let Some(roll) = vf::tilt_back(view_back, self.camera.roll, self.snapshots.roll_kept) {
+                    self.camera.roll = roll;
+                    log::info!("viewfinder: tilt back to {:.1}°", roll.to_degrees());
                 }
             }
             (false, Some(fov)) => {

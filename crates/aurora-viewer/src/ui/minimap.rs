@@ -223,7 +223,7 @@ pub fn avatars(world: &World) -> Vec<(Uuid, Vec3, bool)> {
     let mut out: Vec<(Uuid, Vec3, bool)> = Vec::new();
     for (idx, o) in world.objects.avatars() {
         if o.full_id != world.agent_id
-            && !world.is_mirror(&o.full_id)
+            && !world.is_local_copy(&o.full_id)
             && let Some((p, _, _)) = Scene::object_transform(world, idx, now, 0)
         {
             out.push((o.full_id, p, true));
@@ -1517,8 +1517,9 @@ impl MiniMap {
         Some(id)
     }
 
-    /// The mini-map's image of a region for another window (the header of
-    /// "About Land"): its map tile, else the terrain drawn from
+    /// The mini-map's image of a region for another window (the headers of
+    /// About Land and Region/Estate): its map picture, every 256 m cell
+    /// stitched (`MapTiles::region_picture`), else the terrain drawn from
     /// the heights received (no map server, or the tile is not there yet).
     /// None under RLVa `@showworldmap` or `@showminimap` (`header_image_shown`).
     pub fn region_image(
@@ -1532,7 +1533,13 @@ impl MiniMap {
             return None;
         }
         let (ox, oy) = aurora_net::handle_to_origin(handle);
-        if let Ok(tile) = tiles.get(1, ox / 256, oy / 256, true) {
+        let (size_x, size_y) = world
+            .regions
+            .get(&handle)
+            .map(|region| (region.heightmap.size_x, region.heightmap.size_y))
+            .unwrap_or((256, 256));
+        let (cells_x, cells_y) = super::map_tiles::region_cells(size_x, size_y);
+        if let Ok(tile) = tiles.region_picture(ox / 256, oy / 256, cells_x, cells_y) {
             return Some(tile);
         }
         let region = world.regions.get(&handle)?;

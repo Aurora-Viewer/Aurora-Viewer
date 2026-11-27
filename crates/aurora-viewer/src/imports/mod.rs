@@ -18,6 +18,7 @@ pub mod mesh;
 pub mod permissions;
 pub mod persistence;
 pub mod preview;
+pub mod quick;
 pub mod sound;
 mod stage;
 #[cfg(test)]
@@ -116,7 +117,6 @@ impl ImageSizeLimit {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
-    pub icon_bar: bool,
     /// Shared by texture uploads, material maps and mesh images. Keep the
     /// serialized name so an existing explicit 1K choice survives the change.
     pub limit_texture_size: bool,
@@ -128,6 +128,9 @@ pub struct Preferences {
     pub everyone_copy: bool,
     pub permissions_by_type: permissions::ByType,
     pub show_payment: bool,
+    /// The toolbar's quick import sends free images at 2048 × 2048 without
+    /// asking the size (human request, 2026-11-25; off by default).
+    pub quick_free_full_size: bool,
     pub use_default_folders: bool,
     pub include_source_folder: bool,
     pub batch_folder: Uuid,
@@ -156,7 +159,6 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
-            icon_bar: false,
             limit_texture_size: false,
             lossless_small: true,
             next_modify: false,
@@ -166,6 +168,7 @@ impl Default for Preferences {
             everyone_copy: false,
             permissions_by_type: Default::default(),
             show_payment: true,
+            quick_free_full_size: false,
             use_default_folders: true,
             include_source_folder: true,
             batch_folder: Uuid::nil(),
@@ -333,6 +336,8 @@ pub struct Entry {
     pub source_folders: Vec<String>,
     pub upload_path: Option<Vec<String>>,
     pub selected: bool,
+    /// The tick a failed step took: `restore_draft` gives it back.
+    pub reselect: bool,
     pub source: Option<Source>,
     pub options: import_texture::Options,
     pub image_size_limit: ImageSizeLimit,
@@ -386,6 +391,17 @@ pub enum Status {
     Cancelled,
 }
 impl Entry {
+    /// A step of the row's upload failed (encoding, the upload itself, a map
+    /// it needs). The row leaves the selection: a selected row with an error
+    /// holds the price and the upload of the whole queue (`total`), the
+    /// files added later included, which is meant for a file to fix, not
+    /// for an answer of the server. do_bulk_upload (llviewermenufile.cpp)
+    /// sends each file as its own request, so one failure never holds the
+    /// others. `restore_draft` gives the tick back.
+    fn failed(&mut self, reason: String) {
+        self.status = Status::Error(reason);
+        self.reselect |= std::mem::take(&mut self.selected);
+    }
     /// Keep the cached preparation options and preview revisions in step with
     /// the effective limit; the original decoded pixels remain available.
     pub fn sync_image_size(&mut self, limit_texture_size: bool) -> bool {
@@ -445,6 +461,7 @@ impl Entry {
             source_folders: Vec::new(),
             upload_path: None,
             selected: source.is_some(),
+            reselect: false,
             empty_alpha: empty_alpha
                 .unwrap_or_else(|| matches!(&source,Some(Source::Texture(image)) if import_texture::empty_alpha(image))),
             sound: sound::Editor::new(source.as_ref()),
@@ -542,6 +559,9 @@ struct Step {
     permissions: Permissions,
 }
 
+/// The window id that keeps the quick import bar's place on the screen.
+pub const LAUNCHER_WINDOW: &str = "import_launcher";
+
 pub struct Imports {
     pub open: bool,
     pub launcher_open: bool,
@@ -569,6 +589,11 @@ pub struct Imports {
     queue: VecDeque<Step>,
     current: Option<(Uuid, Step)>,
     pending_confirmed: Option<automatic::Confirmed>,
+    /// The toolbar's quick import under way (`quick`).
+    pub quick: Option<quick::Quick>,
+    /// The entries an upload is for, when not all the selected ones
+    /// (a quick import's).
+    only: Option<Vec<Uuid>>,
     uploaded: HashMap<Uuid, Receipt>,
     pub play_request: Option<Uuid>,
     pub sound_playing: Option<Uuid>,
@@ -584,6 +609,8 @@ pub struct Imports {
     pub demo_mode: String,
     pub demo_local_applied: bool,
     pub demo_upload_started: bool,
+    /// `bulk-failed` has answered its one failure.
+    pub demo_upload_failed: bool,
     pub demo_animation_positioned: bool,
     pub own_avatar_preview: Option<Uuid>,
     pub animation_model_cache: HashMap<Uuid, std::sync::Weak<animation_model::Model>>,
@@ -629,6 +656,8 @@ impl Default for Imports {
             queue: VecDeque::new(),
             current: None,
             pending_confirmed: None,
+            quick: None,
+            only: None,
             uploaded: HashMap::new(),
             play_request: None,
             sound_playing: None,
@@ -644,6 +673,7 @@ impl Default for Imports {
             demo_mode: String::new(),
             demo_local_applied: false,
             demo_upload_started: false,
+            demo_upload_failed: false,
             demo_animation_positioned: false,
             own_avatar_preview: None,
             animation_model_cache: HashMap::new(),
@@ -687,13 +717,38 @@ impl Imports {
         self.entries.push(entry);
         self.open(Choice::Animation);
     }
-    /// The shortcut and menu use the same saved entry point.
-    pub fn toggle_import(&mut self, ctx: &egui::Context, prefs: &Preferences) {
-        if prefs.icon_bar {
-            crate::ui::widgets::toggle_floater(ctx, ui::launcher::WINDOW, &mut self.launcher_open);
-        } else {
-            self.toggle_window(ctx);
+    /// Import (Build › Import, its shortcut, the toolbar's "Import"): the
+    /// import window. The quick import bar it could open is the import
+    /// floating block now, with its own Ctrl+U (human request, 2026-11-25).
+    pub fn toggle_import(&mut self, ctx: &egui::Context) {
+        self.toggle_window(ctx);
+    }
+
+    /// The import floating block, shown or hidden (its button, its Ctrl+U).
+    pub fn toggle_bar(&mut self, ctx: &egui::Context) {
+        crate::ui::widgets::toggle_floater(ctx, ui::launcher::WINDOW, &mut self.launcher_open);
+    }
+
+    /// The quick import bar's Folder and the toolbar's "Advanced import": the
+    /// import window on its batch, for files of every type. True when a
+    /// folder may be chosen now (nothing being read, sent or waiting for a
+    /// confirmation).
+    pub fn open_folder_import(&mut self, ctx: &egui::Context) -> bool {
+        let free = !self.busy() && self.pending_files.is_none() && !self.confirm;
+        if free {
+            self.select_type(Choice::Bulk);
+            self.type_filters = [true; 5];
+            self.tab = ui::Tab::Batch;
         }
+        self.open_window(ctx);
+        free
+    }
+
+    /// The quick import bar's Settings: the import window on its
+    /// permissions and options.
+    pub fn open_import_settings(&mut self, ctx: &egui::Context) {
+        self.tab = ui::Tab::Permissions;
+        self.open_window(ctx);
     }
 
     /// Open the queue without requesting a native file picker.
@@ -1037,6 +1092,7 @@ impl Imports {
                 draft.invalidate_quote();
             }
             entry.status = Status::Ready;
+            entry.selected |= std::mem::take(&mut entry.reselect);
             entry.preview_error = None;
             entry.preview_pending = false;
             entry.preview_generation += 1;
@@ -1093,7 +1149,7 @@ impl Imports {
     }
     fn fail(&mut self, entry: Option<Uuid>, reason: String) {
         if let Some(entry) = entry.and_then(|id| self.entries.iter_mut().find(|e| e.id == id)) {
-            entry.status = Status::Error(reason.clone());
+            entry.failed(reason.clone());
         }
         self.message = reason;
         self.cancel_remaining();
@@ -1167,7 +1223,7 @@ impl Imports {
         };
         for entry in &mut self.entries {
             if failed.contains(&entry.id) {
-                entry.status = Status::Error(reason.clone());
+                entry.failed(reason.clone());
             }
         }
         self.queue
@@ -1229,6 +1285,7 @@ impl Imports {
                     let failed = std::mem::take(&mut self.picker_files)
                         .then(|| entries.iter().find(|e| matches!(e.status, Status::Error(_))).map(|e| e.id))
                         .flatten();
+                    self.quick_loaded(request, &entries);
                     self.entries.extend(entries);
                     if let Some(choice) = loaded_choice {
                         self.reconcile_window(choice);

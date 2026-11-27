@@ -244,7 +244,14 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             let r = ui.add(
                 super::super::widgets::elided_label(
                     ui,
-                    emphasis.rich_text(ui.ctx(), &name, chat_size(ui.ctx(), 11.5), col).strong(),
+                    emphasis
+                        .rich_text(
+                            ui.ctx(),
+                            super::chat_header_name(world, line, &name),
+                            chat_size(ui.ctx(), 11.5),
+                            col,
+                        )
+                        .strong(),
                     max_bubble,
                 )
                 .sense(egui::Sense::click()),
@@ -308,19 +315,42 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             }
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 if !visible.is_empty() {
-                    chat_text_marked(
-                        ui,
-                        p,
-                        env.emoji,
-                        world,
-                        line.wording(env.names),
-                        env.want_names,
-                        &visible,
-                        size,
-                        text_color,
-                        emphasis,
-                        mark,
-                    );
+                    if let Some(action) = super::emote_action(line) {
+                        let action = super::previews::text(env.previews.as_deref(), line, action, width);
+                        super::emote_text_marked(
+                            ui,
+                            p,
+                            env.emoji,
+                            world,
+                            line.wording(env.names),
+                            env.want_names,
+                            super::EmoteName {
+                                name: &name,
+                                line,
+                                names: env.names,
+                                menu: env.menu,
+                            },
+                            &action,
+                            size,
+                            text_color,
+                            emphasis,
+                            mark,
+                        );
+                    } else {
+                        chat_text_marked(
+                            ui,
+                            p,
+                            env.emoji,
+                            world,
+                            line.wording(env.names),
+                            env.want_names,
+                            &visible,
+                            size,
+                            text_color,
+                            emphasis,
+                            mark,
+                        );
+                    }
                 }
                 super::previews::cards(ui, env, line, &text);
             });
@@ -457,6 +487,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let day = 86_400;
         // yesterday's two lines, then today's
@@ -507,6 +538,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let mut list_top = 0.0;
         let mut output = ctx.run_ui(

@@ -518,11 +518,7 @@ impl Catalog {
             .copied()
             .filter(|id| root.is_some_and(|root| actions::under(inv, *id, root)))
             .collect();
-        for id in ids {
-            if let Some(f) = inv.folders.get_mut(&id) {
-                f.state = FetchState::Unknown;
-            }
-        }
+        inv.mark_unread(ids);
         for name in ["#Aurora", FOLDER, OLD_FOLDER, "#Firestorm", "#AO", ALCHEMY_FOLDER] {
             let ids: Vec<_> = inv
                 .folders
@@ -530,15 +526,10 @@ impl Catalog {
                 .filter(|f| !f.library && f.info.name == name)
                 .map(|f| f.info.id)
                 .collect();
-            for id in ids {
-                if let Some(f) = inv.folders.get_mut(&id) {
-                    f.state = FetchState::Unknown;
-                }
-            }
+            inv.mark_unread(ids);
         }
-        if let Some(f) = inv.folders.get_mut(&inv.root) {
-            f.state = FetchState::Unknown;
-        }
+        let root = inv.root;
+        inv.mark_unread([root]);
         self.invalidate();
     }
 }

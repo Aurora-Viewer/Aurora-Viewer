@@ -11,7 +11,7 @@
 //! Appearance › "Top and bottom bars" brings Firestorm's bars back
 //! (`top_bars`, unchanged).
 
-use super::{BarAction, BellState, StatusInfo, clock, main_menus, paint_icon, status_color, status_menu_body, status_shape, status_tip};
+use super::{BarAction, BellState, StatusInfo, clock, paint_icon, status_color, status_menu_body, status_shape, status_tip};
 use crate::theme::Palette;
 use crate::ui::Panels;
 use crate::ui::icons::Icons;
@@ -236,7 +236,7 @@ fn readout_width(text_w: f32) -> f32 {
 
 /// Demo captures (`AURORA_DEMO_BARS`): the menu to open once, at frame 300.
 pub(super) fn demo_open(ctx: &egui::Context, resp: &egui::Response, which: super::demo::Open) {
-    if super::demo::get().open == Some(which) && ctx.cumulative_frame_nr() == 300 {
+    if super::demo::get().open == Some(which) && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 {
         egui::Popup::open_id(ctx, egui::Popup::default_response_id(resp));
     }
 }
@@ -254,6 +254,8 @@ pub fn top(
     media: crate::ui::audio::MediaState,
     notif: &mut crate::ui::notifications::NotifUi,
     bell: BellState,
+    toolbar: &mut crate::ui::toolbar::ToolbarUi,
+    settings: &crate::ui::toolbar::ToolbarSettings,
 ) -> (BarAction, crate::ui::audio::AudioAction) {
     let mut action = BarAction::None;
     let ctx = ui.ctx().clone();
@@ -278,14 +280,33 @@ pub fn top(
         right = thumbs.left() - MARGIN;
     }
     let left = screen.left() + MARGIN;
-    let menu_rect = row(screen, left, left + PAD * 2.0 + SLOT);
+    let main_button = super::top::button("aurora_menu", "wolf");
+    let bug_button = super::top::button("report_bug", "bug-filled");
+    let minimum_place = if settings.address_visible.unwrap_or(true) {
+        super::place::minimum_width(ui, st)
+    } else {
+        0.0
+    };
+    let native = [
+        super::top::width(ui, settings, &main_button),
+        super::top::width(ui, settings, &bug_button),
+    ];
+    let count = if st.show_bug_report { 2 } else { 1 };
+    let native_room = right - left - minimum_place - 36.0 - MARGIN * (count + 1) as f32 - PAD * 2.0 * count as f32;
+    let widths = super::sizing::fit(&native[..count], crate::ui::toolbar::Sizing::Auto, true, native_room, MARGIN, SLOT);
+    let menu_rect = row(screen, left, left + PAD * 2.0 + widths[0]);
     // the bug report in an island of its own after the wolf's (the human's
     // request: in one island the two read as one button); hidden, the place
     // follows the wolf 8 px away
-    let bug_rect = st
-        .show_bug_report
-        .then(|| row(screen, menu_rect.right() + MARGIN, menu_rect.right() + MARGIN + PAD * 2.0 + SLOT));
+    let bug_rect = st.show_bug_report.then(|| {
+        row(
+            screen,
+            menu_rect.right() + MARGIN,
+            menu_rect.right() + MARGIN + PAD * 2.0 + widths[1],
+        )
+    });
     let span = row(screen, bug_rect.unwrap_or(menu_rect).right() + MARGIN, right);
+    let span = super::top::reserve(ui, settings, span, minimum_place);
     let (place_rect, detail) = super::place::layout(ui, st, span);
 
     // each island is an area of its own: the pointer over it is over the
@@ -305,8 +326,7 @@ pub fn top(
         if resp.clicked() {
             notif.open = !notif.open;
         }
-        // do not disturb on or off (#491), as the status selector does
-        if resp.secondary_clicked() {
+        if super::bell_menu(&resp, p, bell.dnd) {
             action = BarAction::SetStatus(crate::ui::notifications::bell_dnd_toggled(st.status));
         }
     });
@@ -327,47 +347,41 @@ pub fn top(
     area(&ctx, p, "menu", menu_rect, |ui| {
         // a right click on the island or its buttons: show the bug button
         let back = ui.interact(menu_rect, Id::unique("bars_island_menu_back"), Sense::click());
-        menu_options(&back, p, st, &mut action);
-        let wolf = Rect::from_min_size(
-            Pos2::new(menu_rect.left() + PAD, menu_rect.center().y - SLOT / 2.0),
-            Vec2::splat(SLOT),
-        );
-        let resp = ui.interact(wolf, Id::unique("bars_island_menu"), Sense::click());
-        menu_options(&resp, p, st, &mut action);
-        let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
-        slot_face(ui, p, wolf, resp.hovered() || open, false);
-        paint_icon(ui, icons, "wolf", wolf, 18.0, p.ink);
+        menu_options(&back, p, st, &mut action, toolbar, settings.locked);
+        let wolf = menu_rect.shrink(PAD);
+        let resp = super::top::native(ui, p, icons, settings, &main_button, wolf, Id::unique("bars_island_menu"));
+        menu_options(&resp, p, st, &mut action, toolbar, settings.locked);
+        toolbar.source(&resp, p, &main_button, settings.locked);
         menu::dropdown_placed(
             &resp,
             p,
-            egui::PopupCloseBehavior::CloseOnClick,
+            egui::PopupCloseBehavior::CloseOnClickOutside,
             Some((egui::RectAlign::BOTTOM_START, 10.0)),
             |ui| {
-                menu::searchable(ui, p, |ui| main_menus(ui, p, panels, st, &mut action, true));
+                menu::searchable(ui, p, |ui| crate::ui::toolbar::commands::show(ui, p, toolbar, settings, ""));
             },
         );
-        resp.on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));
     });
     if let Some(bug_rect) = bug_rect {
         area(&ctx, p, "bug", bug_rect, |ui| {
-            // its right click copies the version (the wolf's menu still
-            // hides it)
+            // Version copying is an explicit row in the shared right-click menu.
             let back = ui.interact(bug_rect, Id::unique("bars_island_bug_back"), Sense::click());
-            let bug = Rect::from_center_size(bug_rect.center(), Vec2::splat(SLOT));
-            let resp = icon_slot(ui, p, icons, bug, Id::unique("bars_island_bug"), "bug-filled", true);
-            if back.secondary_clicked() || resp.secondary_clicked() {
-                action = BarAction::CopyVersion;
-            }
-            if resp.on_hover_text(aurora_i18n::tr!("bug-title")).clicked() {
+            let bug = bug_rect.shrink(PAD);
+            let resp = super::top::native(ui, p, icons, settings, &bug_button, bug, Id::unique("bars_island_bug"));
+            toolbar.source(&resp, p, &bug_button, settings.locked);
+            super::bug_menu(&resp, p, toolbar, settings.locked, &mut action, back.secondary_clicked());
+            if resp.clicked() {
                 action = BarAction::ReportBug;
             }
         });
     }
-    area(&ctx, p, "place", place_rect, |ui| {
-        if let Some(a) = super::place::island(ui, p, icons, panels, st, place_rect, detail) {
-            action = a;
-        }
-    });
+    if settings.address_visible.unwrap_or(true) {
+        area(&ctx, p, "place", place_rect, |ui| {
+            if let Some(a) = super::place::island(ui, p, icons, panels, st, place_rect, detail) {
+                action = a;
+            }
+        });
+    }
     // the favourites' row (F2) under the place island: the windows stay
     // under it too
     if st.favorites.access == crate::settings::FavoritesAccess::Row {
@@ -385,17 +399,41 @@ pub fn top(
 /// Right-click menu of the menu island: the bug report button, also in
 /// Preferences › Interface ("Report a bug in the top bar", on by default
 /// during the alpha).
-fn menu_options(resp: &egui::Response, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
+pub(super) fn menu_options(
+    resp: &egui::Response,
+    p: &Palette,
+    st: &StatusInfo,
+    action: &mut BarAction,
+    toolbar: &mut crate::ui::toolbar::ToolbarUi,
+    locked: bool,
+) {
     menu::context_menu_of_button(resp, p, |ui| {
-        if menu::check(ui, p, "bug-filled", aurora_i18n::tr!("bug-toolbar"), st.show_bug_report, true) {
+        let button = super::top::button("aurora_menu", "wolf");
+        if toolbar.open && menu::check(ui, p, "bug-filled", aurora_i18n::tr!("bug-toolbar"), st.show_bug_report, true) {
             *action = BarAction::ShowBugButton(!st.show_bug_report);
         }
+        // its own island, no block of a bar: no block settings
+        crate::ui::toolbar::section(ui, p, aurora_i18n::tr!("toolbar-button-settings"));
+        toolbar.button_edit_option(ui, p, &button, locked);
+        crate::ui::toolbar::native_context::start_group(ui, p);
+        toolbar.interface_edit_menu(ui, p, Some("aurora_menu"));
     });
 }
 
 /// One island in an area of its own at `rect`, its surface under what
 /// `body` draws there (in screen coordinates).
 pub(crate) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect: Rect, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    area_surface(ctx, p, name, rect, true, body)
+}
+
+pub(crate) fn area_surface<R>(
+    ctx: &egui::Context,
+    p: &Palette,
+    name: &'static str,
+    rect: Rect,
+    surface: bool,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
     // (the windows keep their title clear of it: `layout::clear_of_islands`)
     crate::ui::layout::island_drawn(ctx, rect);
     egui::Area::new(Id::unique(("bars_island", name)))
@@ -404,7 +442,11 @@ pub(crate) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect
         .constrain(false)
         .fade_in(false)
         .show(ctx, |ui| {
-            let surface = ui.painter().add(crate::ui::widgets::island_shape(ui.ctx(), p, rect));
+            let surface = ui.painter().add(if surface {
+                crate::ui::widgets::island_shape(ui.ctx(), p, rect)
+            } else {
+                egui::Shape::Noop
+            });
             ui.set_min_size(rect.size());
             let out = body(ui);
             crate::ui::surface_opacity::fade_after(ui.ctx(), ui.layer_id(), surface, p, crate::ui::surface_opacity::bars());
@@ -434,41 +476,77 @@ fn account_slot_width(balance: Option<f32>) -> f32 {
     4.0 + DISC + balance.map_or(0.0, |width| 6.0 + width.ceil()) + 8.0
 }
 
-fn account_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
+pub(super) fn account_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
     PAD * 2.0 + account_slot_width(balance_text(ui, st).map(|(_, width)| width))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum AccountPart {
+    Both,
+    Status,
+    Balance,
+}
+
+pub(super) fn account_part_width(ui: &egui::Ui, _p: &Palette, st: &StatusInfo, part: AccountPart) -> f32 {
+    match part {
+        AccountPart::Both => account_width(ui, st),
+        AccountPart::Status => PAD * 2.0 + account_slot_width(None),
+        AccountPart::Balance => balance_text(ui, st).map_or(0.0, |(_, width)| PAD * 2.0 + SLOT_PAD * 2.0 + width.ceil()),
+    }
 }
 
 /// The account island: our picture with the online status on it (a click
 /// opens the status menu), the balance (a click buys L$). A right click on
 /// either shows or hides the balance (#1340): hidden, the picture stays.
-fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action: &mut BarAction) {
-    let balance = balance_text(ui, st);
-    let w = account_slot_width(balance.as_ref().map(|(_, width)| *width));
+pub(super) fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action: &mut BarAction) {
+    account_part(ui, p, st, island, action, AccountPart::Both);
+}
+
+pub(super) fn account_part(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action: &mut BarAction, part: AccountPart) {
+    let balance = (part != AccountPart::Status).then(|| balance_text(ui, st)).flatten();
+    let w = account_part_width(ui, p, st, part) - PAD * 2.0;
     let rect = Rect::from_min_size(Pos2::new(island.left() + PAD, island.center().y - SLOT / 2.0), Vec2::new(w, SLOT));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 4.0 + DISC / 2.0, rect.center().y), Vec2::splat(DISC));
     // the picture and its status: one target; the balance: another
-    let status_rect = if balance.is_some() {
+    let status_rect = if part == AccountPart::Balance {
+        Rect::from_min_size(rect.min, Vec2::ZERO)
+    } else if balance.is_some() {
         Rect::from_min_max(rect.min, Pos2::new(disc.right() + 3.0, rect.bottom()))
     } else {
         rect
     };
     let money_rect = Rect::from_min_max(Pos2::new(status_rect.right(), rect.top()), rect.max);
-    let status = ui.interact(status_rect, Id::unique("bars_island_status"), Sense::click());
+    let status = (part != AccountPart::Balance).then(|| ui.interact(status_rect, Id::unique("bars_island_status"), Sense::click()));
     let money = balance
         .is_some()
         .then(|| ui.interact(money_rect, Id::unique("bars_island_balance"), Sense::click()));
     let money_hovered = money.as_ref().is_some_and(egui::Response::hovered);
-    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&status));
-    slot_face(ui, p, rect, status.hovered() || money_hovered || open, false);
-    crate::ui::widgets::avatar_disc(ui, p, disc, st.own_pic, st.own_name, false);
-    // the status dot on the picture's lower right, ringed with the island
-    let dot = disc.right_bottom() - Vec2::splat(3.5);
-    let col = status_color(p, &st.status);
-    ui.painter().circle_filled(dot, 4.5, p.bar);
-    crate::ui::presence::paint_mark(ui.painter(), dot, 3.0, status_shape(&st.status), col, p.bar);
+    let open = status
+        .as_ref()
+        .is_some_and(|status| egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(status)));
+    slot_face(
+        ui,
+        p,
+        rect,
+        status.as_ref().is_some_and(egui::Response::hovered) || money_hovered || open,
+        false,
+    );
+    if status.is_some() {
+        crate::ui::widgets::avatar_disc(ui, p, disc, st.own_pic, st.own_name, false);
+        // the status dot on the picture's lower right, ringed with the island
+        let dot = disc.right_bottom() - Vec2::splat(3.5);
+        let col = status_color(p, &st.status);
+        ui.painter().circle_filled(dot, 4.5, p.bar);
+        crate::ui::presence::paint_mark(ui.painter(), dot, 3.0, status_shape(&st.status), col, p.bar);
+    }
     if let Some((text, width)) = balance {
+        let left = if part == AccountPart::Balance {
+            rect.left() + SLOT_PAD
+        } else {
+            disc.right() + 6.0
+        };
         let font = balance_font(ui);
-        let left = Pos2::new(disc.right() + 6.0, rect.center().y);
+        let left = Pos2::new(left, rect.center().y);
         crate::ui::balance_gains::paint_number(ui.painter(), &text, &font, left, st.balance_ink);
         let anchor = crate::ui::balance_gains::Anchor {
             right: left.x + width,
@@ -486,16 +564,29 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
             *action = BarAction::BuyCurrency;
         }
     }
-    menu::context_menu_of_button(&status, p, |ui| super::balance_menu(ui, p, st, action));
+    if let Some(status) = &status {
+        menu::context_menu_of_button(status, p, |ui| {
+            if part == AccountPart::Status {
+                super::status_menu(ui, p, st.status, action);
+                crate::ui::toolbar::native_context::fallback(ui, p);
+            } else {
+                super::balance_menu(ui, p, st, action);
+            }
+        });
+    }
     // the demo cannot right-click: the same menu under the island
     let ctx = ui.ctx().clone();
-    if super::demo::get().open == Some(super::demo::Open::Account) && ctx.cumulative_frame_nr() >= 300 {
+    if part != AccountPart::Status
+        && super::demo::get().open == Some(super::demo::Open::Account)
+        && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 300
+    {
         let id = Id::unique("bars_account_demo_menu");
         let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         let at = Pos2::new(rect.left(), island.bottom() + MARGIN);
         menu::popup_at(&ctx, id, at, &mut open, p, |ui| super::balance_menu(ui, p, st, action));
         ctx.data_mut(|d| d.insert_temp(id, open));
     }
+    let Some(status) = status else { return };
     demo_open(ui.ctx(), &status, super::demo::Open::Status);
     menu::dropdown_placed(
         &status,
@@ -535,7 +626,7 @@ const NET_W: f32 = 36.0;
 
 /// What the system island shows, left to right.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Item {
+pub(super) enum Item {
     Clock,
     Ping,
     Fps,
@@ -543,6 +634,9 @@ enum Item {
     Net,
     /// Media, music and volume.
     Media,
+    MediaButton,
+    Music,
+    Volume,
 }
 
 /// The items shown, in their order, as the island's right click (and
@@ -573,15 +667,31 @@ fn item_width(ui: &egui::Ui, texts: &Readouts, item: Item) -> f32 {
         Item::Fps => readout_width(held_width(ui, Id::unique(("bars_readout", item)), &texts.fps, READOUT)),
         Item::Net => readout_width(NET_W),
         Item::Media => AUDIO_W,
+        Item::MediaButton | Item::Music | Item::Volume => SLOT,
     }
 }
 
 /// The island's width: its items 2 px apart, no hole where one is hidden.
-fn system_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
+pub(super) fn system_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
     let texts = readouts(st);
     let items = items(st);
     let slots: f32 = items.iter().map(|item| item_width(ui, &texts, *item)).sum();
     PAD + slots + GAP * items.len().saturating_sub(1) as f32 + PAD
+}
+
+pub(super) fn system_part_width(ui: &egui::Ui, st: &StatusInfo, item: Item) -> f32 {
+    let shown = match item {
+        Item::Clock => st.system_island.clock,
+        Item::Ping => st.system_island.ping,
+        Item::Fps => st.system_island.fps,
+        Item::Net => st.net_stats,
+        Item::Media | Item::MediaButton | Item::Music | Item::Volume => st.system_island.media,
+    };
+    if shown {
+        PAD * 2.0 + item_width(ui, &readouts(st), item)
+    } else {
+        0.0
+    }
 }
 
 /// The frame rate's colour: teal from 50 images a second, amber from 25.
@@ -616,7 +726,7 @@ pub(super) fn loss_color(p: &Palette, loss: f32) -> Color32 {
 /// controls' action and whether the pointer is over the readouts (the
 /// detailed tooltip, `system_tip`).
 #[allow(clippy::too_many_arguments)]
-fn system(
+pub(super) fn system(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
@@ -628,16 +738,34 @@ fn system(
     island: Rect,
     action: &mut BarAction,
 ) -> (crate::ui::audio::AudioAction, bool) {
+    system_parts(ui, p, icons, panels, st, audio, audio_ui, media, island, action, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn system_parts(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    panels: &mut Panels,
+    st: &StatusInfo,
+    audio: &mut crate::settings::AudioSettings,
+    audio_ui: &mut crate::ui::audio::AudioUi,
+    media: crate::ui::audio::MediaState,
+    island: Rect,
+    action: &mut BarAction,
+    only: Option<Item>,
+) -> (crate::ui::audio::AudioAction, bool) {
     const SIZE: f32 = READOUT;
     let top = island.center().y - SLOT / 2.0;
     // under the readouts, for the right click
-    let back = ui.interact(island, Id::unique("bars_island_system_back"), Sense::click());
+    let id = Id::unique("bars_island_system_back");
+    let back = ui.interact(island, only.map_or(id, |item| id.with(item)), Sense::click());
     let texts = readouts(st);
     let mut audio_action = crate::ui::audio::AudioAction::None;
     let mut readouts_zone = Rect::NOTHING;
     let mut fps_hovered = false;
     let mut x = island.left() + PAD;
-    for item in items(st) {
+    for item in only.map_or_else(|| items(st), |item| vec![item]) {
         let w = item_width(ui, &texts, item);
         let rect = Rect::from_min_size(Pos2::new(x, top), Vec2::new(w, SLOT));
         x = rect.right() + GAP;
@@ -690,9 +818,11 @@ fn system(
                 );
                 if fps.clicked() {
                     crate::ui::perf::place_under(ui.ctx(), island);
-                    panels.perf = !panels.perf;
+                    crate::ui::widgets::toggle_floater(ui.ctx(), "perf", &mut panels.perf);
                 }
-                super::graphics::hover(&fps, p, st, action);
+                if ui.is_enabled() {
+                    super::graphics::hover(&fps, p, st, action);
+                }
                 fps_hovered = fps.hovered();
                 // FPS has its own interactive hover card. The neighbouring
                 // clock and network readouts retain the detailed system tip.
@@ -714,6 +844,21 @@ fn system(
                 audio_action = crate::ui::audio::top_controls(&mut child, p, icons, audio, audio_ui, media, Vec2::splat(SLOT));
                 continue;
             }
+            Item::MediaButton | Item::Music | Item::Volume => {
+                use crate::ui::audio::TopControl;
+                let control = match item {
+                    Item::MediaButton => TopControl::Media,
+                    Item::Music => TopControl::Music,
+                    _ => TopControl::Volume,
+                };
+                let mut child = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(rect)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                audio_action = crate::ui::audio::top_control(&mut child, p, icons, audio, audio_ui, media, Vec2::splat(SLOT), control);
+                continue;
+            }
         }
         readouts_zone = readouts_zone.union(rect);
     }
@@ -725,7 +870,10 @@ fn system(
         .is_some_and(|pos| !back.secondary_clicked() && island.contains(pos) && ctx.layer_id_at(pos) == Some(ui.layer_id()));
     menu::context_menu_also(&back, p, on_button, |ui| system_menu(ui, p, panels, st, island, action));
     // the demo cannot right-click: the same menu where the pointer would be
-    if super::demo::get().open == Some(super::demo::Open::System) && ctx.cumulative_frame_nr() >= 300 {
+    if only.is_none_or(|item| item == Item::Clock)
+        && super::demo::get().open == Some(super::demo::Open::System)
+        && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 300
+    {
         let id = Id::unique("bars_system_demo_menu");
         let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         // under the island at its right end, as the mockup draws it
@@ -736,7 +884,7 @@ fn system(
     // the demo cannot click: Performance opened from the island at frame
     // 300, by its frame rate or its network
     let demo = super::demo::get().perf;
-    if demo.is_some() && ctx.cumulative_frame_nr() == 300 && !panels.perf {
+    if demo.is_some() && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 && !panels.perf {
         crate::ui::perf::place_under(&ctx, island);
         if demo == Some(super::demo::Perf::Network) {
             *action = BarAction::NetworkGraph;
@@ -781,32 +929,19 @@ fn traffic(ui: &mut egui::Ui, p: &Palette, icons: &Icons, st: &StatusInfo, rect:
 /// menu, menu_hide_navbar.xml, the last item shown staying), hiding the
 /// interface, the bars' buttons.
 fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, island: Rect, action: &mut BarAction) {
-    use crate::camera::CameraPreset;
-    menu::submenu(ui, p, "photo-filled", aurora_i18n::tr!("ui-bars-graphics-presets"), true, |ui| {
-        super::graphics::choices(ui, p, st, action);
-        if menu::item(ui, p, "gauge-filled", aurora_i18n::tr!("ui-bars-performance-window")) {
-            crate::ui::perf::place_under(ui.ctx(), island);
-            crate::ui::widgets::open_floater(ui.ctx(), "perf", &mut panels.perf);
+    // Split controls expose their own functional properties; the old aggregate's
+    // cross-field visibility choices belong to interface customization instead.
+    if let Some(target) = crate::ui::toolbar::native_context::target(ui.ctx())
+        && target != "bar_system"
+    {
+        match target.as_str() {
+            "bar_fps" => graphics_menu(ui, p, panels, st, island, action),
+            "bar_clock" => clock_menu(ui, p, st, action),
+            _ => {}
         }
-        if menu::item(ui, p, "chart-area-line-filled", aurora_i18n::tr!("ui-bars-network-window")) {
-            crate::ui::perf::place_under(ui.ctx(), island);
-            *action = BarAction::NetworkGraph;
-        }
-    });
-    menu::submenu(ui, p, "camera-filled", aurora_i18n::tr!("ui-bars-camera-presets"), true, |ui| {
-        for preset in CameraPreset::ALL.into_iter().filter(|c| *c != CameraPreset::Custom) {
-            if menu::check(ui, p, "camera-filled", preset.label(), st.camera_preset == preset, true) {
-                *action = BarAction::CameraPreset(preset);
-            }
-        }
-        menu::separator(ui, p);
-        if menu::item(ui, p, "video-filled", aurora_i18n::tr!("ui-bars-camera-controls")) {
-            *action = BarAction::Controls {
-                movement: false,
-                toggle: false,
-            };
-        }
-    });
+        return;
+    }
+    graphics_menu(ui, p, panels, st, island, action);
     menu::separator(ui, p);
     menu::section(ui, p, aurora_i18n::tr!("ui-bars-show-in-island"));
     let s = st.system_island;
@@ -843,36 +978,8 @@ fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusI
         if menu::check(ui, p, icon, label, on, can(on)) {
             *action = BarAction::SystemIsland(next);
         }
-        // the clock's seconds, under the clock
-        if icon == "clock-filled"
-            && menu::check(
-                ui,
-                p,
-                "stopwatch",
-                aurora_i18n::tr!("ui-bars-clock-seconds"),
-                s.clock_seconds,
-                s.clock,
-            )
-        {
-            *action = BarAction::SystemIsland(crate::settings::SystemIsland {
-                clock_seconds: !s.clock_seconds,
-                ..s
-            });
-        }
-        // and its 12 / 24 hours (Preferences › Layout too)
         if icon == "clock-filled" {
-            use crate::settings::ClockFormat;
-            menu::submenu(ui, p, "clock-filled", aurora_i18n::tr!("ui-bars-clock-format"), s.clock, |ui| {
-                for (format, label) in [
-                    (ClockFormat::Auto, aurora_i18n::tr!("ui-options-clock-format-auto")),
-                    (ClockFormat::H12, aurora_i18n::tr!("ui-options-clock-format-12")),
-                    (ClockFormat::H24, aurora_i18n::tr!("ui-options-clock-format-24")),
-                ] {
-                    if menu::check(ui, p, "clock-filled", label, s.clock_format == format, true) {
-                        *action = BarAction::SystemIsland(crate::settings::SystemIsland { clock_format: format, ..s });
-                    }
-                }
-            });
+            clock_menu(ui, p, st, action);
         }
     }
     if menu::check(
@@ -892,9 +999,65 @@ fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusI
     if super::immersive_item(ui, p) {
         *action = BarAction::ToggleImmersive;
     }
-    if menu::item(ui, p, "layout-bottombar-filled", aurora_i18n::tr!("ui-bars-customize-bars")) {
-        *action = BarAction::CustomizeBars;
+    crate::ui::toolbar::native_context::fallback(ui, p);
+}
+
+fn graphics_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, island: Rect, action: &mut BarAction) {
+    use crate::camera::CameraPreset;
+    menu::submenu(ui, p, "photo-filled", aurora_i18n::tr!("ui-bars-graphics-presets"), true, |ui| {
+        super::graphics::choices(ui, p, st, action);
+        if menu::item(ui, p, "gauge-filled", aurora_i18n::tr!("ui-bars-performance-window")) {
+            crate::ui::perf::place_under(ui.ctx(), island);
+            crate::ui::widgets::open_floater(ui.ctx(), "perf", &mut panels.perf);
+        }
+        if menu::item(ui, p, "chart-area-line-filled", aurora_i18n::tr!("ui-bars-network-window")) {
+            crate::ui::perf::place_under(ui.ctx(), island);
+            *action = BarAction::NetworkGraph;
+        }
+    });
+    menu::submenu(ui, p, "camera-filled", aurora_i18n::tr!("ui-bars-camera-presets"), true, |ui| {
+        for preset in CameraPreset::ALL.into_iter().filter(|c| *c != CameraPreset::Custom) {
+            if menu::check(ui, p, "camera-filled", preset.label(), st.camera_preset == preset, true) {
+                *action = BarAction::CameraPreset(preset);
+            }
+        }
+        menu::separator(ui, p);
+        if menu::item(ui, p, "video-filled", aurora_i18n::tr!("ui-bars-camera-controls")) {
+            *action = BarAction::Controls {
+                movement: false,
+                toggle: false,
+            };
+        }
+    });
+}
+
+fn clock_menu(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
+    use crate::settings::ClockFormat;
+    let s = st.system_island;
+    if menu::check(
+        ui,
+        p,
+        "stopwatch",
+        aurora_i18n::tr!("ui-bars-clock-seconds"),
+        s.clock_seconds,
+        s.clock,
+    ) {
+        *action = BarAction::SystemIsland(crate::settings::SystemIsland {
+            clock_seconds: !s.clock_seconds,
+            ..s
+        });
     }
+    menu::submenu(ui, p, "clock-filled", aurora_i18n::tr!("ui-bars-clock-format"), s.clock, |ui| {
+        for (format, label) in [
+            (ClockFormat::Auto, aurora_i18n::tr!("ui-options-clock-format-auto")),
+            (ClockFormat::H12, aurora_i18n::tr!("ui-options-clock-format-12")),
+            (ClockFormat::H24, aurora_i18n::tr!("ui-options-clock-format-24")),
+        ] {
+            if menu::check(ui, p, "clock-filled", label, s.clock_format == format, true) {
+                *action = BarAction::SystemIsland(crate::settings::SystemIsland { clock_format: format, ..s });
+            }
+        }
+    });
 }
 
 /// Width of the system island's detailed tooltip (the mockup's).
@@ -912,7 +1075,7 @@ const TIP_CURVE: f32 = 28.0;
 /// pointer goes down into it, whose network row opens Performance on its
 /// Network section; a menu or the volume panel closes it.
 #[allow(clippy::too_many_arguments)]
-fn system_tip(
+pub(super) fn system_tip(
     ctx: &egui::Context,
     p: &Palette,
     icons: &Icons,
@@ -929,7 +1092,12 @@ fn system_tip(
     // from the readouts down into the tooltip, over the 8 px between them
     let keep = was_open
         && ctx.memory(|m| m.area_rect(id)).is_some_and(|tip| {
-            let bridge = Rect::from_min_max(Pos2::new(tip.left(), island.center().y), Pos2::new(tip.right(), tip.top() + 1.0));
+            let edge = if tip.top() >= island.center().y {
+                tip.top() + 1.0
+            } else {
+                tip.bottom() - 1.0
+            };
+            let bridge = Rect::from_two_pos(Pos2::new(tip.left(), island.center().y), Pos2::new(tip.right(), edge));
             ctx.pointer_latest_pos()
                 .is_some_and(|pos| tip.contains(pos) || bridge.contains(pos))
         });
@@ -957,9 +1125,18 @@ fn system_tip(
     if !open {
         return;
     }
+    let wanted = ctx
+        .memory(|memory| memory.area_rect(id))
+        .map_or(TIP_ROW * 14.0 + TIP_CURVE, |rect| rect.height());
+    let (anchor_y, above, _) = crate::ui::widgets::popup_vertical(ctx.content_rect(), island, wanted, MARGIN);
     egui::Area::new(id)
         .order(egui::Order::Foreground)
-        .fixed_pos(Pos2::new(island.right() - TIP_W, island.bottom() + MARGIN))
+        .pivot(if above {
+            egui::Align2::RIGHT_BOTTOM
+        } else {
+            egui::Align2::RIGHT_TOP
+        })
+        .fixed_pos(Pos2::new(island.right(), anchor_y))
         .constrain(true)
         .fade_in(false)
         .show(ctx, |ui| {
@@ -1139,7 +1316,7 @@ fn rate_text(kbps: f32) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::{IslandsLook, StatusInfo};
     use super::*;
 
@@ -1155,7 +1332,7 @@ mod tests {
         assert_eq!(favorites_row_bottom(&ctx), None);
     }
 
-    fn status(stretch: bool, bug: bool) -> StatusInfo<'static> {
+    pub(crate) fn status(stretch: bool, bug: bool) -> StatusInfo<'static> {
         StatusInfo {
             location_hidden: false,
             show_bug_report: bug,
@@ -1282,6 +1459,11 @@ mod tests {
                     Default::default(),
                     &mut notif,
                     BellState::default(),
+                    &mut crate::ui::toolbar::ToolbarUi::default(),
+                    &crate::ui::toolbar::ToolbarSettings {
+                        top: vec![crate::ui::bars::top::button("location_bar", "map-pin-filled")],
+                        ..Default::default()
+                    },
                 );
             });
             out.textures_delta.clear();
@@ -1304,7 +1486,7 @@ mod tests {
         for width in [1280.0, 1536.0, 1920.0] {
             for bug in [true, false] {
                 for stretch in [true, false] {
-                    let (_, rect, _) = frames(width, stretch, bug, Pos2::new(700.0, 400.0));
+                    let (ctx, rect, _) = frames(width, stretch, bug, Pos2::new(700.0, 400.0));
                     let (menu, place, account, system, bell) = (rect("menu"), rect("place"), rect("account"), rect("system"), rect("bell"));
                     let case = format!("{width} bug {bug} stretch {stretch}");
                     assert_eq!((menu.left(), menu.top(), menu.height()), (MARGIN, MARGIN, HEIGHT), "{case}");
@@ -1320,7 +1502,12 @@ mod tests {
                     } else {
                         menu
                     };
-                    assert_eq!(place.left() - before_place.right(), MARGIN, "{case}");
+                    let top = ctx
+                        .data(|data| data.get_temp::<Rect>(Id::unique("custom_top_toolbar_rect")))
+                        .expect("top toolbar reserved");
+                    assert_eq!(top.left() - before_place.right(), MARGIN, "{case}");
+                    assert_eq!(top.width(), PAD * 2.0 + SLOT, "{case}");
+                    assert_eq!(place.left() - top.right(), MARGIN, "{case}");
                     let pairs = [(account, system), (system, bell)];
                     for (a, b) in pairs {
                         assert_eq!(b.left() - a.right(), MARGIN, "{case}: {a:?} {b:?}");
@@ -1438,6 +1625,8 @@ mod tests {
                             Default::default(),
                             &mut notif,
                             BellState::default(),
+                            &mut crate::ui::toolbar::ToolbarUi::default(),
+                            &crate::ui::toolbar::ToolbarSettings::default(),
                         );
                     });
                     out.textures_delta.clear();
@@ -1514,10 +1703,13 @@ mod tests {
                 Default::default(),
                 &mut notif,
                 BellState::default(),
+                &mut crate::ui::toolbar::ToolbarUi::default(),
+                &crate::ui::toolbar::ToolbarSettings::default(),
             )
             .0;
         });
         out.textures_delta.clear();
+        ctx.data_mut(|data| data.insert_temp(Id::unique("islands_test_shapes"), out.shapes));
         action
     }
 
@@ -1811,27 +2003,60 @@ mod tests {
         assert!(!super::super::graphics::is_open(&frames.ctx), "leaving closes the card");
     }
 
-    /// The bug button's right click copies the version, silently: no menu
-    /// opens, the left click still reports a bug.
+    /// Reporting stays on the left click; the right click offers version copying.
     #[test]
-    fn the_bug_button_right_click_copies_the_version() {
+    fn the_bug_button_right_click_opens_options_and_can_copy_the_version() {
         let ctx = egui::Context::default();
         let st = status(true, true);
         frame_at(&ctx, &st, 0.0, vec![]);
         frame_at(&ctx, &st, 0.1, vec![]);
         let bug = ctx
             .memory(|m| m.area_rect(Id::unique(("bars_island", "bug"))))
-            .expect("the bug island")
+            .expect("bug island")
             .center();
         frame_at(&ctx, &st, 0.2, vec![egui::Event::PointerMoved(bug)]);
         frame_at(&ctx, &st, 0.25, vec![press(bug, egui::PointerButton::Secondary, true)]);
         let action = frame_at(&ctx, &st, 0.3, vec![press(bug, egui::PointerButton::Secondary, false)]);
-        assert!(matches!(action, BarAction::CopyVersion), "the right click copies the version");
+        assert!(matches!(action, BarAction::None), "right click only opens its menu");
         frame_at(&ctx, &st, 0.35, vec![]);
-        assert!(!egui::Popup::is_any_open(&ctx), "and opens no menu");
-        frame_at(&ctx, &st, 0.4, vec![press(bug, egui::PointerButton::Primary, true)]);
-        let action = frame_at(&ctx, &st, 0.45, vec![press(bug, egui::PointerButton::Primary, false)]);
-        assert!(matches!(action, BarAction::ReportBug), "the left click reports a bug");
+        assert!(egui::Popup::is_any_open(&ctx));
+        fn text(shape: &egui::Shape, label: &str) -> Option<Rect> {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text() == label => Some(Rect::from_min_size(text.pos, text.galley.size())),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| text(shape, label)),
+                _ => None,
+            }
+        }
+        let shapes = ctx
+            .data(|data| data.get_temp::<Vec<egui::epaint::ClippedShape>>(Id::unique("islands_test_shapes")))
+            .expect("menu shapes");
+        let copy = shapes
+            .iter()
+            .find_map(|shape| text(&shape.shape, aurora_i18n::tr!("bug-copy-version")))
+            .expect("version action")
+            .center();
+        assert!(
+            shapes
+                .iter()
+                .any(|shape| text(&shape.shape, aurora_i18n::tr!("toolbar-interface-edit")).is_some())
+        );
+        frame_at(
+            &ctx,
+            &st,
+            0.4,
+            vec![egui::Event::PointerMoved(copy), press(copy, egui::PointerButton::Primary, true)],
+        );
+        let action = frame_at(&ctx, &st, 0.45, vec![press(copy, egui::PointerButton::Primary, false)]);
+        assert!(matches!(action, BarAction::CopyVersion));
+        frame_at(&ctx, &st, 0.5, vec![]);
+        frame_at(
+            &ctx,
+            &st,
+            0.55,
+            vec![egui::Event::PointerMoved(bug), press(bug, egui::PointerButton::Primary, true)],
+        );
+        let action = frame_at(&ctx, &st, 0.6, vec![press(bug, egui::PointerButton::Primary, false)]);
+        assert!(matches!(action, BarAction::ReportBug));
     }
 
     /// The home button's right click offers Set Home to Here (instead of the
@@ -1883,6 +2108,8 @@ mod tests {
                         Default::default(),
                         &mut crate::ui::notifications::NotifUi::default(),
                         BellState::default(),
+                        &mut crate::ui::toolbar::ToolbarUi::default(),
+                        &crate::ui::toolbar::ToolbarSettings::default(),
                     );
                 });
                 out.textures_delta.clear();
@@ -1936,6 +2163,7 @@ mod tests {
             adapters: Vec::new(),
             notice: None,
             vulkan: None,
+            ray_tracing: Default::default(),
         };
         let input = egui::RawInput {
             screen_rect: Some(screen),
@@ -1956,6 +2184,8 @@ mod tests {
                 Default::default(),
                 &mut notif,
                 BellState::default(),
+                &mut crate::ui::toolbar::ToolbarUi::default(),
+                &crate::ui::toolbar::ToolbarSettings::default(),
             );
             crate::ui::layout::set_work_area(ui.ctx(), work_area(screen, screen.bottom() - 60.0));
             let view = crate::ui::perf::PerfView { data: &data, gpu: &gpu };
@@ -2122,6 +2352,8 @@ mod tests {
         let mut audio = settings.audio.clone();
         let mut audio_ui = crate::ui::audio::AudioUi::default();
         let mut notif = crate::ui::notifications::NotifUi::default();
+        let mut toolbar = crate::ui::toolbar::ToolbarUi::default();
+        let toolbar_settings = crate::ui::toolbar::ToolbarSettings::default();
         let hidden = "http://maps.secondlife.com/secondlife/(Hidden region)".to_owned();
         let mut st = status(false, false);
         st.classic_bars = true;
@@ -2151,6 +2383,8 @@ mod tests {
                     Default::default(),
                     &mut notif,
                     BellState::default(),
+                    &mut toolbar,
+                    &toolbar_settings,
                 );
             });
             out.textures_delta.clear();

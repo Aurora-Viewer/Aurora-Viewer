@@ -94,7 +94,12 @@ impl PlaceFacts {
         let map_shown = !world.rlva.has("showworldmap");
         let nearby_shown = !world.rlva.has("shownearby");
         let sim = world.map.sims.get(&key).filter(|_| map_shown);
-        let size = sim.map_or(256.0, |s| s.size_x.max(1) as f32);
+        let (size_x, size_y) = region_size(
+            main.and_then(|handle| world.regions.get(&handle))
+                .map(|region| (region.heightmap.size_x, region.heightmap.size_y)),
+            sim.map(|sim| (sim.size_x, sim.size_y)),
+        );
+        let (cells_x, cells_y) = super::map_tiles::region_cells(size_x, size_y);
         facts.maturity = match main.and_then(|h| world.regions.get(&h)).and_then(|r| r.info.as_ref()) {
             Some(info) => super::bars::maturity_name(info.sim_access),
             None => sim.map_or("", |s| super::bars::maturity_name(s.access)),
@@ -112,11 +117,46 @@ impl PlaceFacts {
             _ => None,
         };
         if map_shown {
-            facts.tile = tiles.get(1, key.0, key.1, true).ok();
-            facts.pin = position.map(|pos| (pos.x / size, pos.y / size));
+            facts.tile = tiles.region_picture(key.0, key.1, cells_x, cells_y).ok();
+            facts.pin = position.map(|pos| super::map_tiles::region_pin(pos.x, pos.y, size_x as f32, size_y as f32));
         }
         facts
     }
+}
+
+/// The region's size for its picture and pin: the larger of the heightmap's
+/// (once there) and the map block's, so a region the heightmap still has at
+/// its first 256 m does not show its south-west tile first; 256 m when
+/// neither is known, at most `world::MAX_REGION_SIZE` a side.
+fn region_size(heightmap: Option<(u32, u32)>, map: Option<(u32, u32)>) -> (u32, u32) {
+    let (x, y) = match (heightmap, map) {
+        (Some(h), Some(m)) => (h.0.max(m.0), h.1.max(m.1)),
+        (one, other) => one.or(other).unwrap_or((256, 256)),
+    };
+    let most = crate::world::MAX_REGION_SIZE;
+    (x.clamp(256, most), y.clamp(256, most))
+}
+
+/// The loading screen's map frame for a `w` x `h` region picture: as large
+/// as a `side` square, in the picture's shape up to 2:1 (a var region wider
+/// than it is deep keeps its proportions); a longer one is cut in its middle
+/// (`sheet::cover_uv`). Returns the frame's size and the part shown.
+fn map_frame(w: usize, h: usize, side: f32) -> (Vec2, Rect) {
+    let aspect = (w.max(1) as f32 / h.max(1) as f32).clamp(0.5, 2.0);
+    let size = Vec2::new(side * aspect.sqrt(), side / aspect.sqrt());
+    (size, super::sheet::cover_uv(w, h, size))
+}
+
+/// Where the arrival pin (0..1 from the south-west corner) falls in `rect`,
+/// which shows the `uv` part of the picture; `None` when it is cut away.
+fn pin_at(rect: Rect, uv: Rect, (x, y): (f32, f32)) -> Option<Pos2> {
+    let (u, t) = (x.clamp(0.0, 1.0), 1.0 - y.clamp(0.0, 1.0));
+    (uv.x_range().contains(u) && uv.y_range().contains(t)).then(|| {
+        Pos2::new(
+            rect.left() + (u - uv.min.x) / uv.width() * rect.width(),
+            rect.top() + (t - uv.min.y) / uv.height() * rect.height(),
+        )
+    })
 }
 
 /// Split a teleport destination "Region (x, y, z)" into the region and the
@@ -357,26 +397,21 @@ fn banner(
     let base = track.top() - margin * 0.8;
     let mut right = screen.right() - margin;
     if let Some(tile) = place.tile {
-        let side = 132.0 * k;
-        let rect = Rect::from_min_size(Pos2::new(right - side, base - side), Vec2::splat(side));
+        let [w, h] = tile.size();
+        let (size, uv) = map_frame(w, h, 132.0 * k);
+        let rect = Rect::from_min_size(Pos2::new(right - size.x, base - size.y), size);
         let mut shadow = ctx.global_style().visuals.window_shadow;
         shadow.color = shadow.color.gamma_multiply(a);
         painter.add(shadow.as_shape(rect, radius));
-        painter.add(
-            egui::epaint::RectShape::filled(rect, radius, super::widgets::PICTURE_TINT.gamma_multiply(a))
-                .with_texture(tile.id(), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0))),
-        );
+        painter
+            .add(egui::epaint::RectShape::filled(rect, radius, super::widgets::PICTURE_TINT.gamma_multiply(a)).with_texture(tile.id(), uv));
         painter.rect_stroke(
             rect,
             radius,
             egui::Stroke::new(1.0, p.ink.gamma_multiply(0.28 * a)),
             egui::StrokeKind::Inside,
         );
-        if let Some((x, y)) = place.pin {
-            let at = Pos2::new(
-                rect.left() + rect.width() * x.clamp(0.0, 1.0),
-                rect.bottom() - rect.height() * y.clamp(0.0, 1.0),
-            );
+        if let Some(at) = place.pin.and_then(|pin| pin_at(rect, uv, pin)) {
             let pulse = 0.6 + 0.4 * (t * 2.4).sin().abs();
             super::aurora_bg::radial_glow(&painter.with_clip_rect(rect), at, 16.0 * k, p.violet_light, 0.7 * pulse * a);
             painter.circle_filled(at, 3.5 * k, p.ink.gamma_multiply(a));
@@ -567,7 +602,7 @@ pub fn teleport_overlay(
     // that frame between the loading screen and its fade out.
     let painter = ctx.layer_painter(layer).with_clip_rect(rect);
     if !backdrop.is_some_and(|b| b.paint(&painter, p, rect, a)) {
-        super::aurora_bg::paint(&painter, p, rect, t, a);
+        super::aurora_bg::paint(&painter, p, rect, t, a, super::aurora_bg::snow::amount(ctx));
     }
     let corner = banner(ctx, &painter, p, rect, logo, title, dest, detail, fraction, place, t, a);
     ctx.request_repaint();
@@ -767,5 +802,48 @@ mod tests {
         assert!(facts.tile.is_none() && facts.pin.is_none(), "@showworldmap");
         assert!(facts.residents.is_some(), "the residents around are not the map's");
         assert_eq!(banner_place(&world, ""), (here, None));
+    }
+
+    /// A var region's picture keeps its shape on the loading screen: a
+    /// 512 x 256 m region is drawn twice as wide as deep, whole, and its
+    /// pin lands where the arrival point is.
+    #[test]
+    fn the_loading_map_keeps_the_region_shape() {
+        let (size, uv) = map_frame(512, 256, 132.0);
+        assert!((size.x / size.y - 2.0).abs() < 1e-3, "{size:?}");
+        assert!((size.x * size.y - 132.0 * 132.0).abs() < 1.0, "the same area as the square");
+        assert_eq!(uv, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)));
+        let rect = Rect::from_min_size(Pos2::ZERO, size);
+        let at = pin_at(rect, uv, super::super::map_tiles::region_pin(384.0, 64.0, 512.0, 256.0)).expect("on the picture");
+        assert!((at.x - size.x * 0.75).abs() < 1e-3 && (at.y - size.y * 0.75).abs() < 1e-3, "{at:?}");
+        // a square region is the square of before
+        let (size, _) = map_frame(256, 256, 132.0);
+        assert_eq!(size, Vec2::splat(132.0));
+        // past 2:1 the middle is shown and a pin near the cut edge is hidden
+        let (size, uv) = map_frame(1024, 256, 132.0);
+        assert!((size.x / size.y - 2.0).abs() < 1e-3);
+        assert!((uv.min.x - 0.25).abs() < 1e-3 && (uv.max.x - 0.75).abs() < 1e-3, "{uv:?}");
+        let rect = Rect::from_min_size(Pos2::ZERO, size);
+        assert!(pin_at(rect, uv, (0.1, 0.5)).is_none());
+        assert!(pin_at(rect, uv, (0.5, 0.5)).is_some());
+    }
+
+    /// A region's size is the larger of the heightmap's and the map
+    /// block's, within 256 m and the largest region.
+    #[test]
+    fn the_region_size_takes_the_larger_and_stays_in_bounds() {
+        assert_eq!(
+            region_size(Some((256, 256)), Some((512, 256))),
+            (512, 256),
+            "heightmap not grown yet"
+        );
+        assert_eq!(region_size(Some((1024, 512)), None), (1024, 512));
+        assert_eq!(region_size(None, Some((512, 768))), (512, 768));
+        assert_eq!(region_size(None, None), (256, 256));
+        assert_eq!(
+            region_size(None, Some((65520, 0))),
+            (4096, 256),
+            "a map block's size past any region"
+        );
     }
 }

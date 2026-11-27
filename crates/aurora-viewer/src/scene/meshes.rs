@@ -340,6 +340,17 @@ pub struct MeshStreamer {
 }
 
 impl MeshStreamer {
+    /// At exit: lets go of the loaded meshes without freeing them, as the
+    /// system takes the memory back when the process ends (`ObjectStore::
+    /// leak_at_exit`; the mesh data were most of the 29-34 s of #2894 and
+    /// #3134). The entries save nothing when dropped: the cache files are
+    /// written as the meshes arrive.
+    pub(crate) fn leak_at_exit(&mut self) {
+        std::mem::forget(std::mem::take(&mut self.entries));
+        std::mem::forget(std::mem::take(&mut self.by_key));
+        self.todo.clear();
+    }
+
     /// `cache_dir` empty: no disk cache (tests, which run in the crate's
     /// folder: a relative `mesh/` wrote cache files among the sources).
     pub fn new(cache_dir: PathBuf) -> Self {

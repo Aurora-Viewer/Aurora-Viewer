@@ -27,7 +27,17 @@ function Get-TaskSlug([string]$Name) {
 # A build or a viewer is running from $Dir: compiler command lines name
 # their output folder, the viewer runs from its own exe.
 function Test-InUse([string]$Dir) {
-    $full = [IO.Path]::GetFullPath($Dir).TrimEnd('\') + '\'
+    $sep = [IO.Path]::DirectorySeparatorChar
+    $full = [IO.Path]::GetFullPath($Dir).TrimEnd($sep) + $sep
+    if ($IsLinux) {
+        # no CIM here. A cargo that has not started rustc yet names no folder
+        # on its command line, but it runs from one.
+        return [bool](Get-Process cargo, rustc, clippy-driver, aurora-viewer -ErrorAction SilentlyContinue | Where-Object {
+            $cwd = (Get-Item -LiteralPath "/proc/$($_.Id)/cwd" -Force -ErrorAction SilentlyContinue).LinkTarget
+            ($_.Path -and $_.Path.StartsWith($full)) -or ($_.CommandLine -and $_.CommandLine.Contains($full)) -or
+            ($cwd -and "$($cwd.TrimEnd($sep))$sep".StartsWith($full))
+        })
+    }
     $procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue -Filter (
         "Name='cargo.exe' OR Name='rustc.exe' OR Name='clippy-driver.exe' OR Name='aurora-viewer.exe'")
     [bool]($procs | Where-Object {
@@ -45,6 +55,43 @@ function Get-IncrementalDirs([string]$Target) {
     Get-ChildItem -LiteralPath $Target -Directory -Force -ErrorAction SilentlyContinue |
         ForEach-Object { Join-Path $_.FullName 'incremental' } |
         Where-Object { Test-Path -LiteralPath $_ -PathType Container }
+}
+
+# The file new-task.ps1 leaves in a target\ before it frees its incremental
+# caches: its date is the last build, which the trim would otherwise erase.
+$LastBuildMarker = 'aurora-last-build'
+
+# When Cargo last built into the target directory $Target, or $null when
+# nothing tells. Cargo 1.100 keeps no deps\ folder any more (its artefacts
+# are in build\<crate>\<hash>\): incremental\ was the only date left, and
+# once new-task.ps1 freed it the next run took the task for infinitely idle
+# and deleted its whole target\. So the date is the newest of, per profile
+# folder (debug, ci, release…): deps\ and .fingerprint\ (older Cargo),
+# incremental\, build\ and its per-crate folders, the files Cargo puts in the
+# profile folder itself (exe, .d, .pdb); and the marker above.
+function Get-LastBuildTime([string]$Target) {
+    if (-not (Test-Path -LiteralPath $Target -PathType Container)) { return }
+    $dates = @(Get-Item -LiteralPath (Join-Path $Target $LastBuildMarker) -Force -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.LastWriteTime })
+    foreach ($prof in Get-ChildItem -LiteralPath $Target -Directory -Force -ErrorAction SilentlyContinue) {
+        foreach ($c in Get-ChildItem -LiteralPath $prof.FullName -Force -ErrorAction SilentlyContinue) {
+            if (-not $c.PSIsContainer) { $dates += $c.LastWriteTime; continue }
+            if ($c.Name -in 'deps', '.fingerprint', 'incremental') { $dates += $c.LastWriteTime }
+            if ($c.Name -eq 'build') {
+                $dates += $c.LastWriteTime
+                $dates += @(Get-ChildItem -LiteralPath $c.FullName -Directory -Force -ErrorAction SilentlyContinue |
+                        ForEach-Object { $_.LastWriteTime })
+            }
+        }
+    }
+    if ($dates) { ($dates | Sort-Object -Descending)[0] }
+}
+
+# Writes the marker of Get-LastBuildTime: $When, the last build of $Target.
+function Set-LastBuildMarker([string]$Target, [datetime]$When) {
+    $marker = Join-Path $Target $LastBuildMarker
+    [IO.File]::WriteAllText($marker, "Last Cargo build into this folder, kept by scripts/new-task.ps1.`n")
+    [IO.File]::SetLastWriteTime($marker, $When)
 }
 
 # --- Shared Cargo configuration: build gate and compiler cache -----------------
@@ -316,4 +363,128 @@ function Exit-BuildSlot([Threading.Mutex]$Slot) {
 function Invoke-Checked([string]$What, [scriptblock]$Command) {
     & $Command
     if ($LASTEXITCODE -ne 0) { throw "Failed: $What (code $LASTEXITCODE)." }
+}
+
+# owner/name of a GitHub remote URL (https or ssh), nothing for another host.
+function Get-GitHubSlug([string]$Url) {
+    if ($Url -and $Url.Trim() -match 'github\.com[:/](?<owner>[^/]+)/(?<name>[^/]+?)(\.git)?/?$') {
+        "$($Matches.owner)/$($Matches.name)"
+    }
+}
+
+# owner/name of the main repository on GitHub, the one that holds the PRs,
+# issues, project board and merge queue, or nothing. In a clone whose origin
+# is a personal fork, it is another remote: the one `gh repo set-default`
+# chose, else the one named upstream (as `gh repo fork --clone` names it);
+# otherwise origin. A remote that is not on GitHub is skipped. gh marks its
+# choice on a remote's gh-resolved: "base" when the chosen repository is that
+# remote, its owner/name when it is none of them (a fork clone with only
+# origin, where gh writes it on origin).
+function Get-MainRepo([string]$Dir) {
+    $remotes = @(git -C $Dir remote 2>$null)
+    $chosen = @()
+    foreach ($r in $remotes) {
+        $resolved = "$(git -C $Dir config "remote.$r.gh-resolved" 2>$null)".Trim()
+        if ($resolved -match '^[\w.-]+/[\w.-]+$') { return $resolved }
+        if ($resolved -eq 'base') { $chosen += $r }
+    }
+    foreach ($r in $chosen + @('upstream', 'origin')) {
+        if ($remotes -notcontains $r) { continue }
+        $slug = Get-GitHubSlug (git -C $Dir remote get-url $r 2>$null)
+        if ($slug) { return $slug }
+    }
+}
+
+# GitHub owners whose copy of the repository may hold the head of a task
+# branch's PR, surest first: the remotes the branch's settings push it to
+# (branch push remote, remote.pushDefault, a tracked branch of the same
+# name); else the remotes holding a ref of that name, left by a push or by
+# a fetch (a contributor's fork added for a review may hold a branch of the
+# same name: Get-BranchPr also checks the commits); else every GitHub
+# remote's owner. A task branch tracks origin/main from new-task.ps1, which
+# says nothing of where it was pushed.
+function Get-BranchHeadOwners([string]$Dir, [string]$Branch) {
+    $owners = @{}
+    foreach ($r in @(git -C $Dir remote 2>$null)) {
+        $slug = Get-GitHubSlug (git -C $Dir remote get-url --push $r 2>$null)
+        if ($slug) { $owners[$r] = $slug.Split('/')[0] }
+    }
+    $configured = @()
+    $configured += git -C $Dir config "branch.$Branch.pushRemote" 2>$null
+    $configured += git -C $Dir config remote.pushDefault 2>$null
+    if ((git -C $Dir config "branch.$Branch.merge" 2>$null) -eq "refs/heads/$Branch") {
+        $configured += git -C $Dir config "branch.$Branch.remote" 2>$null
+    }
+    $withRef = @()
+    foreach ($r in @($owners.Keys)) {
+        git -C $Dir show-ref --verify --quiet "refs/remotes/$r/$Branch" 2>$null
+        if ($LASTEXITCODE -eq 0) { $withRef += $r }
+    }
+    foreach ($remotes in @(, $configured) + @(, $withRef)) {
+        $known = @($remotes | Where-Object { $_ -and $owners.ContainsKey($_) } | ForEach-Object { $owners[$_] } | Select-Object -Unique)
+        if ($known) { return $known }
+    }
+    @($owners.Values | Select-Object -Unique)
+}
+
+# The newest of $Prs (gh pr list JSON, newest first) whose head is in the
+# repository of one of $Owners: another contributor's PR from a branch of
+# the same name (main, fix/...) is not ours. With $Tip, a commit of the
+# repository in $Dir, only a PR whose head holds it (Test-CommitIn).
+# The commit check is called here, not handed over as a script block: one
+# made with GetNewClosure() only finds the functions of the global scope,
+# not those a called script dot-sourced, so end-task.ps1 got "Test-CommitIn
+# is not recognized" and no PR, merged or not.
+function Select-BranchPr($Prs, [string[]]$Owners, [string]$Dir, [string]$Tip) {
+    foreach ($pr in $Prs) {
+        if (-not $pr.headRepositoryOwner -or $Owners -notcontains $pr.headRepositoryOwner.login) { continue }
+        if ($Tip -and -not (Test-CommitIn $Dir $Tip $pr.headRefOid)) { continue }
+        return $pr
+    }
+}
+
+# $Commit is $Head or one of its ancestors. False for a commit missing
+# here (a head pushed from elsewhere, not fetched): nothing is assumed.
+# A missing object is caught by `cat-file -e` first, which writes nothing:
+# merge-base would print "fatal: Not a valid commit name" on stderr, and a
+# caller under $ErrorActionPreference = 'Stop' (check.ps1's steps) turns that
+# into a terminating error in Windows PowerShell 5.1, `2>$null` or not. The
+# local 'Continue' covers whatever else git may print. No `<oid>^{commit}`:
+# when git is a .bat (depot_tools), cmd eats the `^`.
+function Test-CommitIn([string]$Dir, [string]$Commit, [string]$Head) {
+    if (-not $Commit -or -not $Head) { return $false }
+    $ErrorActionPreference = 'Continue'
+    foreach ($oid in $Commit, $Head) {
+        git -C $Dir cat-file -e $oid 2>$null
+        if ($LASTEXITCODE -ne 0) { return $false }
+    }
+    git -C $Dir merge-base --is-ancestor $Commit $Head 2>$null
+    $LASTEXITCODE -eq 0
+}
+
+# Number and state of the PR of a task branch, into the main repository
+# (Get-MainRepo), or nothing. The head may be on a fork (branches pushed to a
+# personal fork, PRs opened cross-repo): a bare `gh pr view <branch>` only
+# looks in the repository gh picks for the folder and, with a fork remote
+# and no `gh repo set-default`, finds nothing.
+# -AllCommits, before deleting anything: only a PR whose head holds every
+# commit of the local branch. A same-named branch of someone else does not,
+# nor does a PR merged before commits made since.
+function Get-BranchPr([string]$Dir, [string]$Branch, [switch]$AllCommits) {
+    if (-not $Branch) { return }
+    $Branch = $Branch.Trim()
+    $repo = Get-MainRepo $Dir
+    if (-not $repo) { return }
+    $json = gh pr list --repo $repo --head $Branch --state all --limit 30 --json number,state,headRepositoryOwner,headRefOid 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return }
+    # assigned before use: Windows PowerShell 5.1 hands a JSON array to the
+    # pipeline as one object
+    $prs = ($json -join "`n") | ConvertFrom-Json
+    if (-not $prs) { return }
+    $tip = $null
+    if ($AllCommits) {
+        $tip = git -C $Dir rev-parse --verify --quiet "refs/heads/$Branch" 2>$null
+        if (-not $tip) { return }
+    }
+    Select-BranchPr $prs (Get-BranchHeadOwners $Dir $Branch) $Dir $tip
 }

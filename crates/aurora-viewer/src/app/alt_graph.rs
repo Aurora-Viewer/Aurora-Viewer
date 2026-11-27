@@ -44,7 +44,71 @@ pub(super) fn keyboard_mods(mut mods: Mods, alt_graph: bool, text_owner: bool, c
     mods
 }
 
+/// Recover a Windows Ctrl+Alt character only when the layout changed the
+/// unmodified key, for a focused text field (`text_field`). Ordinary Ctrl+Alt
+/// keys and control characters stay keys, and so does a chord bound to a
+/// shortcut (`bound`): LLViewerWindow::handleKey (llviewerwindow.cpp) lets the
+/// character win only for the right Alt alone, and left Ctrl+Alt reaches the
+/// menu accelerators (German Ctrl+Alt+M gives µ, and runs the Movement
+/// Enhancer there). Ctrl+Alt+2 (@ on a German layout) is not bound.
+#[cfg(any(target_os = "windows", test))]
+fn ctrl_alt_character<'a>(
+    text: Option<&'a str>,
+    base: Option<&str>,
+    ctrl: bool,
+    alt: bool,
+    text_field: bool,
+    bound: bool,
+) -> Option<&'a str> {
+    text.filter(|text| {
+        text_field && !bound && ctrl && alt && Some(*text) != base && !text.is_empty() && text.chars().all(|c| !c.is_control())
+    })
+}
+
 impl App {
+    /// The character a Ctrl+Alt press types in the viewer's own window.
+    #[cfg(target_os = "windows")]
+    pub(super) fn ctrl_alt_text(&self, key: &KeyEvent) -> Option<String> {
+        if self.web_has_focus() || self.media.focus.is_some() {
+            return None;
+        }
+        // a focused text field, not any focused widget (a button reached with
+        // Tab, a list): only a text field takes the character
+        self.ctrl_alt_text_in(key, self.egui_ctx.text_edit_focused())
+    }
+
+    /// The character a Ctrl+Alt press types in the window it was pressed
+    /// in, whose text field has the keyboard when `text_field`: the viewer's
+    /// own window, or a window outside (`outside_ctrl_alt_text`).
+    #[cfg(target_os = "windows")]
+    pub(super) fn ctrl_alt_text_in(&self, key: &KeyEvent, text_field: bool) -> Option<String> {
+        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+        if key.state != ElementState::Pressed || self.options_ui.capture.is_some() {
+            return None;
+        }
+        let bound = match key.physical_key {
+            winit::keyboard::PhysicalKey::Code(code) => self
+                .settings
+                .keybinds
+                .triggered(
+                    &crate::keybinds::Input::key(crate::keybinds::binding_code(code, &key.logical_key)),
+                    self.key_mods(key),
+                )
+                .is_some(),
+            _ => false,
+        };
+        let base = key.key_without_modifiers();
+        ctrl_alt_character(
+            key.text_with_all_modifiers(),
+            base.to_text(),
+            self.ctrl,
+            self.alt,
+            text_field,
+            bound,
+        )
+        .map(str::to_owned)
+    }
+
     fn shortcut_text_owner(&self) -> bool {
         self.egui_ctx.egui_wants_keyboard_input() || self.web_has_focus() || self.media.focus.is_some()
     }
@@ -313,5 +377,27 @@ mod tests {
         );
         assert_eq!(keys.update_held_input(&mut down, &input, false, Mods::default()), None);
         assert!(down.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod ctrl_alt_text_tests {
+    use super::ctrl_alt_character;
+    #[test]
+    fn iso_ctrl_alt_text_recovers_layout_symbols_without_typing_shortcuts() {
+        // (text field focused, chord not bound)
+        let ch = |text, base, ctrl, alt| ctrl_alt_character(text, base, ctrl, alt, true, false);
+        assert_eq!(ch(Some("@"), Some("2"), true, true), Some("@"));
+        assert_eq!(ch(Some("€"), Some("e"), true, true), Some("€"));
+        assert_eq!(ch(Some("2"), Some("2"), true, true), None);
+        assert_eq!(ch(Some("\u{3}"), Some("c"), true, true), None);
+        assert_eq!(ch(Some("@"), Some("2"), true, false), None);
+        assert_eq!(ch(None, Some("2"), true, true), None);
+        // a focused widget that is not a text field (a button reached with
+        // Tab, a list) takes no character: the chord stays a key
+        assert_eq!(ctrl_alt_character(Some("@"), Some("2"), true, true, false, false), None);
+        // a chord bound to a shortcut runs it, as the Legacy Viewer's left
+        // Ctrl+Alt reaches its accelerators (German Ctrl+Alt+M: µ)
+        assert_eq!(ctrl_alt_character(Some("µ"), Some("m"), true, true, true, true), None);
     }
 }

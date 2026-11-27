@@ -560,10 +560,6 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         let picker = &mut tool.ui.picker;
         picker.required_permissions = super::texture::texture_drop::picker_permissions(world, &sel, target);
         picker.drop_permissions = rules::COPY | rules::TRANSFER;
-        picker.live_permissions = match target {
-            PickTarget::PbrMaterial => rules::FULL,
-            _ => rules::COPY | rules::TRANSFER,
-        };
         picker.owned_target = owned;
     }
     tool.ui.picker.prepare_material_preview(ctx, env.scene);
@@ -913,6 +909,152 @@ mod tests {
             one(tool);
             settle(&ctx, tool, world, env, 3.0);
             assert!(tool.ui.picker.open && !tool.ui.picker.tentative());
+        });
+    }
+
+    #[test]
+    fn a_click_under_a_tentative_picker_applies_the_item_and_enables_ok() {
+        // LLFloaterTexturePicker::onSelectionChange: a click on an inventory
+        // item ends the tentative state, applies the item when it may be
+        // previewed, and OK (draw: `!getTentative()`) takes it.
+        use crate::world::inventory::actions;
+        for owner_mask in [actions::FULL, actions::COPY | actions::MODIFY, actions::MODIFY | actions::TRANSFER] {
+            fixture(|world, tool, env, prims| {
+                let (root, item, asset) = (Uuid::from_u128(10), Uuid::from_u128(11), Uuid::from_u128(12));
+                world.inventory.root = root;
+                world.inventory.folders.insert(
+                    root,
+                    Folder {
+                        info: InvFolder {
+                            id: root,
+                            name: "Textures".into(),
+                            ..Default::default()
+                        },
+                        children: vec![],
+                        items: vec![item],
+                        state: FetchState::Fetched,
+                        library: false,
+                    },
+                );
+                world.inventory.items.insert(
+                    item,
+                    InvItem {
+                        id: item,
+                        parent: root,
+                        asset_id: asset,
+                        inv_type: 0,
+                        name: "A texture".into(),
+                        owner: world.agent_id,
+                        owner_mask,
+                        ..Default::default()
+                    },
+                );
+                for &idx in prims {
+                    let o = world.objects.get_mut(idx).unwrap();
+                    o.update_flags |= crate::ui::context::flags::OBJECT_YOU_OWNER;
+                    let object = o.full_id;
+                    tool.props.insert(
+                        object,
+                        aurora_net::build::ObjectProps {
+                            object_id: object,
+                            full: true,
+                            ..Default::default()
+                        },
+                    );
+                    tool.contents_ready(world, idx);
+                    tool.on_task_inventory(world, object, Some(1), Vec::new());
+                }
+                let ctx = egui::Context::default();
+                crate::theme::Theme::default().apply(&ctx, 1.0);
+                let before: Vec<_> = prims.iter().map(|&idx| texture(world, idx, 0)).collect();
+                let first = super::super::texture::selected(tool, world)[0].te.texture;
+                open_from_swatch(tool, PickTarget::Diffuse, first);
+                let positions = settle(&ctx, tool, world, env, 0.0);
+                assert!(tool.ui.picker.tentative(), "the faces differ");
+                click(&ctx, tool, world, env, 1.0, positions["A texture"]);
+                assert!(tool.ui.picker.open && !tool.ui.picker.tentative());
+                let copyable = owner_mask & actions::COPY != 0;
+                for (&idx, &texture_before) in prims.iter().zip(&before) {
+                    let expected = if copyable { asset } else { texture_before };
+                    assert_eq!(
+                        texture(world, idx, 0),
+                        expected,
+                        "mask {owner_mask:#x}: a click applies a copyable item"
+                    );
+                }
+                let positions = settle(&ctx, tool, world, env, 2.0);
+                assert!(
+                    !tool.ui.picker.tentative(),
+                    "mask {owner_mask:#x}: still a choice after the preview"
+                );
+                click(&ctx, tool, world, env, 3.0, positions[aurora_i18n::tr!("common-ok")]);
+                if copyable {
+                    assert!(!tool.ui.picker.open, "mask {owner_mask:#x}: OK takes the choice");
+                    for &idx in prims {
+                        assert_eq!(texture(world, idx, 0), asset);
+                    }
+                } else {
+                    // a no-copy item cannot go on several objects
+                    // (LLSelectMgr::selectionSetImage)
+                    for (&idx, &texture_before) in prims.iter().zip(&before) {
+                        assert_eq!(texture(world, idx, 0), texture_before);
+                    }
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn faces_picked_by_all_invert_or_a_face_button_under_the_open_picker_make_it_tentative() {
+        // The face buttons pick faces in every edit mode, and All / Invert
+        // pick many at once: under an open picker, the faces they bring in
+        // are compared like any other selection change, and OK waits for a
+        // choice once they differ (LLFloaterTexturePicker::draw).
+        use crate::build::{EditMode, Tool};
+        fixture(|world, tool, env, prims| {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            tool.open = true;
+            tool.tool = Tool::Edit;
+            let all_faces = |world: &World| -> Vec<Uuid> {
+                prims
+                    .iter()
+                    .flat_map(|&idx| world.objects.get(idx).unwrap().te.as_ref().unwrap().faces.iter().map(|f| f.texture))
+                    .collect()
+            };
+            let before = all_faces(world);
+            let selection = tool.selection.clone();
+            let mut time = 0.0;
+            type Pick = fn(&mut BuildTool, &mut World);
+            let picks: [(&str, Pick); 3] = [
+                ("all", |tool, world| tool.select_all_faces(world)),
+                ("invert", |tool, world| tool.invert_faces(world)),
+                ("face button with Ctrl+Shift", |tool, world| tool.pick_face_button(world, 0, true)),
+            ];
+            for mode in [EditMode::Move, EditMode::Face] {
+                for (name, pick) in picks {
+                    tool.edit_mode = mode;
+                    tool.selection = selection.clone();
+                    tool.selection_linked = false;
+                    // face 0 of the first prim alone; the second stays
+                    // selected with no face, as a face button leaves it
+                    tool.faces.clear();
+                    tool.faces.insert(selection[0], vec![0]);
+                    tool.faces.insert(selection[1], Vec::new());
+                    let first = super::super::texture::selected(tool, world)[0].te.texture;
+                    open_from_swatch(tool, PickTarget::Diffuse, first);
+                    settle(&ctx, tool, world, env, time);
+                    assert!(!tool.ui.picker.tentative(), "{name} in {mode:?}: one face is never tentative");
+                    pick(tool, world);
+                    let positions = settle(&ctx, tool, world, env, time + 1.0);
+                    assert!(tool.ui.picker.open && tool.ui.picker.tentative(), "{name} in {mode:?}");
+                    click(&ctx, tool, world, env, time + 2.0, positions[aurora_i18n::tr!("common-ok")]);
+                    assert!(tool.ui.picker.open, "{name} in {mode:?}: OK waits for a choice");
+                    assert_eq!(all_faces(world), before, "{name} in {mode:?}: no face took the first one's texture");
+                    tool.cancel_texture_picker(world, env);
+                    time += 3.0;
+                }
+            }
         });
     }
 
@@ -1665,10 +1807,11 @@ mod tests {
                 assert_eq!(texture(world, idx, 0), Uuid::from_u128(15));
                 set_texture(world, idx, 0, asset);
             }
-            // Like Firestorm, no-copy items require OK instead of a preview.
-            // A build picker previews only copy and transfer items; a
-            // no-transfer one is confirmed on objects the agent owns and
-            // does not sell, and its copy goes into each object's contents.
+            // Like the Legacy Viewer, no-copy items require OK instead of a
+            // preview. A no-transfer item goes only on objects the agent owns
+            // and does not sell: elsewhere neither a click nor OK applies it.
+            // There a click applies it like OK, and its copy goes into each
+            // object's contents once.
             world.inventory.items.get_mut(&item).unwrap().owner_mask = crate::world::inventory::actions::COPY;
             world.inventory.items.get_mut(&item).unwrap().asset_id = Uuid::from_u128(16);
             world.inventory.generation += 1;
@@ -1696,9 +1839,15 @@ mod tests {
                 tool.on_task_inventory(world, object, Some(1), Vec::new());
             }
             let positions = frame(&ctx, tool, world, env, 13.5, vec![]);
-            assert!(positions.contains_key(aurora_i18n::tr!("ui-texture-picker-no-live-preview")));
             tool.out.clear();
+            click(&ctx, tool, world, env, 13.75, positions["A texture"]);
+            assert!(tool.ui.picker.open, "single click must keep the picker open");
+            for &idx in prims {
+                assert_eq!(texture(world, idx, 0), Uuid::from_u128(16), "a click applies it");
+            }
+            let positions = frame(&ctx, tool, world, env, 13.9, vec![]);
             click(&ctx, tool, world, env, 14.0, positions[aurora_i18n::tr!("common-ok")]);
+            assert!(!tool.ui.picker.open);
             for &idx in prims {
                 assert_eq!(texture(world, idx, 0), Uuid::from_u128(16));
             }
@@ -1707,7 +1856,7 @@ mod tests {
                 .iter()
                 .filter(|c| matches!(c, aurora_net::NetCommand::Build(BuildCmd::UpdateTaskInventory { .. })))
                 .count();
-            assert_eq!(copies, prims.len(), "one copy into each object");
+            assert_eq!(copies, prims.len(), "one copy into each object, not one more on OK");
         });
     }
     #[test]

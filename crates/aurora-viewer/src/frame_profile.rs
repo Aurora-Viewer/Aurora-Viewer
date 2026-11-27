@@ -441,7 +441,7 @@ struct Period {
     /// The rest of g_effects: planar reflections, probe, scene copy, SSR.
     gpu_effects: [f32; 4],
     /// g_weather in parts: shelter map, memories, wet ground, drops.
-    gpu_weather: [f32; 4],
+    gpu_weather: [f32; 5],
     gpu_frames: u32,
     /// Parts of the shadows and depth GPU time (`ShadowStats::gpu_ms`).
     gpu_shadow: [f32; 5],
@@ -482,6 +482,27 @@ struct Period {
     /// in a single frame.
     ui: [u64; 3],
     ui_vertices_max: u32,
+    /// The interface's windows outside the viewer's (aurora-render's
+    /// outside.rs): their draws, the render thread's time on them and the
+    /// longest it spent on them after one frame.
+    outside_draws: u64,
+    outside_ms: f32,
+    outside_ms_max: f32,
+}
+
+/// The windows outside in a summary, when one was drawn: draws per frame
+/// of the viewer, the render thread's time on one draw, and the longest it
+/// spent on them after one frame (ms).
+fn outside_text(draws: u64, ms: f32, ms_max: f32, frames: f32) -> String {
+    if draws == 0 {
+        return String::new();
+    }
+    format!(
+        " out_draws={:.2} out_ms={:.3} out_ms_max={:.2}",
+        draws as f32 / frames,
+        ms / draws as f32,
+        ms_max
+    )
 }
 
 pub struct FrameProfile {
@@ -782,6 +803,9 @@ impl FrameProfile {
             *sum += v as u64;
         }
         p.ui_vertices_max = p.ui_vertices_max.max(render.ui_vertices);
+        p.outside_draws += u64::from(render.outside_windows);
+        p.outside_ms += render.outside_ms;
+        p.outside_ms_max = p.outside_ms_max.max(render.outside_ms);
         let elapsed = now - started;
         if elapsed < PERIOD {
             return None;
@@ -1023,6 +1047,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         count(p.ui[2]),
         p.ui_vertices_max
     );
+    out.push_str(&outside_text(p.outside_draws, p.outside_ms, p.outside_ms_max, n));
     let gpu_n = p.gpu_frames.max(1) as f32;
     let _ = write!(out, " | gpu={:.2}", p.gpu.iter().sum::<f32>() / gpu_n);
     for (el, ms) in GpuElement::ALL.iter().zip(p.gpu) {
@@ -1033,7 +1058,10 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         let _ = write!(out, " g_{key}={:.3}", ms / gpu_n);
     }
     // g_weather in parts
-    for (key, ms) in ["shelter", "weather_memory", "wet_ground", "drops"].iter().zip(p.gpu_weather) {
+    for (key, ms) in ["shelter", "weather_memory", "wet_ground", "drops", "fog"]
+        .iter()
+        .zip(p.gpu_weather)
+    {
         let _ = write!(out, " g_{key}={:.3}", ms / gpu_n);
     }
     // shadows and depth in detail: culling, cascades, prepass; then the
@@ -1117,6 +1145,13 @@ fn summary(p: &Period, elapsed: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_windows_outside_are_in_the_summary_only_when_one_was_drawn() {
+        assert_eq!(outside_text(0, 0.0, 0.0, 240.0), "");
+        // 120 draws in 240 frames, 0.3 ms each, 1.25 ms after the worst frame
+        assert_eq!(outside_text(120, 36.0, 1.25, 240.0), " out_draws=0.50 out_ms=0.300 out_ms_max=1.25");
+    }
 
     fn ms(m: u64) -> Duration {
         Duration::from_millis(m)

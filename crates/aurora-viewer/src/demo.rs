@@ -18,6 +18,8 @@ pub mod anti_spam;
 pub mod beacons;
 #[path = "demo_beams.rs"]
 pub mod beams;
+#[path = "demo_parcel_env.rs"]
+pub mod parcel_env;
 #[path = "demo_parcel_visibility.rs"]
 pub mod parcel_visibility;
 #[path = "demo_pointing.rs"]
@@ -49,6 +51,9 @@ pub mod about;
 pub mod alpha_mask_ab;
 #[path = "demo_alpha_sort.rs"]
 pub mod alpha_sort;
+/// Two inventory animations at once (AURORA_DEMO_INVENTORY=animation-play-two).
+#[path = "demo_animation_layers.rs"]
+pub mod animation_layers;
 /// AURORA_DEMO_ARRIVAL: an arrival in a busy region, every asset downloaded.
 #[path = "demo_arrival.rs"]
 pub mod arrival;
@@ -140,6 +145,13 @@ pub mod env;
 pub mod experience;
 #[path = "demo_floating_text.rs"]
 pub mod floating_text;
+/// AURORA_DEMO_FOG: Aurora Weather's fog under a fixed sky, with props.
+#[path = "demo_fog.rs"]
+pub mod fog;
+/// A trail of footprints in the snow, then Footprints turned off
+/// (AURORA_DEMO_FOOTPRINTS_OFF, #4019).
+#[path = "demo_footprints.rs"]
+pub mod footprints;
 /// A prop derezzed and particles started while the photo mode holds the
 /// world still (AURORA_DEMO_FREEZE_WORLD).
 #[path = "demo_freeze_world.rs"]
@@ -179,9 +191,15 @@ pub mod hud;
 /// the window title (AURORA_DEMO_IM_ANNOUNCE).
 #[path = "demo_im_announce.rs"]
 pub mod im_announce;
+/// Violet Wolf's outfit for Inspect (AURORA_DEMO_INSPECT).
+#[path = "demo_inspect.rs"]
+pub mod inspect;
 /// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
 #[path = "demo_keywords.rs"]
 pub mod keywords;
+/// A lamp switched off and on every few frames (AURORA_DEMO_LAMP_BLINK).
+#[path = "demo_lamp.rs"]
+pub mod lamp;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
@@ -189,8 +207,15 @@ pub mod land;
 /// (AURORA_DEMO_LEGACY_BUMP).
 #[path = "demo_legacy_bump.rs"]
 pub mod legacy_bump;
+/// A Legacy Viewer's lists to import (AURORA_DEMO_LEGACY_LISTS).
+#[path = "demo_legacy_lists.rs"]
+pub mod legacy_lists;
 #[path = "demo_link.rs"]
 pub mod link;
+/// A market for Area Search and Inspect (`market` of AURORA_DEMO_AREA_SEARCH
+/// and AURORA_DEMO_INSPECT).
+#[path = "demo_market.rs"]
+pub mod market;
 /// A Mask of cutoff 255 over an alpha just under opaque (AURORA_DEMO_MASK_255).
 #[path = "demo_mask_255.rs"]
 pub mod mask_255;
@@ -200,10 +225,14 @@ pub mod mask_255;
 pub mod mirror;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
-/// A blocked resident talks in nearby chat, the history hiding, folding or
-/// greying the lines (AURORA_DEMO_MUTED_CHAT).
 #[path = "demo_muted_chat.rs"]
 pub mod muted_chat;
+/// A blocked resident talks in nearby chat, the history hiding, folding or
+/// greying the lines (AURORA_DEMO_MUTED_CHAT).
+/// A room lit by the sun through a doorway and by emissive strips, for the
+/// traced global illumination (AURORA_DEMO_NEON_ROOM).
+#[path = "demo_neon_room.rs"]
+pub mod neon_room;
 /// The real or the Legacy Viewer's night sky, the camera on the stars
 /// (AURORA_DEMO_NIGHT_SKY).
 #[path = "demo_night_sky.rs"]
@@ -267,6 +296,9 @@ pub mod rez;
 /// (AURORA_DEMO_RIGGED_PROP).
 #[path = "demo_rigged_prop.rs"]
 pub mod rigged_prop;
+/// AURORA_DEMO_RT_SWITCH: ray tracing turned on at given frames.
+#[path = "demo_rt_switch.rs"]
+pub mod rt_switch;
 #[path = "demo_sculpt.rs"]
 pub mod sculpt;
 /// Directory answers of the search window (AURORA_DEMO_SEARCH).
@@ -396,6 +428,10 @@ pub mod worn;
 /// Walkable floor of the demo (plaza top, else the terrain), for the
 /// offline movement stand-in.
 pub fn floor_at(x: f32, y: f32) -> f32 {
+    // AURORA_DEMO_NEON_ROOM: the room's floor, over the ground
+    if let Some(floor) = neon_room::floor_under(x, y) {
+        return floor;
+    }
     let (cx, cy) = (140.0, 130.0);
     let terrain = height(x, y);
     if (x - cx).hypot(y - cy) <= 12.0 {
@@ -556,6 +592,11 @@ pub fn wolf_attachments(kept: bool) -> Vec<ObjectUpdate> {
             "",
         );
         o.parent_id = 9001;
+        // not ours: a simulator reports no ownership or modify right on
+        // another avatar's attachment (the viewer locks it on its own too)
+        o.update_flags &= !(crate::ui::context::flags::OBJECT_YOU_OWNER
+            | crate::ui::context::flags::OBJECT_MODIFY
+            | crate::ui::context::flags::OBJECT_MOVE);
         o.state = ((point & 0x0F) << 4) | ((point & 0xF0) >> 4);
         o
     })
@@ -617,11 +658,19 @@ fn prim(
     }
 }
 
+/// Dynamic objects share one sequence above the demo fixtures' local IDs.
+/// A UUID suffix can coincide with that of an object already in the region.
+pub(crate) fn next_rez_local_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(0x4000_0000);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Synthetic inventory rez stand-in: a cube, never a grid asset download.
 pub fn inventory_rez(rez: &aurora_net::inventory::rez::RezInventory) -> ObjectUpdate {
     let id = Uuid::new_v4();
     let mut o = prim(
-        id.as_u128() as u32,
+        next_rez_local_id(),
         rez.ray_end + Vec3::Z * 0.5,
         Quat::IDENTITY,
         Vec3::ONE,
@@ -644,7 +693,7 @@ pub fn inventory_rez(rez: &aurora_net::inventory::rez::RezInventory) -> ObjectUp
 pub fn build_rez(p: &aurora_net::build::NewPrim) -> ObjectUpdate {
     let id = Uuid::new_v4();
     let mut object = prim(
-        id.as_u128() as u32,
+        next_rez_local_id(),
         p.ray_end + Vec3::Z * (p.scale.z * 0.5),
         p.rotation,
         p.scale,
@@ -824,9 +873,8 @@ pub(crate) fn u(n: u128) -> Uuid {
 
 /// Tiny offline attachment used to exercise outfit changes without grid assets.
 pub fn outfit_attachment(item: &aurora_net::AttachRequest) -> ObjectUpdate {
-    let local_id = 30_000 + (item.item_id.as_u128() & 0xffff) as u32;
     let mut o = prim(
-        local_id,
+        next_rez_local_id(),
         Vec3::ZERO,
         Quat::IDENTITY,
         Vec3::splat(0.001),
@@ -979,7 +1027,14 @@ fn demo_raw() -> Llsd {
         (aurora_i18n::tr!("common-trash"), 14),
         (aurora_i18n::tr!("common-my-outfits"), 48),
         ("Materials", 57),
-        (aurora_i18n::tr!("common-favorites"), 23),
+        (
+            if matches!(aurora_i18n::language(), "en-GB" | "en-AU") {
+                aurora_i18n::text_in("en", "common-favorites")
+            } else {
+                aurora_i18n::tr!("common-favorites")
+            },
+            23,
+        ),
     ]
     .iter()
     .enumerate()
@@ -1465,13 +1520,15 @@ pub fn bubbles_events() -> Vec<NetEvent> {
     ev
 }
 
-/// `AURORA_DEMO_CHAT_LINES=1|legacy|volumes`: nearby chat said at the arrival, to
-/// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
-/// one resident, an emote, an object's line, a long line with a link, a
-/// shout. `legacy` shows them as the Legacy Viewer's lines for the session
-/// (nothing is saved). An optional `:0` through `:50` overrides the maximum
-/// wrapped text lines for this demo. Some(true) for `legacy`. `stagger` and
-/// `legacy:stagger` say them one at a time (`chat_lines_due`).
+/// `AURORA_DEMO_CHAT_LINES=1|legacy|volumes|emoji`: nearby chat said at the
+/// arrival, to see the lines above the chat bar (`ui/chat/console.rs`): two
+/// lines of one resident, an emote, an object's line, a long line with a
+/// link, a shout. `legacy` shows them as the Legacy Viewer's lines for the
+/// session (nothing is saved). `emoji` shows a line and its sender's name
+/// with colour emoji, the same in both styles. An optional `:0` through `:50`
+/// overrides the maximum wrapped text lines for this demo. Some(true) for
+/// `legacy`. `stagger` and `legacy:stagger` say them one at a time
+/// (`chat_lines_due`).
 pub fn chat_lines_scenario() -> Option<bool> {
     let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
     match mode.split(':').next()? {
@@ -1485,6 +1542,12 @@ pub fn chat_lines_scenario() -> Option<bool> {
 /// at a time instead of at the arrival.
 fn chat_lines_stagger() -> bool {
     std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.ends_with("stagger"))
+}
+
+/// `AURORA_DEMO_CHAT_LINES=emoji|legacy:emoji`: the line of the scenario
+/// holds colour emoji, in its text and in its sender's name (#5097).
+fn chat_lines_emoji() -> bool {
+    std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.split(':').any(|part| part == "emoji"))
 }
 
 /// `AURORA_DEMO_CHAT_LINES=stagger`: the scenario's next line now due, once:
@@ -1569,6 +1632,10 @@ fn chat_lines_said() -> Vec<NetEvent> {
             ]
         })
         .collect();
+    }
+    if chat_lines_emoji() {
+        let name = format!("{nova} 🫶");
+        return vec![say(DEMO_NOVA, &name, "Colour emoji: 🫶 ❤️ 😀 👍", false, normal)];
     }
     vec![
         say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-1"), false, normal),
@@ -1668,6 +1735,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         blocked: false,
         beyond_range: false,
         speaker: Default::default(),
+        private_history: false,
     };
     match view {
         Bubbles::Friend | Bubbles::Legacy => {
@@ -1908,6 +1976,7 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1932,6 +2001,7 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -2096,6 +2166,7 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         blocked: false,
         beyond_range: false,
         speaker: Default::default(),
+        private_history: false,
     };
     let names = |id: Uuid| world_name(id);
     let group = [
@@ -2437,6 +2508,42 @@ pub fn lure_scene() -> Option<LureScene> {
         "exceeded-continue" => Some(LureScene::ExceededContinue),
         "blocked" => Some(LureScene::Blocked),
         _ => None,
+    }
+}
+
+/// `AURORA_DEMO_TELEPORT_FAILED=<reason>[,hypergrid]`: every teleport is
+/// refused with that reason (a code of teleport_strings.xml or a simulator's
+/// text), as a region's TeleportFailed; `,hypergrid` puts the agent on
+/// another OpenSim grid for the explanation line. `empty` sends an empty
+/// reason, as OpenSim's EntityTransferModule does.
+pub fn teleport_failure() -> Option<(String, bool)> {
+    let value = std::env::var("AURORA_DEMO_TELEPORT_FAILED").ok()?;
+    teleport_failure_value(&value)
+}
+
+fn teleport_failure_value(value: &str) -> Option<(String, bool)> {
+    let value = value.trim();
+    let (reason, hypergrid) = match value.rsplit_once(',') {
+        Some((reason, "hypergrid")) => (reason.trim(), true),
+        _ => (value, false),
+    };
+    match reason {
+        "" => None,
+        "empty" => Some((String::new(), hypergrid)),
+        _ => Some((reason.to_owned(), hypergrid)),
+    }
+}
+
+#[cfg(test)]
+mod teleport_failure_tests {
+    #[test]
+    fn the_demo_teleport_failure_reads_its_reason_and_hypergrid() {
+        use super::teleport_failure_value as read;
+        assert_eq!(read("no_host"), Some(("no_host".into(), false)));
+        assert_eq!(read("Unauthorized,hypergrid"), Some(("Unauthorized".into(), true)));
+        assert_eq!(read("empty"), Some((String::new(), false)));
+        assert_eq!(read("empty,hypergrid"), Some((String::new(), true)));
+        assert_eq!(read("  "), None);
     }
 }
 
@@ -3412,9 +3519,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // a lure accepted offline: the teleport starts, then has nowhere to go
         aurora_net::NetCommand::AcceptLure { .. } => vec![
             NetEvent::TeleportStarted { flags: 0 },
-            NetEvent::TeleportFailed {
-                reason: aurora_i18n::tr!("demo-no-teleport-offline").into(),
-            },
+            NetEvent::viewer_teleport_failed(aurora_i18n::tr!("demo-no-teleport-offline")),
         ],
         aurora_net::NetCommand::AgentAnimation { anim, start: false }
             if *anim == SEAT_ANIM
@@ -5156,12 +5261,13 @@ pub fn events() -> Vec<NetEvent> {
         let across = Vec3::new(-yaw.sin(), yaw.cos(), 0.0);
         let center = Vec3::new(138.5, 125.5, 0.0);
         let floor = height(cx, cy) + 0.35;
+        let alpha = panel_alpha(std::env::var("AURORA_DEMO_PANEL_ALPHA").ok().as_deref());
         for (k, (tex, mat, label)) in alpha_panels().iter().enumerate() {
             let p = center + across * ((k as f32 - 2.5) * 2.1);
             let mut t = TextureEntry::default();
             for f in t.faces.iter_mut() {
                 f.texture = *tex;
-                f.color = [1.0, 1.0, 1.0, 1.0];
+                f.color = [1.0, 1.0, 1.0, alpha];
                 f.material_id = mat.unwrap_or(Uuid::nil());
             }
             add(prim(
@@ -5262,6 +5368,10 @@ pub fn events() -> Vec<NetEvent> {
     // ordinary point light (fixed ids). The first lights the wall through
     // its image; the ground stays dark outside the frustums. `point`: the
     // projectors without their texture, as plain point lights, to compare.
+    // AURORA_DEMO_FOG: the fog scenario's props (demo_fog.rs)
+    for o in fog::objects() {
+        add(o);
+    }
     if let Ok(mode) = std::env::var("AURORA_DEMO_PROJECTOR") {
         let floor = height(cx, cy) + 0.35;
         let wall = [0.82, 0.82, 0.82, 1.0];
@@ -5631,6 +5741,95 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_SATIN=1: satin metal (PBR, metallic 1) ahead of the start
+    // position, for the glossy ray-traced reflections (rt_reflect.wgsl
+    // `cs_gloss`): five strips on the ground from a roughness of 0.15 to
+    // 0.55, the nearest the smoothest, which blur what stands beyond them
+    // more and more, a normal map's bumps on half of each; and a window
+    // frame of thin dark bars (a roughness of 0.35), which stay dark
+    if let Ok(satin) = std::env::var("AURORA_DEMO_SATIN") {
+        // `room`: inside the closed room of AURORA_DEMO_PROBE_ROOM, with an
+        // upright satin panel that faces the start position: what it
+        // mirrors stands behind the camera, lit by the room and not the sky
+        let room = satin.trim() == "room";
+        let (bx, by, floor) = if room {
+            (101.5, 100.0, height(100.0, 100.0) + 0.2)
+        } else {
+            (134.0, 126.0, height(cx, cy) + 0.35)
+        };
+        let metal = |id: u32, pos: Vec3, scale: Vec3, mat: Uuid| {
+            let mut t = TextureEntry::default();
+            for f in t.faces.iter_mut() {
+                f.texture = BLANK_TEXTURE;
+                f.color = [1.0, 1.0, 1.0, 1.0];
+            }
+            prim(
+                id,
+                pos,
+                Quat::IDENTITY,
+                scale,
+                boxp,
+                Arc::new(t),
+                ExtraParams {
+                    render_materials: (0..6).map(|f| (f, mat)).collect(),
+                    ..Default::default()
+                },
+                "",
+            )
+        };
+        for (k, (plain, bumpy)) in MAT_PBR_SATIN.into_iter().zip(MAT_PBR_SATIN_BUMPS).enumerate() {
+            let x = bx + 1.1 * k as f32;
+            for (y, mat) in [(by - 1.25, plain), (by + 1.25, bumpy)] {
+                add(metal(id, Vec3::new(x, y, floor + 0.03), Vec3::new(1.0, 2.5, 0.06), mat));
+                id += 1;
+            }
+        }
+        if room {
+            add(metal(
+                id,
+                Vec3::new(bx + 6.0, by, floor + 1.3),
+                Vec3::new(0.1, 5.0, 2.4),
+                MAT_PBR_SATIN[1],
+            ));
+            id += 1;
+        }
+        // the frame: two posts, three rails
+        let (fx, fy, fz) = (bx + 1.0, by - 3.8, floor + 1.3);
+        for y in [-1.0, 1.0] {
+            add(metal(id, Vec3::new(fx, fy + y, fz), Vec3::new(0.06, 0.06, 2.6), MAT_PBR_SATIN_DARK));
+            id += 1;
+        }
+        for z in [-1.27, 0.0, 1.27] {
+            add(metal(id, Vec3::new(fx, fy, fz + z), Vec3::new(0.06, 2.0, 0.06), MAT_PBR_SATIN_DARK));
+            id += 1;
+        }
+    }
+    // AURORA_DEMO_GLOSSY_BUMPS=1: an upright polished panel (PBR, roughness
+    // 0.05) with the bump normal map, seen along its face from the start
+    // position: the far slope of each bump turns its mirror ray into the
+    // panel (rt_reflect.wgsl `kept_above`)
+    if std::env::var_os("AURORA_DEMO_GLOSSY_BUMPS").is_some() {
+        let floor = height(cx, cy) + 0.35;
+        let mut t = TextureEntry::default();
+        for f in t.faces.iter_mut() {
+            f.texture = BLANK_TEXTURE;
+            f.color = [1.0, 1.0, 1.0, 1.0];
+        }
+        add(prim(
+            id,
+            Vec3::new(136.5, 127.3, floor + 1.5),
+            Quat::IDENTITY,
+            Vec3::new(7.0, 0.1, 3.0),
+            boxp,
+            Arc::new(t),
+            ExtraParams {
+                render_materials: (0..6).map(|f| (f, MAT_PBR_GLOSSY_BUMPS)).collect(),
+                ..Default::default()
+            },
+            "",
+        ));
+        id += 1;
+    }
     // AURORA_DEMO_PBR_MIXED=1: one cube with a white PBR metal on every face
     // but 4, which keeps a red-tinted legacy texture, for Select face on a
     // mixed prim (#4467): clicking the Blinn-Phong face 4 must leave the PBR
@@ -5916,6 +6115,121 @@ pub fn events() -> Vec<NetEvent> {
             add(plain(id, pos, scale, color));
             id += 1;
         }
+    }
+    // AURORA_DEMO_STAINED_GLASS=sun|lamp: a canopy of three panes, red,
+    // green and blue at an alpha of 0.3, 0.5 and 0.7 (the panes of PR
+    // #3821's demo, circuskid), 2.2 m over a white slab ahead of the start
+    // position: with the shadows traced the light they let through colours
+    // the slab, each pane by mix(1, rgb, a) * (1 - a) (aurora-render
+    // rt_common.wgsl `glass_passes`). `lamp` adds a white lamp 1.4 m over
+    // the middle pane, for the night (AURORA_DEMO_TOD=4).
+    if let Ok(mode) = std::env::var("AURORA_DEMO_STAINED_GLASS") {
+        let floor = height(cx, cy) + 0.35;
+        let (x, y) = (136.0, 130.0);
+        add(prim(
+            id,
+            Vec3::new(x, y, floor + 0.02),
+            Quat::IDENTITY,
+            Vec3::new(3.0, 5.0, 0.04),
+            boxp,
+            te([0.9, 0.9, 0.9, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+        for (k, color) in [[0.9, 0.1, 0.08, 0.3], [0.1, 0.8, 0.15, 0.5], [0.1, 0.25, 0.95, 0.7]]
+            .into_iter()
+            .enumerate()
+        {
+            add(prim(
+                id,
+                Vec3::new(x, y + (k as f32 - 1.0) * 1.3, floor + 2.2),
+                Quat::IDENTITY,
+                Vec3::new(1.2, 1.2, 0.02),
+                boxp,
+                te(color, 0, false, 0.0),
+                ExtraParams::default(),
+                "",
+            ));
+            id += 1;
+        }
+        if mode.trim() == "lamp" {
+            add(prim(
+                id,
+                Vec3::new(x, y, floor + 3.6),
+                Quat::IDENTITY,
+                Vec3::splat(0.2),
+                sphere,
+                te([1.0, 1.0, 1.0, 1.0], 0, true, 0.0),
+                ExtraParams {
+                    // (bright on the slab: a weak lamp's colour is lost in
+                    // the night's ambiance, which the panes do not colour)
+                    light: Some(LightParams {
+                        color: [1.0, 1.0, 1.0, 1.0],
+                        radius: 12.0,
+                        cutoff: 0.0,
+                        falloff: 0.0,
+                    }),
+                    ..Default::default()
+                },
+                "",
+            ));
+            id += 1;
+        }
+    }
+    // AURORA_DEMO_LIGHT_PANEL=1: a ceiling light panel, 2.4 m square, 2.6 m
+    // over a white slab, its light at its middle, and a cube hung 1.2 m
+    // under one of its sides, inside the sphere that holds the panel: the
+    // traced rays pass the panel alone, so the cube casts on the slab;
+    // with AURORA_RT_EMITTER=sphere they stop at the sphere and it casts
+    // nothing (aurora-render rt_common.wgsl `shadows_but`). For the night
+    // (AURORA_DEMO_TOD=4).
+    if std::env::var("AURORA_DEMO_LIGHT_PANEL").is_ok() {
+        let floor = height(cx, cy) + 0.35;
+        let (x, y) = (136.0, 122.0);
+        add(prim(
+            id,
+            Vec3::new(x, y, floor + 0.02),
+            Quat::IDENTITY,
+            Vec3::new(5.0, 5.0, 0.04),
+            boxp,
+            te([0.9, 0.9, 0.9, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+        add(prim(
+            id,
+            Vec3::new(x, y, floor + 2.6),
+            Quat::IDENTITY,
+            Vec3::new(2.4, 2.4, 0.05),
+            boxp,
+            te([1.0, 1.0, 1.0, 1.0], 0, true, 0.0),
+            ExtraParams {
+                light: Some(LightParams {
+                    color: [0.8, 0.75, 0.68, 1.0],
+                    radius: 10.0,
+                    cutoff: 0.0,
+                    falloff: 0.0,
+                }),
+                ..Default::default()
+            },
+            "",
+        ));
+        id += 1;
+        // (1.34 m from the light, inside the panel's 1.7 m sphere; its
+        // shadow lands 1.3 m from the slab's middle)
+        add(prim(
+            id,
+            Vec3::new(x + 0.6, y, floor + 1.4),
+            Quat::IDENTITY,
+            Vec3::splat(0.3),
+            boxp,
+            te([0.8, 0.3, 0.2, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
     }
     // AURORA_DEMO_TEXANIM=1: texture animations (llSetTextureAnim) on a row
     // of panels facing the start position, in place of the alpha panels
@@ -6327,6 +6641,12 @@ pub fn events() -> Vec<NetEvent> {
         }
         id += mirror::COUNT;
     }
+    if neon_room::enabled() {
+        for o in neon_room::objects(id) {
+            add(o);
+        }
+        id += neon_room::COUNT;
+    }
     // AURORA_DEMO_HALO: a wide translucent pane 3 m ahead of the start
     // position, facing the camera, so that the avatar stands between the
     // camera and the pane (issue #556: no halo around the avatar on it)
@@ -6634,8 +6954,14 @@ pub fn events() -> Vec<NetEvent> {
     // (AURORA_DEMO_AVATAR_CACHE sends them later, demo_avatar_cache.rs)
     if !avatar_cache::enabled() {
         avatars.extend(wolf_attachments(false));
+        if inspect::enabled() {
+            avatars.extend(inspect::outfit());
+        }
     }
     let start = Vec3::new(132.0, 126.0, height(140.0, 130.0) + 0.35 + 0.84);
+    if market::enabled() {
+        avatars.extend(market::objects(start, &height));
+    }
     // AURORA_DEMO_POS="x,y" moves the start position (captures)
     let start = match std::env::var("AURORA_DEMO_POS")
         .ok()
@@ -6647,6 +6973,9 @@ pub fn events() -> Vec<NetEvent> {
     // AURORA_DEMO_MIRROR: in front of the mirror, facing it
     let (start, look_at) = if mirror::enabled() {
         mirror::start()
+    } else if neon_room::enabled() {
+        // AURORA_DEMO_NEON_ROOM: inside the room, facing its pink strip
+        neon_room::start()
     } else {
         (start, Vec3::new(0.8, 0.4, 0.0))
     };
@@ -7715,6 +8044,64 @@ pub fn own_rigged_events(wearer: u32) -> Vec<NetEvent> {
         handle: HANDLE,
         objects: vec![worn],
     }]
+}
+
+/// AURORA_DEMO_RT_WALK=1: our avatar walks with what makes an avatar of the
+/// grid heavy for the ray tracer, to see its traced shadow follow it
+/// (app/double_click.rs `demo_rt_walk_steps`).
+pub fn rt_walk() -> bool {
+    std::env::var("AURORA_DEMO_RT_WALK").is_ok_and(|v| v.trim() == "1")
+}
+
+/// What `wearer` (our avatar) wears for AURORA_DEMO_RT_WALK: the rigged
+/// demo mesh twice, on the chest and the pelvis (with AURORA_DEMO_ANIMESH
+/// and AURORA_DEMO_ANIMESH_TRIS=315000, more triangles than the ray tracer
+/// poses again in a frame besides the nearest skeleton's), and a hat, a
+/// prim on the skull: from the camera behind the avatar it is nearer than
+/// the body, and it moves as the body does.
+pub fn rt_walk_events(wearer: u32) -> Vec<NetEvent> {
+    let mesh = SculptParams {
+        texture: ANIMESH_MESH,
+        sculpt_type: LL_SCULPT_TYPE_MESH,
+    };
+    let mut objects = Vec::new();
+    for (k, state) in [0x10u8, 0xA0].into_iter().enumerate() {
+        let mut worn = prim(
+            OWN_RIGGED + 1 + k as u32,
+            Vec3::ZERO,
+            Quat::IDENTITY,
+            Vec3::splat(0.1),
+            aurora_prim::VolumeParams {
+                sculpt: Some(mesh),
+                ..Default::default()
+            },
+            te([0.85, 0.85, 0.9, 1.0], 0, false, 0.0),
+            ExtraParams {
+                sculpt: Some(mesh),
+                ..Default::default()
+            },
+            "",
+        );
+        worn.parent_id = wearer;
+        // (chest, pelvis)
+        worn.state = state;
+        objects.push(worn);
+    }
+    let mut hat = prim(
+        OWN_RIGGED + 3,
+        Vec3::new(0.0, 0.0, 0.12),
+        Quat::IDENTITY,
+        Vec3::new(0.3, 0.3, 0.12),
+        shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, 100, 0, 0),
+        te([0.75, 0.2, 0.25, 1.0], 0, false, 0.0),
+        ExtraParams::default(),
+        "",
+    );
+    hat.parent_id = wearer;
+    // (skull)
+    hat.state = 0x20;
+    objects.push(hat);
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
 
 /// Bakes of AURORA_DEMO_CLASSIC: a skin whose alpha is partly soft and cut
@@ -8852,7 +9239,7 @@ pub fn sun_override() -> Option<Vec3> {
     static SUN: std::sync::OnceLock<Option<Vec3>> = std::sync::OnceLock::new();
     *SUN.get_or_init(|| match std::env::var("AURORA_DEMO_SUN").ok() {
         Some(v) => parse_sun(&v),
-        None => soft_shadows::sun(),
+        None => fog::sun().or_else(soft_shadows::sun),
     })
 }
 
@@ -9061,6 +9448,10 @@ pub fn projector_bench_done() -> bool {
 
 /// Fixed framing of the #1494 offline fixture, or a repeatable camera sweep.
 pub fn projector_camera(frame: u64) -> Option<(Vec3, Vec3)> {
+    // (AURORA_DEMO_FOG's camera, placed the same way)
+    if let Some(view) = fog::camera_at(frame) {
+        return Some(view);
+    }
     let mode = std::env::var("AURORA_DEMO_PROJECTOR").ok()?;
     if !mode.starts_with("cluster") {
         return None;
@@ -9665,6 +10056,31 @@ fn panel_scale(k: usize, label: &str) -> Vec3 {
     }
 }
 
+/// Face alpha of the alpha-mode test panels: AURORA_DEMO_PANEL_ALPHA=<0..1>
+/// (0.98 is the build floater's 2 % transparency, #4517); opaque without it
+/// or with a value that does not parse.
+fn panel_alpha(spec: Option<&str>) -> f32 {
+    spec.and_then(|s| s.trim().parse::<f32>().ok())
+        .filter(|a| a.is_finite())
+        .map_or(1.0, |a| a.clamp(0.0, 1.0))
+}
+
+#[cfg(test)]
+mod panel_alpha_tests {
+    use super::panel_alpha;
+
+    #[test]
+    fn the_panel_alpha_is_opaque_unless_a_valid_value_is_given() {
+        assert_eq!(panel_alpha(None), 1.0);
+        assert_eq!(panel_alpha(Some("0.98")), 0.98);
+        assert_eq!(panel_alpha(Some(" 0.5 ")), 0.5);
+        assert_eq!(panel_alpha(Some("2")), 1.0);
+        assert_eq!(panel_alpha(Some("-1")), 0.0);
+        assert_eq!(panel_alpha(Some("NaN")), 1.0);
+        assert_eq!(panel_alpha(Some("half")), 1.0);
+    }
+}
+
 /// (texture, legacy material, hover text) of the test panels;
 /// AURORA_DEMO_MASK_ZERO=1 gives the holed one a Mask material with a
 /// cutoff of 0, drawn whole like the Legacy Viewer.
@@ -9899,6 +10315,27 @@ const MAT_PBR_METAL: [Uuid; 3] = [
     Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0013),
 ];
 
+/// Satin metals of AURORA_DEMO_SATIN, by roughness (`SATIN_ROUGHNESS`):
+/// plain, with the bump normal map, and the frame's dark one.
+const MAT_PBR_SATIN: [Uuid; 5] = [
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0018),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0019),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_001A),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_001B),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_001C),
+];
+const MAT_PBR_SATIN_BUMPS: [Uuid; 5] = [
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0028),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0029),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_002A),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_002B),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_002C),
+];
+const MAT_PBR_SATIN_DARK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_001D);
+const SATIN_ROUGHNESS: [f32; 5] = [0.15, 0.25, 0.35, 0.45, 0.55];
+/// Polished bumpy panel of AURORA_DEMO_GLOSSY_BUMPS.
+const MAT_PBR_GLOSSY_BUMPS: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0017);
+
 /// Polished metal cube of AURORA_DEMO_PBR_METAL, occluded but for a disc.
 const MAT_PBR_ORM_DISC: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0014);
 
@@ -9928,6 +10365,37 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     )];
+    for (k, roughness) in SATIN_ROUGHNESS.into_iter().enumerate() {
+        for (mat, normal_texture) in [(MAT_PBR_SATIN[k], None), (MAT_PBR_SATIN_BUMPS[k], Some(TEX_BUMPS))] {
+            list.push((
+                mat,
+                aurora_assets::PbrMaterial {
+                    normal_texture,
+                    metallic_factor: 1.0,
+                    roughness_factor: roughness,
+                    ..Default::default()
+                },
+            ));
+        }
+    }
+    list.push((
+        MAT_PBR_SATIN_DARK,
+        aurora_assets::PbrMaterial {
+            base_color_factor: [0.12, 0.1, 0.08, 1.0],
+            metallic_factor: 1.0,
+            roughness_factor: 0.35,
+            ..Default::default()
+        },
+    ));
+    list.push((
+        MAT_PBR_GLOSSY_BUMPS,
+        aurora_assets::PbrMaterial {
+            normal_texture: Some(TEX_BUMPS),
+            metallic_factor: 0.0,
+            roughness_factor: 0.05,
+            ..Default::default()
+        },
+    ));
     list.push((
         MAT_PBR_FACE_MAPPED,
         aurora_assets::PbrMaterial {
@@ -9950,6 +10418,7 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
     if legacy_bump::enabled() {
         list.push((legacy_bump::PBR_MATERIAL, legacy_bump::pbr_material()));
     }
+    list.extend(neon_room::materials());
     for (mat, double_sided) in MAT_PBR_SIDED.into_iter().zip([false, true]) {
         list.push((
             mat,

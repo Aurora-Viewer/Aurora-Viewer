@@ -233,9 +233,10 @@ pub struct Facts {
     pub pay_blocked: bool,
     pub hover_height: bool,
     pub worn_shape: Option<Uuid>,
-    /// Appearance > Export shape XML: the worn shape may be written to a
-    /// file (`actions::appearance_xml_export_allowed`) and no export runs.
-    pub shape_xml_export: bool,
+    /// Appearance > Export my appearance XML…: our whole appearance can be
+    /// written (`appearance_xml::ready`) and no outfit change or export runs,
+    /// the condition of the Appearance window's gear menu entry.
+    pub appearance_xml_export: bool,
     pub object: ObjectFacts,
     /// Avatar: (complexity, shown as a silhouette).
     pub complexity: Option<(u32, bool)>,
@@ -354,9 +355,9 @@ pub enum CtxAction {
     /// handle_attachment_edit).
     TouchWorn(Uuid),
     EditWorn(Uuid),
-    /// Appearance > Export shape XML: the worn shape, by inventory item,
-    /// to an appearance XML file (`shape_editor::xml_export`).
-    ExportShapeXml(Uuid),
+    /// Appearance > Export my appearance XML…: the whole avatar, the same
+    /// export as the Appearance window's gear menu (`world::appearance_xml`).
+    ExportAppearanceXml,
     /// "New physics" of the outfit gallery: created, worn and edited
     /// (LLAgentWearables::createWearable).
     NewPhysics,
@@ -769,8 +770,8 @@ pub fn show(
     // eight slices of Firestorm's default pie menu, PieMenu::draw)
     let before = ctx.data_mut(|d| d.get_temp::<Option<usize>>(egui::Id::unique(HOVERED)).flatten());
     if hovered != before {
-        if let Some(i) = hovered.filter(|i| *i < 8) {
-            super::sound_cues::request(ctx, crate::ui_sound::UiSound::PieMenuSlice(i as u8));
+        if let Some(i) = pie_hover_sound(hovered, use_pie, customization.force_list()) {
+            super::sound_cues::request(ctx, crate::ui_sound::UiSound::PieMenuSlice(i));
         }
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique(HOVERED), hovered));
     }
@@ -1837,6 +1838,40 @@ pub fn suitcase_confirm(
     answer
 }
 
+/// A teleport the simulator refused or could not finish
+/// (`world::teleport_failure`): the Legacy Viewer's `CouldNotTeleportReason`
+/// alert, "Teleport failed." and the reason, with the line that explains an
+/// OpenSim Hypergrid refusal under it. True once closed.
+pub fn teleport_failed(ctx: &egui::Context, p: &Palette, world: &World, reason: &str, hint: Option<&str>) -> bool {
+    use egui::RichText;
+    let mut closed = false;
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("teleport_failed")).show(ctx, |ui| {
+        ui.set_width(400.0);
+        ui.horizontal(|ui| {
+            super::widgets::glyph(ui, "alert-triangle-filled", p.amber, 20.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("teleport-failed-title"))
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink),
+            );
+        });
+        ui.add_space(6.0);
+        // its links clickable, as the alert's text parses them (the Skill
+        // Gaming FAQ of RegionTPSpecialUsageBlocked)
+        super::chat::text_with_links(ui, p, world, NameScope::World.into(), reason, &[], 12.5, p.ink);
+        if let Some(hint) = hint {
+            ui.add_space(6.0);
+            ui.add(egui::Label::new(RichText::new(hint).size(12.0).color(p.muted)).wrap());
+        }
+        ui.add_space(10.0);
+        if super::widgets::default_button(super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-ok"))).clicked() {
+            closed = true;
+        }
+    });
+    closed || modal.should_close()
+}
+
 /// Warning before opening a web link outside the trusted domains (phishing,
 /// fake login pages...). Some(true) opens it, Some(false) cancels;
 /// `dont_warn` is the "Do not warn me again" box. A dangerous link
@@ -1990,9 +2025,34 @@ pub fn grid_link_confirm(ctx: &egui::Context, p: &Palette, address: &str, name: 
     answer
 }
 
+fn pie_hover_sound(hovered: Option<usize>, use_pie: bool, force_list: bool) -> Option<u8> {
+    if use_pie && !force_list {
+        hovered.filter(|i| *i < 8).map(|i| i as u8)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropdown_menus_do_not_play_pie_slice_sounds() {
+        for i in 0..12 {
+            assert_eq!(pie_hover_sound(Some(i), false, false), None);
+            assert_eq!(pie_hover_sound(Some(i), true, true), None);
+        }
+    }
+
+    #[test]
+    fn radial_menus_retain_their_slice_sounds() {
+        for i in 0..8 {
+            assert_eq!(pie_hover_sound(Some(i), true, false), Some(i as u8));
+        }
+        assert_eq!(pie_hover_sound(Some(8), true, false), None);
+        assert_eq!(pie_hover_sound(None, true, false), None);
+    }
 
     #[test]
     fn remote_friend_menu_location_clicks_follow_live_received_rights() {

@@ -1160,10 +1160,11 @@ impl Scene {
             present.insert(o.full_id);
             let look = Self::own_look(world, idx);
             let ours = o.full_id == world.agent_id;
-            // the animation editor's mirror of us is a copy made of what is
+            // the animation editor's mirror of us (or a Fit lab mannequin) is
+            // a copy made of what is
             // already on the screen: no arrival grid or line over it (nor
             // over what it wears, which comes with it)
-            if world.is_mirror(&o.full_id) && !rez.avatars_seen.contains_key(&o.full_id) {
+            if world.is_local_copy(&o.full_id) && !rez.avatars_seen.contains_key(&o.full_id) {
                 rez.avatars_seen.insert(o.full_id, (now, look));
                 continue;
             }

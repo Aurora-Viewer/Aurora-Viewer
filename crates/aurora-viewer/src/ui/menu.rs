@@ -14,6 +14,10 @@
 //! the sub-menus list their matching entries in place, under their path;
 //! the arrow keys select among them and Enter clicks the selected one.
 
+mod command;
+pub use super::toolbar::commands::identified;
+pub use command::command;
+
 use crate::theme::Palette;
 use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
@@ -65,6 +69,69 @@ fn rows_id() -> Id {
     Id::unique("aurora_menu_rows")
 }
 
+/// The layers this module's menus drew on, in this pass of the window and
+/// the one before: whatever opened the menu (an egui `Popup` kept in
+/// memory, [`popup_at`]'s bool, a submenu), a press on it is a press in a
+/// menu ([`is_menu_layer`]).
+#[derive(Clone, Default)]
+struct MenuLayers {
+    pass: u64,
+    now: Vec<LayerId>,
+    last: Vec<LayerId>,
+}
+
+fn menu_layers_id(ctx: &egui::Context) -> Id {
+    Id::unique(("aurora_menu_layers", ctx.viewport_id()))
+}
+
+/// A menu drew on its layer. Only its popup's body notes it, never a row:
+/// a hover card or a suggestion list built from menu rows (the top bar's
+/// graphics card, `bars/graphics.rs`) is not a menu.
+fn note_menu_layer(ui: &Ui) {
+    let layer = ui.layer_id();
+    if layer.order != egui::Order::Foreground {
+        return;
+    }
+    let ctx = ui.ctx();
+    let (id, pass) = (menu_layers_id(ctx), ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT));
+    ctx.data_mut(|d| {
+        let m = d.get_temp_mut_or_default::<MenuLayers>(id);
+        if m.pass != pass {
+            m.last = if m.pass + 1 == pass {
+                std::mem::take(&mut m.now)
+            } else {
+                Vec::new()
+            };
+            m.now.clear();
+            m.pass = pass;
+        }
+        if !m.now.contains(&layer) {
+            m.now.push(layer);
+        }
+    });
+}
+
+/// `layer` is a menu's, drawn in this pass or the last (where
+/// `Context::layer_id_at` finds it): a picker under it stays open
+/// (`chat::popout::pressed_away`).
+pub(crate) fn is_menu_layer(ctx: &egui::Context, layer: LayerId) -> bool {
+    let (id, pass) = (menu_layers_id(ctx), ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT));
+    ctx.data(|d| d.get_temp::<MenuLayers>(id))
+        .is_some_and(|m| match pass.checked_sub(m.pass) {
+            Some(0) => m.now.contains(&layer) || m.last.contains(&layer),
+            Some(1) => m.now.contains(&layer),
+            _ => false,
+        })
+}
+
+/// `body`, as the content of a menu's popup, noting its layer first.
+fn noted<R>(body: impl FnOnce(&mut Ui) -> R) -> impl FnOnce(&mut Ui) -> R {
+    move |ui| {
+        note_menu_layer(ui);
+        body(ui)
+    }
+}
+
 /// Menu style: the popup and sub-menu frames (`Frame::menu`) are built
 /// from it, so every level gets the panel color and border.
 fn style(p: &Palette) -> egui::style::StyleModifier {
@@ -113,7 +180,7 @@ fn stock_frame(shape: &egui::Shape, tint: Color32, border: Color32) -> Option<(e
 pub fn glaze(ctx: &egui::Context, p: &Palette) {
     let distinct = ctx
         .data(|d| d.get_temp::<(u64, Vec<LayerId>)>(Id::unique("distinct_menu_surfaces")))
-        .filter(|(frame, _)| *frame == ctx.cumulative_frame_nr())
+        .filter(|(frame, _)| *frame == ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
         .map(|(_, layers)| layers)
         .unwrap_or_default();
     // FSMenuBackgroundAlpha (LLMenuGL::draw), `ui::surface_opacity`
@@ -184,7 +251,7 @@ pub fn glaze(ctx: &egui::Context, p: &Palette) {
 /// A denser menu face and clearer edge when its parent uses the same panel face.
 /// Registration keeps all surface painting in the shared menu glass pass.
 pub fn distinct_surface(ui: &Ui) {
-    let frame = ui.ctx().cumulative_frame_nr();
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ui.ctx().data_mut(|d| {
         let surfaces = d.get_temp_mut_or_default::<(u64, Vec<LayerId>)>(Id::unique("distinct_menu_surfaces"));
         if surfaces.0 != frame {
@@ -199,25 +266,39 @@ pub fn distinct_surface(ui: &Ui) {
 /// Right-click menu of a widget (replaces `Response::context_menu`).
 /// Returns whether the menu is open.
 pub fn context_menu(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
-    context_menu_popup(Popup::context_menu(resp), p, body)
+    if !resp.enabled() {
+        return false;
+    }
+    context_menu_popup(Popup::context_menu(resp), p, resp.secondary_clicked(), body)
 }
 
 /// [`context_menu`] of a widget that also opens a [`dropdown`] on a left
 /// click: the right-click menu needs an id of its own (egui keys both on
 /// the widget's).
 pub fn context_menu_of_button(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
-    context_menu_popup(Popup::context_menu(resp).id(resp.id.with("context_menu")), p, body)
+    if !resp.enabled() {
+        return false;
+    }
+    context_menu_popup(
+        Popup::context_menu(resp).id(resp.id.with("context_menu")),
+        p,
+        resp.secondary_clicked(),
+        body,
+    )
 }
 
 /// [`context_menu_of_button`] that `also` opens at the pointer: a right
 /// click on the buttons laid over `resp`, which take it (the system island's
 /// audio controls).
 pub fn context_menu_also(resp: &egui::Response, p: &Palette, also: bool, body: impl FnOnce(&mut Ui)) -> bool {
+    if !resp.enabled() {
+        return false;
+    }
     let mut popup = Popup::context_menu(resp).id(resp.id.with("context_menu"));
     if also {
         popup = popup.open_memory(egui::SetOpenCommand::Bool(true));
     }
-    context_menu_popup(popup, p, body)
+    context_menu_popup(popup, p, also || resp.secondary_clicked(), body)
 }
 
 /// A context menu owned by a containing view instead of a transient row.
@@ -229,6 +310,7 @@ pub fn context_menu_at(ui: &Ui, id: Id, pos: egui::Pos2, p: &Palette, body: impl
             .layout(egui::Layout::top_down_justified(egui::Align::Min))
             .open_memory(None),
         p,
+        false,
         body,
     )
 }
@@ -241,7 +323,7 @@ pub fn context_menu_at(ui: &Ui, id: Id, pos: egui::Pos2, p: &Palette, body: impl
 pub(crate) fn dismiss_on_window_change(ctx: &egui::Context) -> bool {
     let changed = ctx
         .data(|d| d.get_temp::<u64>(Id::unique("menus_native_window_change")))
-        .is_some_and(|frame| ctx.cumulative_frame_nr() <= frame);
+        .is_some_and(|frame| ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) <= frame);
     if !changed && !super::widgets::window_dragging(ctx) {
         return false;
     }
@@ -252,24 +334,38 @@ pub(crate) fn dismiss_on_window_change(ctx: &egui::Context) -> bool {
 /// Native move/resize events arrive between egui frames. Keep dismissal through
 /// the next frame and all its layout passes, including externally owned menus.
 pub(crate) fn window_geometry_changed(ctx: &egui::Context) {
-    let through = ctx.cumulative_frame_nr() + 1;
+    let through = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) + 1;
     ctx.data_mut(|d| d.insert_temp(Id::unique("menus_native_window_change"), through));
     Popup::close_all(ctx);
 }
 
-fn context_menu_popup(popup: Popup<'_>, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
+fn context_menu_popup(popup: Popup<'_>, p: &Palette, requested: bool, body: impl FnOnce(&mut Ui)) -> bool {
     if dismiss_on_window_change(popup.ctx()) {
         return false;
     }
+    let ctx = popup.ctx().clone();
+    if super::toolbar::native_context::dismiss_repeated_click(&ctx) {
+        return false;
+    }
+    let id = popup.get_id();
+    let was_open = Popup::is_id_open(&ctx, id);
+    let close = PopupCloseBehavior::CloseOnClickOutside;
     // below-right of the pointer like the world menu, pushed back into the
     // window by the area's constraint instead of flipping above it
-    popup
+    let shown = popup
         .align(egui::RectAlign::BOTTOM_START)
         .align_alternatives(&[])
-        .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+        .close_behavior(close)
         .style(style(p))
-        .show(body)
-        .is_some()
+        .show(noted(|ui| {
+            body(ui);
+            super::toolbar::native_context::append(ui, p);
+        }))
+        .is_some();
+    if shown {
+        super::toolbar::native_context::context_shown(&ctx, id, was_open, requested);
+    }
+    shown
 }
 
 /// Menu opened by a click on the widget `resp` (a "more actions" button, a
@@ -291,6 +387,9 @@ pub fn dropdown_placed(
     place: Option<(egui::RectAlign, f32)>,
     body: impl FnOnce(&mut Ui),
 ) -> bool {
+    if !resp.enabled() {
+        return false;
+    }
     if dismiss_on_window_change(&resp.ctx) {
         return false;
     }
@@ -339,7 +438,7 @@ fn placed(
         .close_behavior(close)
         .style(style(p))
         .info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(MenuConfig::MENU_CONFIG_TAG, config))
-        .show(body)
+        .show(noted(body))
         .is_some()
 }
 
@@ -386,7 +485,7 @@ pub fn popup_at(ctx: &egui::Context, id: Id, pos: egui::Pos2, open: &mut bool, p
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
         .style(style(p))
         .open_bool(open)
-        .show(body);
+        .show(noted(body));
     let hovered = ctx.data(|d| d.get_temp::<RowTrack>(rows_id())).and_then(|t| t.hovered);
     ctx.data_mut(|d| d.remove::<RowTrack>(rows_id()));
     hovered
@@ -453,13 +552,39 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
 
 #[allow(clippy::too_many_arguments)]
 fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, end: End, open: bool, sense: Sense) -> egui::Response {
+    row_presented(ui, p, lead, label, label, enabled, end, open, sense)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn row_presented(
+    ui: &mut Ui,
+    p: &Palette,
+    lead: Lead,
+    label: &str,
+    display: &str,
+    enabled: bool,
+    end: End,
+    open: bool,
+    sense: Sense,
+) -> egui::Response {
+    if super::toolbar::commands::scanning() {
+        let icon = match lead {
+            Lead::Icon(icon) => icon,
+            _ => "circle-filled",
+        };
+        let checked = match end {
+            End::Check(value) | End::CheckKeys(value, _) => Some(value),
+            _ => None,
+        };
+        return super::toolbar::commands::row(ui, icon, label, enabled, end == End::Caret, checked);
+    }
     if !filter_row(ui, p, label) {
         return hidden(ui);
     }
     let keyed = if enabled && sense.senses_click() { keyboard_row() } else { None };
     let font = FontId::proportional(12.5);
     let ink = if enabled { p.ink } else { p.muted_dim };
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
+    let galley = ui.painter().layout_no_wrap(display.to_owned(), font, ink);
     let keys = match end {
         End::Keys(keys) | End::CheckKeys(_, keys) => {
             let color = if enabled { p.muted } else { p.muted_dim };
@@ -616,6 +741,56 @@ pub(crate) fn editable_row(
     row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, open, sense)
 }
 
+/// A catalogue menu row: always its icon and its label, so it needs no
+/// tooltip repeating the label.
+pub(crate) fn command_row(
+    ui: &mut Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    enabled: bool,
+    checked: Option<bool>,
+    editable: bool,
+) -> egui::Response {
+    let sense = if editable {
+        Sense::click_and_drag()
+    } else if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let end = checked.map_or(End::None, End::Check);
+    row_presented(ui, p, Lead::Icon(icon), label, label, enabled, end, false, sense)
+}
+
+/// [`editable_row`] with the keys of the entry's shortcut at its right end
+/// (an empty `keys` shows none).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn editable_row_keys(
+    ui: &mut Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    enabled: bool,
+    checked: Option<bool>,
+    down: Option<bool>,
+    editable: bool,
+    keys: &str,
+) -> egui::Response {
+    if keys.is_empty() || down.is_some() {
+        return editable_row(ui, p, icon, label, enabled, checked, down, editable);
+    }
+    let end = checked.map_or(End::Keys(keys), |on| End::CheckKeys(on, keys));
+    let sense = if editable {
+        Sense::click_and_drag()
+    } else if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, false, sense)
+}
+
 /// One absolute cell of an editable menu toolbar, including its empty cells.
 pub(crate) fn icon_cell(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, editable: bool, size: Vec2) -> egui::Response {
     let sense = if editable {
@@ -669,7 +844,7 @@ pub(crate) fn choice_panel(ui: &Ui, p: &Palette, id: Id, pos: egui::Pos2, open: 
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
         .style(style(p))
         .open_bool(open)
-        .show(body);
+        .show(noted(body));
 }
 
 /// A menu's editing companion, kept beside its owner until it is locked again.
@@ -701,7 +876,7 @@ pub(crate) fn settings_panel(ui: &Ui, p: &Palette, id: Id, body: impl FnOnce(&mu
         .style(style(p))
         .frame(egui::Frame::NONE)
         .open(true)
-        .show(|ui| {
+        .show(noted(|ui| {
             let spacing = ui.ctx().global_style().spacing.item_spacing;
             ui.spacing_mut().item_spacing = spacing;
             super::widgets::overlay(ui, p, egui::Margin::same(12), |ui| {
@@ -709,7 +884,7 @@ pub(crate) fn settings_panel(ui: &Ui, p: &Palette, id: Id, body: impl FnOnce(&mu
                 super::widgets::organization_typography(ui);
                 body(ui);
             });
-        });
+        }));
 }
 
 /// Editing can cross between the menu, its submenus and the settings shelf.
@@ -769,7 +944,7 @@ pub(crate) fn editable_submenu(
             }
         });
     }
-    submenu.show(ui, response, body);
+    submenu.show(ui, response, noted(body));
     if click_only {
         egui::containers::menu::MenuState::from_ui(ui, |state, _| {
             if state.open_item == Some(hover_guard) {
@@ -786,7 +961,7 @@ const TAG_PAD: f32 = 6.0;
 /// clicked (the menu closes).
 pub fn item_detail(ui: &mut Ui, p: &Palette, icon: &str, label: &str, detail: &str) -> bool {
     let clicked = row(ui, p, icon, label, true, End::Keys(detail), false).clicked();
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked
@@ -796,7 +971,7 @@ pub fn item_detail(ui: &mut Ui, p: &Palette, icon: &str, label: &str, detail: &s
 /// clicked (the menu closes).
 pub fn item_tag(ui: &mut Ui, p: &Palette, icon: &str, label: &str, tag: &str) -> bool {
     let clicked = row(ui, p, icon, label, true, End::Tag(tag), false).clicked();
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked
@@ -804,6 +979,9 @@ pub fn item_tag(ui: &mut Ui, p: &Palette, icon: &str, label: &str, tag: &str) ->
 
 /// The title of a group of entries: small capitals, muted.
 pub fn section(ui: &mut Ui, p: &Palette, title: &str) {
+    if super::toolbar::commands::scanning() {
+        return;
+    }
     if filtering() {
         return;
     }
@@ -857,56 +1035,50 @@ pub fn item(ui: &mut Ui, p: &Palette, icon: &str, label: &str) -> bool {
     item_if(ui, p, icon, label, true)
 }
 
-/// A catalogue command with a right-click action to add or remove its toolbar button.
-pub fn command(ui: &mut Ui, p: &Palette, id: &'static str) -> bool {
-    command_row(ui, p, id, true, End::None, "")
+/// A toolbar catalogue command with a right-click action to add or remove
+/// its toolbar button. `menu::command(…, key).toolbar_command(id)` gives the
+/// same row a stable menu identity for interface customization.
+pub fn toolbar_command(ui: &mut Ui, p: &Palette, id: &'static str) -> bool {
+    catalogue_row(ui, p, id, None, true, End::None, "")
 }
 
-pub fn command_keys(ui: &mut Ui, p: &Palette, id: &'static str, keys: &str) -> bool {
-    command_keys_if(ui, p, id, true, keys)
+pub fn toolbar_command_keys(ui: &mut Ui, p: &Palette, id: &'static str, keys: &str) -> bool {
+    catalogue_row(ui, p, id, None, true, End::Keys(keys), "")
 }
 
 /// A catalogue command with its shortcut in the keys column, greyed out
-/// when `enabled` is false: the button keeps the short label.
-pub fn command_keys_if(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, keys: &str) -> bool {
-    command_row(ui, p, id, enabled, End::Keys(keys), "")
+/// when `enabled` is false, under the menu's own `label`: the Build menu's
+/// modes do not repeat the "Build - " their buttons and the catalogue carry.
+pub fn toolbar_command_keys_if(ui: &mut Ui, p: &Palette, id: &'static str, label: &str, enabled: bool, keys: &str) -> bool {
+    catalogue_row(ui, p, id, Some(label), enabled, End::Keys(keys), "")
 }
 
-pub fn command_check(ui: &mut Ui, p: &Palette, id: &'static str, checked: bool) -> bool {
-    command_row(ui, p, id, true, End::Check(checked), "")
+pub fn toolbar_command_check(ui: &mut Ui, p: &Palette, id: &'static str, checked: bool) -> bool {
+    catalogue_row(ui, p, id, None, true, End::Check(checked), "")
 }
 
-pub fn command_tip(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, tip: &str) -> bool {
-    command_row(ui, p, id, enabled, End::None, tip)
+pub fn toolbar_command_tip(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, tip: &str) -> bool {
+    catalogue_row(ui, p, id, None, enabled, End::None, tip)
 }
 
-fn command_row(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, end: End<'_>, tip: &str) -> bool {
+fn catalogue_row(ui: &mut Ui, p: &Palette, id: &'static str, label: Option<&str>, enabled: bool, end: End<'_>, tip: &str) -> bool {
     let Some(command) = super::toolbar::command(id) else { return false };
     // Unavailable actions can still be added to a toolbar for later use.
     let response = row_lead_sensed(
         ui,
         p,
         Lead::Icon(command.icon),
-        command.label(),
+        label.unwrap_or(command.label()),
         enabled,
         end,
         false,
         Sense::click(),
     );
-    if ui
-        .ctx()
-        .data(|d| d.get_temp::<bool>(Id::unique("toolbar_menu_demo")))
-        .unwrap_or(false)
-    {
-        ui.ctx()
-            .data_mut(|d| d.insert_temp(Id::unique(("toolbar_menu_command", id)), response.rect));
-    }
-    super::toolbar::command_context(&response, id);
     let clicked = enabled && response.clicked();
     if !tip.is_empty() {
         response.on_hover_text(tip);
     }
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked
@@ -915,7 +1087,7 @@ fn command_row(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, end: E
 /// Entry greyed out when `enabled` is false (Firestorm's on_enable).
 pub fn item_if(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool) -> bool {
     let clicked = row(ui, p, icon, label, enabled, End::None, false).clicked();
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked && enabled
@@ -925,7 +1097,7 @@ pub fn item_if(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool)
 /// (the menu closes).
 pub fn item_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, keys: &str) -> bool {
     let clicked = row(ui, p, icon, label, true, End::Keys(keys), false).clicked();
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked
@@ -939,7 +1111,7 @@ pub fn item_tip(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool
     if !tip.is_empty() {
         resp.on_hover_text(tip);
     }
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked && enabled
@@ -953,7 +1125,7 @@ pub fn todo(ui: &mut Ui, p: &Palette, icon: &str, label: &str) {
 /// Check entry (menu_item_check); true when clicked (the menu closes).
 pub fn check(ui: &mut Ui, p: &Palette, icon: &str, label: &str, checked: bool, enabled: bool) -> bool {
     let clicked = row(ui, p, icon, label, enabled, End::Check(checked), false).clicked();
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked && enabled
@@ -963,7 +1135,7 @@ pub fn check(ui: &mut Ui, p: &Palette, icon: &str, label: &str, checked: bool, e
 /// true when clicked (the menu closes).
 pub fn check_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, checked: bool, enabled: bool, keys: &str) -> bool {
     let clicked = row(ui, p, icon, label, enabled, End::CheckKeys(checked, keys), false).clicked();
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked && enabled
@@ -997,6 +1169,22 @@ pub fn submenu(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool,
 /// [`submenu`] that returns its own row, for a heading that is also an
 /// action when clicked (the import menu).
 pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, body: impl FnOnce(&mut Ui)) -> egui::Response {
+    command_submenu(ui, p, icon, label, enabled, body)
+}
+
+pub(crate) fn command_submenu(
+    ui: &mut Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    enabled: bool,
+    body: impl FnOnce(&mut Ui),
+) -> egui::Response {
+    if super::toolbar::commands::scanning() {
+        let response = super::toolbar::commands::row(ui, icon, label, enabled, true, None);
+        super::toolbar::commands::descend(ui, enabled, body);
+        return response;
+    }
     // a search lists the entries of an available sub-menu in place
     if enabled && filtering() {
         FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.path.push(label.to_owned())));
@@ -1005,9 +1193,19 @@ pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enable
         return hidden(ui);
     }
     let open = enabled && sub_menu_open(ui);
-    let resp = row(ui, p, icon, label, enabled, End::Caret, open);
+    let resp = row_presented(
+        ui,
+        p,
+        Lead::Icon(icon),
+        label,
+        label,
+        enabled,
+        End::Caret,
+        open,
+        Sense::click_and_drag(),
+    );
     if enabled {
-        egui::containers::menu::SubMenu::new().show(ui, &resp, body);
+        egui::containers::menu::SubMenu::new().show(ui, &resp, noted(body));
     }
     resp
 }
@@ -1027,7 +1225,7 @@ fn sub_menu_open(ui: &Ui) -> bool {
 pub fn swatch(ui: &mut Ui, p: &Palette, color: Color32, label: &str) -> bool {
     let resp = row(ui, p, "", label, true, End::None, false);
     dot(ui, p, &resp, color);
-    if resp.clicked() {
+    if resp.clicked() && !super::toolbar::commands::scanning() {
         ui.close();
     }
     resp.clicked()
@@ -1091,7 +1289,10 @@ pub fn voice_volume(ui: &mut Ui, p: &Palette, v: VoiceVolume) -> Option<VoiceEdi
         ui.available_width().max(natural)
     };
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, VOICE_ROW_H), Sense::hover());
-    let (key, frame) = (keep_open_id(ui.layer_id()), ui.ctx().cumulative_frame_nr());
+    let (key, frame) = (
+        keep_open_id(ui.layer_id()),
+        ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT),
+    );
     ui.ctx().data_mut(|d| d.insert_temp(key, (frame, rect)));
     if !ui.is_rect_visible(rect) {
         return None;
@@ -1171,12 +1372,16 @@ pub(crate) fn clicks_kept_row(ctx: &egui::Context, popup: Id) -> bool {
     let Some((frame, rect)) = ctx.data(|d| d.get_temp::<(u64, egui::Rect)>(keep_open_id(layer))) else {
         return false;
     };
-    frame + 1 >= ctx.cumulative_frame_nr()
+    frame + 1 >= ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)
         && ctx.input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|pos| rect.contains(pos)))
 }
 
 /// Thin line between groups of entries.
 pub fn separator(ui: &mut Ui, p: &Palette) {
+    if super::toolbar::commands::scanning() {
+        super::toolbar::commands::information("", "", true);
+        return;
+    }
     if filtering() {
         return;
     }
@@ -1188,6 +1393,10 @@ pub fn separator(ui: &mut Ui, p: &Palette) {
 
 /// Muted line that is not an action (an avatar's complexity…).
 pub fn info(ui: &mut Ui, p: &Palette, icon: &str, text: &str) {
+    if super::toolbar::commands::scanning() {
+        super::toolbar::commands::information(icon, text, false);
+        return;
+    }
     info_line(
         ui,
         icon,
@@ -1436,7 +1645,7 @@ fn hidden(ui: &mut Ui) -> egui::Response {
 /// Aurora's own: the Legacy Viewer's menus have no search.
 pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
     let id = ui.layer_id().id.with("aurora_menu_search");
-    let frame = ui.ctx().cumulative_frame_nr();
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let mut state = ui.data(|d| d.get_temp::<SearchState>(id)).unwrap_or_default();
     let opened = state.frame + 1 < frame;
     if opened {

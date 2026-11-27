@@ -62,7 +62,58 @@ fn demo_vr_closed() -> Option<u64> {
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// The G-buffer at the Standard precision: 8 bits per channel.
+const GBUF_STANDARD: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// A colour target of 16 normalized bits per channel, on the device that has
+/// it (`main_thread.rs` `open_device` asks for it where `gbuf_wide` holds).
+pub(crate) const GBUF_WIDE: wgpu::Features = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM;
+
+/// The adapter draws into that target, resolves it and filters it: what the
+/// G-buffer needs of its format.
+pub(crate) fn gbuf_wide(adapter: &wgpu::Adapter) -> bool {
+    if !adapter
+        .features()
+        .contains(GBUF_WIDE | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
+    {
+        return false;
+    }
+    let f = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba16Unorm);
+    f.allowed_usages
+        .contains(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING)
+        && f.flags.contains(
+            wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE
+                | wgpu::TextureFormatFeatureFlags::FILTERABLE,
+        )
+}
+
+/// The G-buffer's format (octahedral normal, roughness, metallic). `high`
+/// ([`NormalPrecision::high`]): 16 bits per channel, as the normals of
+/// LLPipeline::addDeferredAttachments (indra/newview/pipeline.cpp,
+/// GL_RGBA16; originally LGPL 2.1), in 8 bits' place: eight step the normal
+/// by 0.45 degrees, and a mirror doubles it, so that the traced reflection
+/// of a smooth face came in terraces, 30 cm apart at 20 m. `wide`: the
+/// device draws 16 normalized bits at the pass's sample count
+/// (`Backend::gbuf_wide`); without, 16-bit floats, the HDR target's format,
+/// which every device draws and resolves at each sample count offered:
+/// steps of 0.06 degrees at most.
+pub(crate) fn gbuf_format(high: bool, wide: bool) -> wgpu::TextureFormat {
+    match (high, wide) {
+        (false, _) => GBUF_STANDARD,
+        (true, true) => wgpu::TextureFormat::Rgba16Unorm,
+        (true, false) => HDR_FORMAT,
+    }
+}
+
+/// The G-buffer `s` asks of a renderer of `device` at `samples`: none, or
+/// its format. `wide`: the sample counts of the 16 normalized bits
+/// (`Backend::gbuf_wide`). The reflections count as traced with the sun's
+/// shadows on only: nothing is traced without them (`rt_now`).
+fn gbuf_wanted(device: &wgpu::Device, external: bool, wide: &[u32], s: &RenderSettings, samples: u32) -> Option<wgpu::TextureFormat> {
+    let traced = s.shadow_resolution > 0 && crate::rt_shadows::traced(device, external, s.ray_tracing).reflections;
+    s.gbuffer()
+        .then(|| gbuf_format(s.normal_precision.high(s.ssr, traced), wide.contains(&samples)))
+}
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -224,7 +275,7 @@ struct FrameU {
     /// y: the share of the light the sun's shadows let through
     /// (1 - the shadow intensity), in every pass; z: the projectors'
     /// light size in metres for their soft shadows (0 = the 5-tap filter of
-    /// before), main view only.
+    /// before), main view only. In the pick view w excludes Ignore Object.
     soft: [f32; 4],
     /// The soles' heights of `snow_stamps` (m), four to a vec4.
     snow_stamp_z: [[f32; 4]; crate::types::SNOW_STAMPS / 4],
@@ -233,6 +284,8 @@ struct FrameU {
     snow_far: [f32; 4],
     /// Planet curvature (`Curvature::uniform`): xy the main camera, z 1 / 2R.
     curvature: [f32; 4],
+    /// Aurora Weather's fog (fog.rs `frame_terms`; zero: none).
+    fog_look: [[f32; 4]; 7],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -395,7 +448,7 @@ impl Smaa {
             a2c: false,
             samples: 1,
             format: Some(format),
-            gbuf: false,
+            gbuf: None,
             range: None,
             depth_format: None,
             depth_bias: Default::default(),
@@ -554,11 +607,18 @@ fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
 
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
-/// shadows (reflections, probe faces and impostor pictures draw none).
-fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<(usize, Mat4)>) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+/// shadows (reflections, probe faces and impostor pictures draw none), nor
+/// for a projector among the first `traced` lights, whose shadows the
+/// traced lights' pass draws (`Renderer::traced_projectors`).
+fn spot_shadow_views(
+    f: &FrameParams,
+    limit: usize,
+    shelter: Option<(usize, Mat4)>,
+    traced: usize,
+) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
     let mut views: [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] = std::array::from_fn(|k| {
         let s = f.spot_shadows[k].filter(|_| k < limit);
-        let s = s.filter(|_| f.shadows)?;
+        let s = s.filter(|s| f.shadows && projector_map_drawn(s.light, traced))?;
         let light = f.lights.get(s.light as usize).filter(|_| (s.light as usize) < MAX_LIGHTS)?;
         Some((s, light.projector?.shadow_matrix))
     });
@@ -578,6 +638,21 @@ fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<(usize, Mat4
         ));
     }
     views
+}
+
+/// Whether the traced passes light and shadow by the frame's light,
+/// `sun_dir`: the one that shades, the moon's at night as the shadow maps'
+/// (world/env.rs: the sun when it is up, else the moon, else straight down;
+/// LLEnvironment::getLightDirection). Tracing only while the sun was
+/// visible let the moon through every roof.
+fn traced_light_up(sun_dir: Vec3) -> bool {
+    sun_dir.z > 0.0
+}
+
+/// Whether the shadow map of the projector at `light` in the frame's list is
+/// drawn while the first `traced` lights are traced: only past them.
+fn projector_map_drawn(light: u32, traced: usize) -> bool {
+    light as usize >= traced
 }
 
 /// With the shadows off, how long the shelter map drawn alone is kept while
@@ -705,7 +780,7 @@ impl Glow {
             a2c: false,
             samples: 1,
             format: Some(fmt),
-            gbuf: false,
+            gbuf: None,
             range: None,
             depth_format: None,
             depth_bias: Default::default(),
@@ -814,8 +889,14 @@ struct Taa {
 /// The depth prepass's colour target this frame, when something reads the
 /// motion (`Backend::motion_now`): the mesh normals (xy) and each pixel's
 /// screen motion (zw, object.wgsl `depth_normal`). GTAO's normals when its
-/// targets exist (TAA then reads the same), else TAA's own.
-fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>) -> Option<&'a wgpu::TextureView> {
+/// targets exist (TAA then reads the same), else TAA's own, else the motion
+/// blur's (`Backend::blur_motion`).
+fn motion_view<'a>(
+    motion_now: bool,
+    targets: &'a Targets,
+    taa: Option<&'a Taa>,
+    blur: Option<&'a wgpu::TextureView>,
+) -> Option<&'a wgpu::TextureView> {
     if !motion_now {
         return None;
     }
@@ -824,6 +905,7 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
         .as_ref()
         .map(|g| &g.normals)
         .or_else(|| taa.and_then(|t| t.motion.as_ref()))
+        .or(blur)
 }
 
 /// The coverage from which a blended face gives FSR its own depth and
@@ -1008,6 +1090,9 @@ struct Targets {
     /// The contact shadows' mask (contact_shadows.rs), when they are on or
     /// `AURORA_CONTACT_SHADOWS` keeps it ready.
     contact: Option<crate::contact_shadows::Targets>,
+    /// The ray-traced shadows' mask (rt_shadows.rs), when the device traces:
+    /// bound in the contact mask's place.
+    rt: Option<crate::rt_shadows::Targets>,
     /// The soft sun shadows' mask (soft_shadows.rs), when they are on or
     /// `AURORA_SOFT_SHADOWS` keeps it ready.
     soft: Option<crate::soft_shadows::Targets>,
@@ -1152,7 +1237,14 @@ struct Pipelines {
     part_mask: wgpu::RenderPipeline,
     /// The visible part of the subject's faces (part_pick.rs).
     part_pick: wgpu::RenderPipeline,
+    /// LiveMesh's Fit lab (fit_clip.rs): the garment's outer surface as a
+    /// depth, the body's visible faces as a mask.
+    fit_garment: wgpu::RenderPipeline,
+    fit_body: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
+    /// SSR's composite of the traced reflections (rt_shadows.rs), when they
+    /// are on.
+    ssr_rt: Option<wgpu::RenderPipeline>,
     pre_opaque: wgpu::RenderPipeline,
     pre_opaque_2s: wgpu::RenderPipeline,
     pre_portal: wgpu::RenderPipeline,
@@ -1208,6 +1300,9 @@ struct Pipelines {
     /// lying on what the map says, left every slope bare.
     shelter: wgpu::RenderPipeline,
     shelter_terrain: wgpu::RenderPipeline,
+    /// Aurora Weather's fog: the walls drawn into its flow grid (fog.rs
+    /// `Flow`, object.wgsl `fs_fog_voxel`).
+    fog_voxel: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
     /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
     /// one-sided and two-sided faces.
@@ -1243,6 +1338,13 @@ struct GpuTimer {
     last_pixels: u64,
     /// The world pixels of each readback slot's frame.
     slot_pixels: [std::cell::Cell<u64>; 3],
+    /// What a photo of `last_pixels` is planned by: `last_ms` and the
+    /// rounds its traced passes run that the view's frame does not
+    /// (rt_shadows.rs `STILL_ROUNDS`).
+    last_photo_ms: Option<f32>,
+    /// Those rounds, for each readback slot's frame (0: a frame that
+    /// traces nothing over frames, or a photo's own).
+    slot_rounds: [std::cell::Cell<u32>; 3],
     /// Marks between and inside passes are written
     /// (TIMESTAMP_QUERY_INSIDE_ENCODERS + TIMESTAMP_QUERY_INSIDE_PASSES).
     marks: bool,
@@ -1267,7 +1369,7 @@ struct GpuTimer {
     /// order.
     last_effects: Option<[f32; 4]>,
     /// Last times of the weather (ms), in [`GPU_WEATHER_PARTS`] order.
-    last_weather: Option<[f32; 4]>,
+    last_weather: Option<[f32; 5]>,
     /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
     /// drawn with, and the frames measured since the variant last changed.
     slot_prepass: [std::cell::Cell<bool>; 3],
@@ -1341,7 +1443,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 39;
+const GPU_MARKS: u32 = 41;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1391,7 +1493,8 @@ const GPU_SHADOW_PARTS: [&[(u32, u32)]; 5] = [
 /// After the prepass of the multisampled depth, which opens the scene
 /// encoder (written right after `MARK_SCENE_BEGIN` without MSAA).
 const MARK_DEPTH_MSAA_END: u32 = 20;
-/// Around the bloom levels (bloom.rs), after the glow; part of the post.
+/// Around the sun shafts (sun_shafts.rs) and the bloom levels (bloom.rs),
+/// after the glow; part of the post.
 const MARK_BLOOM_BEGIN: u32 = 21;
 const MARK_BLOOM_END: u32 = 22;
 /// The depth prepasses on their own, both counted in the first element:
@@ -1433,6 +1536,11 @@ const MARK_CLOUDS_END: u32 = 39;
 /// there when they are off); in the effects' range from `MARK_SSAO_END` to
 /// `MARK_WATER_AIR_BEGIN`.
 const MARK_SOFT_END: u32 = 40;
+/// Aurora Weather's fog volume (fog.rs): around its compute, after the
+/// clouds' and before scene pass A (both written together when it is not
+/// drawn).
+const MARK_FOG_BEGIN: u32 = 41;
+const MARK_FOG_END: u32 = 42;
 /// The effects beyond the occlusion, the contact shadows and the soft
 /// shadows (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1449,12 +1557,14 @@ const GPU_EFFECT_PARTS: [&[(u32, u32)]; 4] = [
 ];
 /// What `GpuElement::Weather` is made of (`RenderStats::gpu_weather`): the
 /// shelter map, the wetness and footprints memories, the wet ground (with
-/// the snow lying), the drops and flakes with the distant layers.
-const GPU_WEATHER_PARTS: [(u32, u32); 4] = [
+/// the snow lying), the drops and flakes with the distant layers, the fog's
+/// volume.
+const GPU_WEATHER_PARTS: [(u32, u32); 5] = [
     (MARK_SHELTER_BEGIN, MARK_SHELTER_END),
     (MARK_WEATHER_MEMORY_BEGIN, MARK_WEATHER_MEMORY_END),
     (MARK_WET_BEGIN, MARK_SSR_END),
     (MARK_RAIN_BEGIN, MARK_RAIN_END),
+    (MARK_FOG_BEGIN, MARK_FOG_END),
 ];
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
@@ -1475,8 +1585,12 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
         (MARK_WEATHER_MEMORY_END, MARK_COPY_END),
         (MARK_COPY_END, MARK_WET_BEGIN),
     ],
-    // terrain and sky
-    &[(MARK_DEPTH_MSAA_END, MARK_SKY_END), (MARK_SKY_END, MARK_TERRAIN_END)],
+    // terrain and sky (the fog's volume is the weather's)
+    &[
+        (MARK_DEPTH_MSAA_END, MARK_FOG_BEGIN),
+        (MARK_FOG_END, MARK_SKY_END),
+        (MARK_SKY_END, MARK_TERRAIN_END),
+    ],
     // objects and avatars (opaque, masked), impostor pictures and cards
     &[
         (MARK_TERRAIN_END, MARK_OBJECTS_END),
@@ -1537,6 +1651,8 @@ impl GpuTimer {
             last_ms: None,
             last_pixels: 0,
             slot_pixels: Default::default(),
+            last_photo_ms: None,
+            slot_rounds: Default::default(),
             marks: device
                 .features()
                 .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
@@ -1567,8 +1683,15 @@ impl GpuTimer {
                     let ts = crate::readback::u64_array::<{ GPU_TIMESTAMPS as usize }>(&view[..GPU_TIMESTAMPS as usize * 8]);
                     let ms = |a: u32, b: u32| crate::readback::elapsed_gpu_ms(&ts, a, b, self.period_ns);
                     if ts[1] > ts[0] {
-                        self.last_ms = Some(ms(0, 1));
+                        let all = ms(0, 1);
+                        self.last_ms = Some(all);
                         self.last_pixels = self.slot_pixels[slot].get();
+                        // the traced passes are in the contact shadows'
+                        // range, with the levels' builds, which a photo
+                        // does once: counted with them, the estimate errs
+                        // slow; the whole frame without the marks
+                        let round = if self.marks { ms(MARK_SSAO_END, MARK_CONTACT_END) } else { all };
+                        self.last_photo_ms = Some(crate::rt_shadows::still_gpu_ms(all, round, self.slot_rounds[slot].get()));
                         if self.marks {
                             let mut e = [0.0; GpuElement::ALL.len()];
                             for (t, ranges) in e.iter_mut().zip(GPU_ELEMENTS) {
@@ -1813,7 +1936,7 @@ fn taa_motion_now() -> bool {
 }
 
 /// AURORA_PROFILE: the summary also wants the time each step waited.
-fn profile() -> bool {
+pub(crate) fn profile() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("AURORA_PROFILE").is_some())
 }
@@ -1870,6 +1993,10 @@ struct Dummies {
     white: wgpu::TextureView,
     black: wgpu::TextureView,
     depth: wgpu::TextureView,
+    /// A 1^3 fog volume that lets everything through (0, 0, 0, 1).
+    volume: wgpu::TextureView,
+    /// A 1 x 1 fog ground (never read: `fog_look[6]` says none).
+    ground: wgpu::TextureView,
 }
 
 /// Frame bind groups (group 0) for the different passes.
@@ -1987,6 +2114,8 @@ pub(crate) struct Backend {
     hud_selection: Option<crate::selection::Overlay>,
     /// The poser's hovered part (`part_faces`), as the selection's halo.
     part: Option<crate::selection::Overlay>,
+    /// LiveMesh's Fit lab clipping map (fit_clip.rs), while it is on.
+    fit_clip: Option<crate::fit_clip::FitClip>,
     /// Seeded from post depth while hovering; part faces resolve their own
     /// nearest surface here, including blended unrigged accessories.
     part_depth: Option<wgpu::TextureView>,
@@ -2000,6 +2129,13 @@ pub(crate) struct Backend {
     equirect_reads: crate::equirect::Readbacks,
     /// The Director's film frames on their way back (film_readback.rs).
     film_reads: crate::film_readback::FilmReads,
+    /// The Director's shutter (shutter.rs), made the first time a render
+    /// uses it.
+    shutter: Option<crate::shutter::ShutterAccum>,
+    /// This frame's sub-frame of an offline frame with a shutter.
+    shutter_now: Option<crate::Shutter>,
+    /// Frames drawn since the last film frame (`SHUTTER_KEPT_FRAMES`).
+    shutter_idle: u32,
     /// The six faces of a 360° capture are drawn one after the other: the
     /// snapshot size stays (the render targets are made once, not twice per
     /// face) from the first face to the frame after the last.
@@ -2034,6 +2170,24 @@ pub(crate) struct Backend {
     clouds: Option<crate::clouds::Clouds>,
     /// This frame draws the volumetric clouds over the sky.
     clouds_now: bool,
+    /// The ray-traced sun shadows (AURORA_RT_SHADOWS), and whether this
+    /// frame traces them.
+    rt: Option<crate::rt_shadows::RtShadows>,
+    /// The ray tracer, or what an effect turned on needs, being made.
+    rt_build: Option<RtBuild>,
+    /// The worker making it stopped (a panic) or could not start: nothing is
+    /// made again until ray tracing is turned off and on.
+    rt_failed: bool,
+    rt_now: bool,
+    /// Aurora Weather's fog (fog.rs), made while it is on.
+    fog: Option<crate::fog::Fog>,
+    /// This frame's fog: the height fog's terms of every view (none: no
+    /// fog, or the camera under the water), and whether the main view
+    /// reads the volume.
+    fog_terms: Option<(crate::types::FogLook, f32)>,
+    fog_volume_now: bool,
+    /// The fog's volume is on: the shelter map is drawn for it.
+    fog_shelter: bool,
     /// The soft sun shadows' pipelines, made with the first frame that
     /// wants them.
     soft: Option<crate::soft_shadows::SoftShadows>,
@@ -2109,8 +2263,20 @@ pub(crate) struct Backend {
     glow: Glow,
     /// Depth of field, made the first time it is on.
     dof: Option<crate::dof::Dof>,
+    /// Motion blur, made the first time it is on.
+    motion_blur: Option<crate::motion_blur::MotionBlurPass>,
+    /// The motion target of the depth prepass while the motion blur reads
+    /// it and neither GTAO nor TAA has one (`motion_view`); its size.
+    blur_motion: Option<((u32, u32), wgpu::TextureView)>,
+    /// This frame draws the motion blur (`motion_blur_wanted`).
+    blur_now: bool,
+    /// The sun's and the moon's shafts, made the first time they are on.
+    sun_shafts: Option<crate::sun_shafts::SunShafts>,
     /// The photo's look, made the first time one is on.
     looks: Option<crate::looks::Looks>,
+    /// The photo filters' catalogue pictures, while the catalogue asks for
+    /// them (look_thumbs.rs).
+    look_thumbs: Option<crate::look_thumbs::LookThumbs>,
     rlva_spheres: Option<crate::rlva::Spheres>,
     /// The motion vectors' view (AURORA_DEBUG_MOTION).
     motion_debug: Option<crate::motion_debug::MotionDebug>,
@@ -2141,6 +2307,11 @@ pub(crate) struct Backend {
     /// Frames since a part was last lit: its overlay images go after
     /// `PART_IDLE_FRAMES`.
     part_idle: u32,
+    /// Frames without the Fit lab's map: its images go after
+    /// `PART_IDLE_FRAMES`, so a garment out of view a moment keeps them.
+    fit_idle: u32,
+    /// This frame draws the Fit lab's map: it has its parameters and faces.
+    fit_lit: bool,
     /// The world's labels, drawn behind what the scene has in front of
     /// them (label_depth.rs).
     label_depth: crate::label_depth::LabelDepth,
@@ -2163,7 +2334,16 @@ pub(crate) struct Backend {
     /// The scene's pipelines were compiled with the soft shadows' path
     /// (`soft_path`): the mask is drawn and read only while they were.
     soft_pipelines: bool,
-    /// The pipelines being compiled for other samples or SSR, if any.
+    /// The G-buffer the scene's pipelines were compiled for: its format,
+    /// none without it (`gbuf_wanted`). The targets are made of it, not of
+    /// the settings: a set compiling for another precision draws into the
+    /// one of before until it arrives.
+    gbuf_pipelines: Option<wgpu::TextureFormat>,
+    /// The sample counts the device draws 16 normalized bits at, 1
+    /// included: none without the format (`GBUF_WIDE`).
+    gbuf_wide: Vec<u32>,
+    /// The pipelines being compiled for other samples, SSR or another
+    /// G-buffer format, if any.
     pipeline_build: Option<PipelineBuild>,
     /// The pipeline workers still running, a set no longer wanted included:
     /// waited for when the renderer is dropped (`wait_pipeline_workers`).
@@ -2189,7 +2369,8 @@ pub(crate) struct Backend {
     anim_now: [u32; 4],
     /// `shadow_cull::path` bits of the frame being drawn.
     shadow_path: u32,
-    /// Inverse view-projection of the last rendered frame (picking).
+    /// Inverse view-projection the last frame's depth was drawn with, the
+    /// temporal jitter included (picking).
     last_inv_vp: Mat4,
     /// The planet's curvature the last frame was drawn with (picking).
     last_curvature: Curvature,
@@ -2202,6 +2383,9 @@ pub(crate) struct Backend {
     gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
     /// Where the replay of the journal stages its buffer writes.
     write_staging: crate::write_staging::WriteStaging,
+    /// The surfaces of the interface's windows outside the viewer's
+    /// (outside.rs); the window's renderer alone has any.
+    outside: crate::outside::Surfaces,
 }
 
 impl Drop for Backend {
@@ -2215,6 +2399,7 @@ impl Drop for Backend {
     fn drop(&mut self) {
         if self.lost.get() {
             log::warn!("GPU device lost: the window surface is left to the process");
+            self.outside.leak();
             return;
         }
         self.wait_pipeline_workers();
@@ -2508,8 +2693,8 @@ struct PipeDesc<'a> {
     a2c: bool,
     samples: u32,
     format: Option<wgpu::TextureFormat>,
-    /// Second color target (G-buffer for SSR).
-    gbuf: bool,
+    /// Second color target (G-buffer for SSR), of this format.
+    gbuf: Option<wgpu::TextureFormat>,
     /// Second color target of the passes of the exact blend order
     /// (`blend_exact::Lists::range`): its blend, and what is written.
     range: Option<(Option<wgpu::BlendState>, wgpu::ColorWrites)>,
@@ -2818,11 +3003,16 @@ struct SnowTrail {
 
 impl SnowTrail {
     /// One frame, `on` while footprints are kept (snow lying, the setting
-    /// on).
+    /// on). Off, the frame's `snow_trail` goes to zero (its size 0: no map,
+    /// env.wgsl), so the shaders stop reading the map left from the last
+    /// frame it was drawn (#4019: the trails stayed, frozen, with
+    /// Footprints off, and wherever a teleport took me); on again, the map
+    /// is drawn from the region's prints, as every frame.
     fn advance(&mut self, on: bool, snowing: f32, at: Vec2, fallen: f32, extent: f32) {
         if !on {
             self.origin = None;
             self.last = None;
+            self.uniform = [0.0; 4];
             return;
         }
         let now = Instant::now();
@@ -2936,7 +3126,23 @@ impl Backend {
     /// to it, where the camera goes, from it); with the shadows off too,
     /// alone in the atlas (low settings keep the rain out of the houses).
     fn rain_shelter(&self, f: &FrameParams) -> bool {
-        rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
+        rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && (self.rain_wet.active() || self.fog_shelter)
+    }
+
+    /// How many of the frame's first lights have their projector shadows
+    /// traced this frame (common.wgsl `projector_at`, `PROJECTORS_TRACED`):
+    /// their shadow maps are not drawn. The faces the traced pass does not
+    /// see read the maps: without them a blended face takes such a
+    /// projector unshadowed, as the Legacy Viewer's (alphaF.glsl
+    /// `calcPointLightOrSpotLight`, only spotLightF.glsl reads the maps),
+    /// and so do the reflections. 0 while the lights are not traced.
+    fn traced_projectors(&self) -> usize {
+        let tuning = self.settings.rt_tuning;
+        let traced = self.rt_now
+            && tuning.projectors
+            && self.rt.as_ref().is_some_and(|r| r.traces_lights())
+            && self.targets.rt.as_ref().is_some_and(|t| t.lights.is_some());
+        if traced { crate::rt_shadows::traced_count(tuning) } else { 0 }
     }
 
     /// The projector map the shelter is drawn into this frame, if it is,
@@ -2973,8 +3179,81 @@ impl Backend {
         let by = Vec2::from(by);
         self.rain_wet.shift(by);
         self.snow_trail.shift(by);
+        // (the fog's history is of the old positions: it starts afresh)
+        if let Some(fog) = &mut self.fog {
+            fog.skipped();
+        }
         if let Some(c) = &mut self.shelter_centre {
             *c += by.extend(0.0);
+        }
+    }
+}
+
+impl Backend {
+    /// Aurora Weather's fog this frame (fog.rs): made while it is on, its
+    /// volume's textures while its tier has one (the frame groups bound to
+    /// them again when they change). The height fog's terms of every view
+    /// are kept for `frame_uniforms`. Under the water, and in a cut-out
+    /// photo, none is drawn: the water's fog alone.
+    fn prepare_fog(&mut self, f: &FrameParams, ground: &FogGround, camera_water_level: f32) {
+        self.fog_shelter = f.fog.is_some();
+        let Some(look) = f.fog.filter(|_| !f.cutout && f.camera_pos.z >= camera_water_level) else {
+            self.fog_terms = None;
+            self.fog_volume_now = false;
+            self.fog_shelter = false;
+            // off: everything goes, the frame groups lose its textures
+            if f.fog.is_none() && self.fog.take().is_some() {
+                self.remake_frame_groups();
+            }
+            return;
+        };
+        let made = self.fog.is_none();
+        if made {
+            // (its noise is made on a thread of its own the first time:
+            // until it is ready, none, as below)
+            if let Some(noise) = crate::fog::noise_ready() {
+                let queue = &self.queue;
+                self.fog = extra(&mut self.oom, &self.device, self.lost.get(), "fog", |d| {
+                    crate::fog::Fog::new(d, queue, noise)
+                });
+            }
+        }
+        self.fog_volume_now = false;
+        let Some(fog) = &mut self.fog else {
+            // (refused or not ready yet: none at all rather than a fogged
+            // ground under a clear sky)
+            self.fog_terms = None;
+            self.fog_shelter = false;
+            return;
+        };
+        let level = crate::fog::ground_level_at(ground, f.camera_pos.truncate()).unwrap_or(f.water_height);
+        self.fog_terms = Some((look, level));
+        fog.upload_ground(&self.queue, ground);
+        let changed = if look.tier == FogTier::Height {
+            fog.release_targets()
+        } else if !self.oom.extras_ready(Instant::now()) {
+            false
+        } else {
+            let (made, refused) = crate::gpu_alloc::scoped(&self.device, || fog.ensure_targets(&self.device, look.quality));
+            if first_use(&mut self.oom, "fog volume", false, refused && !self.lost.get()) {
+                // refused: the height fog until it can be made
+                fog.release_targets();
+                true
+            } else {
+                made
+            }
+        };
+        self.fog_volume_now = fog.volume().is_some();
+        // (before the uniforms: the scene reads the flow grid where it is now)
+        if self.fog_volume_now && !f.cutout {
+            fog.place_flow(f.camera_pos);
+        }
+        // the shelter map for the fog drawn, the height fog's too (it keeps
+        // the rooms clear)
+        self.fog_shelter = true;
+        // (made this frame: the frame groups take its ground)
+        if changed || made {
+            self.remake_frame_groups();
         }
     }
 }
@@ -3035,9 +3314,9 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
             write_mask: d.write_mask,
         }));
     }
-    if d.gbuf {
+    if let Some(format) = d.gbuf {
         targets.push(Some(wgpu::ColorTargetState {
-            format: GBUF_FORMAT,
+            format,
             blend: None,
             write_mask: wgpu::ColorWrites::ALL,
         }));
@@ -3234,8 +3513,8 @@ fn extra<T>(
 /// the main view when it is drawn (not hidden by the debug filter), not
 /// under the water (the sky is seen through its fog), nor in a cut-out
 /// photo (no sky).
-fn clouds_wanted(cutout: bool, hide_sky: bool, camera_z: f32, water_level: f32) -> bool {
-    !cutout && !hide_sky && camera_z >= water_level
+fn clouds_wanted(cutout: bool, hide_sky: bool, camera_z: f32, water_level: Option<f32>) -> bool {
+    !cutout && !hide_sky && water_level.is_none_or(|height| camera_z >= height)
 }
 
 /// The clouds' size-bound targets for `size` (and a still's) are made,
@@ -3263,6 +3542,66 @@ fn cloud_targets(
     true
 }
 
+/// Whether the frame draws its motion blur: asked for, and not on a photo
+/// nor an offline film's frame (drawn at their own size, a frame apart
+/// from the last one the window drew), nor on a cut-out frame, whose empty
+/// background keeps its coverage.
+fn motion_blur_wanted(f: &FrameParams, snapshot: bool) -> bool {
+    f.motion_blur.is_some_and(|m| m.scale > 0.0) && !snapshot && !f.cutout
+}
+
+/// The motion blur's targets for `size` are made, checked: false while
+/// refused or waiting (the frame goes without the effect).
+fn motion_blur_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    blur: &mut Option<crate::motion_blur::MotionBlurPass>,
+    device: &wgpu::Device,
+    post: &crate::dof::PostInputs,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let b = blur.get_or_insert_with(|| crate::motion_blur::MotionBlurPass::new(device, HDR_FORMAT));
+    if b.has_targets(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || b.ensure_targets(device, size, HDR_FORMAT, post));
+    if first_use(oom, "motion blur", false, refused && !lost) {
+        b.release();
+        return false;
+    }
+    true
+}
+
+/// Frames without a film frame after which the shutter's sum is let go.
+const SHUTTER_KEPT_FRAMES: u32 = 600;
+
+/// The shutter's sum for `size` is made, checked: false while refused or
+/// waiting (the frame is its last sub-frame alone).
+fn shutter_target(
+    oom: &mut crate::gpu_alloc::Refusals,
+    accum: &mut Option<crate::shutter::ShutterAccum>,
+    device: &wgpu::Device,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let a = accum.get_or_insert_with(|| crate::shutter::ShutterAccum::new(device));
+    if a.has_target(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || a.ensure_target(device, size));
+    if first_use(oom, "shutter", false, refused && !lost) {
+        a.release();
+        return false;
+    }
+    true
+}
+
 /// The depth of field's targets for `size` are made, checked: false while
 /// refused or waiting (the frame goes without the effect).
 fn dof_targets(
@@ -3283,6 +3622,32 @@ fn dof_targets(
     let (_, refused) = crate::gpu_alloc::scoped(device, || d.ensure_targets(device, size, HDR_FORMAT, post));
     if first_use(oom, "depth of field", false, refused && !lost) {
         d.release();
+        return false;
+    }
+    true
+}
+
+/// The sun shafts' targets for `size` (sun_shafts.rs), made on first use
+/// and checked as the depth of field's: refused by a full video memory, the
+/// frame goes without them.
+fn shafts_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    shafts: &mut Option<crate::sun_shafts::SunShafts>,
+    device: &wgpu::Device,
+    post: &crate::dof::PostInputs,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let s = shafts.get_or_insert_with(|| crate::sun_shafts::SunShafts::new(device, post.layout, HDR_FORMAT));
+    if s.has_targets(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || s.ensure_targets(device, size, HDR_FORMAT, post));
+    if first_use(oom, "sun shafts", false, refused && !lost) {
+        s.release();
         return false;
     }
     true
@@ -3354,18 +3719,37 @@ type ImpostorPipelines = (
     wgpu::RenderPipeline,
 );
 
-/// The pipelines that depend on the MSAA samples and SSR, compiled on a
-/// worker thread when one of them changes (#1722, #1746). Built on the render
+/// The pipelines that depend on the MSAA samples, SSR and the G-buffer's
+/// format, compiled on a worker thread when one of them changes (#1722,
+/// #1746). Built on the render
 /// thread, the whole set stopped the frames for as long as the driver took:
 /// 9 s on amdvlk, 36 s on an Intel Arc, reported as a GPU stall. The frames keep their samples and SSR meanwhile, and take the
 /// new ones with their targets on the frame the set arrives.
 struct PipelineBuild {
     samples: u32,
-    ssr: bool,
+    /// The G-buffer's format, none without it (`gbuf_wanted`).
+    gbuf: Option<wgpu::TextureFormat>,
     /// Compiled with the soft shadows' path (`soft_path`).
     soft: bool,
     started: std::time::Instant,
     done: std::sync::mpsc::Receiver<(Pipelines, ImpostorPipelines)>,
+}
+
+/// What a worker thread made for ray tracing: the ray tracer, or the parts
+/// of it an effect turned on later needs.
+enum RtMade {
+    Tracer(Box<crate::rt_shadows::RtShadows>),
+    Parts(Box<crate::rt_shadows::Parts>),
+}
+
+/// The ray tracer being made on a worker thread
+/// (`Backend::follow_ray_tracing`). Its compute pipelines are the driver's
+/// to compile, like the scene's ([`PipelineBuild`]): made on the render
+/// thread when Preferences turned ray tracing on, they held the picture.
+/// The frames keep the shadow maps and the screen-space effects meanwhile.
+struct RtBuild {
+    started: std::time::Instant,
+    done: std::sync::mpsc::Receiver<RtMade>,
 }
 
 impl Impostors {
@@ -3375,7 +3759,7 @@ impl Impostors {
         records_layout: &wgpu::BindGroupLayout,
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
-        ssr: bool,
+        gbuf: Option<wgpu::TextureFormat>,
         soft: bool,
     ) -> Impostors {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3436,7 +3820,7 @@ impl Impostors {
             mapped_at_creation: false,
         });
         let (capture_opaque, capture_blend, sprite, sprite_depth) =
-            Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, ssr, soft);
+            Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, gbuf, soft);
         Impostors {
             layout,
             atlas,
@@ -3556,7 +3940,7 @@ impl Impostors {
         records_layout: &wgpu::BindGroupLayout,
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
-        ssr: bool,
+        gbuf: Option<wgpu::TextureFormat>,
         soft: bool,
     ) -> ImpostorPipelines {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -3574,7 +3958,7 @@ impl Impostors {
             bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout)],
             immediate_size: 0,
         });
-        let desc = |label: &'static str, vs: &'static str, fs: &'static str, vb: Vb, samples: u32, gbuf: bool| PipeDesc {
+        let desc = |label: &'static str, vs: &'static str, fs: &'static str, vb: Vb, samples: u32, gbuf| PipeDesc {
             label,
             vs,
             fs: Some(fs),
@@ -3600,13 +3984,13 @@ impl Impostors {
             device,
             &module,
             &capture_pl,
-            desc("impostor capture", "vs_main", "fs_impostor_capture", Vb::Mesh, 1, false),
+            desc("impostor capture", "vs_main", "fs_impostor_capture", Vb::Mesh, 1, None),
         );
         let capture_blend = make_pipeline(
             device,
             &module,
             &capture_pl,
-            desc("impostor capture blend", "vs_main", "fs_impostor_capture_blend", Vb::Mesh, 1, false),
+            desc("impostor capture blend", "vs_main", "fs_impostor_capture_blend", Vb::Mesh, 1, None),
         );
         // cards in scene pass A (its sample count and SSR G-buffer); the scene
         // alpha holds the glow: color only
@@ -3619,10 +4003,10 @@ impl Impostors {
                 ..desc(
                     "impostor cards",
                     "vs_impostor",
-                    if ssr { "fs_impostor_g" } else { "fs_impostor" },
+                    if gbuf.is_some() { "fs_impostor_g" } else { "fs_impostor" },
                     Vb::Sprite,
                     samples,
-                    ssr,
+                    gbuf,
                 )
             },
         );
@@ -3634,7 +4018,7 @@ impl Impostors {
             PipeDesc {
                 format: None,
                 depth_compare: wgpu::CompareFunction::Greater,
-                ..desc("impostor cards depth", "vs_impostor", "fs_impostor_depth", Vb::Sprite, 1, false)
+                ..desc("impostor cards depth", "vs_impostor", "fs_impostor_depth", Vb::Sprite, 1, None)
             },
         );
         (capture_opaque, capture_blend, sprite, sprite_depth)
@@ -3776,6 +4160,8 @@ struct Ranges {
     select_faces: (u64, u32),
     select_pattern: (u64, u32),
     part_faces: (u64, u32),
+    fit_garment: (u64, u32),
+    fit_body: (u64, u32),
     refl_water: (u64, u32),
     water_air: (u64, u32),
     water_air_terrain: (u64, u32),
@@ -3804,6 +4190,12 @@ struct Ranges {
 }
 
 impl Backend {
+    /// The device-lost callback said the device is gone (device_lost.rs):
+    /// the backend is then dropped through `drop_guarded` (render_thread.rs).
+    pub(crate) fn device_lost(&self) -> bool {
+        self.lost.get()
+    }
+
     /// Surface configuration, pipelines, targets and per-frame buffers.
     ///
     /// Made in one error scope: a full video memory that refuses any of it
@@ -4106,8 +4498,14 @@ impl Backend {
             },
             // the contact shadows' mask (contact_shadows.rs)
             float_tex(13),
+            // what the glass leaves of the traced sun's red, green and blue
+            // (rt_shadows.wgsl, common.wgsl `sun_glass`)
+            float_tex(31),
             // GTAO's screen-space indirect light (gtao.rs)
             float_tex(14),
+            // how open each place is, from the traced probes (rt_gi.wgsl
+            // `cs_gi_sky`, common.wgsl `screen_open`)
+            float_tex(32),
             // the night sky's stars (stars.rs)
             wgpu::BindGroupLayoutEntry {
                 binding: 24,
@@ -4136,6 +4534,40 @@ impl Backend {
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Aurora Weather's fog volume (fog.rs; 31 and 32 are the sun
+            // glass and the GI's openness, of the lighting's group)
+            wgpu::BindGroupLayoutEntry {
+                binding: 33,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // its flow grid (fog.rs `Flow`): how open the air is
+            wgpu::BindGroupLayoutEntry {
+                binding: 34,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // the ground it pools on (fog.rs `upload_ground`)
+            wgpu::BindGroupLayoutEntry {
+                binding: 35,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
@@ -4218,9 +4650,12 @@ impl Backend {
                 float_tex(3),
             ],
         });
+        // the G-buffer, and the traced reflections ssr.wgsl's `fs_ssr_rt`
+        // reads: the mirror ray's, the glossy ones and the metals' base
+        // colour (black textures without them)
         let gbuf_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("gbuffer"),
-            entries: &[float_tex(0)],
+            entries: &[float_tex(0), float_tex(1), float_tex(2), float_tex(3)],
         });
 
         let mk_frame_buffer = |label| {
@@ -4343,12 +4778,72 @@ impl Backend {
                     depth_or_array_layers: 1,
                 },
             );
-            Dummies { white, black, depth }
+            let volume_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("dummy fog volume"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D3,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            // (half floats 0, 0, 0, 1)
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &volume_tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&[0u16, 0, 0, 0x3c00]),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(8),
+                    rows_per_image: Some(1),
+                },
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let volume = volume_tex.create_view(&Default::default());
+            let ground = device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("dummy fog ground"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rg32Float,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default());
+            Dummies {
+                white,
+                black,
+                depth,
+                volume,
+                ground,
+            }
         };
 
         let fmt_features = adapter.get_texture_format_features(HDR_FORMAT);
         let depth_features = adapter.get_texture_format_features(DEPTH_FORMAT);
-        let gbuf_features = adapter.get_texture_format_features(GBUF_FORMAT);
+        // (the anti-aliasing choices are those of the Standard G-buffer: a
+        // sample count the 16 normalized bits lack takes 16-bit floats,
+        // `gbuf_format`, and stays offered)
+        let gbuf_features = adapter.get_texture_format_features(GBUF_STANDARD);
         let msaa_supported: Vec<u32> = [2u32, 4, 8]
             .into_iter()
             .filter(|n| *n == 4 || adapter_specific)
@@ -4360,6 +4855,13 @@ impl Backend {
             .collect();
         let msaa_samples = if msaa_supported.contains(&4) { 4 } else { 1 };
         let settings = RenderSettings::default();
+        let gbuf_wide: Vec<u32> = if device.features().contains(GBUF_WIDE) {
+            let wide = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba16Unorm).flags;
+            [1u32, 2, 4, 8].into_iter().filter(|n| wide.sample_count_supported(*n)).collect()
+        } else {
+            Vec::new()
+        };
+        let gbuf_pipelines = gbuf_wanted(&device, external, &gbuf_wide, &settings, msaa_samples);
         let bloom = crate::bloom::Bloom::new(&device, &post_layout);
         // what the stochastic transparency is made from, the first frame the
         // method is on (`make_st`): nothing of it exists before
@@ -4395,7 +4897,7 @@ impl Backend {
             &gbuf_layout,
             msaa_samples,
             format,
-            settings.gbuffer(),
+            gbuf_pipelines,
             soft_path(&settings),
         );
         let ssao = Self::make_ssao(&device);
@@ -4403,6 +4905,8 @@ impl Backend {
         lost_at_start(&lost, &surface)?;
         let water_effects = crate::water_effects::WaterGpu::new(&device, 1);
         let contact = crate::contact_shadows::ContactShadows::new(&device, &adapter.get_info());
+        // (made when the settings turn ray tracing on: `follow_ray_tracing`)
+        let rt = None;
         lost_at_start(&lost, &surface)?;
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
@@ -4422,7 +4926,9 @@ impl Backend {
                 config.width,
                 config.height,
                 msaa_samples,
+                gbuf_pipelines,
                 &settings,
+                external,
                 refuse,
             )
         });
@@ -4491,6 +4997,8 @@ impl Backend {
             &water_effects,
             &stars,
             &milky_way,
+            None,
+            None,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -4513,7 +5021,7 @@ impl Backend {
             &records_layout,
             &tex_layout,
             msaa_samples,
-            settings.gbuffer(),
+            gbuf_pipelines,
             soft_path(&settings),
         );
         let particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -4556,18 +5064,22 @@ impl Backend {
             targets_shrunk: false,
             ui_targets_backoff: crate::gpu_alloc::Backoff::default(),
             ui_glass: None,
-            previews: Default::default(),
+            previews: crate::preview::Cache::new(settings.aa),
             selection: None,
             cutout: None,
             equirect: None,
             cube: None,
             equirect_reads: Default::default(),
             film_reads: Default::default(),
+            shutter: None,
+            shutter_now: None,
+            shutter_idle: 0,
             cube_hold: false,
             cube_keep: false,
             cube_step: None,
             hud_selection: None,
             part: None,
+            fit_clip: None,
             part_depth: None,
             frame_layout,
             records_layout,
@@ -4587,6 +5099,14 @@ impl Backend {
             contact,
             clouds: None,
             clouds_now: false,
+            rt,
+            rt_build: None,
+            rt_failed: false,
+            rt_now: false,
+            fog: None,
+            fog_terms: None,
+            fog_volume_now: false,
+            fog_shelter: false,
             soft: None,
             soft_now: false,
             contact_now: false,
@@ -4629,7 +5149,12 @@ impl Backend {
             shadow_sampler,
             glow,
             dof: None,
+            motion_blur: None,
+            blur_motion: None,
+            blur_now: false,
+            sun_shafts: None,
             looks: None,
+            look_thumbs: None,
             rlva_spheres: None,
             motion_debug,
             rlva_overlays: None,
@@ -4649,6 +5174,8 @@ impl Backend {
             part_pick_px: None,
             part_lit: false,
             part_idle: 0,
+            fit_idle: 0,
+            fit_lit: false,
             label_depth,
             impostors,
             motion_history,
@@ -4662,6 +5189,8 @@ impl Backend {
             msaa_samples,
             pipeline_build: None,
             soft_pipelines: soft_path(&settings),
+            gbuf_pipelines,
+            gbuf_wide,
             pipeline_workers: Vec::new(),
             rain_wet: RainWet::default(),
             snow_trail: SnowTrail::default(),
@@ -4682,6 +5211,7 @@ impl Backend {
             lost,
             gpu_frames,
             write_staging: Default::default(),
+            outside: Default::default(),
         };
         r.rebuild_bind_groups();
         Ok(r)
@@ -4833,7 +5363,7 @@ impl Backend {
             samples,
             format: Some(HDR_FORMAT),
             range: None,
-            gbuf: false,
+            gbuf: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
             constants: &[],
@@ -4997,9 +5527,10 @@ impl Backend {
         gbuf_layout: &wgpu::BindGroupLayout,
         samples: u32,
         surface_format: wgpu::TextureFormat,
-        ssr: bool,
+        gbuf: Option<wgpu::TextureFormat>,
         soft: bool,
     ) -> Pipelines {
+        let ssr = gbuf.is_some();
         // (without the stochastic transparency's passes: its own module,
         // `make_st`, when the method is first on)
         let src = format!(
@@ -5040,7 +5571,7 @@ impl Backend {
             a2c: false,
             samples,
             format: Some(HDR_FORMAT),
-            gbuf: false,
+            gbuf: None,
             range: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
@@ -5056,7 +5587,7 @@ impl Backend {
         let hud_desc = |label, blend, depth_write| PipeDesc {
             format: Some(surface_format),
             samples: 1,
-            gbuf: false,
+            gbuf: None,
             range: None,
             cull: None,
             blend,
@@ -5087,7 +5618,7 @@ impl Backend {
             cull: None,
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Always,
-            gbuf: ssr,
+            gbuf,
             ..base("sky", "vs_sky", g("fs_sky", "fs_sky_g"))
         });
         let clouds_weather = pipe(PipeDesc {
@@ -5102,15 +5633,15 @@ impl Backend {
             ..base("cloud weather", "vs_sky", "fs_cloud_weather")
         });
         let terrain = pipe(PipeDesc {
-            gbuf: ssr,
+            gbuf,
             ..base("terrain", "vs_terrain", g("fs_terrain", "fs_terrain_g"))
         });
         let terrain_pbr = pipe(PipeDesc {
-            gbuf: ssr,
+            gbuf,
             ..base("terrain pbr", "vs_terrain_pbr", g("fs_terrain_pbr", "fs_terrain_pbr_g"))
         });
         let opaque = pipe(PipeDesc {
-            gbuf: ssr,
+            gbuf,
             ..base("opaque", "vs_main", g("fs_opaque", "fs_opaque_g"))
         });
         let creation_preview = pipe(PipeDesc {
@@ -5119,19 +5650,19 @@ impl Backend {
         });
         let opaque_2s = pipe(PipeDesc {
             cull: None,
-            gbuf: ssr,
+            gbuf,
             ..base("opaque 2s", "vs_main", g("fs_opaque", "fs_opaque_g"))
         });
         let mask = pipe(PipeDesc {
             a2c: samples > 1,
-            gbuf: ssr,
+            gbuf,
             constants: &a2c,
             ..base("mask", "vs_main", g("fs_mask", "fs_mask_g"))
         });
         let mask_2s = pipe(PipeDesc {
             a2c: samples > 1,
             cull: None,
-            gbuf: ssr,
+            gbuf,
             constants: &a2c,
             ..base("mask 2s", "vs_main", g("fs_mask", "fs_mask_g"))
         });
@@ -5745,7 +6276,28 @@ impl Backend {
             crate::part_pick::FORMAT,
             wgpu::ColorWrites::RED,
         ));
-        let ssr_pipe = ssr.then(|| {
+        // LiveMesh's Fit lab (fit_clip.rs), on the main pass's posed
+        // vertices: the garment's nearest outer surface in a depth of its
+        // own, then the body where it is the scene's visible surface (the
+        // scene's depth read only, with the part passes' bias)
+        let fit_garment = pipe(PipeDesc {
+            cull: None,
+            samples: 1,
+            format: None,
+            depth_write: true,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("fit lab garment depth", "vs_part_mask", "fs_fit_garment")
+        });
+        let fit_body = pipe(PipeDesc {
+            cull: None,
+            samples: 1,
+            format: Some(wgpu::TextureFormat::R8Unorm),
+            depth_write: false,
+            write_mask: wgpu::ColorWrites::RED,
+            depth_bias: PART_DEPTH_BIAS,
+            ..base("fit lab body coverage", "vs_part_mask", "fs_fit_body")
+        });
+        let ssr_pipes = ssr.then(|| {
             let src = format!("{}\n{}", common_shader_for(soft), include_str!("shaders/ssr.wgsl"));
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("ssr"),
@@ -5756,20 +6308,33 @@ impl Backend {
                 bind_group_layouts: &[Some(frame_layout), None, None, Some(gbuf_layout)],
                 immediate_size: 0,
             });
-            make_pipeline(
-                device,
-                &m,
-                &pl,
-                PipeDesc {
-                    vb: Vb::None,
-                    cull: None,
-                    blend: Some(premultiplied()),
-                    depth_write: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    ..base("ssr", "vs_ssr", "fs_ssr")
-                },
-            )
+            let composite = |label: &'static str, fs: &'static str| {
+                make_pipeline(
+                    device,
+                    &m,
+                    &pl,
+                    PipeDesc {
+                        vb: Vb::None,
+                        cull: None,
+                        blend: Some(premultiplied()),
+                        depth_write: false,
+                        depth_compare: wgpu::CompareFunction::Always,
+                        ..base(label, "vs_ssr", fs)
+                    },
+                )
+            };
+            // (on a device that can trace: the option is turned on at any
+            // time)
+            let traced = device
+                .features()
+                .contains(crate::rt_shadows::FEATURES)
+                .then(|| composite("ssr traced", "fs_ssr_rt"));
+            (composite("ssr", "fs_ssr"), traced)
         });
+        let (ssr_pipe, ssr_rt) = match ssr_pipes {
+            Some((a, b)) => (Some(a), b),
+            None => (None, None),
+        };
         // depth prepass (single sample)
         let pre = |label: &'static str, vs: &'static str, fs: Option<&'static str>, cull: Option<wgpu::Face>| {
             pipe(PipeDesc {
@@ -6028,7 +6593,7 @@ impl Backend {
             a2c: false,
             samples: 1,
             format: None,
-            gbuf: false,
+            gbuf: None,
             range: None,
             depth_format: Some(SHADOW_FORMAT),
             depth_bias: wgpu::DepthBiasState {
@@ -6076,6 +6641,30 @@ impl Backend {
                 ..shadow_desc("rain shelter terrain", Some("fs_shadow_terrain"))
             },
         );
+        // Aurora Weather's fog: the shelter map's casters drawn into the
+        // flow grid's solid cells (no depth; a stand-in target, its writes discarded with the pass)
+        let voxel_layout = crate::fog::voxel_layout(device);
+        let voxel_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fog walls"),
+            bind_group_layouts: &[None, Some(records_layout), Some(tex_layout), Some(&voxel_layout)],
+            immediate_size: 0,
+        });
+        let fog_voxel = batch.add(
+            &module,
+            &voxel_pl,
+            PipeDesc {
+                format: Some(wgpu::TextureFormat::R8Unorm),
+                // (a write to it, discarded with the pass: a fragment shader
+                // with nothing to write could be left out by a driver, and
+                // its storage writes with it)
+                write_mask: wgpu::ColorWrites::RED,
+                depth_format: None,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                depth_bias: level,
+                ..shadow_desc("fog walls", Some("fs_fog_voxel"))
+            },
+        );
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/post.wgsl").into()),
@@ -6101,7 +6690,7 @@ impl Backend {
                 a2c: false,
                 samples: 1,
                 format: Some(surface_format),
-                gbuf: false,
+                gbuf: None,
                 range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
@@ -6179,7 +6768,10 @@ impl Backend {
             selection_pattern_hdr: selection_pattern_hdr.resolve(&mut done),
             part_mask: part_mask.resolve(&mut done),
             part_pick: part_pick.resolve(&mut done),
+            fit_garment: fit_garment.resolve(&mut done),
+            fit_body: fit_body.resolve(&mut done),
             ssr: ssr_pipe.resolve(&mut done),
+            ssr_rt: ssr_rt.resolve(&mut done),
             pre_opaque: pre_opaque.resolve(&mut done),
             pre_opaque_2s: pre_opaque_2s.resolve(&mut done),
             pre_portal: pre_portal.resolve(&mut done),
@@ -6205,6 +6797,7 @@ impl Backend {
             shadow_terrain: shadow_terrain.resolve(&mut done),
             shelter: shelter.resolve(&mut done),
             shelter_terrain: shelter_terrain.resolve(&mut done),
+            fog_voxel: fog_voxel.resolve(&mut done),
             post: post.resolve(&mut done),
             pick: pick.resolve(&mut done),
             pick_terrain: pick_terrain.resolve(&mut done),
@@ -6256,7 +6849,7 @@ impl Backend {
                     a2c: false,
                     samples: 1,
                     format: Some(AO_FORMAT),
-                    gbuf: false,
+                    gbuf: None,
                     range: None,
                     depth_format: None,
                     depth_bias: Default::default(),
@@ -6295,7 +6888,9 @@ impl Backend {
         width: u32,
         height: u32,
         samples: u32,
+        gbuf: Option<wgpu::TextureFormat>,
         s: &RenderSettings,
+        external: bool,
         refuse: bool,
     ) -> Targets {
         let (w, h) = (width.max(1), height.max(1));
@@ -6346,13 +6941,13 @@ impl Backend {
         );
         let water_interface = make_view(device, "nearest water interface", w, h, DEPTH_FORMAT, 1, sampled).1;
         let water_mask = make_view(device, "water exclusion mask", w, h, wgpu::TextureFormat::R8Unorm, 1, sampled).1;
-        let (gbuf_msaa, gbuf) = if s.gbuffer() {
-            (
-                (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, GBUF_FORMAT, samples, att).1),
-                Some(make_view(device, "gbuffer", w, h, GBUF_FORMAT, 1, sampled).1),
-            )
-        } else {
-            (None, None)
+        // (of the format the pipelines in use were compiled for)
+        let (gbuf_msaa, gbuf) = match gbuf {
+            Some(format) => (
+                (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, format, samples, att).1),
+                Some(make_view(device, "gbuffer", w, h, format, 1, sampled).1),
+            ),
+            None => (None, None),
         };
         let ao_override = crate::gtao::Override::from_env();
         let (legacy_ao, gtao_ao) = ao_override.needed(s.ao_method);
@@ -6398,6 +6993,13 @@ impl Backend {
         let contact = crate::contact_shadows::Override::from_env()
             .needed(s.contact_shadows)
             .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
+        let rt = crate::rt_shadows::Targets::new(
+            device,
+            w,
+            h,
+            crate::rt_shadows::traced(device, external, s.ray_tracing),
+            s.rt_tuning.gi_step,
+        );
         // the blended faces opaque enough are in the occlusion depth when it
         // holds them (`blend_in_ao_depth`)
         let soft = soft
@@ -6460,6 +7062,7 @@ impl Backend {
             ao_depth,
             solid_depth,
             contact,
+            rt,
             soft,
             depth_ss_tex,
             water_refl,
@@ -6485,6 +7088,8 @@ impl Backend {
         water_effects: &crate::water_effects::WaterGpu,
         stars: &wgpu::Buffer,
         milky_way: &wgpu::TextureView,
+        fog_volume: Option<(&wgpu::TextureView, &wgpu::TextureView)>,
+        fog_ground: Option<&wgpu::TextureView>,
     ) -> FrameGroups {
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
@@ -6495,7 +7100,9 @@ impl Backend {
                   depth: &wgpu::TextureView,
                   occlusion: &wgpu::TextureView,
                   contact: &wgpu::TextureView,
+                  glass: &wgpu::TextureView,
                   il: &wgpu::TextureView,
+                  open: &wgpu::TextureView,
                   sample_water: bool,
                   sample_mask: bool,
                   soft: Option<&wgpu::TextureView>| {
@@ -6520,6 +7127,26 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 30,
                         resource: wgpu::BindingResource::TextureView(soft.unwrap_or(milky_way)),
+                    },
+                    // the fog volume (main view only: the others take the
+                    // height fog, `fog_look[2].w`)
+                    wgpu::BindGroupEntry {
+                        binding: 33,
+                        resource: wgpu::BindingResource::TextureView(match fog_volume {
+                            Some((v, _)) if std::ptr::eq(buffer, frame_buffer) => v,
+                            _ => &dummies.volume,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 34,
+                        resource: wgpu::BindingResource::TextureView(match fog_volume {
+                            Some((_, flow)) if std::ptr::eq(buffer, frame_buffer) => flow,
+                            _ => &dummies.volume,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 35,
+                        resource: wgpu::BindingResource::TextureView(fog_ground.unwrap_or(&dummies.ground)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 26,
@@ -6601,8 +7228,16 @@ impl Backend {
                         resource: wgpu::BindingResource::TextureView(contact),
                     },
                     wgpu::BindGroupEntry {
+                        binding: 31,
+                        resource: wgpu::BindingResource::TextureView(glass),
+                    },
+                    wgpu::BindGroupEntry {
                         binding: 14,
                         resource: wgpu::BindingResource::TextureView(il),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 32,
+                        resource: wgpu::BindingResource::TextureView(open),
                     },
                     wgpu::BindGroupEntry {
                         binding: 15,
@@ -6655,14 +7290,31 @@ impl Backend {
         .unwrap_or(&dummies.white);
         let water = t.water_refl.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
         let mirror = t.mirror.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
-        let contact = t.contact.as_ref().map(|c| &c.result).unwrap_or(&dummies.black);
+        // the traced mask holds the contact shadows too (rt_shadows.wgsl)
+        let contact =
+            t.rt.as_ref()
+                .map(|r| &r.result)
+                .or(t.contact.as_ref().map(|c| &c.result))
+                .unwrap_or(&dummies.black);
+        // the colour the glass gives the traced sun (rt_shadows.wgsl)
+        let glass = t.rt.as_ref().map(|r| &r.glass).unwrap_or(&dummies.white);
+        // the traced indirect light in GTAO's place (rt_gi.wgsl)
+        let il =
+            t.rt.as_ref()
+                .and_then(|r| r.gi.as_ref())
+                .map(|g| &g.result)
+                .or(t.gtao.as_ref().and_then(|g| g.indirect.as_ref()).map(|i| &i.result))
+                .unwrap_or(&dummies.black);
+        // how open each place is (rt_gi.wgsl `cs_gi_sky`; white: open)
+        let open = t.rt.as_ref().and_then(|r| r.gi.as_ref()).map(|g| &g.sky).unwrap_or(&dummies.white);
+        // how open the places the reflections are drawn from are (rt_gi.wgsl
+        // `gi_points`)
+        let points =
+            t.rt.as_ref()
+                .and_then(|r| r.gi.as_ref())
+                .map(|g| &g.points)
+                .unwrap_or(&dummies.white);
         let soft = t.soft.as_ref().map(|s| s.result());
-        let il = t
-            .gtao
-            .as_ref()
-            .and_then(|g| g.indirect.as_ref())
-            .map(|i| &i.result)
-            .unwrap_or(&dummies.black);
         // the solid surfaces of the depth the occlusion and the contact
         // shadows read (a dummy without either: nothing reads it)
         let occlusion = t.solid_depth.as_ref().map_or(&dummies.depth, |(_, view)| view);
@@ -6677,7 +7329,9 @@ impl Backend {
                 &dummies.depth,
                 &dummies.depth,
                 &dummies.black,
+                &dummies.white,
                 &dummies.black,
+                &dummies.white,
                 false,
                 false,
                 None,
@@ -6692,7 +7346,9 @@ impl Backend {
                 &dummies.depth,
                 &dummies.depth,
                 contact,
+                glass,
                 il,
+                open,
                 false,
                 true,
                 soft,
@@ -6707,7 +7363,9 @@ impl Backend {
                 &dummies.depth,
                 occlusion,
                 contact,
+                glass,
                 il,
+                open,
                 false,
                 true,
                 soft,
@@ -6722,7 +7380,9 @@ impl Backend {
                 &t.depth_ss,
                 occlusion,
                 contact,
+                glass,
                 il,
+                open,
                 true,
                 true,
                 soft,
@@ -6738,7 +7398,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6753,7 +7415,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    points,
                     false,
                     false,
                     None,
@@ -6768,7 +7432,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    points,
                     false,
                     false,
                     None,
@@ -6783,7 +7449,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6798,7 +7466,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6813,7 +7483,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6828,7 +7500,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6843,7 +7517,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6858,7 +7534,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    points,
                     false,
                     false,
                     None,
@@ -6925,6 +7603,8 @@ impl Backend {
             &self.water_effects,
             &self.stars,
             &self.milky_way,
+            self.fog.as_ref().and_then(|f| f.volume().map(|v| (v, f.flow_view()))),
+            self.fog.as_ref().map(|f| f.ground_view()),
         );
     }
 
@@ -6932,13 +7612,24 @@ impl Backend {
     fn rebuild_bind_groups(&mut self) {
         self.remake_frame_groups();
         self.gbuf_group = self.targets.gbuf.as_ref().map(|g| {
+            let traced = self.targets.rt.as_ref().and_then(|t| t.reflect.as_ref());
+            let black = &self.dummies.black;
+            let views = [
+                g,
+                traced.map_or(black, |t| &t.sharp),
+                traced.map_or(black, |t| &t.gloss),
+                traced.map_or(black, |t| &t.base),
+            ];
+            let entries = views.map(wgpu::BindingResource::TextureView);
+            let entries: Vec<wgpu::BindGroupEntry<'_>> = entries
+                .into_iter()
+                .zip(0..)
+                .map(|(resource, binding)| wgpu::BindGroupEntry { binding, resource })
+                .collect();
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("gbuffer"),
                 layout: &self.gbuf_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(g),
-                }],
+                entries: &entries,
             })
         });
         self.ssao_groups = self.targets.ao.as_ref().map(|(raw, _, _, _)| {
@@ -7043,6 +7734,37 @@ impl Backend {
         }
     }
 
+    /// The motion blur's own motion target, while it draws and neither
+    /// GTAO nor TAA keeps one (`motion_view`), at the world's size; let go
+    /// otherwise. Refused by a full video memory, the blur follows the
+    /// camera alone.
+    fn ensure_blur_motion(&mut self) {
+        let shared = self.targets.gtao.is_some() || self.taa.as_ref().is_some_and(|t| t.motion.is_some());
+        if !self.blur_now || shared {
+            self.blur_motion = None;
+            return;
+        }
+        let size = self.scene_size();
+        if self.blur_motion.as_ref().is_some_and(|(s, _)| *s == size) {
+            return;
+        }
+        self.blur_motion = None;
+        let lost = self.lost.get();
+        self.blur_motion = extra(&mut self.oom, &self.device, lost, "motion blur motion", |device| {
+            let view = make_view(
+                device,
+                "motion blur motion",
+                size.0,
+                size.1,
+                crate::gtao::NORMAL_FORMAT,
+                1,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            )
+            .1;
+            (size, view)
+        });
+    }
+
     /// The targets made on first use, let go: each is made again, checked,
     /// when next needed.
     fn drop_first_use_targets(&mut self) {
@@ -7052,8 +7774,16 @@ impl Backend {
         self.rlva_scaled = None;
         self.selection = None;
         self.hud_selection = None;
+        self.fit_clip = None;
         if let Some(dof) = &mut self.dof {
             dof.release();
+        }
+        if let Some(blur) = &mut self.motion_blur {
+            blur.release();
+        }
+        self.blur_motion = None;
+        if let Some(accum) = &mut self.shutter {
+            accum.release();
         }
         if let Some(looks) = &mut self.looks {
             looks.release();
@@ -7116,7 +7846,9 @@ impl Backend {
             size.0,
             size.1,
             self.msaa_samples,
+            self.gbuf_pipelines,
             &self.settings,
+            self.external,
             refuse,
         );
         let smaa = (self.settings.aa == AntiAliasing::Smaa).then(|| {
@@ -7182,7 +7914,8 @@ impl Backend {
             _ => 1,
         };
         let soft = soft_path(&s);
-        if (samples, s.gbuffer(), soft) == (self.msaa_samples, self.settings.gbuffer(), self.soft_pipelines) {
+        let gbuf = gbuf_wanted(&self.device, self.external, &self.gbuf_wide, &s, samples);
+        if (samples, gbuf, soft) == (self.msaa_samples, self.gbuf_pipelines, self.soft_pipelines) {
             // (a set still compiling for other samples is no longer wanted)
             self.pipeline_build = None;
             self.apply_settings_with(s, None);
@@ -7191,15 +7924,26 @@ impl Backend {
         if self
             .pipeline_build
             .as_ref()
-            .is_none_or(|b| (b.samples, b.ssr, b.soft) != (samples, s.gbuffer(), soft))
+            .is_none_or(|b| (b.samples, b.gbuf, b.soft) != (samples, gbuf, soft))
         {
             log::info!(
                 "compiling the pipelines for {samples} sample(s), SSR {}, G-buffer {}, soft shadows {}",
                 if s.ssr { "on" } else { "off" },
-                if s.gbuffer() { "on" } else { "off" },
+                gbuf.map_or_else(|| "off".to_owned(), |f| format!("{f:?}")),
                 if soft { "on" } else { "off" }
             );
-            let (build, worker) = self.start_pipeline_build(samples, s.gbuffer(), soft);
+            if gbuf.is_some() && self.gbuf_pipelines.is_some() && gbuf != self.gbuf_pipelines {
+                // (what `gbuf_wanted` read, when the precision changes
+                // between two sets: which of them moved tells why)
+                log::info!(
+                    "G-buffer precision {:?}: sun shadows {} px, ray tracing asked {:?}, traced {:?}",
+                    s.normal_precision,
+                    s.shadow_resolution,
+                    s.ray_tracing,
+                    crate::rt_shadows::traced(&self.device, self.external, s.ray_tracing)
+                );
+            }
+            let (build, worker) = self.start_pipeline_build(samples, gbuf, soft);
             self.pipeline_workers.retain(|w| !w.is_finished());
             self.pipeline_workers.extend(worker);
             self.pipeline_build = Some(build);
@@ -7214,12 +7958,13 @@ impl Backend {
                     build.started.elapsed().as_millis()
                 );
                 self.pipeline_build = None;
-                self.apply_settings_with(s, Some((samples, scene, impostors)));
+                self.apply_settings_with(s, Some((samples, gbuf, scene, impostors)));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 // the other settings now, the samples, SSR and soft shadows
                 // with their pipelines (the soft shadows' mask is made
-                // once the pipelines that read it are there)
+                // once the pipelines that read it are there; the G-buffer
+                // keeps the format of the pipelines in use, `gbuf_pipelines`)
                 let now = RenderSettings {
                     aa: self.settings.aa,
                     ssr: self.settings.ssr,
@@ -7244,7 +7989,7 @@ impl Backend {
                     &self.gbuf_layout,
                     samples,
                     self.config.format,
-                    s.gbuffer(),
+                    gbuf,
                     soft,
                 );
                 let impostors = Impostors::make_pipelines(
@@ -7254,17 +7999,22 @@ impl Backend {
                     &self.records_layout,
                     &self.tex_layout,
                     samples,
-                    s.gbuffer(),
+                    gbuf,
                     soft,
                 );
-                self.apply_settings_with(s, Some((samples, scene, impostors)));
+                self.apply_settings_with(s, Some((samples, gbuf, scene, impostors)));
             }
         }
     }
 
-    /// Compile the pipelines for `samples`, `ssr` and the soft shadows'
-    /// path `soft` on a worker thread.
-    fn start_pipeline_build(&self, samples: u32, ssr: bool, soft: bool) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
+    /// Compile the pipelines for `samples`, the G-buffer `gbuf` and the
+    /// soft shadows' path `soft` on a worker thread.
+    fn start_pipeline_build(
+        &self,
+        samples: u32,
+        gbuf: Option<wgpu::TextureFormat>,
+        soft: bool,
+    ) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
         let (tx, done) = std::sync::mpsc::sync_channel(1);
         let device = self.device.clone();
         let layouts = [
@@ -7279,7 +8029,7 @@ impl Backend {
         ];
         let format = self.config.format;
         let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
-            let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
+            let [frame, records, tex, shadow, post, bloom, gbuf_layout, impostor] = &layouts;
             let scene = Self::make_pipelines(
                 &device,
                 frame,
@@ -7287,13 +8037,13 @@ impl Backend {
                 tex,
                 shadow,
                 [post, bloom],
-                gbuf,
+                gbuf_layout,
                 samples,
                 format,
-                ssr,
+                gbuf,
                 soft,
             );
-            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr, soft);
+            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, gbuf, soft);
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));
         });
@@ -7305,7 +8055,7 @@ impl Backend {
             .ok();
         let build = PipelineBuild {
             samples,
-            ssr,
+            gbuf,
             soft,
             started: std::time::Instant::now(),
             done,
@@ -7358,8 +8108,13 @@ impl Backend {
     }
 
     /// `apply_settings` once the pipelines for `s` are known: `rebuilt` the
-    /// set compiled for other samples or SSR, `None` when they stay.
-    fn apply_settings_with(&mut self, s: RenderSettings, rebuilt: Option<(u32, Pipelines, ImpostorPipelines)>) {
+    /// set compiled for other samples or another G-buffer, `None` when they
+    /// stay.
+    fn apply_settings_with(
+        &mut self,
+        s: RenderSettings,
+        rebuilt: Option<(u32, Option<wgpu::TextureFormat>, Pipelines, ImpostorPipelines)>,
+    ) {
         let pipelines_dirty = rebuilt.is_some();
         let mut targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
@@ -7369,13 +8124,18 @@ impl Backend {
             || s.ao_method != self.settings.ao_method
             || s.screen_indirect != self.settings.screen_indirect
             || s.contact_shadows != self.settings.contact_shadows
+            || crate::rt_shadows::traced(&self.device, self.external, s.ray_tracing)
+                != crate::rt_shadows::traced(&self.device, self.external, self.settings.ray_tracing)
             || s.soft_shadows != self.settings.soft_shadows
+            // (the traced indirect light's textures are of its grid)
+            || s.rt_tuning.gi_step != self.settings.rt_tuning.gi_step
             || s.water_reflection_scale != self.settings.water_reflection_scale
             || crate::water_optics::scale(s.water_effects) != crate::water_optics::scale(self.settings.water_effects)
             || s.mirror_scale != self.settings.mirror_scale;
         let taa_was = self.taa.is_some();
-        if let Some((samples, scene, impostors)) = rebuilt {
+        if let Some((samples, gbuf, scene, impostors)) = rebuilt {
             self.msaa_samples = samples;
+            self.gbuf_pipelines = gbuf;
             self.soft_pipelines = soft_path(&s);
             self.pipelines = scene;
             self.impostors.set_pipelines(impostors);
@@ -7419,6 +8179,8 @@ impl Backend {
             self.shadow_merge.atlas_changed(&self.device, &self.shadow_view, res, SHADOW_FORMAT);
         }
         self.settings = s;
+        self.previews.set_anti_aliasing(self.settings.aa);
+        self.follow_ray_tracing();
         if matches!(s.aa, AntiAliasing::Taa | AntiAliasing::Fsr(_)) {
             // FSR in the place of the TAA pass, or the TAA pass again
             if !taa_was || fsr_ratio(s.aa).is_some() != self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
@@ -7437,6 +8199,93 @@ impl Backend {
             self.rebuild_targets();
         } else if shadows_dirty || probes_dirty {
             self.rebuild_bind_groups_checked("TAA history after a shadow or probe change");
+        }
+    }
+
+    /// The ray tracer follows the settings: made when they turn ray
+    /// tracing on, dropped with the levels it built when they turn it off
+    /// (its targets go with the others, `make_targets`). It is made on a
+    /// worker thread ([`RtBuild`]), as is what an effect turned on later
+    /// needs: called again at each frame until the worker is done. A worker
+    /// that stops without its result (a panic) leaves ray tracing as it is,
+    /// the frames on the shadow maps: made again on the render thread, it
+    /// would hold the picture and likely stop there too.
+    fn follow_ray_tracing(&mut self) {
+        let options = crate::rt_shadows::traced(&self.device, self.external, self.settings.ray_tracing);
+        if !options.shadows {
+            // (one still being made is dropped as its worker ends)
+            self.rt_build = None;
+            self.rt_failed = false;
+            if self.rt.take().is_some() {
+                log::info!("ray tracing off");
+            }
+            return;
+        }
+        if let Some(build) = &self.rt_build {
+            match build.done.try_recv() {
+                Ok(made) => {
+                    let spent = build.started.elapsed().as_millis();
+                    self.rt_build = None;
+                    self.take_ray_tracing(made, spent);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    log::error!(
+                        "the ray tracer's worker stopped: nothing more is made for ray tracing until it is turned off and on again"
+                    );
+                    self.rt_build = None;
+                    self.rt_failed = true;
+                }
+            }
+        }
+        if let Some(rt) = &mut self.rt {
+            rt.set_options(options);
+        }
+        if self.rt_build.is_some() || self.rt_failed {
+            return;
+        }
+        let make: Box<dyn FnOnce() -> RtMade + Send> = match &self.rt {
+            None => {
+                let (device, queue, textures) = (self.device.clone(), self.queue.clone(), self.tex_layout.clone());
+                Box::new(move || RtMade::Tracer(Box::new(crate::rt_shadows::RtShadows::new(&device, &queue, &textures, options))))
+            }
+            Some(rt) => match rt.parts_maker(&self.device, &self.queue, &self.tex_layout, options) {
+                Some(parts) => Box::new(move || RtMade::Parts(Box::new(parts()))),
+                None => return,
+            },
+        };
+        let started = std::time::Instant::now();
+        let (tx, done) = std::sync::mpsc::sync_channel(1);
+        let spawned = std::thread::Builder::new().name("aurora-ray-tracer".into()).spawn(move || {
+            // (refused when ray tracing was turned off meanwhile: dropped)
+            let _ = tx.send(make());
+        });
+        match spawned {
+            Ok(worker) => {
+                self.pipeline_workers.retain(|w| !w.is_finished());
+                self.pipeline_workers.push(worker);
+                self.rt_build = Some(RtBuild { started, done });
+            }
+            Err(e) => {
+                log::error!("cannot start the ray tracer's worker: {e}");
+                self.rt_failed = true;
+            }
+        }
+    }
+
+    /// What was made for ray tracing, in `spent` ms, takes its place.
+    fn take_ray_tracing(&mut self, made: RtMade, spent: u128) {
+        match made {
+            RtMade::Tracer(rt) => {
+                log::info!("ray tracer made in {spent} ms on a worker");
+                self.rt = Some(*rt);
+            }
+            RtMade::Parts(parts) => {
+                log::info!("ray tracer: the effects turned on made in {spent} ms on a worker");
+                if let Some(rt) = &mut self.rt {
+                    rt.take(*parts);
+                }
+            }
         }
     }
 
@@ -7484,7 +8333,7 @@ impl Backend {
                 a2c: false,
                 samples: 1,
                 format: Some(HDR_FORMAT),
-                gbuf: false,
+                gbuf: None,
                 range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
@@ -7749,6 +8598,16 @@ impl Backend {
         // centred on the main camera in every pass (`f` is the main view's,
         // reflections and probes included)
         u.curvature = Curvature::new(f.camera_pos, f.curvature).uniform();
+        // the height fog in every view; the main view may read the volume
+        // instead (render_frame)
+        if let Some((look, ground)) = &self.fog_terms {
+            let forward = crate::light_tiles::view_forward(view);
+            u.fog_look[..4].copy_from_slice(&crate::fog::frame_terms(look, &f.sky, *ground, forward, crate::fog::MODE_HEIGHT));
+            // the ground the fog lies on, in every view (binding 35)
+            if let Some([x, y, side]) = self.fog.as_ref().and_then(|f| f.ground_rect()) {
+                u.fog_look[6] = [x, y, side, 0.0];
+            }
+        }
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
@@ -7825,6 +8684,7 @@ impl Backend {
         }
         // SL uses the clamped light norm's GL z component (world x) here
         let ks = 1.0 / f.sky.light_norm.x.max(0.3);
+        u.water_air[1] = f32::from(u8::from(f.hide_water));
         u.water_fog = lin(w.fog_color.max(Vec3::ZERO)).extend(kd.max(0.0)).to_array();
         u.water_params = [ks, w.fresnel_scale, w.fresnel_offset, w.blur_multiplier];
         u.water_waves = [w.wave1.x, w.wave1.y, w.wave2.x, w.wave2.y];
@@ -7889,7 +8749,7 @@ impl Backend {
             }
         }
         u.spot_lights = [[-1; 4]; SPOT_SHADOWS / 4];
-        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f))
+        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f), self.traced_projectors())
             .into_iter()
             .enumerate()
             .filter_map(|(k, v)| Some((k, v?)))
@@ -7929,6 +8789,7 @@ impl Backend {
             // egui-wgpu gets meshes, not callbacks it does not know
             crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
             self.previews.render(
+                crate::preview::Shower::Viewer,
                 &self.device,
                 &self.queue,
                 &mut encoder,
@@ -7936,6 +8797,7 @@ impl Backend {
                 &mut ui.primitives,
                 ui.pixels_per_point,
             );
+            crate::look_thumbs::resolve(self.look_thumbs.as_ref(), &mut ui.primitives);
             let sd = egui_wgpu::ScreenDescriptor {
                 size_in_pixels: [self.config.width, self.config.height],
                 pixels_per_point: ui.pixels_per_point,
@@ -7980,7 +8842,21 @@ impl Backend {
         // (a film frame drawn at its size is no photo: its pixels come back
         // in `films`, a later frame's result once the GPU is done)
         let film = self.film_reads.end_frame();
-        let snapshot = self.end_snapshot() && !cube_face && !film;
+        // (nor is a sub-frame of a shutter: nothing answers it)
+        let sub_frame = self.shutter_now.take().is_some_and(|s| !s.last());
+        let snapshot = self.end_snapshot() && !cube_face && !film && !sub_frame;
+        // the shutter's sum goes some frames after the last render's
+        // (the window's own frames come between a render's sub-frames)
+        self.shutter_idle = if film || sub_frame {
+            0
+        } else {
+            self.shutter_idle.saturating_add(1)
+        };
+        if self.shutter_idle > SHUTTER_KEPT_FRAMES
+            && let Some(accum) = &mut self.shutter
+        {
+            accum.release();
+        }
         if self.film_reads.busy() {
             self.lost.poll(&self.device);
         }
@@ -7998,7 +8874,10 @@ impl Backend {
             equirect: None,
             histogram: self.histogram.take(),
             thumbnails: self.thumbnails.take(),
+            // (`render` fills it once the windows outside are drawn)
+            outside: Vec::new(),
             films,
+            rt: self.rt.as_ref().map_or(0, |rt| rt.made),
             spent,
         }
     }
@@ -8018,6 +8897,11 @@ impl Backend {
         // is taken: its tiles (and the 360° faces) draw the sorted order
         if let Some(st) = &mut self.st {
             st.release();
+        }
+        // the view's last lit frame outlives its targets: the photo's
+        // traced indirect light reads it
+        if let (Some(rt), Some(t)) = (&mut self.rt, &self.targets.rt) {
+            rt.hold_screen(t, &self.targets.scene_copy, &self.targets.depth_ss);
         }
         self.config.width = s.width;
         self.config.height = s.height;
@@ -8263,11 +9147,13 @@ impl Backend {
             params: packet.params.clone(),
             lists: other_lists,
             ui: None,
+            outside: Default::default(),
             surface: packet.surface,
             settings: packet.settings,
             hover: None,
             picks: Vec::new(),
             drawn: Vec::new(),
+            drawn_forgotten: Vec::new(),
             capture: None,
             equirect: None,
             histogram: None,
@@ -8277,6 +9163,7 @@ impl Backend {
             // (moved above, every renderer once)
             world_shift: [0.0; 2],
             input_at: None,
+            rt: None,
         };
         let bounded = |value: f32, min: f32, max: f32| if value.is_finite() { value.clamp(min, max) } else { 1.0 };
         let grade = [
@@ -8360,9 +9247,36 @@ impl Backend {
             );
             self.cube = None;
         }
+        let outside = std::mem::take(&mut packet.outside);
+        let index = packet.index;
         let mut result = self.render_frame(packet);
         result.equirect = self.equirect_reads.poll();
+        self.draw_outside(outside, index, &mut result);
         result
+    }
+
+    /// The interface's windows outside the viewer's (outside.rs), once the
+    /// viewer's own frame is submitted and presented: the texture changes
+    /// of the interface are applied, and egui's buffers are free.
+    fn draw_outside(&mut self, packet: crate::outside::Packet, index: u64, result: &mut FrameResult) {
+        if self.lost.get() {
+            return;
+        }
+        self.outside.take(&self.device, &self.st_init.adapter, self.config.format, packet);
+        let second_view = self.second_view_texture();
+        let drawn = self.outside.draw(
+            &self.device,
+            &self.queue,
+            &self.lost,
+            &mut self.egui,
+            &mut self.previews,
+            second_view,
+            self.look_thumbs.as_ref(),
+            index,
+        );
+        result.stats.outside_windows = drawn.windows;
+        result.stats.outside_ms = drawn.ms;
+        result.outside = self.outside.take_events();
     }
 
     fn render_frame(&mut self, packet: FramePacket) -> FrameResult {
@@ -8559,6 +9473,7 @@ impl Backend {
             Ok(mut fresh) if !fresh.remake => {
                 log::info!("renderer: made again, whole ({took} ms)");
                 fresh.egui.0 = self.egui.0.take();
+                fresh.outside = std::mem::take(&mut self.outside);
                 // (a set still compiling is the new one's to wait for: the
                 // old one's drop would hold this frame for it)
                 fresh.adopt_pipeline_workers(self);
@@ -8610,11 +9525,14 @@ impl Backend {
             params,
             lists: draw_lists,
             ui: mut egui_frame,
+            // (taken by `render` before the frame)
+            outside: _,
             surface,
             settings,
             hover,
             picks,
             drawn,
+            drawn_forgotten,
             capture: wanted,
             // (taken by `render` before the frame)
             equirect: _,
@@ -8625,12 +9543,19 @@ impl Backend {
             motion_cut,
             world_shift,
             input_at,
+            rt: rt_faces,
         } = packet;
         let external_output = output.is_some();
+        // (a sub-frame before its shutter's last carries no film frame:
+        // only the last is read back, shutter.rs)
         self.film_reads.begin(match wanted {
-            Some(Capture::Film(tag, _)) => Some(tag),
+            Some(Capture::Film(tag, _, shutter)) if shutter.is_none_or(|s| s.last()) => Some(tag),
             _ => None,
         });
+        self.shutter_now = match wanted {
+            Some(Capture::Film(_, Some(_), Some(shutter))) => Some(shutter),
+            _ => None,
+        };
         self.motion_cut |= motion_cut;
         self.shift_weather(world_shift);
         let mut stats = RenderStats::default();
@@ -8643,7 +9568,7 @@ impl Backend {
         self.depth_pick.harvest_clicks();
         self.drawn_pick.harvest();
         self.part_pick.harvest();
-        self.drawn_pick.ask(drawn);
+        self.drawn_pick.ask(drawn, &drawn_forgotten);
         let previous_scene = self.scene_size();
         let picks = picks
             .into_iter()
@@ -8683,15 +9608,24 @@ impl Backend {
             self.rebuild_targets();
         }
         stats.present_mode = Some(self.config.present_mode);
-        if settings != self.settings {
+        // (and at each frame while their pipelines compile: a set for another
+        // G-buffer format leaves the settings as asked, with nothing held
+        // back to tell the frames apart, `apply_settings`)
+        if settings != self.settings || self.pipeline_build.is_some() {
             self.apply_frame_settings(settings);
+        }
+        // (at each frame until its worker is done, whatever else the
+        // settings wait for)
+        if self.rt_build.is_some() {
+            self.follow_ray_tracing();
         }
         // the start is over: made, and its settings applied, with nothing
         // refused
         if !self.remake {
             self.seed = None;
         }
-        stats.settings = Some(self.settings);
+        // (none while their pipelines compile: `Renderer::settings_applied`)
+        stats.settings = self.pipeline_build.is_none().then_some(self.settings);
         stats.snow_lying = self.rain_wet.snow > RAIN_WET_DRY;
         // the tiled photo is done: its context goes with the targets that
         // bind it
@@ -8702,7 +9636,7 @@ impl Backend {
             self.rebuild_targets();
         }
         let snapshot = match wanted {
-            Some(Capture::Snapshot(s) | Capture::Film(_, Some(s))) if s.width > 0 && s.height > 0 => Some(s),
+            Some(Capture::Snapshot(s) | Capture::Film(_, Some(s), _)) if s.width > 0 && s.height > 0 => Some(s),
             _ => None,
         };
         if let Some(s) = snapshot {
@@ -8977,6 +9911,34 @@ impl Backend {
                 part.update(&self.queue, f.part_color, PART_TINT, f.selection_scale * PART_HALO);
             }
         }
+        // the Fit lab's map: its images while it is on and has a garment
+        // and a body in view
+        // (kept images are not drawn without this frame's parameters: a
+        // photo's frame has none, and another size)
+        let fit_params = f.fit_clip.filter(|_| !lists.fit_garment.is_empty() && !lists.fit_body.is_empty());
+        self.fit_lit = fit_params.is_some();
+        match fit_params {
+            Some(params) => {
+                self.fit_idle = 0;
+                let size = [post_size.0, post_size.1];
+                if self.fit_clip.as_ref().is_none_or(|fit| fit.size != size) {
+                    let format = self.config.format;
+                    self.fit_clip = extra(&mut self.oom, &self.device, self.lost.get(), "fit lab clipping", |device| {
+                        crate::fit_clip::FitClip::new(device, format, DEPTH_FORMAT, size)
+                    });
+                }
+                // (refused by a full video memory: nothing of the old size is left)
+                if let Some(fit) = &self.fit_clip {
+                    fit.update(&self.queue, &params, f.proj);
+                }
+            }
+            None => {
+                self.fit_idle = self.fit_idle.saturating_add(1);
+                if self.fit_idle > PART_IDLE_FRAMES {
+                    self.fit_clip = None;
+                }
+            }
+        }
         if !lists.hud_select_faces.is_empty() {
             let size = [self.config.width, self.config.height];
             if self.hud_selection.as_ref().is_none_or(|selection| selection.size != size) {
@@ -9061,15 +10023,22 @@ impl Backend {
 
         self.show_ao_method();
         self.contact_now = self.contact_on(f.shadows);
-        self.soft_now = self.soft_on(f.shadows, f.shadow_softness);
+        self.rt_now = f.shadows && self.rt.is_some() && self.targets.rt.is_some() && rt_faces.is_some();
+        // (the traced shadows take the soft ones' place)
+        self.soft_now = !self.rt_now && self.soft_on(f.shadows, f.shadow_softness);
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
-        self.motion_now = self.gtao_normals_now || self.taa.is_some();
+        self.blur_now = motion_blur_wanted(f, snapshot.is_some());
+        self.motion_now = self.gtao_normals_now || self.taa.is_some() || self.blur_now;
+        self.ensure_blur_motion();
         // nothing kept the matrices while nothing read the motion: the
         // first frame that reads it again starts the history again
         self.motion_cut |= self.motion_now && !self.motion_kept;
         // rain prototype: the terrain heights (and where they are, for the
         // uniforms below)
         self.water_effects.upload_rain_ground(&self.queue, &lists.rain_ground);
+        // Aurora Weather's fog: before the uniforms (its terms) and the
+        // shadows (its shelter map)
+        self.prepare_fog(f, &lists.fog_ground, camera_water_level);
         // snow wets nothing (the ground dries as after rain), it lies
         let (rain, snow) = if f.rain_look.snow > 0.0 { (0.0, f.rain) } else { (f.rain, 0.0) };
         // cleaned up (the Weather window): the memory starts again, every
@@ -9141,6 +10110,17 @@ impl Backend {
         }
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
+        if self.fog_volume_now {
+            main.fog_look[2][3] = crate::fog::MODE_VOLUME;
+            // the fog's flow grid, for the surfaces in closed rooms
+            if let Some(origin) = self.fog.as_ref().and_then(|f| f.flow_grid()) {
+                let d = crate::fog::FLOW_DIMS;
+                main.fog_look[4] = origin.extend(crate::fog::FLOW_CELL).to_array();
+                main.fog_look[5] = [d[0] as f32, d[1] as f32, d[2] as f32, 0.0];
+            }
+        } else if self.fog_terms.is_some() && self.rain_shelter_map(f).is_some() {
+            main.fog_look[2][3] += crate::fog::MODE_SHELTER;
+        }
         if f.photo_tile != Mat4::IDENTITY {
             main.photo = photo_part(f.photo_tile);
         }
@@ -9169,10 +10149,17 @@ impl Backend {
             air.clip_plane = [0.0, 0.0, 1.0, -f.water_height];
             self.queue.write_buffer(&self.refl_buffers[7], 0, bytemuck::bytes_of(&air));
         }
+        if self.rt_now {
+            // the traced mask stands for the shadow map where it is read
+            main.contact[0] = 1.0;
+            main.contact[2] = 1.0;
+        }
+        // the blended faces opaque enough are in the depth the contact
+        // shadows read
+        let contact_blend = self.contact_now && crate::contact_shadows::Override::from_env().all_casters();
         if self.contact_now {
             main.contact[0] = 1.0;
-            // the blended faces opaque enough are in the depth it read
-            if crate::contact_shadows::Override::from_env().all_casters() {
+            if contact_blend {
                 main.contact[1] = 1.0;
             }
         }
@@ -9203,6 +10190,14 @@ impl Backend {
         let indirect_now = self.targets.gtao_shown
             && self.targets.gtao.as_ref().is_some_and(|g| g.indirect.is_some())
             && gtao_indirect_now(self.settings.screen_indirect);
+        // the traced indirect light, bound in its place when it is on
+        let rt_gi_now = self.rt_now
+            && self.rt.as_ref().is_some_and(|r| r.lights_indirectly())
+            && self.targets.rt.as_ref().is_some_and(|t| t.gi.is_some());
+        // the point lights' traced share, in the traced mask's `.b`
+        let rt_lights_now = self.rt_now
+            && self.rt.as_ref().is_some_and(|r| r.traces_lights())
+            && self.targets.rt.as_ref().is_some_and(|t| t.lights.is_some());
         if let Some(m) = &mirror {
             let n = m.normal.normalize_or(Vec3::Z);
             main.mirror_plane = n.extend(-n.dot(m.point)).to_array();
@@ -9226,6 +10221,8 @@ impl Backend {
             main.light_sets = light_tiles::bin(fu.view, fu.proj, eye, size, lights);
             main.light_sets.mode[1] = u32::from(light_culling == LightCulling::Check || f.debug.check_light_sets);
         }
+        // (the traced lamps walk the same sets, rt_lights.wgsl `lights_near`)
+        let traced_light_sets = main.light_sets;
         stats.light_tiles = light_tiles_on;
         // reflection probes by screen tile and depth, for the main view
         // (probes::tiles), and how its fragments walk them (sample_probes_pair)
@@ -9349,8 +10346,27 @@ impl Backend {
             _ => 0,
         };
         // (common.wgsl SCREEN_INDIRECT)
-        if indirect_now {
+        if indirect_now || rt_gi_now {
             main.light_sets.mode[2] |= 0x400;
+        }
+        // (common.wgsl TRACED_SKY: the traced probes' sight of the sky in
+        // the indirect light's alpha)
+        if let Some(rt) = self.rt.as_mut() {
+            rt.want_probes(self.settings.rt_tuning.probes);
+            rt.tune_gi(self.settings.rt_tuning);
+        }
+        let traced_sky = rt_gi_now && self.rt.as_ref().is_some_and(|r| r.sees_the_sky());
+        if traced_sky {
+            main.light_sets.mode[3] |= 0x100;
+        }
+        // (common.wgsl LOCAL_TRACED, TRACED_LIGHTS_SHIFT, PROJECTORS_TRACED)
+        if rt_lights_now {
+            let tuning = self.settings.rt_tuning;
+            let lights = crate::rt_shadows::traced_count(tuning) as u32;
+            main.light_sets.mode[2] |= 0x100_0000 | (lights - 1) << 25;
+            if tuning.projectors {
+                main.light_sets.mode[2] |= 0x8000_0000;
+            }
         }
         // (common.wgsl SPECULAR_AA)
         if specular_aa_now(self.settings.specular_aa) {
@@ -9362,7 +10378,8 @@ impl Backend {
         // cut-out photo (no sky), nor with the sky hidden. A photo, a tile of one or any other still
         // is traced once in full (clouds.rs `StillSpec`), with no history.
         // Until the noise is made the sky shader keeps the Legacy layer.
-        let still = (snapshot.is_some() || f.photo_tile != Mat4::IDENTITY).then(|| {
+        let rt_still = snapshot.is_some() || f.photo_tile != Mat4::IDENTITY;
+        let still = rt_still.then(|| {
             let photo = self.gtao.photo.unwrap_or((self.config.width, self.config.height));
             crate::clouds::StillSpec {
                 origin: crate::clouds::still_origin(photo_part(f.photo_tile), photo),
@@ -9371,7 +10388,7 @@ impl Backend {
         let cloud_params = f
             .clouds
             .as_ref()
-            .filter(|_| clouds_wanted(f.cutout, f.hide_sky, f.camera_pos.z, camera_water_level))
+            .filter(|_| clouds_wanted(f.cutout, f.hide_sky, f.camera_pos.z, (!f.hide_water).then_some(camera_water_level)))
             .and_then(|c| {
                 let rotation = Mat4::from_mat3(glam::Mat3::from_mat4(f.view));
                 crate::clouds::Params::new(f, c, f.proj * rotation, inv_view_proj_rot(f.proj, f.view))
@@ -9407,6 +10424,8 @@ impl Backend {
             main.features[3] = 1;
         }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
+        let fu_sun_color = main.sun_color;
+        let fu_sky = [main.sky_zenith, main.sky_horizon, main.ground_color];
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
         // (asked in window pixels: a photo frame answers none of them)
@@ -9414,16 +10433,18 @@ impl Backend {
             self.drawn_pick.begin(
                 (self.config.width, self.config.height),
                 main_vp.inverse(),
+                unjittered_vp.inverse(),
                 Curvature::new(f.camera_pos, f.curvature),
             )
         } else {
             None
         };
-        if let Some((x, y, _)) = drawn_px {
+        if let Some((x, y, mode)) = drawn_px {
             let narrow = crate::drawn_pick::narrow(x, y, self.config.width, self.config.height);
             let mut u = main;
             // (its group binds no soft shadow mask)
             u.soft[0] = 0.0;
+            u.soft[3] = u8::from(mode.through_ignored()) as f32;
             u.view_proj = (narrow * main_vp).to_cols_array_2d();
             u.eye_view_proj = (narrow * Mat4::from_cols_array_2d(&main.eye_view_proj)).to_cols_array_2d();
             self.queue.write_buffer(&self.refl_buffers[6], 0, bytemuck::bytes_of(&u));
@@ -9498,6 +10519,10 @@ impl Backend {
                 [w, h, 1.0 / w, 1.0 / h]
             })
         };
+        // The places the probe's capture and the mirror are drawn from, whose
+        // openness their faces take with the traced probes (rt_gi.wgsl
+        // `gi_points`, common.wgsl `reflection_open`; TRACED_SKY tells them)
+        let mut gi_points: [Option<Vec3>; 2] = [None; 2];
         if do_water_refl {
             let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05, false);
             // The mirror flips z after the bend: a point bent down by the
@@ -9515,6 +10540,13 @@ impl Backend {
             let n = m.normal.normalize_or(Vec3::Z);
             let mut u = refl_frame(self, n, -n.dot(m.point), 0.01, true);
             u.sky_star_pass = star_pass(&self.targets.mirror);
+            // (half a metre in front of it, on the camera's side: on its
+            // plane the place is the mirror's own panel)
+            if traced_sky {
+                u.light_sets.mode[3] |= 0x100;
+                let side = if n.dot(f.camera_pos - m.point) < 0.0 { -n } else { n };
+                gi_points[1] = Some(m.point + side * 0.5);
+            }
             mirror_vp = Mat4::from_cols_array_2d(&u.view_proj);
             mirror_eye = Vec3::from_slice(&u.camera_pos[..3]);
             self.queue.write_buffer(&self.refl_buffers[1], 0, bytemuck::bytes_of(&u));
@@ -9545,6 +10577,10 @@ impl Backend {
             u.misc = [0.0, 0.0, 0.0, 2.0];
             u.clip_plane = [0.0; 4];
             u.light_sets.mode[2] |= radiance_bits | crate::probes::capture_lighting::DOME;
+            if traced_sky {
+                u.light_sets.mode[3] |= 0x100;
+                gi_points[0] = Some(c.origin);
+            }
             // the sun stops at the roofs (display_cube_face, generateSunShadow)
             if !c.sky_only && irr_capture && f.shadows {
                 if c.face == 0 {
@@ -9612,7 +10648,7 @@ impl Backend {
         // projector shadow maps of the frame (none without shadows)
         let shelter_map = self.rain_shelter_map(f);
         let spot_vp: [Option<Mat4>; SPOT_SHADOWS] =
-            spot_shadow_views(f, self.shadow_count as usize, shelter_map).map(|v| v.map(|(_, m)| m));
+            spot_shadow_views(f, self.shadow_count as usize, shelter_map, self.traced_projectors()).map(|v| v.map(|(_, m)| m));
         for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
             let Some(m) = m else { continue };
             let u = ShadowU {
@@ -9717,6 +10753,22 @@ impl Backend {
             // viewfinder marches as much further
             self.contact
                 .write(&self.device, &self.queue, t, light, fu.proj.w_axis.z, f.photo_scale);
+        }
+        // what the traced reflections read after the scene copy
+        let rt_clip_from_world = fu.proj * fu.view;
+        let fu_camera = fu.camera_pos;
+        if let (true, Some(rt), Some(t)) = (self.rt_now, &mut self.rt, &self.targets.rt) {
+            rt.write(
+                &self.queue,
+                t,
+                fu.proj * fu.view,
+                fu.camera_pos,
+                f.sun_dir,
+                traced_light_up(f.sun_dir),
+                self.contact_now,
+                self.settings.rt_tuning.sun_softness,
+            );
+            rt.write_texture_clock(&self.queue, [self.anim_now[2], self.anim_now[3]]);
         }
         if let (true, Some(t)) = (self.targets.gtao_shown, &mut self.targets.gtao) {
             let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
@@ -10007,6 +11059,8 @@ impl Backend {
         rg.select_faces = push(cpu, &lists.select_faces);
         rg.select_pattern = push(cpu, &lists.select_pattern);
         rg.part_faces = push(cpu, &lists.part_faces);
+        rg.fit_garment = push(cpu, &lists.fit_garment);
+        rg.fit_body = push(cpu, &lists.fit_body);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
         if let Some(c) = &capture {
@@ -10131,6 +11185,7 @@ impl Backend {
         }
 
         let mut water_settings = self.settings.water_effects;
+        water_settings.enabled &= !f.hide_water;
         water_settings.particle_budget = water_settings.particle_budget.saturating_sub(n_particles);
         if self.water_effects.prepare(
             &self.device,
@@ -10173,6 +11228,11 @@ impl Backend {
         let timer_slot = self.timer.as_mut().and_then(|t| t.slot());
         if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
             t.slot_pixels[slot].set(u64::from(world_size.0) * u64::from(world_size.1));
+            let rounds = match (self.rt_now && !rt_still, &self.rt, &self.targets.rt) {
+                (true, Some(rt), Some(targets)) => rt.still_rounds(targets) - 1,
+                _ => 0,
+            };
+            t.slot_rounds[slot].set(rounds);
         }
         let mut first_pass = true;
         let mut take_first = || {
@@ -10265,6 +11325,102 @@ impl Backend {
             }
         };
 
+        // ---- faces drawn under a clicked pixel: opaque and masked, then
+        // blended ones in front of them (only in the frame of a click)
+        let draw_pick = |encoder: &mut wgpu::CommandEncoder, mode: crate::DrawnMode| {
+            let mode = mode.alpha_mode();
+            let blend_pick = match mode {
+                crate::DrawnMode::Visible => &self.pipelines.pick_visible,
+                crate::DrawnMode::LeftVisible => &self.pipelines.pick_left_visible,
+                crate::DrawnMode::Left => &self.pipelines.pick_left,
+                _ => &self.pipelines.pick,
+            };
+            let left = matches!(mode, crate::DrawnMode::Left | crate::DrawnMode::LeftVisible);
+            let mask_interaction = mode == crate::DrawnMode::Left;
+            let (solid_pick, solid_pick_2s) = if left {
+                (&self.pipelines.pick_left, &self.pipelines.pick_left_2s)
+            } else {
+                (&self.pipelines.pick, &self.pipelines.pick_2s)
+            };
+            let layers: [&[(&wgpu::RenderPipeline, (u64, u32), Option<usize>)]; 2] = [
+                &[
+                    (&self.pipelines.pick_terrain, rg.terrain, None),
+                    (&self.pipelines.pick_terrain, rg.terrain_pbr, None),
+                    (&self.pipelines.pick_terrain_mask, rg.terrain_mask, None),
+                    (solid_pick, rg.opaque, Some(0)),
+                    (solid_pick_2s, rg.opaque_2s, Some(1)),
+                    (solid_pick, rg.mask, Some(2)),
+                    (solid_pick_2s, rg.mask_2s, Some(3)),
+                ],
+                &[
+                    (blend_pick, rg.blend, None),
+                    // under the water too: found by a click from above
+                    (blend_pick, rg.blend_under, None),
+                    // LLToolPie's transparent pick reaches Mask cutouts too.
+                    // Keep the visible opaque answer underneath, so a passive
+                    // mask cannot hide a posed attachment's actionable face.
+                    // HUDs and camera/menu queries do not enter these ranges.
+                    (
+                        &self.pipelines.pick_mask,
+                        if mask_interaction { rg.mask } else { (0, 0) },
+                        mask_interaction.then_some(2),
+                    ),
+                    (
+                        &self.pipelines.pick_mask_2s,
+                        if mask_interaction { rg.mask_2s } else { (0, 0) },
+                        mask_interaction.then_some(3),
+                    ),
+                    // LLViewerWindow::pickAsync / pickImmediate: debug alpha
+                    // makes transparent surfaces pickable. Reuse the actual
+                    // overlay lists, including hidden faces and only the
+                    // rigged geometry enabled for display, with their full
+                    // two-sided triangles instead of their texture cutouts.
+                    (&self.pipelines.pick_overlay, rg.debug_red, None),
+                    (&self.pipelines.pick_overlay, rg.debug_blue, None),
+                ],
+            ];
+            for (k, draws) in layers.iter().enumerate() {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("drawn pick"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.drawn_pick.views[k],
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.drawn_pick.depth,
+                        depth_ops: Some(wgpu::Operations {
+                            // the blended faces behind the opaque ones stay hidden
+                            load: if k == 0 { wgpu::LoadOp::Clear(0.0) } else { wgpu::LoadOp::Load },
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.refl[6]);
+                for (pipe, range, bin) in draws.iter() {
+                    draw(&mut pass, pipe, *range);
+                    if let Some(b) = bin {
+                        draw_bin(&mut pass, Some(pipe), *b, *b);
+                    }
+                }
+            }
+            self.drawn_pick.encode_copy(encoder);
+        };
+        // Hi-Z zeros draws hidden behind opaque walls, including ignored
+        // ones. Only a press through such a volume needs the original lists.
+        if let Some((_, _, mode)) = drawn_px
+            && mode.through_ignored()
+        {
+            draw_pick(&mut encoder, mode);
+        }
         prof.mark("setup");
         // GPU timestamps between and inside passes (time by kind of element)
         let marks = self
@@ -10304,6 +11460,8 @@ impl Backend {
             self.shelter_drawn = Some((self.shelter_matrix(), Instant::now()));
         }
         let shelter_only = shelter_only && !shelter_kept;
+        // its draws are this frame's (the fog's walls are drawn with them)
+        let shelter_drawn_now = shelter && (f.shadows || shelter_only);
         // MARK_SHELTER_BEGIN / END written (once, in the Spots step)
         let mut shelter_marked = false;
         if f.shadows || shelter_only {
@@ -10473,7 +11631,12 @@ impl Backend {
         };
         // the mesh normals and the motion, drawn beside the depth when GTAO
         // or TAA reads them; without them the passes keep no colour target
-        let normals = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
+        let normals = motion_view(
+            self.motion_now,
+            &self.targets,
+            self.taa.as_ref(),
+            self.blur_motion.as_ref().map(|(_, v)| v),
+        );
         let normal_target = |load| {
             normals.map(|view| {
                 Some(wgpu::RenderPassColorAttachment {
@@ -10717,7 +11880,7 @@ impl Backend {
         // copy of its depth, which the pass then reads; the occlusion's
         // depth already holds those blended faces
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
-            let more = crate::contact_shadows::Override::from_env().all_casters() && (n_blend > 0 || n_sprites > 0);
+            let more = contact_blend && (n_blend > 0 || n_sprites > 0);
             if more {
                 let source = match &self.targets.ao_depth {
                     Some((tex, _)) if blend_in_ao_depth => tex,
@@ -10784,6 +11947,96 @@ impl Backend {
                 }
             }
             self.contact.encode(&mut encoder, t, more);
+        }
+        // The depth the ray-traced mask is made from. Where `frame.contact.y`
+        // tells a blended face solid to the eye that the mask is its own
+        // (object.wgsl `contact_share`), it is the solid depth, which holds
+        // those faces: traced from the prepass, the mask held there the
+        // shadow of what lies behind the face.
+        let rt_mask_depth = match &self.targets.solid_depth {
+            Some((_, solid)) if contact_blend && n_blend > 0 => solid,
+            _ => &self.targets.depth_ss,
+        };
+        if let (true, Some(rt), Some(t), Some(faces)) = (self.rt_now, &mut self.rt, &self.targets.rt, &rt_faces) {
+            let contact = match (self.contact_now, &self.targets.contact) {
+                (true, Some(c)) => &c.result,
+                _ => &self.dummies.black,
+            };
+            rt.encode(&self.device, &self.queue, &mut encoder, t, rt_mask_depth, contact, &scene, faces);
+            // A photo (a tile of one, a 360° face, an offline film's frame)
+            // has no frame before it: its passes run their rounds over its
+            // view (rt_shadows.rs `STILL_ROUNDS`). The small frame that
+            // records a tiled photo's context is read for its depth alone.
+            let rounds = match rt_still {
+                false => 1,
+                true if f.photo_context == crate::types::PhotoContext::Record => 1,
+                true => rt.still_rounds(t),
+            };
+            if !rt_still && !rt_gi_now {
+                rt.release_screen();
+            }
+            // moved surfaces keep their history through the prepass's motion
+            let rt_motion_drawn = motion_view(
+                self.motion_now,
+                &self.targets,
+                self.taa.as_ref(),
+                self.blur_motion.as_ref().map(|(_, v)| v),
+            );
+            let rt_motion = rt_motion_drawn.unwrap_or(&self.dummies.black);
+            // (the sun's soft shadow too, whether the lights are traced or not)
+            let light = crate::rt_shadows::TraceLight {
+                light_sets: traced_light_sets,
+                clip_from_world: rt_clip_from_world,
+                camera: fu_camera,
+                sun_dir: f.sun_dir,
+                sun_up: traced_light_up(f.sun_dir),
+                sun_color: fu_sun_color,
+                sky_zenith: fu_sky[0],
+                sky_horizon: fu_sky[1],
+                ground_color: fu_sky[2],
+                pbr_occlusion: pbr_occlusion_now(),
+            };
+            for n in 0..rounds {
+                let round = if rt_still {
+                    crate::rt_shadows::Round::Still(n)
+                } else {
+                    crate::rt_shadows::Round::Live
+                };
+                if n > 0 {
+                    rt.retrace(&self.device, &self.queue, &mut encoder, t, rt_mask_depth, contact, &scene, round);
+                }
+                rt.encode_lights(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    t,
+                    &light,
+                    &f.lights,
+                    rt_mask_depth,
+                    rt_motion_drawn,
+                    &self.dummies.black,
+                    &scene,
+                    round,
+                    self.settings.rt_tuning,
+                );
+                if rt_gi_now {
+                    rt.encode_gi(
+                        &self.device,
+                        &self.queue,
+                        &mut encoder,
+                        t,
+                        &light,
+                        &f.lights[..f.lights.len().min(MAX_LIGHTS)],
+                        crate::gtao::intensity_override().unwrap_or(self.settings.screen_indirect_intensity),
+                        &self.targets.depth_ss,
+                        rt_motion,
+                        &self.targets.scene_copy,
+                        &scene,
+                        round,
+                        gi_points,
+                    );
+                }
+            }
         }
         mark(&mut encoder, MARK_CONTACT_END);
         // ---- soft sun shadows: the shadow of each pixel of the prepass (or
@@ -11197,7 +12450,7 @@ impl Backend {
         // ---- volumetric clouds: the weather map when its parameters changed,
         // the noise slice, the trace and the reconstruction (clouds.rs)
         let scene_samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
-        let scene_gbuf = self.targets.gbuf.is_some();
+        let scene_gbuf = self.targets.gbuf.as_ref().map(|view| view.texture().format());
         // (until the noise is made `encode` generates it and allocates
         // nothing; after, it needs the targets made above)
         let clouds_encode = self.clouds_now || self.clouds.as_ref().is_some_and(|c| !c.ready());
@@ -11236,11 +12489,85 @@ impl Backend {
                 cloud_size,
                 still,
             );
-            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, GBUF_FORMAT, DEPTH_FORMAT);
+            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, DEPTH_FORMAT);
         } else if let Some(clouds) = &mut self.clouds {
             clouds.skipped(still.is_some());
         }
         mark(&mut encoder, MARK_CLOUDS_END);
+        // ---- Aurora Weather's fog volume (fog.rs): after the shadows it
+        // reads, before the scene that reads it; then the sky's pipeline
+        mark(&mut encoder, MARK_FOG_BEGIN);
+        if let Some(fog) = &mut self.fog {
+            // its walls, drawn with the shelter map's casters into the flow
+            // grid when due (the shelter map's draws are this frame's)
+            if self.fog_volume_now && shelter_drawn_now && still.is_none() && fog.walls_due(&self.queue, self.anim_now) {
+                let walls = fog.walls();
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("fog walls"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: walls.target,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Discard,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.set_vertex_buffer(0, scene.vertices.slice(..));
+                pass.set_vertex_buffer(1, scene.skin.slice(..));
+                pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_pipeline(&self.pipelines.fog_voxel);
+                let k = self.shelter_slot;
+                for (group, (w, h)) in walls.views {
+                    pass.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
+                    pass.set_scissor_rect(0, 0, w, h);
+                    pass.set_bind_group(3, group, &[]);
+                    let (off, count) = rg.spot[k];
+                    if count > 0 {
+                        pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                        calls.set(calls.get() + 1);
+                    }
+                    draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
+                }
+            }
+            match (&self.fog_terms, self.fog_volume_now) {
+                (Some((look, _)), true) => fog.encode(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    &self.frame_buffer,
+                    &self.shadow_view,
+                    &self.shadow_sampler,
+                    &self.lin_clamp,
+                    look,
+                    fu.view,
+                    fu.proj,
+                    fu.camera_pos,
+                    still.is_some(),
+                ),
+                _ => fog.skipped(),
+            }
+            if self.fog_terms.is_some() {
+                fog.prepare_sky(
+                    &self.device,
+                    &self.frame_buffer,
+                    &self.lin_clamp,
+                    &self.dummies.volume,
+                    scene_samples,
+                    scene_gbuf,
+                    HDR_FORMAT,
+                    DEPTH_FORMAT,
+                );
+            }
+        }
+        mark(&mut encoder, MARK_FOG_END);
         // ---- scene pass A: sky, terrain, opaque, masked
         {
             let (view, resolve) = match &self.targets.color_msaa {
@@ -11321,6 +12648,13 @@ impl Backend {
                 {
                     clouds.draw(&mut pass, scene_samples, scene_gbuf);
                     // (the composite has its own group 0)
+                    pass.set_bind_group(0, &self.groups.a, &[]);
+                }
+                // the weather's fog over the sky and the clouds: dst * T + L
+                if self.fog_terms.is_some()
+                    && let Some(fog) = &self.fog
+                {
+                    fog.draw_sky(&mut pass, scene_samples, scene_gbuf);
                     pass.set_bind_group(0, &self.groups.a, &[]);
                 }
             }
@@ -11558,6 +12892,48 @@ impl Backend {
             },
             size,
         );
+        // the traced reflections, in SSR's place: they read the copy where
+        // the view sees what they hit
+        let rt_reflect = self.settings.ssr && self.rt_now && self.pipelines.ssr_rt.is_some();
+        let rt_reflect = rt_reflect
+            && match (&mut self.rt, &self.targets.rt, &self.targets.gbuf) {
+                (Some(rt), Some(t), Some(gbuf)) if rt.reflects() => {
+                    let light = crate::rt_shadows::TraceLight {
+                        light_sets: traced_light_sets,
+                        clip_from_world: rt_clip_from_world,
+                        camera: fu_camera,
+                        sun_dir: f.sun_dir,
+                        sun_up: traced_light_up(f.sun_dir),
+                        sun_color: fu_sun_color,
+                        sky_zenith: fu_sky[0],
+                        sky_horizon: fu_sky[1],
+                        ground_color: fu_sky[2],
+                        pbr_occlusion: pbr_occlusion_now(),
+                    };
+                    rt.encode_reflections(
+                        &self.device,
+                        &self.queue,
+                        &mut encoder,
+                        t,
+                        &light,
+                        &self.targets.depth_ss,
+                        gbuf,
+                        motion_view(
+                            self.motion_now,
+                            &self.targets,
+                            self.taa.as_ref(),
+                            self.blur_motion.as_ref().map(|(_, v)| v),
+                        ),
+                        &self.dummies.black,
+                        &self.targets.scene_copy,
+                        &scene,
+                        &self.probes,
+                        rt_still,
+                    );
+                    true
+                }
+                _ => false,
+            };
 
         mark(&mut encoder, MARK_COPY_END);
 
@@ -11823,7 +13199,8 @@ impl Backend {
             }
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split && !st_on, false);
             bind_mesh(&mut pass, &self.groups.b);
-            if let (true, Some(ssr), Some(gbg)) = (self.settings.ssr, &self.pipelines.ssr, &self.gbuf_group) {
+            let ssr_pipe = if rt_reflect { &self.pipelines.ssr_rt } else { &self.pipelines.ssr };
+            if let (true, Some(ssr), Some(gbg)) = (self.settings.ssr, ssr_pipe, &self.gbuf_group) {
                 pass.set_pipeline(ssr);
                 pass.set_bind_group(3, gbg, &[]);
                 pass.draw(0..3, 0..1);
@@ -12180,95 +13557,15 @@ impl Backend {
             }
         }
         mark(&mut encoder, MARK_SCENE_END);
-        // ---- faces drawn under a clicked pixel: opaque and masked, then
-        // blended ones in front of them (only in the frame of a click)
-        if drawn_px.is_some() {
-            let blend_pick = match drawn_px.map(|(_, _, mode)| mode) {
-                Some(crate::DrawnMode::Visible) => &self.pipelines.pick_visible,
-                Some(crate::DrawnMode::LeftVisible) => &self.pipelines.pick_left_visible,
-                Some(crate::DrawnMode::Left) => &self.pipelines.pick_left,
-                _ => &self.pipelines.pick,
-            };
-            let left = drawn_px.is_some_and(|(_, _, mode)| matches!(mode, crate::DrawnMode::Left | crate::DrawnMode::LeftVisible));
-            let mask_interaction = drawn_px.is_some_and(|(_, _, mode)| mode == crate::DrawnMode::Left);
-            let (solid_pick, solid_pick_2s) = if left {
-                (&self.pipelines.pick_left, &self.pipelines.pick_left_2s)
-            } else {
-                (&self.pipelines.pick, &self.pipelines.pick_2s)
-            };
-            let layers: [&[(&wgpu::RenderPipeline, (u64, u32), Option<usize>)]; 2] = [
-                &[
-                    (&self.pipelines.pick_terrain, rg.terrain, None),
-                    (&self.pipelines.pick_terrain, rg.terrain_pbr, None),
-                    (&self.pipelines.pick_terrain_mask, rg.terrain_mask, None),
-                    (solid_pick, rg.opaque, Some(0)),
-                    (solid_pick_2s, rg.opaque_2s, Some(1)),
-                    (solid_pick, rg.mask, Some(2)),
-                    (solid_pick_2s, rg.mask_2s, Some(3)),
-                ],
-                &[
-                    (blend_pick, rg.blend, None),
-                    // under the water too: found by a click from above
-                    (blend_pick, rg.blend_under, None),
-                    // LLToolPie's transparent pick reaches Mask cutouts too.
-                    // Keep the visible opaque answer underneath, so a passive
-                    // mask cannot hide a posed attachment's actionable face.
-                    // HUDs and camera/menu queries do not enter these ranges.
-                    (
-                        &self.pipelines.pick_mask,
-                        if mask_interaction { rg.mask } else { (0, 0) },
-                        mask_interaction.then_some(2),
-                    ),
-                    (
-                        &self.pipelines.pick_mask_2s,
-                        if mask_interaction { rg.mask_2s } else { (0, 0) },
-                        mask_interaction.then_some(3),
-                    ),
-                    // LLViewerWindow::pickAsync / pickImmediate: debug alpha
-                    // makes transparent surfaces pickable. Reuse the actual
-                    // overlay lists, including hidden faces and only the
-                    // rigged geometry enabled for display, with their full
-                    // two-sided triangles instead of their texture cutouts.
-                    (&self.pipelines.pick_overlay, rg.debug_red, None),
-                    (&self.pipelines.pick_overlay, rg.debug_blue, None),
-                ],
-            ];
-            for (k, draws) in layers.iter().enumerate() {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("drawn pick"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.drawn_pick.views[k],
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.drawn_pick.depth,
-                        depth_ops: Some(wgpu::Operations {
-                            // the blended faces behind the opaque ones stay hidden
-                            load: if k == 0 { wgpu::LoadOp::Clear(0.0) } else { wgpu::LoadOp::Load },
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                bind_mesh(&mut pass, &self.groups.refl[6]);
-                for (pipe, range, bin) in draws.iter() {
-                    draw(&mut pass, pipe, *range);
-                    if let Some(b) = bin {
-                        draw_bin(&mut pass, Some(pipe), *b, *b);
-                    }
-                }
-            }
-            self.drawn_pick.encode_copy(&mut encoder);
+        if let Some((_, _, mode)) = drawn_px
+            && !mode.through_ignored()
+        {
+            draw_pick(&mut encoder, mode);
         }
-        // depth under the cursor, read back in a later frame
+        // depth under the cursor, read back in a later frame, with the
+        // still camera: the hover's caches compare this point from frame to
+        // frame, and the jitter would move it by up to a texel at each one
+        // (picks take the jittered one, `last_inv_vp`)
         self.depth_pick.encode_hover(
             &self.device,
             &self.queue,
@@ -12407,9 +13704,72 @@ impl Backend {
                 }
             }
         }
+        // ---- motion blur, on the resolved image and its depth of field,
+        // before the glow, the bloom and the tone mapping (not on a photo,
+        // an offline film's frame nor the first frame after a cut)
+        match (&f.motion_blur, self.prev_view_proj) {
+            (Some(params), Some(prev))
+                if self.blur_now
+                    && !self.motion_cut
+                    && motion_blur_targets(
+                        &mut self.oom,
+                        &mut self.motion_blur,
+                        &self.device,
+                        &crate::dof::PostInputs {
+                            layout: &self.post_layout,
+                            sampler: &self.post_sampler,
+                            buffer: &self.post_buffer,
+                            glow: &self.glow.views[1],
+                        },
+                        post_size,
+                        self.lost.get(),
+                    ) =>
+            {
+                let motion = motion_view(
+                    self.motion_now,
+                    &self.targets,
+                    self.taa.as_ref(),
+                    self.blur_motion.as_ref().map(|(_, v)| v),
+                );
+                let blur = self.motion_blur.as_mut().expect("made by motion_blur_targets");
+                post_bg = blur.encode(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    post_src,
+                    post_depth,
+                    motion,
+                    &crate::motion_blur::Cameras {
+                        view_proj: unjittered_vp,
+                        prev_view_proj: prev,
+                        proj: f.proj,
+                    },
+                    post_size,
+                    params,
+                    HDR_FORMAT,
+                    &crate::dof::PostInputs {
+                        layout: &self.post_layout,
+                        sampler: &self.post_sampler,
+                        buffer: &self.post_buffer,
+                        glow: &self.glow.views[1],
+                    },
+                );
+            }
+            // (refused by a full video memory, or a frame without it)
+            (Some(_), _) => {}
+            (None, _) => {
+                if let Some(blur) = &mut self.motion_blur {
+                    blur.release();
+                }
+            }
+        }
         self.prev_view_proj = Some(unjittered_vp);
         self.prev_motion_view = Some((f.proj, f.view));
-        self.last_inv_vp = unjittered_vp.inverse();
+        // the camera the depth was drawn with, jitter included: unprojected
+        // with the still one, a texel's depth lands up to half a texel
+        // beside the point drawn there, off the surface of a face seen at
+        // an angle (#4869)
+        self.last_inv_vp = (fu.proj * fu.view).inverse();
         self.last_curvature = Curvature::new(f.camera_pos, f.curvature);
 
         // ---- automatic exposure, from the resolved scene and the glow of
@@ -12442,9 +13802,38 @@ impl Backend {
         if glow_on {
             self.glow.encode(&mut encoder, post_bg);
         }
-        // ---- bloom, from the image the post pass reads (after the glow,
-        // which it leaves as it is)
         mark(&mut encoder, MARK_BLOOM_BEGIN);
+        // ---- the sun's and the moon's shafts (sun_shafts.rs), into the
+        // image the bloom and the tone mapping read (after the exposure,
+        // which their mask is measured with, and the glow of faces, which
+        // they leave as it is; timed with the bloom). None under a debug
+        // view (it replaces the image), on a cut-out photo (its empty
+        // background is no sky) or a photo drawn in tiles (each tile's
+        // streaks would end at its seams); kept ready while the light is
+        // merely out of view.
+        let shafts = crate::sun_shafts::strength(f.sun_rays);
+        let debug_view = f.debug_glow || f.debug.shadows || f.debug.ambient_occlusion;
+        if shafts > 0.0 && !debug_view && !f.cutout && f.photo_tile == Mat4::IDENTITY {
+            let post = crate::dof::PostInputs {
+                layout: &self.post_layout,
+                sampler: &self.post_sampler,
+                buffer: &self.post_buffer,
+                glow: &self.glow.views[1],
+            };
+            let ready = shafts_targets(&mut self.oom, &mut self.sun_shafts, &self.device, &post, post_size, self.lost.get());
+            let forward = crate::light_tiles::view_forward(f.view);
+            if ready
+                && let Some(sun) = crate::sun_shafts::sun_on_image(unjittered_vp, forward, f.sun_dir, f.sun_visible)
+                && let Some(s) = &self.sun_shafts
+                && let Some(bg) = s.encode(&self.device, &self.queue, &mut encoder, post_bg, post_depth, sun, shafts * sun.fade)
+            {
+                post_bg = bg;
+            }
+        } else if let Some(s) = &mut self.sun_shafts {
+            s.release();
+        }
+        // ---- bloom, from the image the post pass reads (after the glow,
+        // which it leaves as it is; the shafts included)
         if bloom > 0.0 {
             self.bloom.encode(&mut encoder, post_bg);
         }
@@ -12492,9 +13881,60 @@ impl Backend {
             self.rlva_spheres = None;
             composed_view
         };
+        // the catalogue's pictures: made on their first request, let go
+        // after a while without one
+        match &f.look_thumbs {
+            Some(_) => {
+                let format = self.config.format;
+                if self.look_thumbs.as_ref().is_none_or(|t| t.format != format) {
+                    if let Some(old) = self.look_thumbs.take() {
+                        old.free(&mut self.egui);
+                    }
+                    if self.oom.extras_ready(Instant::now()) {
+                        let device = &self.device;
+                        let egui = &mut self.egui;
+                        let (thumbs, refused) =
+                            crate::gpu_alloc::scoped(device, || crate::look_thumbs::LookThumbs::new(device, egui, format));
+                        if first_use(&mut self.oom, "photo filter pictures", false, refused && !self.lost.get()) {
+                            thumbs.free(&mut self.egui);
+                        } else {
+                            self.look_thumbs = Some(thumbs);
+                        }
+                    }
+                }
+                if let Some(thumbs) = &mut self.look_thumbs {
+                    thumbs.idle = 0;
+                }
+            }
+            None => {
+                if let Some(thumbs) = &mut self.look_thumbs {
+                    thumbs.idle += 1;
+                    if thumbs.idle > crate::look_thumbs::KEEP_FRAMES
+                        && let Some(old) = self.look_thumbs.take()
+                    {
+                        old.free(&mut self.egui);
+                    }
+                }
+            }
+        }
+        // a still for them is taken from the look's input: without a look,
+        // one that changes nothing routes the frame through it
+        let capture = f
+            .look_thumbs
+            .as_ref()
+            .and_then(|t| t.capture)
+            .filter(|_| self.look_thumbs.is_some());
+        let pass_through;
         // the photo's look: the post pass and SMAA draw into its input,
         // and its passes into the frame
-        let look = f.look.as_ref().filter(|look| look.layers.iter().any(|l| !l.ops.is_empty()));
+        let look = match f.look.as_ref().filter(|look| look.layers.iter().any(|l| !l.ops.is_empty())) {
+            Some(look) => Some(look),
+            None if capture.is_some() => {
+                pass_through = crate::looks::PhotoLook::pass_through(post_size);
+                Some(&pass_through)
+            }
+            None => None,
+        };
         if look.is_some() {
             let format = self.config.format;
             let looks = self.looks.get_or_insert_with(|| crate::looks::Looks::new(&self.device));
@@ -12512,7 +13952,11 @@ impl Backend {
                 // through (no input: the frame goes without the look)
                 looks.release();
             }
-        } else if let Some(looks) = &mut self.looks {
+        } else if let Some(looks) = &mut self.looks
+            && f.look_thumbs.is_none()
+        {
+            // (kept while the filters catalogue shows: its stills go
+            // through them every few seconds, see `pass_through` above)
             looks.idle();
         }
         let looks = look.and(self.looks.as_ref()).and_then(|looks| Some((looks, looks.input()?)));
@@ -12522,14 +13966,17 @@ impl Backend {
         // timestamp goes to whichever pass really ends it
         let draws_selection = rg.select_faces.1 > 0 && self.selection.is_some();
         let draws_part = rg.part_faces.1 > 0 && self.part_lit && self.part.is_some() && self.part_depth.is_some();
+        let draws_fit = self.fit_lit && rg.fit_garment.1 > 0 && rg.fit_body.1 > 0 && self.fit_clip.is_some();
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds && !draws_selection && !draws_part => Some(wgpu::RenderPassTimestampWrites {
-                    query_set: &t.query_set,
-                    beginning_of_pass_write_index: None,
-                    end_of_pass_write_index: Some(1),
-                }),
+                (Some(t), Some(_)) if !draw_huds && !draws_selection && !draws_part && !draws_fit => {
+                    Some(wgpu::RenderPassTimestampWrites {
+                        query_set: &t.query_set,
+                        beginning_of_pass_write_index: None,
+                        end_of_pass_write_index: Some(1),
+                    })
+                }
                 _ => None,
             };
             // with SMAA the post pass fills its gamma-encoded input image
@@ -12562,6 +14009,14 @@ impl Backend {
             if let Some(st) = &self.smaa_targets {
                 self.smaa.encode(&mut encoder, st, post_target, smaa_ts);
             }
+            if let Some(thumbs) = &mut self.look_thumbs {
+                if let (Some(rect), Some((_, input))) = (capture, looks) {
+                    thumbs.capture(&self.device, &self.queue, &mut encoder, input, post_depth, rect, f.proj);
+                }
+                if let Some((slot, look)) = f.look_thumbs.as_ref().and_then(|t| t.draw.as_ref()) {
+                    calls.set(calls.get() + thumbs.draw(&self.device, &self.queue, &mut encoder, *slot, look));
+                }
+            }
             if let (Some((looks, _)), Some(look)) = (looks, look) {
                 let depth = crate::looks::LookDepth {
                     view: post_depth,
@@ -12573,7 +14028,12 @@ impl Backend {
         }
 
         if let Some(debug) = &self.motion_debug {
-            let motion = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
+            let motion = motion_view(
+                self.motion_now,
+                &self.targets,
+                self.taa.as_ref(),
+                self.blur_motion.as_ref().map(|(_, v)| v),
+            );
             debug.encode(
                 &self.device,
                 &self.queue,
@@ -12595,7 +14055,7 @@ impl Backend {
             draw(&mut pass, &self.pipelines.selection_mask, rg.select_faces);
             drop(pass);
             let timestamps = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds && !draws_part => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_part && !draws_fit => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -12664,7 +14124,7 @@ impl Backend {
             draw(&mut pass, &self.pipelines.part_mask, rg.part_faces);
             drop(pass);
             let timestamps = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_fit => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -12673,6 +14133,28 @@ impl Backend {
             };
             part.encode(&mut encoder, scene_target, timestamps);
             calls.set(calls.get() + 2);
+        }
+
+        // LiveMesh's Fit lab: where the body pokes through the garment
+        if draws_fit && let Some(fit) = &self.fit_clip {
+            let mut pass = fit.begin_garment(&mut encoder);
+            bind_mesh(&mut pass, &self.groups.b);
+            draw(&mut pass, &self.pipelines.fit_garment, rg.fit_garment);
+            drop(pass);
+            let mut pass = fit.begin_body(&mut encoder, post_depth);
+            bind_mesh(&mut pass, &self.groups.b);
+            draw(&mut pass, &self.pipelines.fit_body, rg.fit_body);
+            drop(pass);
+            let timestamps = match (&self.timer, timer_slot) {
+                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                    query_set: &t.query_set,
+                    beginning_of_pass_write_index: None,
+                    end_of_pass_write_index: Some(1),
+                }),
+                _ => None,
+            };
+            fit.encode(&self.device, &mut encoder, scene_target, post_depth, timestamps);
+            calls.set(calls.get() + 3);
         }
 
         if let Some(effects) = &mut self.rlva_spheres {
@@ -12786,8 +14268,16 @@ impl Backend {
                 crate::label_depth::skip(labels);
             }
             crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
-            self.previews
-                .render(&self.device, &self.queue, &mut encoder, &mut self.egui, &mut ui.primitives, scale);
+            self.previews.render(
+                crate::preview::Shower::Viewer,
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &mut self.egui,
+                &mut ui.primitives,
+                scale,
+            );
+            crate::look_thumbs::resolve(self.look_thumbs.as_ref(), &mut ui.primitives);
             extra_cmds = self
                 .egui
                 .update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &sd);
@@ -12858,7 +14348,7 @@ impl Backend {
         if wanted == Some(Capture::Scene) {
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             capture = self.encode_capture(&mut encoder, source, false);
-        } else if matches!(wanted, Some(Capture::Film(_, None))) && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
+        } else if matches!(wanted, Some(Capture::Film(_, None, _))) && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
             // a live film's frame: the same view, read back without a wait
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             let bgra = matches!(
@@ -12992,6 +14482,27 @@ impl Backend {
             if let Some(cube) = &mut self.cube {
                 cube.add_face(&mut encoder, surface_tex.texture(), step);
             }
+        } else if let (Some(_), Some(shutter)) = (snapshot, self.shutter_now) {
+            // a sub-frame of an offline frame with a shutter: added to the
+            // sum; the last writes the average and is read back as below
+            let texture = surface_tex.texture();
+            if shutter_target(
+                &mut self.oom,
+                &mut self.shutter,
+                &self.device,
+                (texture.width(), texture.height()),
+                self.lost.get(),
+            ) {
+                let accum = self.shutter.as_mut().expect("made by shutter_target");
+                accum.encode(&self.device, &self.queue, &mut encoder, texture, shutter);
+            }
+            if shutter.last() {
+                let bgra = matches!(
+                    texture.format(),
+                    wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+                );
+                self.film_reads.encode(&self.device, &mut encoder, texture, bgra, f.cutout);
+            }
         } else if snapshot.is_some() && self.film_reads.carried() {
             // an offline render's frame, drawn at its size: read back
             // without a wait, answered by a later frame
@@ -13120,6 +14631,7 @@ impl Backend {
 
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
         stats.gpu_pixels = self.timer.as_ref().map_or(0, |t| t.last_pixels);
+        stats.gpu_photo_ms = self.timer.as_ref().and_then(|t| t.last_photo_ms);
         stats.target_bytes_per_pixel = self
             .target_bytes
             .filter(|&(bytes, pixels)| bytes > 0 && pixels > 0)
@@ -13305,6 +14817,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_gbuffer_keeps_8_bits_or_16_on_every_device() {
+        // Standard: the format of before, whatever the device has
+        assert_eq!(gbuf_format(false, true), wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(gbuf_format(false, false), wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(gbuf_format(true, true), wgpu::TextureFormat::Rgba16Unorm);
+        // without the normalized format, or at a sample count it lacks, the
+        // HDR target's: every device draws into it and resolves it at each
+        // sample count offered
+        assert_eq!(gbuf_format(true, false), HDR_FORMAT);
+    }
+
+    #[test]
     fn the_scene_shader_without_soft_shadows_drops_their_path() {
         let with = common_shader_for(true);
         let without = common_shader_for(false);
@@ -13363,6 +14887,24 @@ mod tests {
                 assert!(m.levels < 16);
             }
         }
+    }
+
+    #[test]
+    fn the_moon_is_traced_at_night() {
+        // the sun up, then the moon at night: both traced
+        assert!(traced_light_up(Vec3::new(0.3, 0.2, 0.68)));
+        assert!(traced_light_up(Vec3::new(-0.1, 0.35, 0.93)));
+        // neither up (straight down): nothing to trace
+        assert!(!traced_light_up(Vec3::NEG_Z));
+    }
+
+    #[test]
+    fn a_traced_projector_draws_no_shadow_map() {
+        // nothing traced: every projector keeps its map
+        assert!(projector_map_drawn(0, 0) && projector_map_drawn(5, 0));
+        // the first 4 lights traced: theirs go, the ones past them stay
+        assert!(!projector_map_drawn(0, 4) && !projector_map_drawn(3, 4));
+        assert!(projector_map_drawn(4, 4) && projector_map_drawn(63, 4));
     }
 
     #[test]
@@ -13471,6 +15013,23 @@ mod tests {
         assert_eq!(wet.uniform[2], 256.0);
     }
 
+    /// Footprints off (the setting, or no snow lying any more): the frame
+    /// says there is no map, so no frozen trail is drawn (#4019); on again,
+    /// the map is back in the frame.
+    #[test]
+    fn footprints_off_leave_no_trail_map_in_the_frame() {
+        let mut trail = SnowTrail::default();
+        trail.advance(true, 1.0, Vec2::new(100.0, 60.0), 5.0, 48.0);
+        assert!(trail.active());
+        assert_eq!(trail.uniform[2], 48.0);
+        trail.advance(false, 1.0, Vec2::new(100.0, 60.0), 5.0, 48.0);
+        assert!(!trail.active());
+        assert_eq!(trail.uniform, [0.0; 4]);
+        trail.advance(true, 1.0, Vec2::new(100.0, 60.0), 5.0, 48.0);
+        assert!(trail.active());
+        assert_eq!(trail.uniform[2], 48.0);
+    }
+
     #[test]
     fn a_border_crossing_moves_the_weathers_memories() {
         // a crossing to the east neighbour: every position 256 m less in x;
@@ -13554,6 +15113,8 @@ mod tests {
         MARK_WATER_INTERFACE_END,
         MARK_DEPTH_MSAA_END,
         MARK_CLOUDS_END,
+        MARK_FOG_BEGIN,
+        MARK_FOG_END,
         MARK_SKY_END,
         MARK_TERRAIN_END,
         MARK_OBJECTS_END,
@@ -13625,11 +15186,15 @@ mod tests {
 
     #[test]
     fn the_clouds_are_asked_for_only_over_a_drawn_sky() {
-        assert!(clouds_wanted(false, false, 30.0, 20.0));
-        assert!(clouds_wanted(false, false, 20.0, 20.0));
-        assert!(!clouds_wanted(true, false, 30.0, 20.0), "cut-out photo");
-        assert!(!clouds_wanted(false, true, 30.0, 20.0), "sky hidden: no trace for nothing");
-        assert!(!clouds_wanted(false, false, 19.0, 20.0), "under the water");
+        assert!(clouds_wanted(false, false, 30.0, Some(20.0)));
+        assert!(clouds_wanted(false, false, 20.0, Some(20.0)));
+        assert!(!clouds_wanted(true, false, 30.0, Some(20.0)), "cut-out photo");
+        assert!(!clouds_wanted(false, true, 30.0, Some(20.0)), "sky hidden: no trace for nothing");
+        assert!(!clouds_wanted(false, false, 19.0, Some(20.0)), "under the water");
+        assert!(
+            clouds_wanted(false, false, 19.0, None),
+            "hidden water leaves the sky visible below sea level"
+        );
     }
 
     /// The occlusion's table is read by index against the main view's

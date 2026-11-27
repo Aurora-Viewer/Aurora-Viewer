@@ -43,7 +43,9 @@ impl BuildTool {
     /// Whether the section of `tab` is on screen this frame: the build
     /// window's own section, or a detached window that is shown.
     pub fn section_visible(&self, tab: usize) -> bool {
-        (self.tab == tab && !self.ui.detached_tabs.contains(&tab)) || self.ui.detached_shown.contains(&tab)
+        (self.tab == tab && !self.ui.detached_tabs.contains(&tab))
+            || self.ui.detached_shown.contains(&tab)
+            || self.ui.second.shown == Some(tab)
     }
 }
 
@@ -90,7 +92,7 @@ pub(super) fn prepare(tool: &mut BuildTool, s: &BuildSettings) {
     for (block, shown) in &s.detached {
         if let Some(tab) = block.tab() {
             tool.ui.detached_tabs.push(tab);
-            if *shown && tool.tool == Tool::Edit {
+            if *shown && tool.main_tool() == Some(Tool::Edit) {
                 tool.ui.detached_shown.push(tab);
             }
         }
@@ -100,7 +102,7 @@ pub(super) fn prepare(tool: &mut BuildTool, s: &BuildSettings) {
 /// Every section of the build window is in a window of its own: the
 /// build window keeps its shared controls only.
 pub(super) fn sectionless(tool: &BuildTool, s: &BuildSettings) -> bool {
-    available(s) && tool.tool == Tool::Edit && tab_detached(s, tool.tab)
+    available(s) && tool.main_tool() == Some(Tool::Edit) && tab_detached(s, tool.tab)
 }
 
 /// Fit the build window to its shared controls while it has no section,
@@ -109,7 +111,9 @@ pub(super) fn fit_window(ctx: &egui::Context, tool: &BuildTool, s: &BuildSetting
     let id = egui::Id::unique(INSPECTOR_ID);
     let flag = id.with("build-sectionless");
     let saved = id.with("build-sections-height");
-    let Some(rect) = main_rect(ctx) else {
+    // (its size where it is drawn: in a window of its own outside the
+    // viewer's, not the size of the place it left inside)
+    let Some(size) = widgets::floater_size(ctx, INSPECTOR_ID) else {
         return;
     };
     let now = sectionless(tool, s);
@@ -117,16 +121,16 @@ pub(super) fn fit_window(ctx: &egui::Context, tool: &BuildTool, s: &BuildSetting
     if now != was {
         ctx.data_mut(|d| d.insert_persisted(flag, now));
         if now {
-            ctx.data_mut(|d| d.insert_persisted(saved, rect.height()));
+            ctx.data_mut(|d| d.insert_persisted(saved, size.y));
         } else if let Some(height) = ctx.data_mut(|d| d.get_persisted::<f32>(saved)) {
-            widgets::size_floater(ctx, INSPECTOR_ID, egui::vec2(rect.width(), height));
+            widgets::size_floater(ctx, INSPECTOR_ID, egui::vec2(size.x, height));
             return;
         }
     }
     if now && let (Some(body), Some(need)) = (tool.ui.body_height, tool.ui.sectionless_body) {
-        let target = (rect.height() - body + need).round();
-        if (rect.height() - target).abs() > 0.5 {
-            widgets::size_floater(ctx, INSPECTOR_ID, egui::vec2(rect.width(), target));
+        let target = (size.y - body + need).round();
+        if (size.y - target).abs() > 0.5 {
+            widgets::size_floater(ctx, INSPECTOR_ID, egui::vec2(size.x, target));
         }
     }
 }
@@ -153,11 +157,9 @@ pub(super) fn hide(tool: &mut BuildTool) {
 
 /// Show or hide a detached block's window (its rail button).
 pub(super) fn toggle(tool: &mut BuildTool, s: &mut BuildSettings, block: Block) {
-    if block.tab().is_some() && tool.tool != Tool::Edit {
-        // Back to editing, as the button of a section does: its window shows.
-        tool.set_tool(Tool::Edit);
-        s.detached.insert(block, true);
-        return;
+    if block.tab().is_some() {
+        // a section is the Edit tool's, as its button in the window is
+        tool.activate(Tool::Edit);
     }
     if let Some(shown) = s.detached.get_mut(&block) {
         *shown = !*shown;
@@ -210,8 +212,15 @@ pub(super) fn source(ui: &egui::Ui, p: &Palette, tool: &mut BuildTool, s: &Build
     }
 }
 
+/// Where the build window is in the viewer's window: what a block is
+/// dropped on to go back in. None while it is in a window of its own
+/// outside: the place it left inside is no longer its own.
 fn main_rect(ctx: &egui::Context) -> Option<egui::Rect> {
-    ctx.memory(|m| m.area_rect(egui::Id::unique(INSPECTOR_ID)))
+    let id = egui::Id::unique(INSPECTOR_ID);
+    if widgets::floater_outside(ctx, id) {
+        return None;
+    }
+    ctx.memory(|m| m.area_rect(id))
 }
 
 fn outline_main(ctx: &egui::Context, p: &Palette, rect: egui::Rect) {
@@ -265,6 +274,17 @@ pub(super) fn finish(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, s: 
     }
 }
 
+/// Whether the window of a detached `block` (shown by its button) is on
+/// screen: a section with the main window, the Position / Size / Rotation
+/// block while something is selected to edit (no window at all without
+/// one, human request 2026-11-24).
+fn window_shown(tool: &BuildTool, block: Block) -> bool {
+    match block {
+        Block::Transform => !tool.selection.is_empty() && matches!(tool.main_tool(), Some(Tool::Edit | Tool::Create)),
+        _ => tool.main_tool() == Some(Tool::Edit),
+    }
+}
+
 fn default_size(tool: &BuildTool, block: Block) -> Vec2 {
     let height = match block {
         Block::Transform => tool.ui.transform_height.unwrap_or(190.0) + 18.0,
@@ -296,11 +316,8 @@ pub(super) fn windows(
     let blocks: Vec<Block> = s.detached.iter().filter(|(_, shown)| **shown).map(|(block, _)| *block).collect();
     let mut reattach = None;
     for block in blocks {
-        let shown = match block {
-            Block::Transform => matches!(tool.tool, Tool::Edit | Tool::Create),
-            _ => tool.tool == Tool::Edit,
-        };
-        if !shown {
+        if !window_shown(tool, block) {
+            tool.ui.detach_press.remove(&block);
             continue;
         }
         let id = floater_id(block);
@@ -407,12 +424,9 @@ fn body(
     block: Block,
 ) -> Option<f32> {
     let Some(tab) = block.tab() else {
-        if tool.selection.is_empty() {
-            common::small(ui, p, aurora_i18n::tr!("build-ui-tools-nothing-selected"));
-        } else {
-            let arrange = super::object::TransformArrange::for_width(ui.available_width());
-            super::object::show_transform_arranged(ui, p, tool, world, s, mods, arrange, false);
-        }
+        // (only shown with a selection: `window_shown`)
+        let arrange = super::object::TransformArrange::for_width(ui.available_width());
+        super::object::show_transform_arranged(ui, p, tool, world, s, mods, arrange, false);
         return None;
     };
     let width = widgets::scrolled_width(ui).max(1.0);
@@ -445,21 +459,41 @@ mod tests {
     }
 
     #[test]
-    fn detached_sections_leave_the_build_window_and_show_only_while_editing() {
+    fn detached_sections_leave_the_build_window_and_show_only_with_it() {
         let s = settings(&[(Block::Materials, true), (Block::Contents, false), (Block::Transform, true)]);
         let mut tool = BuildTool::default();
-        tool.set_tool(Tool::Edit);
+        tool.open_build(Tool::Edit);
         prepare(&mut tool, &s);
         let mut tabs = tool.ui.detached_tabs.clone();
         tabs.sort_unstable();
         // the transform block is no section: it has no tab
         assert_eq!(tabs, vec![3, 4]);
         assert_eq!(tool.ui.detached_shown, vec![3]);
-        tool.set_tool(Tool::Grab);
+        // another tool in its own window: the main window keeps its sections
+        tool.open_build(Tool::Grab);
         prepare(&mut tool, &s);
-        assert!(tool.ui.detached_shown.is_empty(), "a section shows while editing only");
+        assert_eq!(tool.ui.detached_shown, vec![3]);
+        // the main window closed, the move window left: no section shows
+        tool.main_open = false;
+        prepare(&mut tool, &s);
+        assert!(tool.ui.detached_shown.is_empty(), "a section shows with the main window only");
         hide(&mut tool);
         assert!(tool.ui.detached_tabs.is_empty() && tool.ui.detached_shown.is_empty());
+    }
+
+    #[test]
+    fn the_detached_transform_block_shows_only_while_something_is_selected() {
+        let mut tool = BuildTool::default();
+        tool.open_build(Tool::Edit);
+        assert!(!window_shown(&tool, Block::Transform), "nothing selected: no window, no message");
+        assert!(window_shown(&tool, Block::General), "a section shows its own empty state");
+        tool.selection.push(crate::world::objects::ObjKey { region: 1, local_id: 7 });
+        assert!(window_shown(&tool, Block::Transform));
+        tool.main_open = false;
+        assert!(!window_shown(&tool, Block::Transform), "with the main window only");
+        tool.main_open = true;
+        tool.selection.clear();
+        assert!(!window_shown(&tool, Block::Transform), "hidden again once the selection is gone");
     }
 
     #[test]
@@ -504,14 +538,53 @@ mod tests {
     fn the_build_window_is_sectionless_when_its_tab_is_out() {
         let s = settings(&[(Block::General, true)]);
         let mut tool = BuildTool::default();
-        tool.set_tool(Tool::Edit);
+        tool.open_build(Tool::Edit);
         tool.tab = 6;
         assert!(sectionless(&tool, &s));
         tool.tab = 5;
         assert!(!sectionless(&tool, &s));
         tool.tab = 6;
-        tool.set_tool(Tool::Grab);
-        assert!(!sectionless(&tool, &s), "the other tools show no section anyway");
+        tool.open_build(Tool::Grab);
+        assert!(sectionless(&tool, &s), "another tool's window leaves the main window as it is");
+        tool.main_open = false;
+        assert!(!sectionless(&tool, &s), "no main window, no section anyway");
+    }
+
+    /// In a window of its own outside the viewer's, the build window is
+    /// fitted from the size it has there, and the place it left inside is
+    /// no longer its own: nothing is dropped on it nor outlined there.
+    #[test]
+    fn the_build_window_outside_is_fitted_from_its_size_there() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::unique(INSPECTOR_ID);
+        // inside the viewer's window: 420 x 700
+        for _ in 0..2 {
+            crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::Area::new(id).fixed_pos(egui::pos2(50.0, 60.0)).show(ui.ctx(), |ui| {
+                    ui.allocate_space(egui::vec2(420.0, 700.0));
+                });
+            }));
+        }
+        assert_eq!(main_rect(&ctx).map(|rect| rect.size()), Some(egui::vec2(420.0, 700.0)));
+        // sent outside, where it is 500 x 900
+        crate::outside::want(&ctx, id, true);
+        crate::outside::set_native(&ctx, id, true);
+        ctx.data_mut(|d| d.insert_persisted(id.with(widgets::OUTSIDE_SIZE), egui::vec2(500.0, 900.0)));
+        assert_eq!(main_rect(&ctx), None);
+        // its section is taken out: 600 of its body for what needs 100
+        let mut s = settings(&[(Block::General, true)]);
+        let mut tool = BuildTool::default();
+        tool.open_build(Tool::Edit);
+        tool.tab = 6;
+        tool.ui.body_height = Some(600.0);
+        tool.ui.sectionless_body = Some(100.0);
+        fit_window(&ctx, &tool, &s);
+        assert_eq!(crate::outside::take_resizes(&ctx), [(id, egui::vec2(500.0, 400.0), false)]);
+        // the section comes back: the height it had outside
+        ctx.data_mut(|d| d.insert_persisted(id.with(widgets::OUTSIDE_SIZE), egui::vec2(500.0, 400.0)));
+        s.detached.clear();
+        fit_window(&ctx, &tool, &s);
+        assert_eq!(crate::outside::take_resizes(&ctx), [(id, egui::vec2(500.0, 900.0), false)]);
     }
 
     #[test]

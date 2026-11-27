@@ -6,7 +6,7 @@ use crate::world::World;
 use aurora_llsd::{Llsd, llsd_map};
 use aurora_net::NetEvent;
 use aurora_net::build::{BuildCmd, ObjectProps, PhysicsParams, TaskItem, perm, perm_field};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -38,6 +38,9 @@ pub struct DemoSim {
     rezzed_from_task: HashMap<Uuid, Uuid>,
     /// Groups supplied by creation requests, including an explicitly empty group.
     rezzed_groups: HashMap<Uuid, Uuid>,
+    /// Prims made with the Create tool (ObjectAdd): our own work, so their
+    /// creator and last owner are us, as on a grid.
+    created: HashSet<Uuid>,
     /// What an object item holds (`AURORA_DEMO_DEEP_PERMS`), by item id: a
     /// rez from contents gets it, a save back keeps the copy's contents.
     stored: HashMap<Uuid, Vec<TaskItem>>,
@@ -71,6 +74,10 @@ struct History {
     undo: Vec<Placement>,
     redo: Vec<Placement>,
     last: Option<Instant>,
+    /// Where the simulator holds the object. The viewer moves an object
+    /// before it sends the edit, so the world's placement is already the
+    /// new one when the edit arrives: noted on ObjectSelect, then kept here.
+    placed: Option<Placement>,
 }
 
 /// `AURORA_DEMO_BUILD_ECHO=<ms>`: the demo answers a transform edit that
@@ -84,6 +91,24 @@ fn echo_delay() -> Option<Duration> {
             .filter(|&ms| ms > 0)
             .map(Duration::from_millis)
     })
+}
+
+/// The owner a simulator reports for the object `id`: its own when the
+/// update names one, else an attachment's wearer (a linked prim of it hangs
+/// from its root, which hangs from the avatar), else us.
+fn owner_of(world: &World, id: Uuid) -> Uuid {
+    world
+        .objects
+        .index_of_uuid(&id)
+        .and_then(|i| {
+            let o = world.objects.get(i)?;
+            Some(o.owner_id).filter(|owner| !owner.is_nil()).or_else(|| {
+                let root = world.objects.get(super::root_of(world, i))?;
+                let parent = world.objects.get(world.objects.parent_of(root)?)?;
+                parent.is_avatar().then_some(parent.full_id)
+            })
+        })
+        .unwrap_or(crate::demo::DEMO_AGENT)
 }
 
 fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) -> TaskItem {
@@ -134,6 +159,15 @@ fn script_copy_demo() -> bool {
 }
 
 impl DemoSim {
+    /// Ends every object's current edit, as if `EDIT_GAP` had passed: the
+    /// next update starts a new undo step (tests, without a sleep).
+    #[cfg(test)]
+    pub(crate) fn end_edits(&mut self) {
+        for h in self.history.values_mut() {
+            h.last = None;
+        }
+    }
+
     pub fn save_script(
         &mut self,
         target: aurora_net::scripts::ScriptTarget,
@@ -154,6 +188,7 @@ impl DemoSim {
         let item_id = self.rezzed_item.get(&id).copied().unwrap_or_default();
         let from_task_id = self.rezzed_from_task.get(&id).copied().unwrap_or_default();
         let group = self.rezzed_groups.get(&id).copied();
+        let created = self.created.contains(&id);
         self.props.entry(id).or_insert_with(|| {
             let name = world
                 .objects
@@ -173,15 +208,25 @@ impl DemoSim {
                 .and_then(|i| world.objects.get(i))
                 .map(|o| o.key.local_id);
             let (touch_name, sit_name) = local_id.and_then(crate::demo::object_menu::texts).unwrap_or_default();
-            let owner_id = world
-                .objects
-                .index_of_uuid(&id)
-                .and_then(|i| world.objects.get(i))
-                .map(|o| o.owner_id)
-                .filter(|owner| !owner.is_nil())
-                .unwrap_or(crate::demo::DEMO_AGENT);
+            let owner_id = owner_of(world, id);
             // the lamp of AURORA_DEMO_OBJECT_EXPORT: mostly our own work
-            let creator_id = local_id.and_then(crate::demo::object_export::creator).unwrap_or(DEMO_CREATOR);
+            let creator_id = if created {
+                crate::demo::DEMO_AGENT
+            } else {
+                local_id.and_then(crate::demo::object_export::creator).unwrap_or(DEMO_CREATOR)
+            };
+            // Violet Wolf's outfit of AURORA_DEMO_INSPECT: named and credited
+            let outfit = local_id.and_then(crate::demo::inspect::props);
+            let creator_id = outfit.map_or(creator_id, |o| o.2);
+            let name = outfit.map_or(name, |o| o.0.to_owned());
+            // the market of AURORA_DEMO_AREA_SEARCH: several owners and creators
+            let market = local_id.and_then(crate::demo::market::props);
+            let (name, owner_id, creator_id, group) = match market {
+                Some((name, _, creator, Some(group))) => (name, group, creator, Some(group)),
+                Some((name, owner, creator, None)) => (name, owner, creator, group),
+                None => (name, owner_id, creator_id, group),
+            };
+            let description = outfit.map_or_else(String::new, |o| o.1.to_owned());
             ObjectProps {
                 object_id: id,
                 full: true,
@@ -194,7 +239,7 @@ impl DemoSim {
                         Uuid::nil()
                     }
                 }),
-                last_owner_id: DEMO_CREATOR,
+                last_owner_id: if created { owner_id } else { DEMO_CREATOR },
                 creation_date: 1_700_000_000_000_000,
                 base_mask: PERM_ALL,
                 owner_mask: PERM_ALL,
@@ -209,7 +254,7 @@ impl DemoSim {
                 folder_id,
                 from_task_id,
                 name,
-                description: String::new(),
+                description,
                 touch_name: touch_name.into(),
                 sit_name: sit_name.into(),
             }
@@ -306,6 +351,7 @@ impl DemoSim {
             BuildCmd::Add(p) => {
                 let object = crate::demo::build_rez(p);
                 self.rezzed_groups.insert(object.full_id, p.group_id);
+                self.created.insert(object.full_id);
                 vec![NetEvent::ObjectUpdates {
                     handle: p.handle,
                     objects: vec![object],
@@ -438,7 +484,7 @@ impl DemoSim {
                     let history = self.history.entry(id).or_default();
                     let now = Instant::now();
                     if history.last.is_none_or(|at| now - at > EDIT_GAP) {
-                        history.undo.push((o.position, o.rotation, o.scale));
+                        history.undo.push(history.placed.unwrap_or((o.position, o.rotation, o.scale)));
                         history.redo.clear();
                     }
                     history.last = Some(now);
@@ -452,6 +498,7 @@ impl DemoSim {
                     if let Some(s) = update.scale {
                         o.scale = s;
                     }
+                    history.placed = Some((o.position, o.rotation, o.scale));
                     objects.push(o);
                 }
                 let echo = NetEvent::ObjectUpdates { handle: *handle, objects };
@@ -479,7 +526,8 @@ impl DemoSim {
                     let Some((position, rotation, scale)) = from.pop() else {
                         continue;
                     };
-                    to.push((o.position, o.rotation, o.scale));
+                    to.push(history.placed.unwrap_or((o.position, o.rotation, o.scale)));
+                    history.placed = Some((position, rotation, scale));
                     history.last = None;
                     let mut o = super::replace::demo_update(o);
                     (o.position, o.rotation, o.scale) = (position, rotation, scale);
@@ -490,6 +538,8 @@ impl DemoSim {
             BuildCmd::Delink { handle, local_ids } => {
                 let mut objects = Vec::new();
                 for id in Self::uuids(world, *handle, local_ids) {
+                    // its placements were offsets from the root: stale now
+                    self.history.remove(&id);
                     let Some(idx) = world.objects.index_of_uuid(&id) else { continue };
                     let Some(o) = world.objects.get(idx) else { continue };
                     let Some((p, r)) = super::replace::region_transform(world, idx) else {
@@ -514,6 +564,9 @@ impl DemoSim {
                 };
                 let mut objects = Vec::new();
                 for id in &ids {
+                    // its placements were in the region (or another root's
+                    // frame): stale once it is part of this linkset
+                    self.history.remove(id);
                     let Some(idx) = world.objects.index_of_uuid(id) else { continue };
                     let Some(o) = world.objects.get(idx) else { continue };
                     let Some((op, or)) = super::replace::region_transform(world, idx) else {
@@ -632,6 +685,15 @@ impl DemoSim {
             }
             BuildCmd::Select { handle, local_ids } => {
                 let ids = Self::uuids(world, *handle, local_ids);
+                for id in &ids {
+                    if let Some(o) = world.objects.index_of_uuid(id).and_then(|i| world.objects.get(i)) {
+                        self.history
+                            .entry(*id)
+                            .or_default()
+                            .placed
+                            .get_or_insert((o.position, o.rotation, o.scale));
+                    }
+                }
                 self.reply_props(world, &ids)
             }
             BuildCmd::SetName { handle, local_ids, name } => {
@@ -717,7 +779,13 @@ impl DemoSim {
                 self.reply_props(world, &ids)
             }
             BuildCmd::RequestTaskInventory { object_id, .. } => {
-                let (serial, items) = self.contents_of(*object_id).clone();
+                let (serial, mut items) = self.contents_of(*object_id).clone();
+                // the demo's stock items are ours; in someone else's object
+                // (another avatar's attachment) they are its owner's
+                let owner = owner_of(world, *object_id);
+                for item in items.iter_mut().filter(|i| i.owner_id == crate::demo::DEMO_AGENT) {
+                    item.owner_id = owner;
+                }
                 let root = TaskItem {
                     item_id: *object_id,
                     is_folder: true,
@@ -952,7 +1020,7 @@ impl DemoSim {
             let child_id = Uuid::new_v4();
             let mut child = object.clone();
             child.full_id = child_id;
-            child.local_id = child_id.as_u128() as u32;
+            child.local_id = crate::demo::next_rez_local_id();
             child.parent_id = object.local_id;
             // (a child's position is its parent's frame)
             child.position = glam::Vec3::new(0.6 * (n as f32 + 1.0), 0.0, 0.0);
@@ -1146,7 +1214,12 @@ impl DemoSim {
                 let mut m = Llsd::new_map();
                 for v in body["object_ids"].as_array() {
                     let id = v.as_uuid();
-                    let n = prims_of(&id);
+                    let n = world
+                        .objects
+                        .index_of_uuid(&id)
+                        .and_then(|i| world.objects.get(i))
+                        .and_then(|o| crate::demo::market::land_impact(o.key.local_id))
+                        .unwrap_or_else(|| prims_of(&id));
                     m.insert(
                         id.to_string(),
                         llsd_map! {

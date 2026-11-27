@@ -477,7 +477,13 @@ fn visual_rows(job: &LayoutJob, base: Base, measure: &mut dyn FnMut(&str, &Layou
             }
             w
         };
-        let ranges = break_rows(&chars, wrap, &mut width);
+        // a label's first row indentation (the widgets before it in a
+        // wrapping row), counted in the width of the text's first word
+        let indent = match job.sections.first() {
+            Some(s) if p == 0 && s.byte_range.start.0 == 0 => s.leading_space,
+            _ => 0.0,
+        };
+        let ranges = break_rows(&chars, wrap, indent, &mut width);
         let last_para = p + 1 == paragraphs.len();
         for (r, range) in ranges.iter().enumerate() {
             let soft = r + 1 < ranges.len();
@@ -518,8 +524,11 @@ fn visual_rows(job: &LayoutJob, base: Base, measure: &mut dyn FnMut(&str, &Layou
 
 /// Rows of a paragraph (ranges of `chars`): a row breaks after the spaces
 /// that end a word, at `wrap.max_width`; a word too long for a row overruns
-/// it, unless `wrap.break_anywhere`.
-fn break_rows(chars: &[(usize, char)], wrap: &TextWrapping, width: &mut dyn FnMut(Range<usize>) -> f32) -> Vec<Range<usize>> {
+/// it, unless `wrap.break_anywhere`. After an `indent` (counted in the
+/// first word's width) a first word that does not fit starts the next row
+/// and leaves the first one empty, as egui's line break does for a label
+/// that starts after the previous widget of a wrapping row.
+fn break_rows(chars: &[(usize, char)], wrap: &TextWrapping, indent: f32, width: &mut dyn FnMut(Range<usize>) -> f32) -> Vec<Range<usize>> {
     if !wrap.max_width.is_finite() || chars.is_empty() {
         return std::iter::once(0..chars.len()).collect();
     }
@@ -538,6 +547,10 @@ fn break_rows(chars: &[(usize, char)], wrap: &TextWrapping, width: &mut dyn FnMu
             end += 1;
         }
         let w = width(k..word_end);
+        if k == 0 && indent > 0.0 && w > wrap.max_width {
+            rows.push(0..0);
+            used = -indent;
+        }
         if k > start && used + w > wrap.max_width {
             rows.push(start..k);
             start = k;
@@ -888,6 +901,20 @@ mod tests {
         let rows = visual_rows(&j, Base::Auto, &mut units);
         // the space the first row ends on is held, not drawn
         assert_eq!(rows[0].hidden, vec![10]);
+    }
+
+    /// After the widgets before it in a wrapping row (its first row's
+    /// indentation), a first word that does not fit goes to the next row,
+    /// whole, as egui's line break puts it: the first row stays empty.
+    #[test]
+    fn a_first_word_that_does_not_fit_after_the_indentation_starts_the_next_row() {
+        let mut j = job("واحد اثنان");
+        j.wrap = TextWrapping::wrap_at_width(11.0);
+        j.sections[0].leading_space = 9.0;
+        assert_eq!(shown(&j, Base::Auto), ["", "[*اثنان][ ][*واحد]"]);
+        // it fits: it stays on the first row
+        j.sections[0].leading_space = 6.0;
+        assert_eq!(shown(&j, Base::Auto), ["[*واحد]", "[*اثنان]"]);
     }
 
     #[test]

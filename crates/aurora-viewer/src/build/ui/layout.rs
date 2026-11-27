@@ -146,13 +146,13 @@ pub(super) fn icon(item: Item) -> &'static str {
     }
 }
 
-pub(super) fn gear(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool) {
-    if compact::icon_button(ui, p, "settings-filled", aurora_i18n::tr!("build-layout-settings"), true).clicked() {
-        tool.ui.layout.open = !tool.ui.layout.open;
-        if !tool.ui.layout.open {
-            tool.ui.layout.organizing = false;
-            tool.ui.layout.drag = None;
-        }
+/// The build settings panel opened or closed: the gear under UUID in the
+/// Aurora window's header.
+pub(super) fn toggle_settings(tool: &mut BuildTool) {
+    tool.ui.layout.open = !tool.ui.layout.open;
+    if !tool.ui.layout.open {
+        tool.ui.layout.organizing = false;
+        tool.ui.layout.drag = None;
     }
 }
 
@@ -227,15 +227,25 @@ pub(super) fn row(
             let detached = block.filter(|block| super::detach::is_detached(s, *block));
             let (active, tip) = match detached {
                 Some(block) => {
-                    let shown = tool.tool == Tool::Edit && s.detached.get(&block).copied().unwrap_or(false);
+                    let shown = tool.main_tool() == Some(Tool::Edit) && s.detached.get(&block).copied().unwrap_or(false);
                     (shown, super::detach::toggle_hint(block, shown))
                 }
                 None => (
-                    section(item).is_some_and(|tab| tool.tool == Tool::Edit && tool.tab == tab)
-                        || mode(item).is_some_and(|mode| tool.tool == mode),
+                    section(item).is_some_and(|tab| tool.main_tool() == Some(Tool::Edit) && tool.tab == tab)
+                        // the Aurora style's Camera, Move, Create and Land:
+                        // their window is shown; Edit: the tool in use
+                        || mode(item).is_some_and(|mode| {
+                            if s.legacy_window || mode == Tool::Edit {
+                                tool.tool == mode
+                            } else {
+                                tool.tool_window_open(mode)
+                            }
+                        }),
                     title(item).to_owned(),
                 ),
             };
+            // the second section, lit at half (second_tab.rs)
+            let second = detached.is_none() && section(item).is_some_and(|tab| super::second_tab::shown(tool, s) == Some(tab));
             let response = compact::navigation_button_marked(
                 &mut child,
                 p,
@@ -243,8 +253,9 @@ pub(super) fn row(
                 title(item),
                 &tip,
                 s.layout.display(item),
-                active,
+                active || second,
                 detached.is_some(),
+                second,
                 height,
             );
             display_menu(&response, p, s, item);
@@ -258,11 +269,19 @@ pub(super) fn row(
                     if tool.tool != Tool::Edit {
                         tool.set_tool(Tool::Edit);
                     }
-                    tool.tab = tab;
-                } else if let Some(mode) = mode(item)
-                    && tool.tool != mode
-                {
-                    tool.set_tool(mode);
+                    if s.legacy_window {
+                        tool.tab = tab;
+                    } else {
+                        super::second_tab::click(tool, tab, mods.shift);
+                    }
+                } else if let Some(mode) = mode(item) {
+                    if s.legacy_window || mode == Tool::Edit {
+                        tool.activate(mode);
+                    } else {
+                        // a window of its own, opened or closed
+                        let can_build = world.rlva_can_build();
+                        tool.bar_click(Some(mode), true, can_build, world, s);
+                    }
                 }
             }
             // Inventory held over a section's button opens that section,
@@ -812,10 +831,47 @@ pub(super) fn control(
     } else {
         22.0
     };
+    // Aurora: "Edit linked parts", once on, reads "Link n" with its ◄ ►,
+    // in place of the footer's link selector (the human's trial,
+    // 2026-11-22); the row keeps its height
+    let link = (item == Item::Linked && value && !s.legacy_window).then(|| tool.selected_link_number(world));
     ui.allocate_ui_with_layout(Vec2::new(width, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.set_min_width(width);
-        let text = RichText::new(title(item)).size(common::BODY);
-        let response = widgets::checkbox(ui, p, &mut value, text);
+        let label = match link {
+            Some(number) => aurora_i18n::tr!(
+                "build-compact-link-value",
+                number = number.map_or_else(|| "-".to_string(), |n| n.to_string())
+            ),
+            None => title(item).to_string(),
+        };
+        let response = widgets::checkbox(ui, p, &mut value, RichText::new(label).size(common::BODY));
+        if let Some(number) = link {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for next in [true, false] {
+                    let arrow = widgets::action_button_if(
+                        ui,
+                        p,
+                        if next { "caret-right-filled" } else { "caret-left-filled" },
+                        "",
+                        widgets::ActionKind::Flat,
+                        Vec2::splat(LINK_ARROW),
+                        number.is_some(),
+                    )
+                    .on_hover_text(if next {
+                        aurora_i18n::tr!("build-compact-next")
+                    } else {
+                        aurora_i18n::tr!("build-compact-previous")
+                    });
+                    #[cfg(test)]
+                    ui.ctx()
+                        .data_mut(|d| d.insert_temp(egui::Id::unique(("build_link_arrow", next)), arrow.rect));
+                    if arrow.clicked() {
+                        tool.select_next_link(world, s, next, mods.shift);
+                    }
+                }
+            });
+        }
         if response.changed() {
             match item {
                 Item::Face => tool.set_edit_mode(world, s, if value { EditMode::Face } else { EditMode::Move }),
@@ -837,45 +893,43 @@ pub(super) fn control(
     });
 }
 
-pub(super) fn selection_navigation(
+/// The ◄ ► of the face selector.
+pub(super) const NAV_ARROW: f32 = widgets::TEXT_BUTTON_HEIGHT;
+/// The ◄ ► of "Link n" in its option row.
+const LINK_ARROW: f32 = 18.0;
+/// Global / Local / Reference and the face buttons beside them.
+pub(super) const FOOTER_BUTTON: f32 = 26.0;
+/// The face buttons at their full size, with their arrows.
+pub(super) const FACE_SELECTOR: f32 = 2.0 * NAV_ARROW + 4.0 + crate::build::face_buttons::FACE_BUTTONS as f32 * (FOOTER_BUTTON + 2.0) - 2.0;
+
+/// The footer's face selector: ◄, the face buttons, ►.
+pub(super) fn face_navigation(
     ui: &mut egui::Ui,
     p: &Palette,
     tool: &mut BuildTool,
     world: &mut World,
-    s: &mut BuildSettings,
+    edit_linked: bool,
     mods: Mods,
-    item: Item,
     width: f32,
 ) {
-    let number = if item == Item::Face && tool.edit_mode == EditMode::Face {
-        tool.selection
-            .first()
-            .and_then(|key| world.objects.index_of(key))
-            .map(|_| tool.selected_face_numbers(world))
-    } else if item == Item::Linked && s.edit_linked {
-        tool.selected_link_number(world).map(|n| n.to_string())
-    } else {
-        None
-    };
-    let response = ui.allocate_ui_with_layout(Vec2::new(width, 26.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+    // the face arrows step faces wherever the face buttons pick them
+    let enabled = !tool.selection.is_empty() && tool.face_picking();
+    // as tall as Global / Local / Reference beside them (the human's
+    // request, 2026-11-22)
+    let height = FOOTER_BUTTON;
+    let response = ui.allocate_ui_with_layout(Vec2::new(width, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         ui.spacing_mut().interact_size.y = widgets::TEXT_BUTTON_HEIGHT;
-        let enabled = number.is_some() && !tool.selection.is_empty();
-        let label = if item == Item::Linked {
-            aurora_i18n::tr!("build-compact-link-value", number = number.as_deref().unwrap_or("-"))
-        } else {
-            aurora_i18n::tr!("build-compact-face-value", number = number.as_deref().unwrap_or("-"))
-        };
         for next in [false, true] {
             if next {
-                widgets::readout_sized(
+                face_buttons(
                     ui,
-                    RichText::new(&label)
-                        .size(common::SMALL)
-                        .color(if number.is_some() { p.violet_pale } else { p.muted }),
-                    Vec2::new((width - 40.0).max(1.0), widgets::TEXT_BUTTON_HEIGHT),
-                )
-                .on_hover_text(&label);
+                    p,
+                    tool,
+                    world,
+                    mods,
+                    Vec2::new((width - 2.0 * NAV_ARROW - 4.0).max(1.0), height),
+                );
             }
             if widgets::action_button_if(
                 ui,
@@ -883,7 +937,7 @@ pub(super) fn selection_navigation(
                 if next { "caret-right-filled" } else { "caret-left-filled" },
                 "",
                 widgets::ActionKind::Flat,
-                Vec2::splat(widgets::TEXT_BUTTON_HEIGHT),
+                Vec2::new(NAV_ARROW, height),
                 enabled,
             )
             .on_hover_text(if next {
@@ -893,19 +947,63 @@ pub(super) fn selection_navigation(
             })
             .clicked()
             {
-                if item == Item::Linked {
-                    tool.select_next_link(world, s, next, mods.shift);
-                } else {
-                    tool.select_next_part(world, s, next, mods.shift);
-                }
+                tool.select_next_face(world, edit_linked, next, mods.shift);
             }
         }
     });
     #[cfg(test)]
     ui.ctx()
-        .data_mut(|d| d.insert_temp(egui::Id::unique(("build_part_navigation", item)), response.response.rect));
+        .data_mut(|d| d.insert_temp(egui::Id::unique(("build_part_navigation", Item::Face)), response.response.rect));
     #[cfg(not(test))]
     let _ = response;
+}
+
+/// The face buttons 0 to 8 (`build::face_buttons`), in place of the face
+/// number between ◄ ►, in both window styles: greyed in Align, under the
+/// other tools and for a face no selected prim has.
+pub(super) fn face_buttons(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, mods: Mods, size: Vec2) {
+    use crate::build::face_buttons::FaceButton;
+    let active = tool.face_picking() && !tool.selection.is_empty();
+    let states = tool.face_buttons(world).map(|state| match state {
+        _ if !active => widgets::IndexState::Disabled,
+        FaceButton::Absent => widgets::IndexState::Disabled,
+        FaceButton::Off => widgets::IndexState::Off,
+        FaceButton::Mixed => widgets::IndexState::Mixed,
+        FaceButton::On => widgets::IndexState::On,
+    });
+    let (clicked, rects) = widgets::index_buttons(ui, p, size, &states, |face| {
+        aurora_i18n::tr!("build-face-button", number = face.to_string())
+    });
+    if let Some(face) = clicked {
+        tool.pick_face_button(world, face as u8, mods.shift);
+    }
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("build_face_buttons"), rects));
+    #[cfg(not(test))]
+    let _ = rects;
+}
+
+/// Invert and All after the face buttons (the human's request,
+/// 2026-11-22), in both window styles, active where the buttons are:
+/// `BuildTool::invert_faces` and `select_all_faces`.
+pub(super) fn face_actions(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, size: Vec2) {
+    let enabled = tool.face_picking() && !tool.selection.is_empty();
+    for (invert, icon, tip) in [
+        (true, "contrast-filled", aurora_i18n::tr!("build-face-invert")),
+        (false, "select-all", aurora_i18n::tr!("build-face-all")),
+    ] {
+        let response = widgets::action_button_if(ui, p, icon, "", widgets::ActionKind::Flat, size, enabled).on_hover_text(tip);
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::unique(("build_face_action", invert)), response.rect));
+        if response.clicked() {
+            if invert {
+                tool.invert_faces(world);
+            } else {
+                tool.select_all_faces(world);
+            }
+        }
+    }
 }
 
 /// The right-click menu of a bar button: its icon, its label or both.
@@ -1089,26 +1187,70 @@ pub(super) fn panel(
     tool.ui.layout.zones.push((panel, rect));
 }
 
-pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods) {
-    if !tool.ui.layout.open || !tool.open || widgets::floater_minimized(ctx, super::INSPECTOR_ID) {
+/// The settings panel's width where it has the room.
+pub(super) const SETTINGS_WIDTH: f32 = 340.0;
+/// Its frame draws its border around that width.
+const SETTINGS_BORDER: f32 = 2.0;
+/// The room the panel takes at that width, in a window outside.
+pub(super) const SETTINGS_ROOM: f32 = SETTINGS_WIDTH + SETTINGS_BORDER;
+
+/// Where the settings panel is drawn.
+#[derive(Clone, Copy)]
+pub(super) enum Beside {
+    /// Beside the build window, in the viewer's window.
+    Window,
+    /// In the room the build window's own window keeps at its right,
+    /// outside the viewer's (`widgets::side_room_outside`): None until the
+    /// system has made it.
+    Outside(Option<egui::Rect>),
+}
+
+/// Whether the settings panel is up: the room its window outside keeps
+/// for it follows this.
+pub(super) fn settings_shown(ctx: &egui::Context, tool: &BuildTool) -> bool {
+    tool.ui.layout.open && tool.open && !widgets::floater_minimized(ctx, super::INSPECTOR_ID)
+}
+
+pub(super) fn settings(
+    ctx: &egui::Context,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    s: &mut BuildSettings,
+    mods: Mods,
+    beside: Beside,
+) {
+    if !settings_shown(ctx, tool) {
         return;
     }
-    let Some(anchor) = ctx.memory(|m| m.area_rect(egui::Id::unique(super::INSPECTOR_ID))) else {
-        return;
+    let (work, x, width, bottom) = match beside {
+        Beside::Window => {
+            let Some(anchor) = ctx.memory(|m| m.area_rect(egui::Id::unique(super::INSPECTOR_ID))) else {
+                return;
+            };
+            // Follow the editor in the same movement room: floating bars leave space
+            // outside the smaller first-launch work area too.
+            let work = crate::ui::layout::move_area(ctx);
+            let right = anchor.center().x <= work.center().x + 1.0;
+            let available = if right {
+                work.right() - anchor.right()
+            } else {
+                anchor.left() - work.left()
+            } - 8.0;
+            let width = available.clamp(160.0, SETTINGS_WIDTH).min(work.width());
+            let x = if right { anchor.right() + 8.0 } else { anchor.left() - width - 8.0 }
+                .clamp(work.left(), (work.right() - width).max(work.left()));
+            (work, x, width, anchor.bottom().min(work.bottom()))
+        }
+        Beside::Outside(None) => return,
+        // the room is the panel's: as wide and as tall as it at most
+        Beside::Outside(Some(room)) => (
+            room,
+            room.left(),
+            (room.width() - SETTINGS_BORDER).min(SETTINGS_WIDTH),
+            room.bottom(),
+        ),
     };
-    // Follow the editor in the same movement room: floating bars leave space
-    // outside the smaller first-launch work area too.
-    let work = crate::ui::layout::move_area(ctx);
-    let right = anchor.center().x <= work.center().x + 1.0;
-    let available = if right {
-        work.right() - anchor.right()
-    } else {
-        anchor.left() - work.left()
-    } - 8.0;
-    let width = available.clamp(160.0, 340.0).min(work.width());
-    let x =
-        if right { anchor.right() + 8.0 } else { anchor.left() - width - 8.0 }.clamp(work.left(), (work.right() - width).max(work.left()));
-    let bottom = anchor.bottom().min(work.bottom());
     let area = egui::Area::new(egui::Id::unique("construction-settings"))
         .order(egui::Order::Middle)
         .pivot(egui::Align2::LEFT_BOTTOM)
@@ -1159,6 +1301,9 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                         widgets::divider(ui, p);
                         common::section(ui, p, aurora_i18n::tr!("build-layout-handles"));
                         floaters::handle_controls(ui, p, s);
+                        widgets::divider(ui, p);
+                        common::section(ui, p, aurora_i18n::tr!("build-layout-clicks"));
+                        floaters::click_controls(ui, p, s);
                         return;
                     }
                     if tool.ui.layout.organizing {
@@ -1273,6 +1418,15 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                         }
                         floaters::handle_controls(ui, p, s);
                     });
+                    widgets::divider(ui, p);
+                    common::section(ui, p, aurora_i18n::tr!("build-layout-clicks"));
+                    ui.scope(|ui| {
+                        if tool.ui.layout.organizing {
+                            ui.visuals_mut().disabled_alpha = 1.0;
+                            ui.disable();
+                        }
+                        floaters::click_controls(ui, p, s);
+                    });
                     if !tool.ui.notecards.message.is_empty() {
                         common::small(ui, p, &tool.ui.notecards.message);
                     }
@@ -1283,7 +1437,7 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
 
 pub(super) fn finish(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, s: &mut BuildSettings) {
     if let Some(item) = tool.ui.layout.drag {
-        let demo_hold = ctx.cumulative_frame_nr() >= 700
+        let demo_hold = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 700
             && ctx.data(|data| data.get_temp::<Item>(egui::Id::unique("build-demo-layout-drag"))) == Some(item);
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
         if let Some(pos) = ctx.pointer_interact_pos() {

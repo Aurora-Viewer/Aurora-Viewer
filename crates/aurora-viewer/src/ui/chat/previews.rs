@@ -625,7 +625,7 @@ impl Previews {
         if self.image_window.as_mut().is_some_and(|view| view.window(ctx, p)) {
             self.image_window = None;
         }
-        let pass = ctx.cumulative_pass_nr();
+        let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
         if self.playing.as_ref().is_some_and(|v| !v.window && pass > v.drawn + 2) {
             self.playing = None;
         }
@@ -660,7 +660,12 @@ impl Previews {
         // every frame of a drag (#941); outside a drag its height follows
         // its width when another video starts in it, or when the title
         // bar measured differently
-        let outer = ctx.memory(|m| m.area_rect(egui::Id::unique(PLAYER_WINDOW)));
+        // (in a window outside the picture keeps its shape in whatever room
+        // the user gives the window, which takes its shape once per video:
+        // `Floater::show_outside`)
+        let outer = ctx
+            .memory(|m| m.area_rect(egui::Id::unique(PLAYER_WINDOW)))
+            .filter(|_| !crate::outside::wanted(ctx, egui::Id::unique(PLAYER_WINDOW)));
         if let (Some(body), Some(outer)) = (body, outer)
             && !crate::ui::widgets::floater_minimized(ctx, PLAYER_WINDOW)
         {
@@ -805,7 +810,7 @@ pub(super) fn cards(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, text:
 }
 
 fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, target: &Target, start: Start) {
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let width = pv.settings.size.width().min(ui.available_width().max(80.0));
     if pv.hidden.contains(&k) {
         hidden_line(ui, p, pv, k);
@@ -1222,7 +1227,7 @@ fn too_large(ui: &mut egui::Ui, p: &Palette, url: &str, size: Option<u64>, width
 /// its title and channel (a clip: its site); playing, the player in place of
 /// the picture with its buttons under it.
 fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, video: Option<&lp::Video>, width: f32) {
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let Some(Cached {
         entry: Entry::Video {
             title,
@@ -1518,6 +1523,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let mut pv = Previews::default();
         let visible = |pv: &Previews, line: &ChatLine| text(Some(pv), line, &line.text, 320.0).into_owned();
@@ -1608,6 +1614,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         assert_eq!(text(Some(&pv), &line, &line.text, 340.0), urls[3]);
         assert_eq!(

@@ -23,6 +23,7 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         blocked: false,
         beyond_range: false,
         speaker: Default::default(),
+        private_history: false,
     }
 }
 
@@ -52,6 +53,7 @@ struct Harness {
     open: bool,
     /// `Settings::chat_column_collapsed`, given every frame as the app does.
     column_setting: bool,
+    confirm_close_all_ims: bool,
     /// The viewer runs in demo mode (the button never writes the settings).
     demo: bool,
 }
@@ -82,6 +84,7 @@ impl Harness {
             friends: Default::default(),
             open: true,
             column_setting: false,
+            confirm_close_all_ims: true,
             demo: false,
         }
     }
@@ -105,6 +108,7 @@ impl Harness {
             friends,
             open,
             column_setting,
+            confirm_close_all_ims,
             demo,
         } = self;
         // as the app does every frame, and with what the button asked
@@ -146,6 +150,9 @@ impl Harness {
                 }),
                 open,
             ));
+            if st.close_all_dialog(ui.ctx(), &p, world) {
+                *confirm_close_all_ims = false;
+            }
         });
         for action in &actions[asked..] {
             if let ConvAction::ColumnCollapsed(collapsed) = action {
@@ -238,6 +245,33 @@ fn the_column_shows_and_closes_conversations() {
         "the × closes the conversation"
     );
     assert_eq!(h.st.selected, None, "without showing it");
+}
+
+/// The conversation shown closed from its × in the column: the one below
+/// it shows next, the one above at the end of the list, as with Ctrl+W
+/// (LLTabContainer::removeTabPanel), not the nearby chat at the top (#4373).
+#[test]
+fn closing_the_conversation_shown_shows_its_neighbour() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.settle();
+    let order = super::super::sidebar::tab_order(&h.world, &h.st);
+    assert_eq!(order.len(), 3, "the nearby chat, then two conversations");
+    let (first, last) = (order[1].expect("a conversation"), order[2].expect("a conversation"));
+    let close_shown = |h: &mut Harness, id: Uuid| {
+        h.st.selected = Some(id);
+        h.settle();
+        h.actions.clear();
+        let entry = h.rect(entry_id(Pinned::Conversation(id)));
+        h.frame(vec![egui::Event::PointerMoved(entry.center())]);
+        h.frame(Vec::new());
+        let close = h.rect(entry_id(Pinned::Conversation(id)).with("close"));
+        h.click(close.center());
+        assert!(h.actions.iter().any(|a| matches!(a, ConvAction::Close(c) if *c == id)));
+    };
+    close_shown(&mut h, first);
+    assert_eq!(h.st.selected, Some(last), "the one below");
+    close_shown(&mut h, last);
+    assert_eq!(h.st.selected, Some(first), "the last one: the one above");
 }
 
 /// The right-click menu of a message: Quote puts "> text" in the field,
@@ -509,6 +543,42 @@ fn the_keyboard_goes_round_the_conversations_and_closes_them() {
         h.frame(key(egui::Key::W, egui::Modifiers::COMMAND));
         assert!(!h.open, "{style:?}");
         assert!(!h.actions.iter().any(|a| matches!(a, ConvAction::Close(_))), "{style:?}");
+    }
+}
+
+/// Ctrl+W with the emoji or GIF picker open: the next conversation shows
+/// with the pickers closed from the pass of the key on, not one pass with
+/// the other conversation's picker (#4867), in both styles of the list.
+#[test]
+fn closing_a_conversation_with_ctrl_w_closes_its_picker() {
+    for style in [ChatStyle::Legacy, ChatStyle::Aurora] {
+        for gif in [false, true] {
+            let mut h = Harness::new(style);
+            h.st.gifs.demo = true;
+            h.settle();
+            let order = if style.workspace() {
+                super::super::sidebar::tab_order(&h.world, &h.st)
+            } else {
+                super::super::keys::legacy_order(&h.world, &h.st)
+            };
+            let last = order[2];
+            h.st.select_tab(last);
+            h.st.conv_focus_request = true;
+            h.settle();
+            if gif {
+                h.st.gif_open = true;
+            } else {
+                h.st.emoji_open = true;
+            }
+            h.settle();
+            assert!(h.st.emoji_open || h.st.gif_open, "{style:?} gif {gif}: open");
+            h.frame(key(egui::Key::W, egui::Modifiers::COMMAND));
+            assert_ne!(h.st.selected, last, "{style:?} gif {gif}: the next one shown");
+            assert!(
+                !h.st.emoji_open && !h.st.gif_open,
+                "{style:?} gif {gif}: closed on the pass of the key"
+            );
+        }
     }
 }
 
@@ -2838,7 +2908,80 @@ fn a_group_conversation_opens_the_group_actions() {
     assert!(h.actions.iter().any(|a| matches!(a, ConvAction::Call(id) if *id == GROUP)));
 }
 
-/// The nearby chat's menu holds its transcript only: it cannot be closed.
+/// The same Close All command is available from nearby chat, but never closes it.
+#[test]
+fn close_all_ims_leaves_sessions_and_preserves_detached_nearby() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    let group = Uuid::from_u128(0x1234);
+    h.world.groups.sessions.entry(group).or_default().group = true;
+    h.world.conversation_line(group, line("Jane", JANE, ChatKind::Im, "group"));
+    h.settle();
+    let local = h.rect(entry_id(Pinned::Local));
+    let label = aurora_i18n::tr!("ui-chat-close-all-ims");
+    let texts = h.right_click(local.center());
+    h.click(last(&texts, label).center());
+    assert!(h.actions.iter().any(|a| matches!(a, ConvAction::CloseAll)));
+    h.st.selected = Some(JANE);
+    h.st.popped.pop_out(Some(BOB), false, false, false);
+    h.st.popped.pop_out(None, false, false, false);
+
+    h.st.request_close_all(&mut h.world, true);
+    assert!(h.world.social.ims.is_empty());
+    assert!(h.st.selected.is_none());
+    assert!(h.world.groups.sessions.is_empty());
+    assert!(!h.st.popped.contains(Some(BOB)));
+    assert!(h.st.popped.contains(None));
+    assert!(h.open);
+    assert!(
+        h.world
+            .groups
+            .out
+            .iter()
+            .any(|cmd| matches!(cmd, aurora_net::NetCommand::SendImDialog { id, dialog, .. }
+        if *id == group && *dialog == crate::world::groups::dialog::SESSION_LEAVE))
+    );
+
+    h.st.popped.remove(None);
+    h.actions.clear();
+    h.settle();
+    let local = h.rect(entry_id(Pinned::Local));
+    let texts = h.right_click(local.center());
+    h.click(last(&texts, label).center());
+    assert!(!h.actions.iter().any(|a| matches!(a, ConvAction::CloseAll)));
+}
+
+#[test]
+fn close_all_ims_prompts_for_voice_and_cancel_keeps_every_session() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.world.start_call(JANE);
+    h.world.calls.active.as_mut().unwrap().state = crate::world::calls::CallState::Connected;
+    h.st.request_close_all(&mut h.world, true);
+    let texts = h.settle();
+    assert!(shown(&texts, aurora_i18n::tr!("ui-chat-close-all-ims-question")));
+    h.click(last(&texts, aurora_i18n::tr!("ui-context-do-not-show-again")).center());
+    h.click(last(&texts, aurora_i18n::tr!("common-cancel")).center());
+    assert!(h.st.close_all_prompt.is_none());
+    assert!(h.confirm_close_all_ims);
+    assert!(h.world.call_of(&JANE).is_some());
+    assert_eq!(h.world.social.ims.len(), 2);
+
+    h.st.request_close_all(&mut h.world, true);
+    let texts = h.settle();
+    h.click(last(&texts, aurora_i18n::tr!("ui-context-do-not-show-again")).center());
+    h.click(last(&texts, aurora_i18n::tr!("common-ok")).center());
+    assert!(!h.confirm_close_all_ims);
+    assert!(h.world.calls.active.is_none());
+    assert!(h.world.social.ims.is_empty());
+
+    h.world.start_call(BOB);
+    h.world.calls.active.as_mut().unwrap().state = crate::world::calls::CallState::Connected;
+    h.st.request_close_all(&mut h.world, h.confirm_close_all_ims);
+    assert!(h.st.close_all_prompt.is_none());
+    assert!(h.world.calls.active.is_none());
+    assert!(h.world.social.ims.is_empty());
+}
+
+/// Nearby chat offers its transcript and has no individual Close action.
 #[test]
 fn the_nearby_chat_menu_holds_its_transcript() {
     let mut h = Harness::new(ChatStyle::Aurora);
@@ -2867,6 +3010,7 @@ fn the_tabs_of_the_other_styles_open_the_menu() {
         let texts = h.right_click(tab.center());
         let close = aurora_i18n::tr!("ui-chat-close-conversation");
         assert!(shown(&texts, close), "{style:?}");
+        assert!(shown(&texts, aurora_i18n::tr!("ui-chat-close-all-ims")), "{style:?}");
         assert!(shown(&texts, aurora_i18n::tr!("common-view-profile")), "{style:?}");
         h.click(last(&texts, close).center());
         assert!(
@@ -3306,6 +3450,51 @@ fn an_outgoing_call_does_not_take_the_keyboard_when_it_opens_the_window() {
         assert!(
             h.frames.ctx.memory(|m| m.has_focus(egui::Id::unique(("conv_input", Some(BOB))))),
             "{style:?}: a user request takes the keyboard"
+        );
+    }
+}
+
+/// An emoji chosen in the picker takes the caret after it: what is typed
+/// next follows the emoji, in Aurora's box as in the Legacy style's field.
+/// It went to the end of the draft with the caret left where it was, so the
+/// next characters came before it.
+#[test]
+fn an_emoji_of_the_picker_takes_the_caret_after_it() {
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        h.st.selected = Some(JANE);
+        h.st.conv_focus_request = true;
+        h.settle();
+        h.frame(vec![egui::Event::Text("hello".into())]);
+        h.settle();
+        assert_eq!(h.st.draft_mut(Some(JANE)).as_str(), "hello", "{style:?}: typed in the field");
+        h.st.emoji_open = true;
+        h.settle();
+        let picker = h
+            .frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique(("emoji_picker", Some(JANE)))))
+            .unwrap_or_else(|| panic!("{style:?}: the picker is shown"));
+        // down the picker's first column, to the first emoji met (the
+        // search and the categories write nothing)
+        let mut y = picker.top() + 10.0;
+        while h.st.draft_mut(Some(JANE)).as_str() == "hello" && y < picker.bottom() {
+            h.click(egui::pos2(picker.left() + 21.0, y));
+            y += 12.0;
+        }
+        let picked = h.st.draft_mut(Some(JANE)).clone();
+        assert!(
+            picked.starts_with("hello") && picked.len() > "hello".len(),
+            "{style:?}: an emoji of the picker is written: {picked:?} in {picker:?}"
+        );
+        assert!(!h.st.emoji_open, "{style:?}: the pick closes the picker");
+        h.settle();
+        h.frame(vec![egui::Event::Text("!".into())]);
+        h.settle();
+        assert_eq!(
+            h.st.draft_mut(Some(JANE)).as_str(),
+            format!("{picked}!"),
+            "{style:?}: what is typed next follows the emoji"
         );
     }
 }

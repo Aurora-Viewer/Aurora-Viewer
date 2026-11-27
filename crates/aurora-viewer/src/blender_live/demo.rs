@@ -46,6 +46,29 @@ pub fn fixture(rig: &Rig, multiple: bool) -> Result<protocol::Prepared, String> 
 }
 
 pub fn static_fixture(rig: &Rig, linked: bool) -> Result<protocol::Prepared, String> {
+    static_with(rig, linked, None)
+}
+
+/// `AURORA_DEMO_BLENDER_LIVE=static-repaint`: the static object with a base
+/// colour texture, its surface colour white as the plug-in sends a textured
+/// surface; `painted` is the same object after a repaint of that texture
+/// alone, a later revision, so its card's thumbnail and time change.
+pub fn repaint_fixture(rig: &Rig, painted: bool) -> Result<protocol::Prepared, String> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let pixel: [u8; 4] = if painted { [140, 70, 235, 255] } else { [26, 204, 166, 255] };
+    let texture = serde_json::json!({
+        "images": [{"width": 1, "height": 1, "rgba": STANDARD.encode(pixel)}],
+        "color": [1.0, 1.0, 1.0, 1.0],
+        "material": {"metallic": 0.0, "roughness": 0.6, "emissive": [0, 0, 0], "double_sided": false,
+            "alpha_mode": "OPAQUE", "textures": [0, null, null, null]},
+        "revision": if painted { 2 } else { 1 },
+    });
+    static_with(rig, false, Some(texture))
+}
+
+/// The static objects, with `texture`'s image, colour and material on the
+/// root's surface when it is given.
+fn static_with(rig: &Rig, linked: bool, texture: Option<serde_json::Value>) -> Result<protocol::Prepared, String> {
     let vertices: Vec<_> = (0..8)
         .map(|i| {
             let p = Vec3::new(
@@ -70,11 +93,107 @@ pub fn static_fixture(rig: &Rig, linked: bool) -> Result<protocol::Prepared, Str
         // Child first also exercises list-order independence in the worker.
         meshes.insert(0, child);
     }
-    let bytes = serde_json::to_vec(&serde_json::json!({"protocol":1,"revision":1,"meshes":meshes})).map_err(|e| e.to_string())?;
+    let mut value = serde_json::json!({"protocol":1,"revision":1,"meshes":meshes});
+    if let Some(texture) = texture {
+        value["images"] = texture["images"].clone();
+        value["revision"] = texture["revision"].clone();
+        value["meshes"][0]["faces"][0]["color"] = texture["color"].clone();
+        value["meshes"][0]["faces"][0]["material"] = texture["material"].clone();
+    }
+    let bytes = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
     let mut snapshot = protocol::prepare(&bytes, &rig.names.keys().cloned().collect())?;
     let rigged = fixture(rig, false)?;
     snapshot.triangles += rigged.triangles;
     snapshot.meshes.extend(rigged.meshes);
     snapshot.sources.extend(rigged.sources);
     Ok(snapshot)
+}
+
+/// `AURORA_DEMO_BLENDER_LIVE=warnings`: the static object, whose textures
+/// Blender could not read, and two objects Blender could not send, with the
+/// plug-in's own messages, as plug-in 0.16 sends them.
+pub fn warnings_fixture(rig: &Rig) -> Result<protocol::Prepared, String> {
+    let mut snapshot = static_fixture(rig, false)?;
+    let warning = |source, name: &str, kind, reason: &str| protocol::ObjectWarning {
+        source,
+        name: name.to_owned(),
+        kind,
+        reason: reason.to_owned(),
+    };
+    snapshot.warnings = vec![
+        warning(
+            Some(uuid::Uuid::from_u128(101)),
+            "Live static object",
+            protocol::WarningKind::Textures,
+            "Bake procedural shaders to UV image textures for live materials",
+        ),
+        warning(
+            Some(uuid::Uuid::from_u128(103)),
+            "Sculpted rock",
+            protocol::WarningKind::NotSent,
+            "This object exceeds the LiveMesh transfer limit; reduce its geometry or textures",
+        ),
+        warning(
+            Some(uuid::Uuid::from_u128(104)),
+            "Hair cards",
+            protocol::WarningKind::NotSent,
+            "Unsupported weighted bones: Hair.001, Hair.002",
+        ),
+    ];
+    Ok(snapshot)
+}
+
+/// `AURORA_DEMO_BLENDER_LIVE=sleeves`: one rigged object of eight tubes, the
+/// upper arms and thighs weighted to the shoulders and hips, the forearms and
+/// shins to the elbows and knees, so the Avatar tab's bend shows on the
+/// avatar and in Quick look.
+pub fn sleeves_fixture(rig: &Rig) -> Result<protocol::Prepared, String> {
+    let at = |name: &str| -> Result<Vec3, String> {
+        let joint = rig.names.get(name).copied().ok_or_else(|| format!("No {name} joint"))?;
+        Ok(rig.default_world_inv[joint].inverse().w_axis.truncate())
+    };
+    let segments = [
+        ("mShoulderLeft", "mElbowLeft"),
+        ("mElbowLeft", "mWristLeft"),
+        ("mShoulderRight", "mElbowRight"),
+        ("mElbowRight", "mWristRight"),
+        ("mHipLeft", "mKneeLeft"),
+        ("mKneeLeft", "mAnkleLeft"),
+        ("mHipRight", "mKneeRight"),
+        ("mKneeRight", "mAnkleRight"),
+    ];
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let mut joints = Vec::new();
+    let mut inverse_bind = Vec::new();
+    for (index, (from, to)) in segments.into_iter().enumerate() {
+        let joint = rig.names.get(from).copied().ok_or_else(|| format!("No {from} joint"))?;
+        joints.push(from);
+        inverse_bind.push(rig.default_world_inv[joint].to_cols_array());
+        // a box around the bone, a little thicker than the limb
+        let (a, b) = (at(from)?, at(to)?);
+        let (low, high) = (a.min(b) - Vec3::splat(0.07), a.max(b) + Vec3::splat(0.07));
+        let center = (low + high) * 0.5;
+        let base = vertices.len() as u32;
+        for i in 0..8 {
+            let p = Vec3::new(
+                if i & 1 == 0 { low.x } else { high.x },
+                if i & 2 == 0 { low.y } else { high.y },
+                if i & 4 == 0 { low.z } else { high.z },
+            );
+            vertices.push(serde_json::json!({ "position": p.to_array(), "normal": (p - center).normalize().to_array(), "uv": [0.0, 0.0], "joints": [index,0,0,0], "weights": [1.0,0.0,0.0,0.0] }));
+        }
+        indices.extend(
+            [
+                0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5,
+            ]
+            .map(|i| base + i),
+        );
+    }
+    let sleeves = serde_json::json!({
+        "name": "Live sleeves", "joints": joints, "inverse_bind": inverse_bind,
+        "faces": [{ "color": [0.95, 0.55, 0.20, 1.0], "vertices": vertices, "indices": indices }]
+    });
+    let bytes = serde_json::to_vec(&serde_json::json!({"protocol":1,"revision":1,"meshes":[sleeves]})).map_err(|e| e.to_string())?;
+    protocol::prepare(&bytes, &rig.names.keys().cloned().collect())
 }

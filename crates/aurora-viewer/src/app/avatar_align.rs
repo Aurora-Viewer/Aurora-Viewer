@@ -216,7 +216,7 @@ mod tests {
             let o = world.objects.get(idx).expect("avatar");
             (o.parent_id, o.rotation)
         };
-        let frame = |world: &mut World| world.update_bodies(Instant::now(), 0.016, Vec3::ZERO, false, false, 1.0);
+        let frame = |world: &mut World| world.update_bodies(Instant::now(), 0.016, Vec3::ZERO, false, false, 1.0, 60.0, 2.0);
         world.objects.get_mut(idx).expect("avatar").parent_id = 0;
         frame(&mut world);
         assert!(world.seat_snaps.is_empty());

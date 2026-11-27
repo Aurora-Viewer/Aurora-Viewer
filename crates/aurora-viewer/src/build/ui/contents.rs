@@ -146,7 +146,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let mut list: Vec<&TaskItem> = items
         .iter()
         .filter(|i| filters.matches(i))
-        .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
+        .filter(|i| filter.is_empty() || crate::ui::inventory::view::matches_text(&searchable_name(i).to_uppercase(), &filter))
         .collect();
     list.sort_by_key(|i| crate::natural_order::key(&i.name));
     tool.ui
@@ -272,7 +272,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
 }
 
-/// `AURORA_DEMO_CONTENTS_DROP=panelâ€¦` carries inventory onto the list.
+/// `AURORA_DEMO_CONTENTS_DROP=panel…` carries inventory onto the list.
 fn demo_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("AURORA_DEMO").as_deref() == Ok("1") && std::env::var_os("AURORA_DEMO_CONTENTS_DROP").is_some())

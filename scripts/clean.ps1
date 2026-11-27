@@ -31,6 +31,7 @@ param(
 . "$PSScriptRoot\common.ps1"
 
 $p = Get-AuroraPaths
+$DirSep = [IO.Path]::DirectorySeparatorChar
 
 function Get-SizeGB([string]$Path) {
     $sum = (Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
@@ -40,8 +41,9 @@ function Get-SizeGB([string]$Path) {
 # Safe to delete: $Path is strictly inside $Root, and $TagDir (the Cargo
 # target directory it belongs to) holds the CACHEDIR.TAG Cargo creates.
 function Test-Deletable([string]$Path, [string]$TagDir, [string]$Root) {
-    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
-    $root = [IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'
+    $sep = [IO.Path]::DirectorySeparatorChar
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd($sep)
+    $root = [IO.Path]::GetFullPath($Root).TrimEnd($sep) + $sep
     $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -and
         (Test-Path -LiteralPath (Join-Path $TagDir 'CACHEDIR.TAG'))
 }
@@ -52,7 +54,7 @@ $mainTarget = Join-Path $p.Main 'target'
 if (Test-Path -LiteralPath $mainTarget) {
     foreach ($d in Get-ChildItem -LiteralPath $mainTarget -Directory -Force) {
         $keep = ($d.Name -eq 'release') -and -not $IncludeRelease
-        $items += @{ Path = $d.FullName; What = "repository: target\$($d.Name)"; Delete = -not $keep; Root = $mainTarget; Tag = $mainTarget }
+        $items += @{ Path = $d.FullName; What = "repository: target$DirSep$($d.Name)"; Delete = -not $keep; Root = $mainTarget; Tag = $mainTarget }
     }
 }
 if (Test-Path -LiteralPath $p.Work) {
@@ -62,18 +64,18 @@ if (Test-Path -LiteralPath $p.Work) {
         if ($Incremental -and -not $Tasks) {
             # only the incremental caches go; the rest of the target is not measured
             foreach ($inc in Get-IncrementalDirs $tt) {
-                $rel = $inc.Substring($t.FullName.Length).TrimStart('\')
-                $items += @{ Path = $inc; What = "task: $($t.Name)\$rel"; Delete = $true; Root = $tt; Tag = $tt }
+                $rel = $inc.Substring($t.FullName.Length).TrimStart([IO.Path]::DirectorySeparatorChar)
+                $items += @{ Path = $inc; What = "task: $($t.Name)$DirSep$rel"; Delete = $true; Root = $tt; Tag = $tt }
             }
         } else {
-            $items += @{ Path = $tt; What = "task: $($t.Name)\target"; Delete = [bool]$Tasks; Root = $t.FullName; Tag = $tt }
+            $items += @{ Path = $tt; What = "task: $($t.Name)$($DirSep)target"; Delete = [bool]$Tasks; Root = $t.FullName; Tag = $tt }
         }
     }
 }
 $relSrc = Join-Path $p.Root 'RELEASE\src'
 $relTarget = Join-Path $relSrc 'target'
 if (Test-Path -LiteralPath $relTarget) {
-    $items += @{ Path = $relTarget; What = 'RELEASE\src\target'; Delete = [bool]$IncludeRelease; Root = $relSrc; Tag = $relTarget }
+    $items += @{ Path = $relTarget; What = "RELEASE$($DirSep)src$($DirSep)target"; Delete = [bool]$IncludeRelease; Root = $relSrc; Tag = $relTarget }
 }
 if (-not $items) { Write-Host "No build folder."; exit 0 }
 

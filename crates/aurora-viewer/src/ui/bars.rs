@@ -4,16 +4,20 @@
 //! over the world, is in `islands.rs` and `place.rs`; these full-width bars
 //! are its Firestorm look (Preferences › Aurora).
 
+pub mod chat_bar;
+pub(crate) mod chrome;
 pub(crate) mod clock;
 pub(crate) mod demo;
 pub mod dock;
 pub mod favorites;
 mod graphics;
 pub mod islands;
+pub(crate) mod location_popup;
 mod location_suggest;
-mod place;
+pub(crate) mod place;
 pub mod side;
 pub(crate) mod sizing;
+pub(crate) mod top;
 mod tp_list;
 
 use super::Panels;
@@ -21,6 +25,7 @@ use super::icons::Icons;
 use super::menu;
 use super::skin::Layout;
 use crate::theme::Palette;
+use crate::world::tphistory::HistoryItem;
 use egui::{Color32, RichText, Vec2};
 
 /// Advanced › Admin's entries (menu_viewer.xml, the Admin menu).
@@ -39,6 +44,7 @@ pub enum AdminAction {
 
 #[derive(Default)]
 pub enum BarAction {
+    ToggleAddressBar,
     VrView(crate::camera::VrView),
     IkEdit,
     Poser,
@@ -63,6 +69,15 @@ pub enum BarAction {
     MessageOfTheDay,
     /// Same import chooser toggle as the configurable Import shortcut.
     Import,
+    ImportType(crate::imports::Choice),
+    /// The toolbar's "Import bar": the quick import bar, shown or hidden,
+    /// whatever the Import menu entry opens.
+    ImportBar,
+    /// The toolbar's "Advanced import": the import window in its folder
+    /// mode, with every option, and no file chooser.
+    ImportAdvanced,
+    /// The toolbar's "Import settings": the quick import bar's Settings.
+    ImportSettings,
     /// Advanced › Media streams backup (Streamlist.xml_import / xml_export).
     ImportStreamList,
     ExportStreamList,
@@ -73,8 +88,11 @@ pub enum BarAction {
     None,
     /// ShowBanLines: 0 hidden, 1 on collision, 2 on proximity.
     BanLines(u8),
-    /// Build floater: 0 toggle, 1 edit, 2 create, 3 land.
+    /// Build floater: 0 toggle, 1 edit, 2 create, 3 land, 4 camera, 5 move.
     Build(u8),
+    /// A Build toolbar button, as [`BarAction::Build`]: lit, it closes its
+    /// window (BuildTool::bar_click).
+    BuildButton(u8),
     Logout,
     Quit,
     TeleportHome,
@@ -86,6 +104,12 @@ pub enum BarAction {
     ToggleFlyOverride,
     /// The toolbar's Snapshot to disk (File.TakeSnapshotToDisk).
     PhotoToDisk,
+    /// The menu's Photo, as its Ctrl+Shift+S (Take Snapshot, `Floater.Show`
+    /// snapshot): opens the photo window, or brings it forward.
+    PhotoWindow,
+    /// The toolbar's Photo button (the snapshot command, `Floater.Toggle`):
+    /// the photo window of the chosen style opened or closed.
+    PhotoToggle,
     /// The toolbar's Photo roll: the reel's quick view on its newest photo.
     PhotoRoll,
     /// The toolbar's 360° snapshot (Floater.ToggleOrBringToFront
@@ -149,6 +173,8 @@ pub enum BarAction {
         handle: aurora_net::RegionHandle,
         position: glam::Vec3,
     },
+    /// The exact visit selected in the place menu, including its grid.
+    TeleportSavedPlace(HistoryItem),
     /// Communicate > Online status changed.
     SetStatus(crate::world::status::StatusModes),
     /// Open the chat preferences (automatic responses).
@@ -255,14 +281,6 @@ pub struct IslandsLook {
     pub stretch: bool,
     /// The parcel rights are named when there is room.
     pub rights_text: bool,
-}
-
-/// A place of the teleport history, in the place menu.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RecentPlace {
-    pub name: String,
-    pub region: String,
-    pub slurl: String,
 }
 
 pub struct StatusInfo<'a> {
@@ -381,7 +399,7 @@ pub struct StatusInfo<'a> {
     pub own_pic: Option<&'a egui::TextureHandle>,
     /// The last places of the teleport history, newest first, without the
     /// one we are in (the place menu).
-    pub recent: Vec<RecentPlace>,
+    pub recent: Vec<HistoryItem>,
     /// The favourites and where they live.
     pub favorites: &'a favorites::View,
     /// What the system island shows, the traffic indicator, the
@@ -577,9 +595,41 @@ pub(super) fn balance_menu(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, acti
             ..rows
         });
     }
-    if menu::command(ui, p, "buy_currency") {
+    if menu::toolbar_command(ui, p, "buy_currency") {
         *action = BarAction::BuyCurrency;
     }
+    super::toolbar::native_context::fallback(ui, p);
+}
+
+/// Copying the version is an explicit action in the common context menu.
+pub(super) fn bug_menu(
+    resp: &egui::Response,
+    p: &Palette,
+    toolbar: &mut super::toolbar::ToolbarUi,
+    locked: bool,
+    action: &mut BarAction,
+    also: bool,
+) {
+    menu::context_menu_also(resp, p, also, |ui| {
+        if menu::item(ui, p, "copy-filled", aurora_i18n::tr!("bug-copy-version")) {
+            *action = BarAction::CopyVersion;
+        }
+        // the menu island's: no block of a bar, no block settings
+        let button = top::button("report_bug", "bug-filled");
+        super::toolbar::section(ui, p, aurora_i18n::tr!("toolbar-button-settings"));
+        toolbar.button_edit_option(ui, p, &button, locked);
+        super::toolbar::native_context::start_group(ui, p);
+        toolbar.interface_edit_menu(ui, p, Some("report_bug"));
+    });
+}
+
+pub(super) fn bell_menu(resp: &egui::Response, p: &Palette, dnd: bool) -> bool {
+    let mut changed = false;
+    menu::context_menu_of_button(resp, p, |ui| {
+        changed = menu::check(ui, p, "bell-off", aurora_i18n::tr!("common-do-not-disturb"), dnd, true);
+        super::toolbar::native_context::fallback(ui, p);
+    });
+    changed
 }
 
 /// Local time of day choices (index = `Panels::time_of_day`; shown in the
@@ -737,13 +787,15 @@ fn render_types_menu(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &m
     let icons = &RENDER_TYPE_ICONS[1..];
     for (((label, off), keys), icon) in rows.into_iter().zip(&st.render_type_keys).zip(icons) {
         let mut drawn = !*off;
-        if menu::toggle_keys(ui, p, icon, label, &mut drawn, keys) {
+        if menu::identified(ui, format!("type-{icon}"), |ui| {
+            menu::toggle_keys(ui, p, icon, label, &mut drawn, keys)
+        }) {
             *off = !drawn;
             changed = true;
         }
     }
     let any_hidden = h != Default::default() || particles;
-    if menu::item_if(ui, p, RENDER_TYPE_ICONS[11], tr!("render-types-show-all"), any_hidden) {
+    if menu::command(ui, p, "render-types-show-all").item_if(RENDER_TYPE_ICONS[11], tr!("render-types-show-all"), any_hidden) {
         h = Default::default();
         particles = false;
         changed = true;
@@ -766,30 +818,50 @@ fn flip_window(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, id: &str
 fn status_menu(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::StatusModes, action: &mut BarAction) {
     let mut m = status;
     let mut c = false;
-    c |= flip(ui, p, "hourglass-filled", aurora_i18n::tr!("common-away"), &mut m.away, true);
-    c |= flip(ui, p, "bell-off", aurora_i18n::tr!("common-do-not-disturb"), &mut m.dnd, true);
-    c |= flip(ui, p, INVISIBLE, aurora_i18n::tr!("ui-bars-invisible"), &mut m.invisible, true);
-    c |= flip(ui, p, AUTO_REPLY, aurora_i18n::tr!("ui-bars-auto-reply"), &mut m.autorespond, true);
+    c |= menu::identified(ui, "common-away", |ui| {
+        flip(ui, p, "hourglass-filled", aurora_i18n::tr!("common-away"), &mut m.away, true)
+    });
+    c |= menu::identified(ui, "common-do-not-disturb", |ui| {
+        flip(ui, p, "bell-off", aurora_i18n::tr!("common-do-not-disturb"), &mut m.dnd, true)
+    });
+    c |= menu::identified(ui, "ui-bars-invisible", |ui| {
+        flip(ui, p, INVISIBLE, aurora_i18n::tr!("ui-bars-invisible"), &mut m.invisible, true)
+    });
+    c |= menu::identified(ui, "ui-bars-auto-reply", |ui| {
+        flip(ui, p, AUTO_REPLY, aurora_i18n::tr!("ui-bars-auto-reply"), &mut m.autorespond, true)
+    });
     let non_friends = aurora_i18n::tr!("ui-bars-auto-reply-to-non-friends");
-    c |= flip(ui, p, AUTO_REPLY, non_friends, &mut m.autorespond_nonfriends, true);
-    menu::separator(ui, p);
-    let teleports = aurora_i18n::tr!("ui-bars-reject-teleport-offers-and-requests");
-    c |= flip(ui, p, NO_TELEPORT, teleports, &mut m.reject_teleports, true);
-    let invites = aurora_i18n::tr!("ui-bars-reject-all-group-invitations");
-    c |= flip(ui, p, NO_INVITE, invites, &mut m.reject_group_invites, true);
-    let friendship = aurora_i18n::tr!("ui-bars-reject-all-friendship-requests");
-    c |= flip(ui, p, NO_FRIENDSHIP, friendship, &mut m.reject_friendship, true);
-    menu::submenu(ui, p, AD_HOC, aurora_i18n::tr!("ui-bars-ad-hoc-conferences"), true, |ui| {
-        let ignore = aurora_i18n::tr!("ui-bars-ignore-all-and-exit-automatically");
-        c |= flip(ui, p, "message-off", ignore, &mut m.ignore_adhoc, true);
-        let enabled = m.ignore_adhoc;
-        let report = aurora_i18n::tr!("ui-bars-report-ignored-residents-in-nearby-chat");
-        c |= flip(ui, p, "message-filled", report, &mut m.report_ignored_adhoc, enabled);
-        let friends = aurora_i18n::tr!("ui-bars-do-not-ignore-my-friends");
-        c |= flip(ui, p, "users", friends, &mut m.adhoc_from_friends, enabled);
+    c |= menu::identified(ui, "non_friends", |ui| {
+        flip(ui, p, AUTO_REPLY, non_friends, &mut m.autorespond_nonfriends, true)
     });
     menu::separator(ui, p);
-    if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-auto-reply-messages")) {
+    let teleports = aurora_i18n::tr!("ui-bars-reject-teleport-offers-and-requests");
+    c |= menu::identified(ui, "teleports", |ui| {
+        flip(ui, p, NO_TELEPORT, teleports, &mut m.reject_teleports, true)
+    });
+    let invites = aurora_i18n::tr!("ui-bars-reject-all-group-invitations");
+    c |= menu::identified(ui, "invites", |ui| {
+        flip(ui, p, NO_INVITE, invites, &mut m.reject_group_invites, true)
+    });
+    let friendship = aurora_i18n::tr!("ui-bars-reject-all-friendship-requests");
+    c |= menu::identified(ui, "friendship", |ui| {
+        flip(ui, p, NO_FRIENDSHIP, friendship, &mut m.reject_friendship, true)
+    });
+    menu::command(ui, p, "ui-bars-ad-hoc-conferences").submenu(AD_HOC, aurora_i18n::tr!("ui-bars-ad-hoc-conferences"), true, |ui| {
+        let ignore = aurora_i18n::tr!("ui-bars-ignore-all-and-exit-automatically");
+        c |= menu::identified(ui, "ignore", |ui| flip(ui, p, "message-off", ignore, &mut m.ignore_adhoc, true));
+        let enabled = m.ignore_adhoc;
+        let report = aurora_i18n::tr!("ui-bars-report-ignored-residents-in-nearby-chat");
+        c |= menu::identified(ui, "report", |ui| {
+            flip(ui, p, "message-filled", report, &mut m.report_ignored_adhoc, enabled)
+        });
+        let friends = aurora_i18n::tr!("ui-bars-do-not-ignore-my-friends");
+        c |= menu::identified(ui, "friends", |ui| {
+            flip(ui, p, "users", friends, &mut m.adhoc_from_friends, enabled)
+        });
+    });
+    menu::separator(ui, p);
+    if menu::command(ui, p, "ui-bars-auto-reply-messages").item("settings-filled", aurora_i18n::tr!("ui-bars-auto-reply-messages")) {
         *action = BarAction::ChatPrefs;
         return;
     }
@@ -819,7 +891,9 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
     // demo captures: AURORA_DEMO_STATUSMENU=1 opens it (=invisible: with
     // that status, set by the viewer)
     static DEMO_OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_STATUSMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300 {
+    if *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_STATUSMENU").is_some())
+        && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300
+    {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
     }
     menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
@@ -947,71 +1021,80 @@ fn stand_up_enabled(seated: bool, sit_locked: bool) -> bool {
 /// (without "Advanced" unless `advanced`). An entry carries the icon its
 /// function has in the bottom toolbar and in the world menus.
 fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, action: &mut BarAction, advanced: bool) {
-    menu::submenu(ui, p, "user-filled", aurora_i18n::tr!("common-me"), true, |ui| {
+    if menu::command(ui, p, "toolbar-interface-edit")
+        .item(super::toolbar::drawers::CUSTOMIZE_ICON, aurora_i18n::tr!("toolbar-interface-edit"))
+    {
+        *action = BarAction::CustomizeBars;
+    }
+    menu::command(ui, p, "common-me").submenu("user-filled", aurora_i18n::tr!("common-me"), true, |ui| {
         let sit_locked = ui.ctx().data(|d| d.get_temp::<bool>(rlva_sit_locked_id())).unwrap_or(false);
         let appearance = aurora_i18n::tr!("ui-bars-appearance");
         let can_customize = customize_avatar_enabled(st.seated, sit_locked);
-        if menu::check(ui, p, "shirt-filled", appearance, panels.appearance, can_customize) {
+        if menu::command(ui, p, "ui-bars-appearance").check("shirt-filled", appearance, panels.appearance, can_customize) {
             super::widgets::toggle_floater(ui.ctx(), "appearance", &mut panels.appearance);
         }
-        if menu::item(ui, p, "user-filled", aurora_i18n::tr!("ui-bars-profile")) {
+        if menu::command(ui, p, "ui-bars-profile").item("user-filled", aurora_i18n::tr!("ui-bars-profile")) {
             *action = BarAction::MyProfile;
         }
         // menu_viewer.xml: Marketplace listings, before Buy L$
-        if st.marketplace && menu::item(ui, p, "tag-filled", aurora_i18n::tr!("marketplace-listings-menu")) {
+        if st.marketplace
+            && menu::command(ui, p, "marketplace-listings-menu").item("tag-filled", aurora_i18n::tr!("marketplace-listings-menu"))
+        {
             *action = BarAction::MarketplaceListings;
         }
         // menu_viewer.xml: Avatar › Favorite Wearables, after Marketplace listings
-        flip_window(
-            ui,
-            p,
-            "hanger-2-filled",
-            aurora_i18n::tr!("toolbar-command-wearable-favorites"),
-            super::appearance::wearable_favorites::WINDOW,
-            &mut panels.wearable_favorites,
-        );
-        if menu::command(ui, p, "buy_currency") {
+        menu::identified(ui, "toolbar-command-wearable-favorites", |ui| {
+            flip_window(
+                ui,
+                p,
+                "hanger-2-filled",
+                aurora_i18n::tr!("toolbar-command-wearable-favorites"),
+                super::appearance::wearable_favorites::WINDOW,
+                &mut panels.wearable_favorites,
+            )
+        });
+        if menu::command(ui, p, "currency-menu").toolbar_command("buy_currency") {
             *action = BarAction::BuyCurrency;
         }
         // menu_viewer.xml: Avatar › Money Tracker
-        if menu::command_check(ui, p, "money_tracker", panels.money_tracker) {
+        if menu::command(ui, p, "tracker").toolbar_command_check("money_tracker", panels.money_tracker) {
             super::money_tracker::toggle(ui.ctx(), &mut panels.money_tracker);
         }
         // menu_viewer.xml: Pose Stand... (Floater.Show fs_posestand, enabled
         // by fs_when_not_sitting): it opens the window, or brings it forward
         // when open; the toolbar button is the one that toggles it
-        if menu::item_if(ui, p, "man-filled", aurora_i18n::tr!("ui-bars-pose-stand"), !st.seated) {
+        if menu::command(ui, p, "ui-bars-pose-stand").item_if("man-filled", aurora_i18n::tr!("ui-bars-pose-stand"), !st.seated) {
             super::widgets::open_floater(ui.ctx(), super::pose_stand::WINDOW, &mut panels.pose_stand);
             super::widgets::bring_floater_front(ui.ctx(), super::pose_stand::WINDOW);
         }
         // menu_viewer.xml: Me › Experiences (Picks, before it there, has
         // no entry in this menu)
-        if menu::command_check(ui, p, "experiences", panels.experiences) {
+        if menu::command(ui, p, "ui-experiences-title").toolbar_command_check("experiences", panels.experiences) {
             super::widgets::toggle_floater(ui.ctx(), super::experiences::WINDOW, &mut panels.experiences);
         }
         // menu_viewer.xml: Avatar Welcome Pack… (Floater.Toggle
         // avatar_welcome_pack), after the attachments, which this menu does
         // not hold; on a grid with the page
-        if st.avatar_welcome && menu::item(ui, p, "user-circle", aurora_i18n::tr!("ui-bars-avatar-welcome-pack")) {
+        if st.avatar_welcome
+            && menu::command(ui, p, "ui-bars-avatar-welcome-pack").item("user-circle", aurora_i18n::tr!("ui-bars-avatar-welcome-pack"))
+        {
             super::widgets::toggle_floater(ui.ctx(), super::avatar_welcome::WINDOW, &mut panels.avatar_welcome);
         }
         menu::separator(ui, p);
-        if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.home_entry) {
+        if menu::command(ui, p, "common-go-home").item_if("home-filled", aurora_i18n::tr!("common-go-home"), st.home_entry) {
             *action = BarAction::TeleportHome;
         }
         menu::separator(ui, p);
         // enable_sitdown_self / enable_standup_self: greyed when RLVa would
         // refuse the one that applies (@sit standing, @unsit seated)
-        if menu::item_if(
-            ui,
-            p,
+        if menu::command(ui, p, "ui-bars-sit-on-ground").item_if(
             "armchair",
             aurora_i18n::tr!("ui-bars-sit-on-ground"),
             st.seated || !sit_locked,
         ) {
             *action = BarAction::SitGround;
         }
-        if menu::command_tip(ui, p, "stand_up", stand_up_enabled(st.seated, sit_locked), "") {
+        if menu::command(ui, p, "common-stand-up").toolbar_command_tip("stand_up", stand_up_enabled(st.seated, sit_locked), "") {
             *action = BarAction::StandUp;
         }
         let fly = if st.flying {
@@ -1022,11 +1105,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // enable_fly_land (indra/newview/llviewermenu.cpp): no takeoff under
         // @fly or over a land without flight; landing is never refused
         let grounded = ui.ctx().data(|d| d.get_temp::<bool>(fly_locked_id())).unwrap_or(false);
-        if menu::item_if(ui, p, "plane-tilt-filled", fly, st.flying || !grounded) {
+        if menu::command(ui, p, "fly").item_if("plane-tilt-filled", fly, st.flying || !grounded) {
             *action = BarAction::ToggleFly;
         }
         // menu_viewer.xml: Fly Override (FSAlwaysFly), beside the flight
-        if menu::command_check(ui, p, "fly_override", st.fly_override) {
+        if menu::command(ui, p, "fly_override").toolbar_command_check("fly_override", st.fly_override) {
             *action = BarAction::ToggleFlyOverride;
         }
         // Firestorm keeps its double-click teleport beside its movement
@@ -1034,44 +1117,47 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             .ctx()
             .data(|d| d.get_temp::<bool>(egui::Id::unique("movelock_requested")))
             .unwrap_or(false);
-        if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("movelock-title"), locked, true) {
+        if menu::command(ui, p, "movelock-title").check("lock-filled", aurora_i18n::tr!("movelock-title"), locked, true) {
             *action = BarAction::ToggleMoveLock;
         }
-        if menu::command(ui, p, "movelock_options") {
+        if menu::command(ui, p, "movelock-options").toolbar_command("movelock_options") {
             *action = BarAction::MoveLockOptions;
         }
         // menu_viewer.xml: Avatar › Movement › Quickjump, after Movelock
-        if menu::command_check(ui, p, "quickjump", st.quickjump) {
+        if menu::command(ui, p, "quickjump").toolbar_command_check("quickjump", st.quickjump) {
             *action = BarAction::ToggleQuickjump;
         }
         // menu_viewer.xml: Avatar › Movement › Face nearest avatar and
         // Avatar alignment (Avatar.FaceNearest, Avatar.AlignToggle), after
         // Quickjump
-        if menu::item(ui, p, "user-search", aurora_i18n::tr!("toolbar-command-face-nearest")) {
+        if menu::command(ui, p, "toolbar-command-face-nearest").item("user-search", aurora_i18n::tr!("toolbar-command-face-nearest")) {
             *action = BarAction::FaceNearestAvatar;
         }
         let align = aurora_i18n::tr!("toolbar-command-avatar-align");
-        if menu::check(ui, p, "user-scan", align, panels.avatar_align, true) {
+        if menu::command(ui, p, "toolbar-command-avatar-align").check("user-scan", align, panels.avatar_align, true) {
             super::widgets::toggle_floater(
                 ui.ctx(),
                 super::avatar_align::window(panels.avatar_align_mini),
                 &mut panels.avatar_align,
             );
         }
-        if menu::command(ui, p, "movement_enhancer") {
+        if menu::command(ui, p, "movement-title").toolbar_command("movement_enhancer") {
             *action = BarAction::MovementEnhancer;
         }
         // Firestorm keeps its double-click teleport beside its movement
         // entries (Avatar › Movement): the four choices of the preference
-        menu::submenu(
-            ui,
-            p,
+        menu::command(ui, p, "ui-options-double-click-ground").submenu(
             "hand-click",
             aurora_i18n::tr!("ui-options-double-click-ground"),
             true,
             |ui| {
                 for choice in crate::autopilot::DoubleClick::ALL {
-                    if menu::check(ui, p, choice.icon(), choice.label(), st.double_click == choice, true) {
+                    if menu::command(ui, p, format!("double-click-{}", choice.icon())).check(
+                        choice.icon(),
+                        choice.label(),
+                        st.double_click == choice,
+                        true,
+                    ) {
                         *action = BarAction::SetDoubleClick(choice);
                     }
                 }
@@ -1079,53 +1165,55 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         );
         health_menu(ui, p, &st.health);
         menu::separator(ui, p);
-        if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-preferences")) {
-            super::widgets::open_floater(ui.ctx(), "options", &mut panels.settings);
+        if menu::command(ui, p, "ui-bars-preferences").item("settings-filled", aurora_i18n::tr!("ui-bars-preferences")) {
+            super::widgets::open_floater(ui.ctx(), super::options::WINDOW, &mut panels.settings);
         }
         // menu_viewer.xml: Show User Interface (alt|shift|U), after
         // Preferences, Toolbar Buttons and Show HUD Attachments
-        if interface_item(ui, p, st) {
+        if menu::identified(ui, "interface_item", |ui| interface_item(ui, p, st)) {
             *action = BarAction::ToggleInterface;
         }
-        if immersive_item(ui, p) {
+        if menu::identified(ui, "immersive_item", |ui| immersive_item(ui, p)) {
             *action = BarAction::ToggleImmersive;
         }
         menu::separator(ui, p);
-        if menu::item(ui, p, "logout", aurora_i18n::tr!("ui-bars-log-out")) {
+        if menu::command(ui, p, "ui-bars-log-out").item("logout", aurora_i18n::tr!("ui-bars-log-out")) {
             *action = BarAction::Logout;
         }
-        if menu::item(ui, p, "power", aurora_i18n::tr!("ui-bars-quit-aurora-viewer")) {
+        if menu::command(ui, p, "ui-bars-quit-aurora-viewer").item("power", aurora_i18n::tr!("ui-bars-quit-aurora-viewer")) {
             *action = BarAction::Quit;
         }
     });
-    menu::submenu(ui, p, "messages-filled", aurora_i18n::tr!("ui-bars-communicate"), true, |ui| {
-        flip_window(
-            ui,
-            p,
-            "messages-filled",
-            aurora_i18n::tr!("common-conversations"),
-            "conversations",
-            &mut panels.chat,
-        );
+    menu::command(ui, p, "ui-bars-communicate").submenu("messages-filled", aurora_i18n::tr!("ui-bars-communicate"), true, |ui| {
+        menu::identified(ui, "common-conversations", |ui| {
+            flip_window(
+                ui,
+                p,
+                "messages-filled",
+                aurora_i18n::tr!("common-conversations"),
+                "conversations",
+                &mut panels.chat,
+            )
+        });
         // menu_viewer.xml: Omnifilter, after Conversations (Floater.Toggle)
-        flip_window(
-            ui,
-            p,
-            "filter-filled",
-            aurora_i18n::tr!("toolbar-command-omnifilter"),
-            super::omnifilter::WINDOW,
-            &mut panels.omnifilter,
-        );
+        menu::identified(ui, "toolbar-command-omnifilter", |ui| {
+            flip_window(
+                ui,
+                p,
+                "filter-filled",
+                aurora_i18n::tr!("toolbar-command-omnifilter"),
+                super::omnifilter::WINDOW,
+                &mut panels.omnifilter,
+            )
+        });
         let gestures = crate::keybinds::chord_label("KeyG", true, false, false);
-        if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), &gestures) {
+        if menu::command(ui, p, "gesture-title").item_keys("hand-move", aurora_i18n::tr!("gesture-title"), &gestures) {
             super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
         }
         // menu_viewer.xml: Conversation Log… after Gestures (Floater.Toggle
         // conversation, checked while it is open; always enabled, its
         // logging check is left out of the Legacy Viewer's menu)
-        if menu::check(
-            ui,
-            p,
+        if menu::command(ui, p, "ui-bars-conversation-log").check(
             "file-text-filled",
             aurora_i18n::tr!("ui-bars-conversation-log"),
             panels.conversation_log,
@@ -1137,7 +1225,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // tab of Conversations or its torn-off window
         // (FSFloaterContacts::onOpen), shortcut="control|alt|shift|F"
         let contacts = crate::keybinds::chord_label("KeyF", true, true, true);
-        if menu::item_keys(ui, p, "users", aurora_i18n::tr!("common-contacts"), &contacts) {
+        if menu::command(ui, p, "common-contacts").item_keys("users", aurora_i18n::tr!("common-contacts"), &contacts) {
             *action = BarAction::Contacts;
         }
         for (tab, icon, label) in [
@@ -1146,21 +1234,19 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             (2, "users-group", aurora_i18n::tr!("common-groups")),
             (4, "ban", aurora_i18n::tr!("ui-bars-block-list")),
         ] {
-            if menu::item(ui, p, icon, label) {
+            if menu::command(ui, p, format!("entry-{icon}")).item(icon, label) {
                 super::widgets::open_floater(ui.ctx(), "people", &mut panels.people);
                 panels.people_tab = tab;
             }
         }
         menu::separator(ui, p);
         // Firestorm "Online Status" menu
-        menu::submenu(ui, p, "circle-filled", aurora_i18n::tr!("ui-bars-online-status"), true, |ui| {
+        menu::command(ui, p, "ui-bars-online-status").submenu("circle-filled", aurora_i18n::tr!("ui-bars-online-status"), true, |ui| {
             status_menu(ui, p, st.status, action)
         });
     });
-    menu::submenu(ui, p, "world-filled", aurora_i18n::tr!("common-world"), true, |ui| {
-        if menu::item_keys(
-            ui,
-            p,
+    menu::command(ui, p, "common-world").submenu("world-filled", aurora_i18n::tr!("common-world"), true, |ui| {
+        if menu::command(ui, p, "toolbar-command-resync-animations").item_keys(
             "refresh",
             aurora_i18n::tr!("toolbar-command-resync-animations"),
             &st.health.resync_keys,
@@ -1168,9 +1254,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             *action = BarAction::ResyncAnimations;
         }
         menu::separator(ui, p);
-        menu::submenu(ui, p, "device-desktop-filled", "HUDs", true, |ui| {
+        menu::command(ui, p, "-HUDs-").submenu("device-desktop-filled", "HUDs", true, |ui| {
             let mut visible = st.show_huds;
-            if flip(ui, p, "eye-filled", aurora_i18n::tr!("ui-bars-show-huds"), &mut visible, true) {
+            if menu::identified(ui, "ui-bars-show-huds", |ui| {
+                flip(ui, p, "eye-filled", aurora_i18n::tr!("ui-bars-show-huds"), &mut visible, true)
+            }) {
                 *action = BarAction::ShowHuds(visible);
             }
             for (zoom, icon, label) in [
@@ -1182,141 +1270,159 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 ),
                 ((st.hud_zoom * 1.2).min(1.0), "zoom-in-filled", aurora_i18n::tr!("ui-bars-zoom-in")),
             ] {
-                if menu::item(ui, p, icon, label) {
+                if menu::command(ui, p, format!("entry-{icon}")).item(icon, label) {
                     *action = BarAction::HudZoom(zoom);
                 }
             }
         });
         // menu_viewer.xml: Teleport history (Alt+H), Places
-        if menu::item(ui, p, "door-enter", aurora_i18n::tr!("portal-title")) {
+        if menu::command(ui, p, "portal-title").item("door-enter", aurora_i18n::tr!("portal-title")) {
             *action = BarAction::Portals;
         }
         let history = crate::keybinds::chord_label("KeyH", false, true, false);
-        if menu::item_keys(ui, p, "history", aurora_i18n::tr!("common-teleport-history"), &history) {
+        if menu::command(ui, p, "common-teleport-history").item_keys("history", aurora_i18n::tr!("common-teleport-history"), &history) {
             *action = BarAction::TeleportHistory;
         }
-        flip_window(
-            ui,
-            p,
-            "map-pin-filled",
-            aurora_i18n::tr!("common-places"),
-            "places",
-            &mut panels.places,
-        );
+        menu::identified(ui, "common-places", |ui| {
+            flip_window(
+                ui,
+                p,
+                "map-pin-filled",
+                aurora_i18n::tr!("common-places"),
+                "places",
+                &mut panels.places,
+            )
+        });
         // menu_viewer.xml: Destinations, after Places (Floater.Toggle), on a
         // grid with a guide
-        if st.destinations && menu::item(ui, p, "map-2", aurora_i18n::tr!("toolbar-command-destinations")) {
+        if st.destinations
+            && menu::command(ui, p, "toolbar-command-destinations").item("map-2", aurora_i18n::tr!("toolbar-command-destinations"))
+        {
             super::widgets::toggle_floater(ui.ctx(), super::destinations::WINDOW, &mut panels.destinations);
         }
         // menu_viewer.xml: Parcel Details (About Land), then Region Details
         // (Region / Estate, Alt+R)
-        // (About Land's floater has an id per layout: the flag alone)
-        if menu::check(
-            ui,
-            p,
+        // (About Land's floater has an id per layout: `about_land_classic`)
+        if menu::command(ui, p, "common-about-land").check(
             "info-circle-filled",
             aurora_i18n::tr!("common-about-land"),
             panels.about_land,
             true,
         ) {
-            panels.about_land = !panels.about_land;
+            let id = super::land::window_id(panels.about_land_classic);
+            super::widgets::toggle_floater(ui.ctx(), id, &mut panels.about_land);
         }
         let region = crate::keybinds::chord_label("KeyR", false, true, false);
-        if menu::item_keys(ui, p, "building-castle", aurora_i18n::tr!("region-title"), &region) {
-            super::widgets::toggle_floater(ui.ctx(), super::region::WINDOW, &mut panels.region_estate);
+        if menu::command(ui, p, "region-title").item_keys("building-castle", aurora_i18n::tr!("region-title"), &region) {
+            let id = super::region::window_id(panels.region_estate_classic);
+            super::widgets::toggle_floater(ui.ctx(), id, &mut panels.region_estate);
         }
         // menu_viewer.xml: Set Home to Here, after Region Details
-        if menu::item_if(ui, p, "home-check", aurora_i18n::tr!("world-set-home-here"), st.can_set_home) {
+        if menu::command(ui, p, "world-set-home-here").item_if("home-check", aurora_i18n::tr!("world-set-home-here"), st.can_set_home) {
             *action = BarAction::SetHome;
         }
         // menu_viewer.xml: Search (Ctrl+F)
         let search = crate::keybinds::chord_label("KeyF", true, false, false);
-        if menu::item_keys(ui, p, "search-filled", aurora_i18n::tr!("search-title"), &search) {
+        if menu::command(ui, p, "search-title").item_keys("search-filled", aurora_i18n::tr!("search-title"), &search) {
             super::widgets::toggle_floater(ui.ctx(), super::search::WINDOW, &mut panels.search);
         }
-        flip_window(
-            ui,
-            p,
-            "zoom-scan-filled",
-            aurora_i18n::tr!("toolbar-command-area-search"),
-            super::area_search::WINDOW,
-            &mut panels.area_search,
-        );
+        menu::identified(ui, "toolbar-command-area-search", |ui| {
+            flip_window(
+                ui,
+                p,
+                "zoom-scan-filled",
+                aurora_i18n::tr!("toolbar-command-area-search"),
+                super::area_search::WINDOW,
+                &mut panels.area_search,
+            )
+        });
         // menu_viewer.xml: SL Marketplace, after Search
-        if st.marketplace && menu::item(ui, p, "building-store", aurora_i18n::tr!("marketplace-menu")) {
+        if st.marketplace && menu::command(ui, p, "marketplace-menu").item("building-store", aurora_i18n::tr!("marketplace-menu")) {
             *action = BarAction::Marketplace;
         }
-        flip(
-            ui,
-            p,
-            "compass-filled",
-            aurora_i18n::tr!("common-mini-map"),
-            &mut panels.minimap,
-            true,
-        );
-        flip_window(
-            ui,
-            p,
-            "map",
-            aurora_i18n::tr!("common-world-map"),
-            "worldmap",
-            &mut panels.world_map,
-        );
-        flip_window(
-            ui,
-            p,
-            "location-filled",
-            aurora_i18n::tr!("toolbar-command-region-tracker"),
-            super::region_tracker::WINDOW,
-            &mut panels.region_tracker,
-        );
+        menu::identified(ui, "common-mini-map", |ui| {
+            flip(
+                ui,
+                p,
+                "compass-filled",
+                aurora_i18n::tr!("common-mini-map"),
+                &mut panels.minimap,
+                true,
+            )
+        });
+        menu::identified(ui, "common-world-map", |ui| {
+            flip_window(
+                ui,
+                p,
+                "map",
+                aurora_i18n::tr!("common-world-map"),
+                "worldmap",
+                &mut panels.world_map,
+            )
+        });
+        menu::identified(ui, "toolbar-command-region-tracker", |ui| {
+            flip_window(
+                ui,
+                p,
+                "location-filled",
+                aurora_i18n::tr!("toolbar-command-region-tracker"),
+                super::region_tracker::WINDOW,
+                &mut panels.region_tracker,
+            )
+        });
         // menu_viewer.xml: Stream Title (its window keeps the history of
         // the titles), then Landmark this Place, after the maps
-        flip_window(
-            ui,
-            p,
-            "playlist-filled",
-            aurora_i18n::tr!("ui-bars-stream-title"),
-            super::stream_title::WINDOW,
-            &mut panels.stream_title,
-        );
-        if menu::item(ui, p, "bookmark-filled", aurora_i18n::tr!("landmark-create-here")) {
+        menu::identified(ui, "ui-bars-stream-title", |ui| {
+            flip_window(
+                ui,
+                p,
+                "playlist-filled",
+                aurora_i18n::tr!("ui-bars-stream-title"),
+                super::stream_title::WINDOW,
+                &mut panels.stream_title,
+            )
+        });
+        if menu::command(ui, p, "landmark-create-here").item("bookmark-filled", aurora_i18n::tr!("landmark-create-here")) {
             *action = BarAction::CreateLandmark;
         }
-        if menu::item(ui, p, "map", aurora_i18n::tr!("owned-land-title")) {
+        if menu::command(ui, p, "owned-land-title").item("map", aurora_i18n::tr!("owned-land-title")) {
             *action = BarAction::OwnedLand;
         }
         // menu_viewer.xml: My Linden Home after Show Owned Land, Second
         // Life grids only
-        if st.linden_home && menu::item(ui, p, "home-2-filled", aurora_i18n::tr!("linden-home-menu")) {
+        if st.linden_home && menu::command(ui, p, "linden-home-menu").item("home-2-filled", aurora_i18n::tr!("linden-home-menu")) {
             *action = BarAction::LindenHome;
         }
-        menu::submenu(ui, p, "dots-filled", aurora_i18n::tr!("world-show-more"), true, |ui| {
-            flip_window(
-                ui,
-                p,
-                "bulb-filled",
-                aurora_i18n::tr!("beacons-title"),
-                super::beacons::WINDOW,
-                &mut panels.beacons,
-            );
+        menu::command(ui, p, "world-show-more").submenu("dots-filled", aurora_i18n::tr!("world-show-more"), true, |ui| {
+            menu::identified(ui, "beacons-title", |ui| {
+                flip_window(
+                    ui,
+                    p,
+                    "bulb-filled",
+                    aurora_i18n::tr!("beacons-title"),
+                    super::beacons::WINDOW,
+                    &mut panels.beacons,
+                )
+            });
             let mut overlays = st.world_overlays;
             let before = overlays;
-            flip(
-                ui,
-                p,
-                "border-all",
-                aurora_i18n::tr!("world-property-lines"),
-                &mut overlays.property_lines,
-                true,
-            );
-            flip(ui, p, "map", aurora_i18n::tr!("world-land-owners"), &mut overlays.land_owners, true);
+            menu::identified(ui, "world-property-lines", |ui| {
+                flip(
+                    ui,
+                    p,
+                    "border-all",
+                    aurora_i18n::tr!("world-property-lines"),
+                    &mut overlays.property_lines,
+                    true,
+                )
+            });
+            menu::identified(ui, "world-land-owners", |ui| {
+                flip(ui, p, "map", aurora_i18n::tr!("world-land-owners"), &mut overlays.land_owners, true)
+            });
             if overlays != before {
                 *action = BarAction::WorldOverlays(overlays);
             }
-            if menu::check(
-                ui,
-                p,
+            if menu::command(ui, p, "common-show-transparency").check(
                 "layers-subtract",
                 aurora_i18n::tr!("common-show-transparency"),
                 st.show_transparency,
@@ -1324,35 +1430,35 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             ) {
                 *action = BarAction::ShowTransparency;
             }
-            if flip(
-                ui,
-                p,
-                "sparkles-filled",
-                aurora_i18n::tr!("world-hide-particles"),
-                &mut overlays.hide_particles,
-                true,
-            ) {
+            if menu::identified(ui, "world-hide-particles", |ui| {
+                flip(
+                    ui,
+                    p,
+                    "sparkles-filled",
+                    aurora_i18n::tr!("world-hide-particles"),
+                    &mut overlays.hide_particles,
+                    true,
+                )
+            }) {
                 *action = BarAction::WorldOverlays(overlays);
             }
         });
-        menu::submenu(ui, p, "barrier-block-filled", aurora_i18n::tr!("ui-bars-ban-lines"), true, |ui| {
+        menu::command(ui, p, "ui-bars-ban-lines").submenu("barrier-block-filled", aurora_i18n::tr!("ui-bars-ban-lines"), true, |ui| {
             for (v, icon, label) in [
                 (0u8, "eye-off", aurora_i18n::tr!("ui-bars-hidden")),
                 (1, "alert-triangle-filled", aurora_i18n::tr!("ui-bars-on-collision")),
                 (2, "radar-filled", aurora_i18n::tr!("common-nearby")),
             ] {
-                if menu::check(ui, p, icon, label, st.ban_lines == v, true) {
+                if menu::command(ui, p, format!("entry-{icon}")).check(icon, label, st.ban_lines == v, true) {
                     *action = BarAction::BanLines(v);
                 }
             }
         });
         // menu_viewer.xml: Show Info › Show Tips (Ctrl+Shift+T), Show Land
         // Tooltips, Show Tips On All Objects
-        menu::submenu(ui, p, "pointer-filled", aurora_i18n::tr!("ui-options-hover-tips"), true, |ui| {
+        menu::command(ui, p, "ui-options-hover-tips").submenu("pointer-filled", aurora_i18n::tr!("ui-options-hover-tips"), true, |ui| {
             let mut tips = st.hover_tips;
-            let mut changed = menu::check(
-                ui,
-                p,
+            let mut changed = menu::command(ui, p, "ui-bars-hover-tips-show").check(
                 "pointer-filled",
                 aurora_i18n::tr!("ui-bars-hover-tips-show"),
                 tips.enabled,
@@ -1361,9 +1467,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             if changed {
                 tips.enabled = !tips.enabled;
             }
-            if menu::check(
-                ui,
-                p,
+            if menu::command(ui, p, "ui-options-hover-tips-land").check(
                 "map-pin-filled",
                 aurora_i18n::tr!("ui-options-hover-tips-land"),
                 tips.land,
@@ -1372,9 +1476,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 tips.land = !tips.land;
                 changed = true;
             }
-            if menu::check(
-                ui,
-                p,
+            if menu::command(ui, p, "ui-bars-hover-tips-all-objects").check(
                 "cube",
                 aurora_i18n::tr!("ui-bars-hover-tips-all-objects"),
                 tips.all_objects,
@@ -1387,15 +1489,13 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 *action = BarAction::HoverTips(tips);
             }
         });
-        menu::submenu(ui, p, "sunset-2-filled", aurora_i18n::tr!("common-environment"), true, |ui| {
+        menu::command(ui, p, "common-environment").submenu("sunset-2-filled", aurora_i18n::tr!("common-environment"), true, |ui| {
             // menu_viewer.xml, RLV.EnableIfNot setenv: every entry here is
             // greyed while RLVa holds the environment
             let free = !ui.ctx().data(|d| d.get_temp::<bool>(rlva_env_locked_id())).unwrap_or(false);
             // back to the region / parcel EEP cycle, in real time
             let shared = !st.local_env;
-            if menu::check_keys(
-                ui,
-                p,
+            if menu::command(ui, p, "ui-bars-use-shared-environments").check_keys(
                 "world-filled",
                 aurora_i18n::tr!("ui-bars-use-shared-environments"),
                 shared,
@@ -1417,22 +1517,36 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             let labels = time_of_day();
             for i in crate::world::env::TIME_OF_DAY_ORDER {
                 let n = i as usize;
-                if menu::check_keys(ui, p, icons[n], labels[n], panels.time_of_day == i, free, &st.env_keys[n]) {
+                if menu::command(ui, p, format!("time-of-day-{i}")).check_keys(
+                    icons[n],
+                    labels[n],
+                    panels.time_of_day == i,
+                    free,
+                    &st.env_keys[n],
+                ) {
                     panels.time_of_day = i;
                 }
             }
             menu::separator(ui, p);
             // Firestorm's quick preferences lists, and World > Environment >
             // Personal Lighting...
-            if menu::item_if(ui, p, "sun-filled", aurora_i18n::tr!("ui-bars-environment-picker"), free) {
-                panels.environment = true;
+            if menu::command(ui, p, "ui-bars-environment-picker").item_if(
+                "sun-filled",
+                aurora_i18n::tr!("ui-bars-environment-picker"),
+                free,
+            ) {
+                super::widgets::open_floater(ui.ctx(), "environment_selector", &mut panels.environment);
             }
-            if menu::item_if(ui, p, "adjustments-filled", aurora_i18n::tr!("common-personal-lighting"), free) {
-                panels.personal_lighting = true;
+            if menu::command(ui, p, "common-personal-lighting").item_if(
+                "adjustments-filled",
+                aurora_i18n::tr!("common-personal-lighting"),
+                free,
+            ) {
+                super::widgets::open_floater(ui.ctx(), "personal_lighting", &mut panels.personal_lighting);
             }
             // Aurora's own: the weather beside the lighting it rides on; it
             // lights the scene, so @setenv holds it like the rest
-            if menu::item_if(ui, p, "umbrella-filled", aurora_i18n::tr!("ui-bars-aurora-weather"), free) {
+            if menu::command(ui, p, "ui-bars-aurora-weather").item_if("umbrella-filled", aurora_i18n::tr!("ui-bars-aurora-weather"), free) {
                 *action = BarAction::AuroraWeather;
             }
             // Firestorm's Phototools "New preset" buttons (World.EnvPreset)
@@ -1443,49 +1557,55 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 (SettingsKind::Water, "droplet-filled", aurora_i18n::tr!("ui-bars-new-water")),
                 (SettingsKind::Day, "sunset-2-filled", aurora_i18n::tr!("ui-bars-new-day-cycle")),
             ] {
-                if menu::item_if(ui, p, icon, label, free) {
+                if menu::command(ui, p, format!("entry-{icon}")).item_if(icon, label, free) {
                     *action = BarAction::NewEnvironment(kind);
                 }
             }
         });
         // menu_viewer.xml: World › Asset Blacklist, after the explorers
-        flip_window(
-            ui,
-            p,
-            "music",
-            aurora_i18n::tr!("toolbar-command-sound-explorer"),
-            super::sound_explorer::WINDOW,
-            &mut panels.sound_explorer,
-        );
-        flip_window(
-            ui,
-            p,
-            "run",
-            aurora_i18n::tr!("ui-bars-animation-explorer"),
-            super::animation_explorer::WINDOW,
-            &mut panels.animation_explorer,
-        );
-        flip_window(
-            ui,
-            p,
-            "eye-off",
-            aurora_i18n::tr!("blacklist-title"),
-            super::blacklist::WINDOW,
-            &mut panels.asset_blacklist,
-        );
-        flip_window(
-            ui,
-            p,
-            "adjustments-horizontal-filled",
-            aurora_i18n::tr!("avatar-render-title"),
-            super::avatar_render_settings::WINDOW,
-            &mut panels.avatar_render_settings,
-        );
+        menu::identified(ui, "toolbar-command-sound-explorer", |ui| {
+            flip_window(
+                ui,
+                p,
+                "music",
+                aurora_i18n::tr!("toolbar-command-sound-explorer"),
+                super::sound_explorer::WINDOW,
+                &mut panels.sound_explorer,
+            )
+        });
+        menu::identified(ui, "ui-bars-animation-explorer", |ui| {
+            flip_window(
+                ui,
+                p,
+                "run",
+                aurora_i18n::tr!("ui-bars-animation-explorer"),
+                super::animation_explorer::WINDOW,
+                &mut panels.animation_explorer,
+            )
+        });
+        menu::identified(ui, "blacklist-title", |ui| {
+            flip_window(
+                ui,
+                p,
+                "eye-off",
+                aurora_i18n::tr!("blacklist-title"),
+                super::blacklist::WINDOW,
+                &mut panels.asset_blacklist,
+            )
+        });
+        menu::identified(ui, "avatar-render-title", |ui| {
+            flip_window(
+                ui,
+                p,
+                "adjustments-horizontal-filled",
+                aurora_i18n::tr!("avatar-render-title"),
+                super::avatar_render_settings::WINDOW,
+                &mut panels.avatar_render_settings,
+            )
+        });
         // menu_viewer.xml: World › Show Friends only (TogglePerAccountControl
         // FSRenderFriendsOnly), after Avatar Render Settings
-        if menu::check(
-            ui,
-            p,
+        if menu::command(ui, p, "toolbar-command-friends-only").check(
             "user-check",
             aurora_i18n::tr!("toolbar-command-friends-only"),
             st.friends_only,
@@ -1493,9 +1613,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         ) {
             *action = BarAction::ToggleFriendsOnly;
         }
-        if menu::check(
-            ui,
-            p,
+        if menu::command(ui, p, "ui-bars-immersive-hide-tags").check(
             "label-off",
             aurora_i18n::tr!("ui-bars-immersive-hide-tags"),
             !st.show_name_tags,
@@ -1504,44 +1622,60 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             *action = BarAction::ToggleNameTags;
         }
         menu::separator(ui, p);
-        // Firestorm's View › Camera Controls and Movement Controls
+        // The Legacy Viewer's View › Camera Controls and Movement Controls: checked
+        // while shown, a click toggles them as the toolbar buttons do
+        // (View.ToggleCameraFloater, Floater.Toggle "moveview"), compact
+        // windows included (#3904); here in the World menu
         let camera = crate::keybinds::chord_label("KeyC", true, false, true);
-        if menu::item_keys(ui, p, "video-filled", aurora_i18n::tr!("controls-camera-title"), &camera) {
+        if menu::command(ui, p, "controls-camera-title").check_keys(
+            "video-filled",
+            aurora_i18n::tr!("controls-camera-title"),
+            panels.camera_controls,
+            true,
+            &camera,
+        ) {
             *action = BarAction::Controls {
                 movement: false,
-                toggle: false,
+                toggle: true,
             };
         }
-        if menu::item(ui, p, "walk", aurora_i18n::tr!("controls-movement-title")) {
+        if menu::command(ui, p, "controls-movement-title").check(
+            "walk",
+            aurora_i18n::tr!("controls-movement-title"),
+            panels.movement_controls,
+            true,
+        ) {
             *action = BarAction::Controls {
                 movement: true,
-                toggle: false,
+                toggle: true,
             };
         }
-        if menu::item(ui, p, "eye-filled", aurora_i18n::tr!("common-mouselook-m")) {
+        if menu::command(ui, p, "common-mouselook-m").item("eye-filled", aurora_i18n::tr!("common-mouselook-m")) {
             *action = BarAction::ToggleMouselook;
         }
-        if menu::item(ui, p, "camera-filled", aurora_i18n::tr!("ui-bars-reset-camera-esc")) {
+        if menu::command(ui, p, "ui-bars-reset-camera-esc").item("camera-filled", aurora_i18n::tr!("ui-bars-reset-camera-esc")) {
             *action = BarAction::ResetCamera;
         }
         let photo = crate::keybinds::chord_label("KeyS", true, false, true);
-        if menu::item_keys(ui, p, "photo-filled", aurora_i18n::tr!("photo-title"), &photo) {
-            super::widgets::toggle_floater(ui.ctx(), super::snapshot::WINDOW, &mut panels.snapshot);
+        if menu::command(ui, p, "photo-title").item_keys("photo-filled", aurora_i18n::tr!("photo-title"), &photo) {
+            *action = BarAction::PhotoWindow;
         }
         // Phototools (menu_viewer.xml `phototools_item_call`, alt|P)
         let phototools = crate::keybinds::chord_label("KeyP", false, true, false);
-        if menu::item_keys(ui, p, "camera-cog", aurora_i18n::tr!("toolbar-command-phototools"), &phototools) {
+        if menu::command(ui, p, "toolbar-command-phototools").item_keys(
+            "camera-cog",
+            aurora_i18n::tr!("toolbar-command-phototools"),
+            &phototools,
+        ) {
             super::widgets::toggle_floater(ui.ctx(), super::phototools::WINDOW, &mut panels.phototools);
         }
         // the Director (camera tracks and films), Aurora's own, beside the
         // photo: it was only on the toolbar
-        if menu::item(ui, p, "movie", aurora_i18n::tr!("toolbar-command-director")) {
+        if menu::command(ui, p, "toolbar-command-director").item("movie", aurora_i18n::tr!("toolbar-command-director")) {
             super::widgets::toggle_floater(ui.ctx(), super::director::WINDOW, &mut panels.director);
         }
         // Aurora's own: our avatar seen by a camera of its own
-        if menu::check(
-            ui,
-            p,
+        if menu::command(ui, p, "second-camera-title").check(
             "device-cctv-filled",
             aurora_i18n::tr!("second-camera-title"),
             panels.second_camera,
@@ -1550,7 +1684,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::widgets::toggle_floater(ui.ctx(), super::second_camera::WINDOW, &mut panels.second_camera);
         }
     });
-    menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
+    menu::command(ui, p, "common-build").submenu("box", aurora_i18n::tr!("common-build"), true, |ui| {
         build_menu(
             ui,
             p,
@@ -1562,36 +1696,42 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             st.build_options,
         );
     });
-    menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
+    menu::command(ui, p, "common-contents").submenu("briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
         contents_menu(ui, p, panels, action, st.marketplace, st.motd);
     });
     if advanced {
-        menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("common-advanced"), true, |ui| {
+        menu::command(ui, p, "common-advanced").submenu("adjustments-filled", aurora_i18n::tr!("common-advanced"), true, |ui| {
             let perf = aurora_i18n::tr!("ui-bars-performance-ctrl-shift-1");
-            flip_window(ui, p, "gauge-filled", perf, "perf", &mut panels.perf);
+            menu::identified(ui, "perf", |ui| flip_window(ui, p, "gauge-filled", perf, "perf", &mut panels.perf));
             let graphics = aurora_i18n::tr!("ui-bars-graphics-preferences");
-            flip_window(ui, p, "settings-filled", graphics, "options", &mut panels.settings);
+            menu::identified(ui, "graphics", |ui| {
+                flip_window(ui, p, "settings-filled", graphics, super::options::WINDOW, &mut panels.settings)
+            });
             let toolbox = aurora_i18n::tr!("dev-toolbox-menu");
-            flip_window(
-                ui,
-                p,
-                "code-circle-filled",
-                toolbox,
-                crate::ui::dev_toolbox::WINDOW,
-                &mut panels.dev_toolbox,
-            );
+            menu::identified(ui, "toolbox", |ui| {
+                flip_window(
+                    ui,
+                    p,
+                    "code-circle-filled",
+                    toolbox,
+                    crate::ui::dev_toolbox::WINDOW,
+                    &mut panels.dev_toolbox,
+                )
+            });
             // Advanced.ShowDebugSettings
             let debug_settings = aurora_i18n::tr!("toolbar-command-debug-settings");
-            flip_window(
-                ui,
-                p,
-                "terminal-2",
-                debug_settings,
-                crate::ui::debug_settings::WINDOW,
-                &mut panels.debug_settings,
-            );
+            menu::identified(ui, "debug-settings", |ui| {
+                flip_window(
+                    ui,
+                    p,
+                    "terminal-2",
+                    debug_settings,
+                    crate::ui::debug_settings::WINDOW,
+                    &mut panels.debug_settings,
+                )
+            });
             // Develop › Rendering Types (LLAdvancedToggleRenderType)
-            menu::submenu(ui, p, RENDER_TYPE_ICONS[0], aurora_i18n::tr!("render-types-menu"), true, |ui| {
+            menu::command(ui, p, "render-types-menu").submenu(RENDER_TYPE_ICONS[0], aurora_i18n::tr!("render-types-menu"), true, |ui| {
                 render_types_menu(ui, p, st, action);
             });
             // Advanced › Rendering Features › UI (menu_viewer.xml, ToggleUI:
@@ -1601,9 +1741,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             // features (Selected, Highlighted, Dynamic Textures, Foot
             // Shadows, Fog, Test FRInfo, Flexible Objects) are debugging
             // switches of its own pipeline, not ported.
-            menu::submenu(ui, p, "stack-filled", aurora_i18n::tr!("render-features-menu"), true, |ui| {
+            menu::command(ui, p, "render-features-menu").submenu("stack-filled", aurora_i18n::tr!("render-features-menu"), true, |ui| {
                 let label = aurora_i18n::tr!("render-features-ui");
-                if menu::check_keys(ui, p, "app-window-filled", label, true, true, &st.ui_feature_keys) {
+                if menu::command(ui, p, "render-features-ui").check_keys("app-window-filled", label, true, true, &st.ui_feature_keys) {
                     *action = BarAction::ToggleUiFeature;
                 }
             });
@@ -1611,14 +1751,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             // region gives the console to
             if st.region_console {
                 let console = aurora_i18n::tr!("sim-console-menu");
-                flip_window(
-                    ui,
-                    p,
-                    "terminal-2",
-                    console,
-                    crate::ui::sim_console::WINDOW,
-                    &mut panels.sim_console,
-                );
+                menu::identified(ui, "console", |ui| {
+                    flip_window(
+                        ui,
+                        p,
+                        "terminal-2",
+                        console,
+                        crate::ui::sim_console::WINDOW,
+                        &mut panels.sim_console,
+                    )
+                });
             }
             // Advanced › Request Admin Status (Ctrl+Alt+G) / Leave Admin
             // Status (Advanced.RequestAdminStatus / LeaveAdminStatus): asked
@@ -1626,10 +1768,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             if st.god_level == 0 {
                 // the default chord (⌘⌥G on macOS), as the other menu rows
                 let keys = crate::keybinds::chord_label("KeyG", true, true, false);
-                if menu::item_keys(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-request"), &keys) {
+                if menu::command(ui, p, "god-mode-request").item_keys("crown-filled", aurora_i18n::tr!("god-mode-request"), &keys) {
                     *action = BarAction::AdminStatus(true);
                 }
-            } else if menu::item(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-leave")) {
+            } else if menu::command(ui, p, "god-mode-leave").item("crown-filled", aurora_i18n::tr!("god-mode-leave")) {
                 *action = BarAction::AdminStatus(false);
             }
             // Advanced › Admin (menu_viewer.xml), while the region keeps
@@ -1639,29 +1781,29 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             }
             // Advanced › Quiet Snapshots (PlayModeUISndSnapshot)
             let quiet = aurora_i18n::tr!("photo-quiet-snapshots");
-            if menu::check(ui, p, "camera-off", quiet, st.quiet_snapshots, true) {
+            if menu::command(ui, p, "quiet").check("camera-off", quiet, st.quiet_snapshots, true) {
                 *action = BarAction::ToggleQuietSnapshots;
             }
-            menu::submenu(
-                ui,
-                p,
+            menu::command(ui, p, "ui-bars-animation-speed").submenu(
                 "player-play-filled",
                 aurora_i18n::tr!("ui-bars-animation-speed"),
                 true,
                 |ui| {
-                    if menu::item(ui, p, "player-skip-forward-filled", aurora_i18n::tr!("ui-bars-animation-faster")) {
+                    if menu::command(ui, p, "ui-bars-animation-faster")
+                        .item("player-skip-forward-filled", aurora_i18n::tr!("ui-bars-animation-faster"))
+                    {
                         *action = BarAction::AnimationSpeed(crate::scene::anim::adjusted_animation_speed(st.animation_speed, 0.1));
                     }
-                    if menu::item(ui, p, "player-skip-back-filled", aurora_i18n::tr!("ui-bars-animation-slower")) {
+                    if menu::command(ui, p, "ui-bars-animation-slower")
+                        .item("player-skip-back-filled", aurora_i18n::tr!("ui-bars-animation-slower"))
+                    {
                         *action = BarAction::AnimationSpeed(crate::scene::anim::adjusted_animation_speed(st.animation_speed, -0.1));
                     }
-                    if menu::item(ui, p, "refresh", aurora_i18n::tr!("ui-bars-animation-reset")) {
+                    if menu::command(ui, p, "ui-bars-animation-reset").item("refresh", aurora_i18n::tr!("ui-bars-animation-reset")) {
                         *action = BarAction::AnimationSpeed(1.0);
                     }
                     menu::separator(ui, p);
-                    if menu::check(
-                        ui,
-                        p,
+                    if menu::command(ui, p, "ui-bars-slow-motion-animations").check(
                         "player-pause-filled",
                         aurora_i18n::tr!("ui-bars-slow-motion-animations"),
                         st.slow_motion_animations,
@@ -1673,17 +1815,19 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             );
             // Advanced › Media Streams Backup: the parcel stream list to
             // and from an XML file (Streamlist.xml_import / xml_export)
-            menu::submenu(
-                ui,
-                p,
+            menu::command(ui, p, "ui-bars-media-streams-backup").submenu(
                 "database-filled",
                 aurora_i18n::tr!("ui-bars-media-streams-backup"),
                 true,
                 |ui| {
-                    if menu::item(ui, p, "database-import", aurora_i18n::tr!("ui-bars-import-stream-list")) {
+                    if menu::command(ui, p, "ui-bars-import-stream-list")
+                        .item("database-import", aurora_i18n::tr!("ui-bars-import-stream-list"))
+                    {
                         *action = BarAction::ImportStreamList;
                     }
-                    if menu::item(ui, p, "database-export", aurora_i18n::tr!("ui-bars-export-stream-list")) {
+                    if menu::command(ui, p, "ui-bars-export-stream-list")
+                        .item("database-export", aurora_i18n::tr!("ui-bars-export-stream-list"))
+                    {
                         *action = BarAction::ExportStreamList;
                     }
                 },
@@ -1691,48 +1835,62 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             // Advanced › Release Keys (Tools.ReleaseKeys), greyed while no
             // script holds a control (Tools.EnableReleaseKeys); no shortcut
             let release = aurora_i18n::tr!("ui-bars-release-keys");
-            if menu::item_if(ui, p, "keyboard-filled", release, st.release_keys) {
+            if menu::command(ui, p, "ui-bars-release-keys").item_if("keyboard-filled", release, st.release_keys) {
                 *action = BarAction::ReleaseKeys;
             }
         });
     }
-    menu::submenu(ui, p, "help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {
+    menu::command(ui, p, "common-help").submenu("help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {
         // menu_viewer.xml: the viewer's wiki and the grid's help first, then
         // Check Grid status before the reports. The wiki is the project's
         // own, without the Legacy Viewer's F1 (the favourites' key here).
         // The grid's help shows only when the grid info gives a help page
         // (update_grid_help, llviewermenu.cpp).
         use super::context::{CtxAction, request};
-        if menu::item(ui, p, "book-filled", aurora_i18n::tr!("ui-bars-wiki")) {
+        if menu::command(ui, p, "ui-bars-wiki").item("book-filled", aurora_i18n::tr!("ui-bars-wiki")) {
             request(ui.ctx(), CtxAction::OpenUrl(crate::links::WIKI.into()));
         }
         if let Some(help) = &st.grid_help
-            && menu::item_detail(ui, p, "article-filled", aurora_i18n::tr!("ui-bars-knowledge-base"), &help.grid)
+            && menu::command(ui, p, "ui-bars-knowledge-base").item_detail(
+                "article-filled",
+                aurora_i18n::tr!("ui-bars-knowledge-base"),
+                &help.grid,
+            )
         {
             request(ui.ctx(), CtxAction::OpenUrl(help.url.clone()));
         }
         menu::separator(ui, p);
         let grid_status = aurora_i18n::tr!("toolbar-command-grid-status");
         let tower = "building-broadcast-tower-filled";
-        flip_window(ui, p, tower, grid_status, super::grid_status::WINDOW, &mut panels.grid_status);
-        if crate::updater::checks_enabled() && menu::item(ui, p, "download-filled", aurora_i18n::tr!("update-check")) {
+        menu::identified(ui, "grid_status", |ui| {
+            flip_window(ui, p, tower, grid_status, super::grid_status::WINDOW, &mut panels.grid_status)
+        });
+        if crate::updater::checks_enabled()
+            && menu::command(ui, p, "update-check").item("download-filled", aurora_i18n::tr!("update-check"))
+        {
             *action = BarAction::CheckUpdates;
         }
-        if menu::item(ui, p, "bug-filled", aurora_i18n::tr!("bug-title")) {
+        if menu::command(ui, p, "bug-title").item("bug-filled", aurora_i18n::tr!("bug-title")) {
             *action = BarAction::ReportBug;
         }
-        if menu::item(ui, p, "flag-filled", aurora_i18n::tr!("report-abuse-title")) {
+        if menu::command(ui, p, "report-abuse-title").item("flag-filled", aurora_i18n::tr!("report-abuse-title")) {
             *action = BarAction::ReportAbuse;
         }
         // menu_viewer.xml: Help › Bumps, Pushes & Hits, after the reports
         let bumps = aurora_i18n::tr!("bumps-title");
-        flip_window(ui, p, "bounce-right-filled", bumps, super::bumps::WINDOW, &mut panels.bumps);
-        if st.release_notes && menu::item(ui, p, "file-text-filled", aurora_i18n::tr!("help-server-release-notes")) {
+        menu::identified(ui, "bumps", |ui| {
+            flip_window(ui, p, "bounce-right-filled", bumps, super::bumps::WINDOW, &mut panels.bumps)
+        });
+        if st.release_notes
+            && menu::command(ui, p, "help-server-release-notes").item("file-text-filled", aurora_i18n::tr!("help-server-release-notes"))
+        {
             *action = BarAction::ServerReleaseNotes;
         }
         menu::separator(ui, p);
         let about = aurora_i18n::tr!("ui-bars-about");
-        flip_window(ui, p, "info-circle-filled", about, super::about::WINDOW, &mut panels.about);
+        menu::identified(ui, "about", |ui| {
+            flip_window(ui, p, "info-circle-filled", about, super::about::WINDOW, &mut panels.about)
+        });
         let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());
         menu::info(ui, p, "info-circle-filled", &version);
         menu::separator(ui, p);
@@ -1759,28 +1917,23 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
 /// ("Character Test") and complexity information are left out.
 fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
     use super::context::{CtxAction, request};
-    menu::submenu(ui, p, "medical-cross-filled", aurora_i18n::tr!("avatar-health-menu"), true, |ui| {
-        if menu::item_keys(
-            ui,
-            p,
+    menu::command(ui, p, "avatar-health-menu").submenu("medical-cross-filled", aurora_i18n::tr!("avatar-health-menu"), true, |ui| {
+        if menu::command(ui, p, "avatar-health-stop-animations").item_keys(
             "player-stop-filled",
             aurora_i18n::tr!("avatar-health-stop-animations"),
             &h.stop_keys,
         ) {
             request(ui.ctx(), CtxAction::StopAnimationsKeepPermissions);
         }
-        if menu::item(
-            ui,
-            p,
-            "player-stop-filled",
-            aurora_i18n::tr!("avatar-health-stop-animations-revoke"),
-        ) {
+        if menu::command(ui, p, "avatar-health-stop-animations-revoke")
+            .item("player-stop-filled", aurora_i18n::tr!("avatar-health-stop-animations-revoke"))
+        {
             request(ui.ctx(), CtxAction::StopAnimations);
         }
-        if menu::item(ui, p, "stretching", aurora_i18n::tr!("avatar-health-undeform")) {
+        if menu::command(ui, p, "avatar-health-undeform").item("stretching", aurora_i18n::tr!("avatar-health-undeform")) {
             request(ui.ctx(), CtxAction::Undeform);
         }
-        if menu::item(ui, p, "bone-filled", aurora_i18n::tr!("ui-context-reset-skeleton")) {
+        if menu::command(ui, p, "ui-context-reset-skeleton").item("bone-filled", aurora_i18n::tr!("ui-context-reset-skeleton")) {
             request(
                 ui.ctx(),
                 CtxAction::ResetSkeleton {
@@ -1789,7 +1942,9 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
                 },
             );
         }
-        if menu::item(ui, p, "run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations")) {
+        if menu::command(ui, p, "ui-context-reset-skeleton-and-animations")
+            .item("run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"))
+        {
             request(
                 ui.ctx(),
                 CtxAction::ResetSkeleton {
@@ -1798,12 +1953,10 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
                 },
             );
         }
-        if menu::item_keys(ui, p, "reload", aurora_i18n::tr!("ui-context-rebake"), &h.rebake_keys) {
+        if menu::command(ui, p, "ui-context-rebake").item_keys("reload", aurora_i18n::tr!("ui-context-rebake"), &h.rebake_keys) {
             request(ui.ctx(), CtxAction::Rebake);
         }
-        if menu::item_keys(
-            ui,
-            p,
+        if menu::command(ui, p, "avatar-health-refresh-attachments").item_keys(
             "paperclip",
             aurora_i18n::tr!("avatar-health-refresh-attachments"),
             &h.refresh_keys,
@@ -1823,43 +1976,54 @@ fn build_menu(
     save_to_contents: bool,
     options: crate::build::MenuOptions,
 ) {
-    if menu::check(
-        ui,
-        p,
-        "man-filled",
-        aurora_i18n::tr!("avatar-studio-title"),
-        panels.avatar_studio,
-        true,
-    ) {
+    if menu::command(ui, p, "avatar-studio-title").check("man-filled", aurora_i18n::tr!("avatar-studio-title"), panels.avatar_studio, true)
+    {
         *action = run_command(ui.ctx(), "avatar_studio", panels);
     }
-    if menu::item(ui, p, "wand", aurora_i18n::tr!("poser-title")) {
+    if menu::command(ui, p, "poser-title").item("wand", aurora_i18n::tr!("poser-title")) {
         *action = BarAction::Poser;
     }
-    if menu::command_keys(ui, p, "ik_edit", ik_keys) {
+    if menu::command(ui, p, "ik-edit-title").toolbar_command_keys("ik_edit", ik_keys) {
         *action = BarAction::IkEdit;
     }
     let locked = ui.ctx().data(|d| d.get_temp::<bool>(rlva_build_locked_id())).unwrap_or(false);
-    if menu::item_if(ui, p, "box", aurora_i18n::tr!("ui-bars-build-ctrl-b"), !locked) {
+    if menu::command(ui, p, "entry-box").item_if("box", aurora_i18n::tr!("ui-bars-build-ctrl-b"), !locked) {
         *action = BarAction::Build(0);
     }
     // the shortcuts in the keys column, so that the toolbar buttons keep
-    // the short labels (menu_viewer.xml: Ctrl+3, Ctrl+4, Ctrl+5)
-    for (mode, id, key) in [
-        (1, "build_edit", "Digit3"),
-        (2, "build_create", "Digit4"),
-        (3, "build_land", "Digit5"),
+    // the short labels (menu_viewer.xml: Ctrl+3, Ctrl+4, Ctrl+5); the menu
+    // keys stay those saved interfaces already name
+    for (mode, entry, id, label, key) in [
+        (
+            1,
+            "entry-pencil-filled",
+            "build_edit",
+            aurora_i18n::tr!("toolbar-command-build-edit"),
+            "Digit3",
+        ),
+        (
+            2,
+            "entry-circle-plus-filled",
+            "build_create",
+            aurora_i18n::tr!("toolbar-command-build-create"),
+            "Digit4",
+        ),
+        (
+            3,
+            "entry-mountain-filled",
+            "build_land",
+            aurora_i18n::tr!("toolbar-command-build-land"),
+            "Digit5",
+        ),
     ] {
         let keys = crate::keybinds::chord_label(key, true, false, false);
-        if menu::command_keys_if(ui, p, id, !locked, &keys) {
+        if menu::command(ui, p, entry).toolbar_command_keys_if(id, label, !locked, &keys) {
             *action = BarAction::Build(mode);
         }
     }
     // menu_viewer.xml: Build › Object › Edit Particles, greyed out until an
     // object we own is selected (LLEnableEditParticleSource)
-    if menu::command_tip(
-        ui,
-        p,
+    if menu::command(ui, p, "ui-bars-edit-particles").toolbar_command_tip(
         "edit_particles",
         edit_particles,
         if edit_particles {
@@ -1872,9 +2036,7 @@ fn build_menu(
     }
     // menu_viewer.xml: Build › Object › Save Back to Object Contents, right
     // after Edit Particles
-    if menu::item_tip(
-        ui,
-        p,
+    if menu::command(ui, p, "ui-bars-save-to-object-contents").item_tip(
         "package-import",
         aurora_i18n::tr!("ui-bars-save-to-object-contents"),
         save_to_contents,
@@ -1886,15 +2048,70 @@ fn build_menu(
     ) {
         *action = BarAction::SaveToObjectContents;
     }
-    menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("build-options-menu"), true, |ui| {
+    menu::command(ui, p, "build-options-menu").submenu("adjustments-filled", aurora_i18n::tr!("build-options-menu"), true, |ui| {
         build_options_menu(ui, p, action, options);
     });
     menu::separator(ui, p);
-    if menu::command(ui, p, "import") {
-        *action = BarAction::Import;
-    }
-    if menu::command(ui, p, "blender_live") {
+    // Build › Import: the quick import bar's imports in its order, then the
+    // advanced import, the local files and the import options (human
+    // request, 2026-11-26)
+    menu::command(ui, p, "import-types").submenu("file-upload-filled", aurora_i18n::tr!("import-menu"), true, |ui| {
+        import_menu(ui, p, action);
+    });
+    if menu::command(ui, p, "blender-live-title").toolbar_command("blender_live") {
         *action = BarAction::BlenderLive;
+    }
+}
+
+/// Build › Import's entries, each its toolbar command.
+fn import_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction) {
+    let types = [
+        ("import_texture", "import-menu-textures", aurora_i18n::tr!("import-menu-textures")),
+        (
+            "import_animation",
+            "import-menu-animations",
+            aurora_i18n::tr!("import-menu-animations"),
+        ),
+        ("import_sound", "import-menu-sounds", aurora_i18n::tr!("import-menu-sounds")),
+        (
+            "import_material",
+            "import-menu-materials",
+            aurora_i18n::tr!("import-menu-materials"),
+        ),
+        ("import_mesh", "import-menu-meshes", aurora_i18n::tr!("import-menu-meshes")),
+    ];
+    for (id, key, label) in types {
+        if menu::command(ui, p, key).toolbar_command_keys_if(id, label, true, "")
+            && let Some(choice) = super::toolbar::presets::import_choice(id)
+        {
+            *action = BarAction::ImportType(choice);
+        }
+    }
+    menu::separator(ui, p);
+    if menu::command(ui, p, "toolbar-import-advanced").toolbar_command_keys_if(
+        "import_advanced",
+        aurora_i18n::tr!("toolbar-import-advanced"),
+        true,
+        "",
+    ) {
+        *action = BarAction::ImportAdvanced;
+    }
+    if menu::command(ui, p, "toolbar-import-local").toolbar_command_keys_if(
+        "import_local",
+        aurora_i18n::tr!("toolbar-import-local"),
+        true,
+        "",
+    ) && let Some(choice) = super::toolbar::presets::import_choice("import_local")
+    {
+        *action = BarAction::ImportType(choice);
+    }
+    if menu::command(ui, p, "import-menu-options").toolbar_command_keys_if(
+        "import_settings",
+        aurora_i18n::tr!("import-menu-options"),
+        true,
+        "",
+    ) {
+        *action = BarAction::ImportSettings;
     }
 }
 
@@ -1902,56 +2119,42 @@ fn build_menu(
 /// the selection shows. The entries stay open to set several in a row.
 fn build_options_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, options: crate::build::MenuOptions) {
     let mut o = options;
-    menu::toggle(ui, p, "user-check", aurora_i18n::tr!("build-compact-owned-only"), &mut o.owned_only);
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-compact-owned-only").toggle("user-check", aurora_i18n::tr!("build-compact-owned-only"), &mut o.owned_only);
+    menu::command(ui, p, "build-compact-movable-only").toggle(
         "arrows-move",
         aurora_i18n::tr!("build-compact-movable-only"),
         &mut o.movable_only,
     );
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-options-locked-only").toggle(
         "lock-filled",
         aurora_i18n::tr!("build-options-locked-only"),
         &mut o.locked_only,
     );
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-options-copyable-only").toggle(
         "copy-filled",
         aurora_i18n::tr!("build-options-copyable-only"),
         &mut o.copyable_only,
     );
-    menu::toggle(ui, p, "sphere", aurora_i18n::tr!("build-compact-probes"), &mut o.probes);
-    menu::toggle(ui, p, "focus-2", aurora_i18n::tr!("build-compact-surrounding"), &mut o.surrounding);
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-compact-probes").toggle("sphere", aurora_i18n::tr!("build-compact-probes"), &mut o.probes);
+    menu::command(ui, p, "build-compact-surrounding").toggle("focus-2", aurora_i18n::tr!("build-compact-surrounding"), &mut o.surrounding);
+    menu::command(ui, p, "build-options-group-owned").toggle(
         "users-group",
         aurora_i18n::tr!("build-options-group-owned"),
         &mut o.group_owned,
     );
     menu::separator(ui, p);
-    menu::toggle(ui, p, "eye-filled", aurora_i18n::tr!("build-compact-highlight"), &mut o.highlight);
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-compact-highlight").toggle("eye-filled", aurora_i18n::tr!("build-compact-highlight"), &mut o.highlight);
+    menu::command(ui, p, "build-options-hidden-selection").toggle(
         "eye-closed",
         aurora_i18n::tr!("build-options-hidden-selection"),
         &mut o.hidden_selection,
     );
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-options-light-radius").toggle(
         "bulb-filled",
         aurora_i18n::tr!("build-options-light-radius"),
         &mut o.light_radius,
     );
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-options-probe-volumes").toggle(
         "sphere",
         aurora_i18n::tr!("build-options-probe-volumes"),
         &mut o.probe_volumes,
@@ -1977,29 +2180,67 @@ const SCRIPT_LIBRARY: &str = "https://wiki.secondlife.com/wiki/LSL_Library";
 /// writing an empty line.
 fn contents_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, action: &mut BarAction, marketplace: bool, motd: bool) {
     use super::context::{CtxAction, request};
-    flip_window(
-        ui,
-        p,
-        "briefcase-filled",
-        aurora_i18n::tr!("common-inventory"),
-        "inventory",
-        &mut panels.inventory,
-    );
+    menu::identified(ui, "common-inventory", |ui| {
+        flip_window(
+            ui,
+            p,
+            "briefcase-filled",
+            aurora_i18n::tr!("common-inventory"),
+            "inventory",
+            &mut panels.inventory,
+        )
+    });
     let gestures = crate::keybinds::chord_label("KeyG", true, false, false);
-    if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), &gestures) {
+    if menu::command(ui, p, "gesture-title").item_keys("hand-move", aurora_i18n::tr!("gesture-title"), &gestures) {
         super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
     }
     menu::separator(ui, p);
-    if marketplace && menu::item(ui, p, "chart-candle-filled", aurora_i18n::tr!("ui-bars-market-data")) {
+    if marketplace && menu::command(ui, p, "ui-bars-market-data").item("chart-candle-filled", aurora_i18n::tr!("ui-bars-market-data")) {
         request(ui.ctx(), CtxAction::OpenUrl(LINDEX_MARKET.into()));
     }
-    if menu::item(ui, p, "code", aurora_i18n::tr!("ui-bars-script-library")) {
+    if menu::command(ui, p, "ui-bars-script-library").item("code", aurora_i18n::tr!("ui-bars-script-library")) {
         request(ui.ctx(), CtxAction::OpenUrl(SCRIPT_LIBRARY.into()));
     }
     menu::separator(ui, p);
-    if menu::item_if(ui, p, "message-filled", aurora_i18n::tr!("ui-bars-message-of-the-day"), motd) {
+    if menu::command(ui, p, "ui-bars-message-of-the-day").item_if("message-filled", aurora_i18n::tr!("ui-bars-message-of-the-day"), motd) {
         *action = BarAction::MessageOfTheDay;
     }
+}
+
+/// Refresh live labels, availability and check marks without any input.
+pub(crate) fn collect_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo) {
+    let mut child = ui.new_child(egui::UiBuilder::new().id_salt("main_menu_catalogue").invisible());
+    let mut action = BarAction::None;
+    let mut catalogue = super::toolbar::commands::scope(&mut child, None, |ui| main_menus(ui, p, panels, st, &mut action, true));
+    catalogue
+        .entries
+        .extend(super::toolbar::COMMANDS.iter().map(|command| super::toolbar::commands::Entry {
+            button: super::skin::ToolButton {
+                command: command.id.into(),
+                icon: command.icon.into(),
+                tooltip: String::new(),
+            },
+            parent: "catalogue".into(),
+            group: false,
+            info: false,
+            separator: false,
+            enabled: command.ready,
+            checked: None,
+        }));
+    super::toolbar::commands::publish(ui.ctx(), catalogue);
+}
+
+pub(crate) fn dispatch_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo) -> BarAction {
+    let Some(command) = super::toolbar::commands::take_request(ui.ctx()) else {
+        return BarAction::None;
+    };
+    if !command.starts_with(super::toolbar::commands::PREFIX) {
+        return run_command(ui.ctx(), &command, panels);
+    }
+    let mut child = ui.new_child(egui::UiBuilder::new().id_salt("main_menu_dispatch").invisible());
+    let mut action = BarAction::None;
+    super::toolbar::commands::scope(&mut child, Some(command), |ui| main_menus(ui, p, panels, st, &mut action, true));
+    action
 }
 
 /// Draw a (white mask) icon tinted, centered in `rect`.
@@ -2232,7 +2473,19 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
 /// selected and ready to copy; typing or pasting a place then Enter
 /// teleports there; Escape or a click elsewhere restores the location.
 fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, loc: &str, w: f32) -> Option<BarAction> {
-    let id = egui::Id::unique("nav_location_edit");
+    location_field_scoped(ui, p, panels, st, loc, w, egui::Id::unique("nav_location_edit"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn location_field_scoped(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    panels: &mut Panels,
+    st: &StatusInfo,
+    loc: &str,
+    w: f32,
+    id: egui::Id,
+) -> Option<BarAction> {
     let slurl = st.slurl.as_str();
     let Some(text) = panels.nav_edit.as_mut() else {
         // exactly the text width (truncated when too long): the maturity badge
@@ -2310,7 +2563,7 @@ fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &Stat
             panels.nav_edit_new = true;
         }
         // AURORA_DEMO_BARS=legacy,locations: a place being typed
-        if demo::get().locations && ui.ctx().cumulative_frame_nr() == location_suggest::DEMO_FRAME {
+        if demo::get().locations && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == location_suggest::DEMO_FRAME {
             panels.nav_edit = Some(location_suggest::DEMO_TYPED.to_owned());
             panels.nav_edit_new = true;
         }
@@ -2429,9 +2682,11 @@ pub fn top_bars(
     media: super::audio::MediaState,
     notif: &mut super::notifications::NotifUi,
     bell: BellState,
+    toolbar: &mut super::toolbar::ToolbarUi,
+    settings: &super::toolbar::ToolbarSettings,
 ) -> (BarAction, super::audio::AudioAction) {
     if !st.classic_bars {
-        return islands::top(ui, p, icons, panels, st, audio, audio_ui, media, notif, bell);
+        return islands::top(ui, p, icons, panels, st, audio, audio_ui, media, notif, bell, toolbar, settings);
     }
     let mut action = BarAction::None;
     let mut audio_action = super::audio::AudioAction::None;
@@ -2448,13 +2703,15 @@ pub fn top_bars(
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.style_mut().visuals.button_frame = false;
                 // Aurora menu (white wolf): Me, Communicate, World, Build, Contents, Advanced, Help
-                if let Some(t) = icons.get("wolf") {
-                    let img = egui::Image::new(t).fit_to_exact_size(Vec2::new(18.0, 18.0)).tint(p.ink);
-                    menu::button(ui, p, egui::Button::image(img), |ui| {
-                        menu::searchable(ui, p, |ui| main_menus(ui, p, panels, st, &mut action, true));
-                    })
-                    .on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));
-                }
+                let main_button = top::button("aurora_menu", "wolf");
+                let width = top::width(ui, settings, &main_button);
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(width, islands::SLOT), egui::Sense::hover());
+                let response = top::native(ui, p, icons, settings, &main_button, rect, egui::Id::unique("classic_main_menu"));
+                toolbar.source(&response, p, &main_button, settings.locked);
+                toolbar.appearance_context(&response, p, &main_button, settings.locked);
+                menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                    menu::searchable(ui, p, |ui| super::toolbar::commands::show(ui, p, toolbar, settings, ""));
+                });
                 // Firestorm's notification well: the bell next to the wolf
                 if !bell.aurora {
                     let resp = super::notifications::bell(ui, p, icons, bell.unread, notif.open, bell.dnd, false);
@@ -2463,7 +2720,7 @@ pub fn top_bars(
                     if resp.clicked() {
                         notif.open = !notif.open;
                     }
-                    if resp.secondary_clicked() {
+                    if bell_menu(&resp, p, bell.dnd) {
                         action = BarAction::SetStatus(super::notifications::bell_dnd_toggled(st.status));
                     }
                 }
@@ -2472,9 +2729,8 @@ pub fn top_bars(
                     let resp = icon_button_response(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), TOP_ICON);
                     if resp.clicked() {
                         action = BarAction::ReportBug;
-                    } else if resp.secondary_clicked() {
-                        action = BarAction::CopyVersion;
                     }
+                    bug_menu(&resp, p, toolbar, settings.locked, &mut action, false);
                 }
                 status_dot(ui, p, st.status, &mut action);
                 // back / forward through the teleport history, home (Firestorm navigation bar)
@@ -2524,7 +2780,7 @@ pub fn top_bars(
                         if resp.clicked() {
                             notif.open = !notif.open;
                         }
-                        if resp.secondary_clicked() {
+                        if bell_menu(&resp, p, bell.dnd) {
                             action = BarAction::SetStatus(super::notifications::bell_dnd_toggled(st.status));
                         }
                     }
@@ -2540,7 +2796,7 @@ pub fn top_bars(
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
                     graphics::hover(&fps, p, st, &mut action);
                     if fps.clicked() {
-                        panels.perf = !panels.perf;
+                        super::widgets::toggle_floater(ui.ctx(), "perf", &mut panels.perf);
                     }
                     audio_action = super::audio::top_controls(ui, p, icons, audio, audio_ui, media, super::audio::BAR_SLOT);
                     if voice_light(ui, p, icons, st.voice.0, &st.voice.1) {
@@ -2614,92 +2870,96 @@ pub fn top_bars(
                         action = BarAction::ResumeClouds;
                     }
                     ui.add_space(4.0);
-                    egui::Frame::new()
-                        .fill(p.field)
-                        .corner_radius(ui.visuals().window_corner_radius)
-                        .inner_margin(egui::Margin::symmetric(8, 1))
-                        .show(ui, |ui| {
-                            ui.set_width((ui.available_width() - 4.0).max(160.0));
-                            // the whole field is clickable (widgets added later, like the
-                            // ⓘ button, stay on top of this area)
-                            let field = ui.max_rect().expand2(Vec2::new(8.0, 1.0));
-                            let field = egui::Rect::from_x_y_ranges(
-                                field.x_range(),
-                                ui.max_rect().center().y - 10.0..=ui.max_rect().center().y + 10.0,
-                            );
-                            let bg = ui.interact(field, ui.scope_id().with("nav_location_area"), egui::Sense::click());
-                            if panels.nav_edit.is_none() {
-                                if bg.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
-                                }
-                                if bg.clicked() {
-                                    panels.nav_edit = Some(st.slurl.clone());
-                                    panels.nav_edit_new = true;
-                                }
-                            }
-                            let mut loc = String::new();
-                            if !st.parcel.is_empty() {
-                                loc.push_str(st.parcel);
-                                loc.push_str(", ");
-                            }
-                            loc.push_str(&format!(
-                                "{} ({:.0}, {:.0}, {:.0})",
-                                st.region, st.position.x, st.position.y, st.position.z
-                            ));
-                            // LLAgentUI::buildLocationString (llagentui.cpp): "(Hidden
-                            // parcel), (Hidden region)" under @showloc; the field still
-                            // opens on the SLURL, hidden in its turn
-                            // (LLLocationInputCtrl::changeLocationPresentation)
-                            if st.location_hidden {
-                                loc = format!("{}, {}", st.parcel, st.region);
-                            }
-                            if !st.maturity.is_empty() {
-                                loc.push_str(&format!(" - {}", st.maturity));
-                            }
-                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                if info_button(ui, p, icons) {
-                                    panels.about_land = !panels.about_land;
-                                }
-                                // keep the maturity badge and the parcel icons visible when
-                                // the field is narrow; the icons go first in a very narrow
-                                // window (they would spill over the clock)
-                                let icons_w = if st.parcel_icons.is_empty() {
-                                    0.0
-                                } else {
-                                    super::parcel_icons::width(ui, &st.parcel_icons) + 8.0
-                                };
-                                let icons_w = if ui.available_width() - 24.0 - STAR_W - icons_w >= 80.0 {
-                                    icons_w
-                                } else {
-                                    0.0
-                                };
-                                let w = (ui.available_width() - 24.0 - STAR_W - icons_w).max(40.0);
-                                ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                                    if let Some(a) = location_field(ui, p, panels, st, &loc, w) {
-                                        action = a;
+                    if settings.address_visible.unwrap_or(true) {
+                        egui::Frame::new()
+                            .fill(p.field)
+                            .corner_radius(ui.visuals().window_corner_radius)
+                            .inner_margin(egui::Margin::symmetric(8, 1))
+                            .show(ui, |ui| {
+                                ui.set_width((ui.available_width() - 4.0).max(160.0));
+                                // the whole field is clickable (widgets added later, like the
+                                // ⓘ button, stay on top of this area)
+                                let field = ui.max_rect().expand2(Vec2::new(8.0, 1.0));
+                                let field = egui::Rect::from_x_y_ranges(
+                                    field.x_range(),
+                                    ui.max_rect().center().y - 10.0..=ui.max_rect().center().y + 10.0,
+                                );
+                                let bg = ui.interact(field, ui.scope_id().with("nav_location_area"), egui::Sense::click());
+                                if panels.nav_edit.is_none() {
+                                    if bg.hovered() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                                     }
-                                });
-                                super::widgets::maturity_badge(ui, p, st.maturity, 14.0);
-                                // parcel abilities then the landmark star, anchored to
-                                // the right edge of the field
-                                if icons_w > 0.0 {
-                                    ui.add_space((ui.available_width() - icons_w + 8.0 - STAR_W).max(0.0));
-                                    ui.scope(|ui| {
-                                        if super::parcel_icons::show(ui, p, icons, &st.parcel_icons, p.field) {
-                                            panels.about_land = !panels.about_land;
+                                    if bg.clicked() {
+                                        panels.nav_edit = Some(st.slurl.clone());
+                                        panels.nav_edit_new = true;
+                                    }
+                                }
+                                let mut loc = String::new();
+                                if !st.parcel.is_empty() {
+                                    loc.push_str(st.parcel);
+                                    loc.push_str(", ");
+                                }
+                                loc.push_str(&format!(
+                                    "{} ({:.0}, {:.0}, {:.0})",
+                                    st.region, st.position.x, st.position.y, st.position.z
+                                ));
+                                // LLAgentUI::buildLocationString (llagentui.cpp): "(Hidden
+                                // parcel), (Hidden region)" under @showloc; the field still
+                                // opens on the SLURL, hidden in its turn
+                                // (LLLocationInputCtrl::changeLocationPresentation)
+                                if st.location_hidden {
+                                    loc = format!("{}, {}", st.parcel, st.region);
+                                }
+                                if !st.maturity.is_empty() {
+                                    loc.push_str(&format!(" - {}", st.maturity));
+                                }
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                    if info_button(ui, p, icons) {
+                                        let id = super::land::window_id(panels.about_land_classic);
+                                        super::widgets::toggle_floater(ui.ctx(), id, &mut panels.about_land);
+                                    }
+                                    // keep the maturity badge and the parcel icons visible when
+                                    // the field is narrow; the icons go first in a very narrow
+                                    // window (they would spill over the clock)
+                                    let icons_w = if st.parcel_icons.is_empty() {
+                                        0.0
+                                    } else {
+                                        super::parcel_icons::width(ui, &st.parcel_icons) + 8.0
+                                    };
+                                    let icons_w = if ui.available_width() - 24.0 - STAR_W - icons_w >= 80.0 {
+                                        icons_w
+                                    } else {
+                                        0.0
+                                    };
+                                    let w = (ui.available_width() - 24.0 - STAR_W - icons_w).max(40.0);
+                                    ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
+                                        if let Some(a) = location_field(ui, p, panels, st, &loc, w) {
+                                            action = a;
                                         }
                                     });
-                                } else {
-                                    ui.add_space((ui.available_width() - STAR_W).max(0.0));
-                                }
-                                // LLLocationInputCtrl::updateAddLandmarkButton: no star under @showloc
-                                if !st.location_hidden
-                                    && let Some(star) = landmark_star(ui, p, icons, st.parcel_landmark.as_ref())
-                                {
-                                    action = BarAction::LandmarkStar(star);
-                                }
+                                    super::widgets::maturity_badge(ui, p, st.maturity, 14.0);
+                                    // parcel abilities then the landmark star, anchored to
+                                    // the right edge of the field
+                                    if icons_w > 0.0 {
+                                        ui.add_space((ui.available_width() - icons_w + 8.0 - STAR_W).max(0.0));
+                                        ui.scope(|ui| {
+                                            if super::parcel_icons::show(ui, p, icons, &st.parcel_icons, p.field) {
+                                                let id = super::land::window_id(panels.about_land_classic);
+                                                super::widgets::toggle_floater(ui.ctx(), id, &mut panels.about_land);
+                                            }
+                                        });
+                                    } else {
+                                        ui.add_space((ui.available_width() - STAR_W).max(0.0));
+                                    }
+                                    // LLLocationInputCtrl::updateAddLandmarkButton: no star under @showloc
+                                    if !st.location_hidden
+                                        && let Some(star) = landmark_star(ui, p, icons, st.parcel_landmark.as_ref())
+                                    {
+                                        action = BarAction::LandmarkStar(star);
+                                    }
+                                });
                             });
-                        });
+                    }
                 });
             });
         });
@@ -2720,9 +2980,18 @@ pub fn top_bars(
 
 /// Execute a toolbar command; returns an action for the app.
 pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAction {
+    if let Some(choice) = super::toolbar::presets::import_choice(cmd) {
+        return BarAction::ImportType(choice);
+    }
+    if cmd.starts_with(super::toolbar::commands::PREFIX) {
+        super::toolbar::commands::request(ctx, cmd);
+        return BarAction::None;
+    }
     // a window shown closes, a minimized one expands (LLFloaterReg::toggleInstance)
     let toggle = |id: &str, open: &mut bool| super::widgets::toggle_floater(ctx, id, open);
     match cmd {
+        "report_bug" => return BarAction::ReportBug,
+        "location_bar" => return BarAction::ToggleAddressBar,
         "conversations" => toggle("conversations", &mut panels.chat),
         "people" => {
             toggle("people", &mut panels.people);
@@ -2734,7 +3003,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         }
         "inventory" => toggle("inventory", &mut panels.inventory),
         "inventory_dual" => {
-            panels.inventory = true;
+            super::widgets::open_floater(ctx, "inventory", &mut panels.inventory);
             panels.inventory_dual = !panels.inventory_dual;
             super::inventory::resize_for_dual(ctx, panels.inventory_dual);
         }
@@ -2773,7 +3042,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
-        "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
+        // Floater.Toggle snapshot: the app knows the window's style
+        "snapshot" => return BarAction::PhotoToggle,
         // Floater.ToggleOrBringToFront 360capture
         "360capture" => return BarAction::Photo360,
         // File.TakeSnapshotToDisk: a photo saved with the last settings,
@@ -2785,6 +3055,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "phototools" => toggle(super::phototools::WINDOW, &mut panels.phototools),
         // Floater.Toggle quickprefs
         "quickprefs" => toggle(super::quick_prefs::WINDOW, &mut panels.quick_prefs),
+        "graphics_preferences" => return BarAction::GraphicsPreferences,
         // Aurora's own: the Director's window and its timeline
         "director" => toggle(super::director::WINDOW, &mut panels.director),
         // Aurora's own: the second camera's window
@@ -2801,7 +3072,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // View › Show User Interface and World › HUDs › Show HUDs as buttons
         "hide_interface" => return BarAction::ToggleInterface,
         "huds" => return BarAction::ToggleHuds,
-        "preferences" => toggle("options", &mut panels.settings),
+        "preferences" => toggle(super::options::WINDOW, &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
         "move" => {
             return BarAction::Controls {
@@ -2823,9 +3094,9 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "sit" => return BarAction::SitGround,
         "home" => return BarAction::TeleportHome,
         // Firestorm's commands on what Aurora already does (commands.xml)
-        "aboutland" => panels.about_land = !panels.about_land,
-        "regioninfo" => panels.region_estate = !panels.region_estate,
-        "myenvironments" => panels.environment = !panels.environment,
+        "aboutland" => toggle(super::land::window_id(panels.about_land_classic), &mut panels.about_land),
+        "regioninfo" => toggle(super::region::window_id(panels.region_estate_classic), &mut panels.region_estate),
+        "myenvironments" => toggle("environment_selector", &mut panels.environment),
         "radar" | "block_list" | "contact_sets" => {
             let tab = match cmd {
                 "radar" => super::people::TAB_NEARBY,
@@ -2842,11 +3113,15 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         }
         "build" => return BarAction::Build(0),
         "ik_edit" => return BarAction::IkEdit,
-        "build_edit" => return BarAction::Build(1),
-        "build_create" => return BarAction::Build(2),
-        "build_land" => return BarAction::Build(3),
+        "build_edit" => return BarAction::BuildButton(1),
+        "build_create" => return BarAction::BuildButton(2),
+        "build_land" => return BarAction::BuildButton(3),
+        "build_focus" => return BarAction::BuildButton(4),
+        "build_grab" => return BarAction::BuildButton(5),
         "edit_particles" => return BarAction::EditParticles,
         "import" => return BarAction::Import,
+        "import_advanced" => return BarAction::ImportAdvanced,
+        "import_settings" => return BarAction::ImportSettings,
         "blender_live" => return BarAction::BlenderLive,
         "buy_currency" => return BarAction::BuyCurrency,
         "money_tracker" => super::money_tracker::toggle(ctx, &mut panels.money_tracker),
@@ -2995,7 +3270,7 @@ pub(crate) struct ButtonLook {
 }
 
 impl ButtonLook {
-    fn bar(width: f32) -> Self {
+    pub(crate) fn bar(width: f32) -> Self {
         ButtonLook {
             size: Vec2::new(width, 22.0),
             icon: (width - 6.0).clamp(10.0, 16.0),
@@ -3032,6 +3307,19 @@ pub(crate) fn natural_width(
     icon: f32,
     mic: f32,
 ) -> f32 {
+    if super::toolbar::structure::is_divider(&b.command) {
+        return super::toolbar::structure::DIVIDER_SIZE;
+    }
+    if super::toolbar::structure::is_separator(&b.command) {
+        return super::toolbar::structure::style(ctx, &b.command).size;
+    }
+    if let Some(width) = chrome::width(ctx, &b.command) {
+        return width;
+    }
+    let mode = super::toolbar::appearance::get(ctx, &b.command)
+        .mode
+        .or(super::toolbar::blocks::saved_style(ctx, &b.command).mode)
+        .unwrap_or(mode);
     let speak = b.command == "speak";
     if mode == super::toolbar::ButtonMode::IconsOnly {
         return if speak { mic } else { square };
@@ -3063,7 +3351,7 @@ fn content(ui: &egui::Ui, rect: egui::Rect, look: ButtonLook, text: &str) -> (Op
 }
 
 #[allow(clippy::too_many_arguments)]
-fn tool_button(
+pub(crate) fn tool_button(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
@@ -3078,6 +3366,8 @@ fn tool_button(
     flash: f32,
     locked: bool,
 ) -> egui::Response {
+    let custom = super::toolbar::appearance::get(ui.ctx(), command);
+    let icon = custom.icon.as_deref().unwrap_or(icon);
     let (rect, _) = ui.allocate_exact_size(look.size, egui::Sense::hover());
     let resp = ui.interact(rect, tool_button_id(command), egui::Sense::click_and_drag());
     let icon_size = look.icon;
@@ -3154,7 +3444,11 @@ fn tool_button(
     } else if unread > 0 {
         paint_unread_pill(ui, p, rect, icon_size, unread);
     }
-    resp.on_hover_text(tip)
+    if super::toolbar::ToolbarUi::dragging(ui.ctx()) {
+        resp
+    } else {
+        resp.on_hover_text(tip)
+    }
 }
 
 /// The unread count of the Conversations button: the one counter of the
@@ -3393,7 +3687,8 @@ fn mic_button(
 
     // demo captures: AURORA_DEMO_MICMENU=1 opens the panel
     static DEMO_OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let demo = *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_MICMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300;
+    let demo = *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_MICMENU").is_some())
+        && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300;
     let toggle = match &arrow {
         Some(arrow) => arrow.clicked(),
         None => !toolbar_menu && resp.secondary_clicked(),
@@ -3639,6 +3934,9 @@ pub(crate) struct Row<'a> {
     pub style: super::toolbar::Style,
     /// The "Toolbar buttons" window is open (and the toolbars unlocked).
     pub editing: bool,
+    /// A floating block's row: drawn as a bar's block, and a drag on its
+    /// buttons moves the block (`toolbar/floating.rs`).
+    pub floating: bool,
 }
 
 /// The toolbar's buttons one after the other in `ui` (Firestorm's bar or
@@ -3658,7 +3956,46 @@ pub(crate) fn toolbar_row(
     row: &Row,
     action: &mut BarAction,
 ) -> Vec<egui::Rect> {
+    let ctx = ui.ctx().clone();
+    let look = |button: &super::skin::ToolButton| {
+        let mut resolved = look(button);
+        resolved.mode = super::toolbar::appearance::get(&ctx, &button.command)
+            .mode
+            .or(super::toolbar::blocks::saved_style(&ctx, &button.command).mode)
+            .unwrap_or(resolved.mode);
+        if row.bar.vertical() {
+            resolved.left = resolved.mode != super::toolbar::ButtonMode::IconsOnly;
+        }
+        resolved
+    };
     let mut rects = Vec::with_capacity(buttons.len());
+    let split = row.editing
+        || row.floating
+        || (toolbar.islands
+            && (buttons
+                .iter()
+                .any(|button| super::toolbar::structure::is_separator(&button.command))
+                || sizing::has_alignment(ui.ctx(), buttons)));
+    let underlay = split.then(|| {
+        let mut painter = ui.painter().clone();
+        // ScrollArea clips controls at the inner viewport. The glass still
+        // needs its end padding, as LLToolBar::updateLayoutAsNeeded keeps
+        // mPadLeft/mPadRight around its buttons. Extend only the background
+        // along the bar, leaving the content clip and hit targets unchanged.
+        let padding = if row.bar.vertical() {
+            Vec2::new(0.0, islands::PAD)
+        } else {
+            Vec2::new(islands::PAD, 0.0)
+        };
+        painter.set_clip_rect(ui.clip_rect().expand2(padding).intersect(ui.ctx().content_rect()));
+        let slot = painter.add(egui::Shape::Noop);
+        (painter, slot)
+    });
+    let reveal = |ui: &mut egui::Ui, command: &str, rect: egui::Rect| {
+        if super::toolbar::ToolbarUi::is_preview_item(ui.ctx(), command) && !ui.clip_rect().contains_rect(rect) {
+            ui.scroll_to_rect(rect, Some(egui::Align::Center));
+        }
+    };
     // the app's RLVa and flight locks, read once for the row
     let (sit_locked, build_locked, fly_locked) = ui.ctx().data(|d| {
         (
@@ -3668,17 +4005,81 @@ pub(crate) fn toolbar_row(
         )
     });
     for b in buttons {
+        if super::toolbar::structure::is_divider(&b.command) {
+            let (rect, _) = ui.allocate_exact_size(look(b).size, egui::Sense::hover());
+            let response = ui.interact(rect, tool_button_id(&b.command), egui::Sense::click_and_drag());
+            let color = if response.hovered() { p.violet_light } else { p.muted_dim };
+            // A user-placed divider inside a toolbar block.
+            let ends = if row.bar.vertical() {
+                [rect.left_center() + Vec2::new(5.0, 0.0), rect.right_center() - Vec2::new(5.0, 0.0)]
+            } else {
+                [rect.center_top() + Vec2::new(0.0, 5.0), rect.center_bottom() - Vec2::new(0.0, 5.0)]
+            };
+            ui.painter().line_segment(ends, egui::Stroke::new(1.0, color));
+            toolbar.button_in(&response, row.bar, row.style, b, p, row.locked, row.floating);
+            if response.clicked() || response.secondary_clicked() {
+                toolbar.selected = Some(b.command.clone());
+            }
+            rects.push(rect);
+            continue;
+        }
+        if super::toolbar::structure::is_separator(&b.command) {
+            let size = look(b).size;
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            let response = ui.interact(rect, tool_button_id(&b.command), egui::Sense::click_and_drag());
+            reveal(ui, &b.command, rect);
+            if row.editing || response.hovered() {
+                super::widgets::paint_glyph(
+                    ui.painter(),
+                    if row.bar.vertical() {
+                        "separator-horizontal"
+                    } else {
+                        "separator-vertical"
+                    },
+                    rect.center(),
+                    10.0,
+                    p.muted,
+                );
+            }
+            toolbar.button_in(&response, row.bar, row.style, b, p, row.locked, row.floating);
+            if !super::toolbar::ToolbarUi::dragging(ui.ctx()) {
+                response.on_hover_text(super::toolbar::label(b));
+            }
+            rects.push(rect);
+            continue;
+        }
+        if let Some(rect) = chrome::register(ui, b, row, look(b).size) {
+            reveal(ui, &b.command, rect);
+            rects.push(rect);
+            continue;
+        }
+        if super::toolbar::ToolbarUi::intercepting(ui.ctx()) {
+            let response = super::toolbar::edit_mode::cell(ui, p, icons, toolbar, b, row.bar, row.style, row.locked, look(b));
+            reveal(ui, &b.command, response.rect);
+            rects.push(response.rect);
+            let settings = super::toolbar::appearance::settings(ui.ctx());
+            if super::toolbar::drawers::is_drawer(&b.command) {
+                super::toolbar::drawers::show(&response, p, icons, toolbar, panels, mic, row, b);
+            } else {
+                super::toolbar::edit_mode::source_menu(&response, p, toolbar, &settings, &b.command);
+            }
+            continue;
+        }
         if b.command == "speak" {
             let open_voice = std::mem::take(&mut toolbar.voice_options);
             let response = mic_button(ui, p, icons, look(b), super::toolbar::label(b), mic, true, open_voice);
             rects.push(response.rect);
-            toolbar.button(&response, row.bar, row.style, b, p, row.locked);
+            toolbar.button_in(&response, row.bar, row.style, b, p, row.locked, row.floating);
             if !row.locked && response.dragged() {
                 mic.held = false;
             }
             continue;
         }
-        let active = if b.command == "fly_override" {
+        let active = if b.command.starts_with(super::toolbar::commands::PREFIX) {
+            super::toolbar::commands::checked(ui.ctx(), &b.command)
+        } else if b.command == "location_bar" {
+            location_popup::is_open(ui.ctx())
+        } else if b.command == "fly_override" {
             toolbar.fly_override_active
         } else if b.command == "quickjump" {
             toolbar.quickjump_active
@@ -3735,7 +4136,8 @@ pub(crate) fn toolbar_row(
             && !no_guide
             && !(b.command == "pose_stand" && row.seated)
             && !(b.command == "edit_particles" && !toolbar.edit_particles)
-            && !(b.command == "stand_up" && !row.seated);
+            && !(b.command == "stand_up" && !row.seated)
+            && (!b.command.starts_with(super::toolbar::commands::PREFIX) || super::toolbar::commands::available(ui.ctx(), &b.command));
         let tip = if badge {
             aurora_i18n::tr!(
                 "ui-bars-unread",
@@ -3785,11 +4187,16 @@ pub(crate) fn toolbar_row(
         };
         // the Favorites button: its grid of favourites opens upwards
         let grid_id = egui::Id::unique("bars_favorites_grid_open");
-        let active = active || (b.command == "favorites" && ui.ctx().data(|d| d.get_temp::<bool>(grid_id)).unwrap_or(false));
+        let active = active
+            || (b.command == "favorites" && ui.ctx().data(|d| d.get_temp::<bool>(grid_id)).unwrap_or(false))
+            || (super::toolbar::drawers::is_drawer(&b.command) && super::toolbar::drawers::is_open(ui.ctx(), &b.command));
         let rlva_locked = (b.command == "sit" || b.command == "stand_up" && row.seated) && sit_locked
-            || matches!(b.command.as_str(), "build" | "build_edit" | "build_create" | "build_land") && build_locked
+            || matches!(
+                b.command.as_str(),
+                "build" | "build_focus" | "build_grab" | "build_edit" | "build_create" | "build_land"
+            ) && build_locked
             || b.command == "fly" && fly_locked;
-        let response = tool_button(
+        let mut response = tool_button(
             ui,
             p,
             icons,
@@ -3815,11 +4222,61 @@ pub(crate) fn toolbar_row(
             },
             rlva_locked,
         );
+        // its keyboard shortcut clicks it, with a click's rules
+        // (toolbar/shortcuts.rs)
+        if !row.editing && super::toolbar::shortcuts::claim(ui.ctx(), &b.command) {
+            response.flags.insert(egui::response::Flags::FAKE_PRIMARY_CLICKED);
+        }
         rects.push(response.rect);
-        toolbar.button(&response, row.bar, row.style, b, p, row.locked);
+        // an Interfaces block's interface: applied by a click, never dragged
+        // nor edited alone (`drawers::INTERFACES`)
+        if let Some(key) = b.command.strip_prefix(super::toolbar::drawers::INTERFACE_PREFIX) {
+            toolbar.interface_context(&response, p, b);
+            if response.clicked() && !row.editing {
+                if key == super::toolbar::drawers::INTERFACE_CUSTOMIZE {
+                    *action = BarAction::CustomizeBars;
+                } else {
+                    toolbar.interface_clicked(key);
+                }
+            }
+            continue;
+        }
+        toolbar.button_in(&response, row.bar, row.style, b, p, row.locked, row.floating);
+        if b.command == "location_bar" {
+            let settings = super::toolbar::appearance::settings(ui.ctx());
+            let bar = settings.location(&b.command, &super::skin::Layout::default()).unwrap_or(row.bar);
+            location_popup::register(&response, bar);
+        }
+        if super::toolbar::drawers::is_drawer(&b.command) {
+            super::toolbar::drawers::show(&response, p, icons, toolbar, panels, mic, row, b);
+            // the import block's button shows and hides it like Ctrl+U
+            if b.command == super::toolbar::drawers::IMPORT_BAR
+                && response.clicked()
+                && !super::toolbar::ToolbarUi::editing(ui.ctx())
+                && super::toolbar::drawers::is_floating(&super::toolbar::appearance::settings(ui.ctx()), &b.command)
+            {
+                *action = BarAction::ImportBar;
+            }
+            continue;
+        }
         if !super::toolbar::ready(&b.command) || !usable {
             // a saved Legacy Viewer command Aurora does not have yet, or one
             // with nothing to do now
+            continue;
+        }
+        let catalogue = super::toolbar::commands::catalogue(ui.ctx());
+        if b.command == "aurora_menu" || catalogue.find(&b.command).is_some_and(|entry| entry.group) {
+            let settings = super::toolbar::appearance::settings(ui.ctx());
+            menu::dropdown_placed(
+                &response,
+                p,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                Some((look(b).opens, 7.0)),
+                |ui| {
+                    let parent = if b.command == "aurora_menu" { "" } else { &b.command };
+                    menu::searchable(ui, p, |ui| super::toolbar::commands::show(ui, p, toolbar, &settings, parent));
+                },
+            );
             continue;
         }
         if b.command == "favorites" {
@@ -3864,12 +4321,45 @@ pub(crate) fn toolbar_row(
             continue;
         }
         if response.clicked() && !rlva_locked {
+            if b.command == "location_bar" {
+                location_popup::toggle(ui.ctx());
+                continue;
+            }
             let a = run_command(ui.ctx(), &b.command, panels);
             if !matches!(a, BarAction::None) {
                 *action = a;
             }
         }
     }
+    if let Some((painter, underlay)) = underlay {
+        let bounds = rects.iter().copied().filter(|rect| rect.is_positive()).reduce(egui::Rect::union);
+        if let Some(bounds) = bounds {
+            let outer = bounds.expand(islands::PAD).intersect(painter.clip_rect());
+            // the chat block's island, raised over the dock's row
+            // (`chrome::lift_chat`)
+            let lifted = (row.bar == super::toolbar::Bar::Bottom && !row.floating && !row.editing)
+                .then(|| chrome::chat_lift(ui.ctx()))
+                .flatten()
+                .filter(|lift| *lift > 0.0)
+                .and_then(|lift| {
+                    let chat = buttons.iter().position(|button| button.command == "bar_chat")?;
+                    Some((rects.get(chat)?.center(), lift))
+                });
+            let shapes = super::toolbar::structure::groups(buttons, &rects, outer, row.bar.vertical())
+                .into_iter()
+                .map(|mut rect| {
+                    if let Some((chat, lift)) = lifted
+                        && rect.contains(chat)
+                    {
+                        rect.min.y -= lift;
+                    }
+                    super::widgets::island_shape(ui.ctx(), p, rect)
+                })
+                .collect();
+            painter.set(underlay, egui::Shape::Vec(shapes));
+        }
+    }
+    super::toolbar::blocks::collect(ui, row.bar, buttons, &rects);
     rects
 }
 
@@ -3902,7 +4392,7 @@ pub fn bottom_bar(
 ) -> (Option<super::chat::OutgoingChat>, BarAction, f32, bool) {
     let bar = super::toolbar::Bar::Bottom;
     let style = toolbar_settings.style(bar).resolve(bar, islands);
-    let editing = toolbar.open && !toolbar_settings.locked;
+    let editing = toolbar.open;
     let (flash, flashing) = chat.button_flash.button(ui.input(|i| i.time));
     if flashing {
         ui.ctx().request_repaint();
@@ -3921,6 +4411,7 @@ pub fn bottom_bar(
             bar,
             style,
             editing,
+            floating: false,
         };
         return dock::bottom(
             ui,
@@ -3943,23 +4434,42 @@ pub fn bottom_bar(
     let mut width_committed = false;
     let mut glass = None;
     // autohidden (#1009), the toolbar takes the whole bar
-    let chat_shown = chat.bar_shown();
+    let display = super::toolbar::structure::Display::for_bar(ui.ctx(), bar, toolbar_settings.buttons(layout), editing);
+    let chat_shown = (chat.bar_shown() || editing) && !toolbar_settings.chat_composed;
     chat.bar_hovered = false;
     let editor_height = if chat_shown {
         super::chat::input::height(ui.ctx(), super::chat::bar_input_id(), ui.spacing().interact_size.y)
     } else {
         0.0
     };
-    let bar_height = layout.bottom_bar_height.max(editor_height + 6.0);
+    let buttons = display.buttons();
+    let row_height: f32 = if buttons.iter().any(|button| super::toolbar::structure::is_block(&button.command)) {
+        islands::HEIGHT
+    } else {
+        22.0
+    };
+    let row_height = buttons
+        .iter()
+        .filter(|button| super::toolbar::structure::is_block(&button.command))
+        .map(|button| chrome::height(ui.ctx(), &button.command))
+        .fold(row_height, f32::max);
+    let bar_height = layout.bottom_bar_height.max(editor_height + 6.0).max(row_height + 6.0);
     let resp = egui::Panel::bottom("bottom_bar")
-        .frame(bar_frame(p).inner_margin(egui::Margin::symmetric(8, 3)))
+        .frame(
+            (if editing {
+                bar_frame(p).fill(p.bar.gamma_multiply(0.0))
+            } else {
+                bar_frame(p)
+            })
+            .inner_margin(egui::Margin::symmetric(8, 3)),
+        )
         .exact_size(bar_height)
         .show(ui, |ui| {
+            super::toolbar::edit_mode::region(ui, p, super::toolbar::Bar::Bottom, ui.max_rect(), buttons.is_empty());
             glass = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
             ui.set_min_width(ui.available_width());
             ui.horizontal_centered(|ui| {
                 let total = ui.available_width();
-                let buttons = toolbar_settings.buttons(layout);
                 let n = buttons.len().max(1) as f32;
                 // the toolbar keeps at least a narrow button per command
                 const MIN_BTN: f32 = 22.0;
@@ -4028,11 +4538,26 @@ pub fn bottom_bar(
                     .iter()
                     .map(|b| natural_width(ui.ctx(), b, style.mode, square, 16.0, square))
                     .collect();
-                let widths = sizing::fit(&natural, style.sizing, labelled, remaining - 1.0, gap, MIN_BTN);
-                let widths: Vec<f32> = widths.into_iter().map(|w| w.max(MIN_BTN)).collect();
+                let widths = sizing::toolbar(ui.ctx(), buttons, &natural, style.sizing, labelled, remaining - 1.0, gap, MIN_BTN);
+                let mut widths: Vec<f32> = widths
+                    .into_iter()
+                    .zip(buttons)
+                    .map(|(w, button)| {
+                        if super::toolbar::structure::is_separator(&button.command)
+                            || super::toolbar::structure::is_divider(&button.command)
+                        {
+                            w
+                        } else {
+                            w.max(MIN_BTN)
+                        }
+                    })
+                    .collect();
+                let aligned = sizing::alignment(ui.ctx(), buttons, &mut widths, remaining - 1.0, gap, style);
                 let used = widths.iter().sum::<f32>() + gap * (n - 1.0);
-                let lead = (sizing::place(style.align, 0.0, remaining - 1.0, used)).max(0.0);
-                let zone = egui::Rect::from_min_size(ui.cursor().min, Vec2::new(remaining.max(4.0), 22.0));
+                let lead = aligned
+                    .unwrap_or_else(|| sizing::place(style.align, 0.0, remaining - 1.0, used))
+                    .max(0.0);
+                let zone = egui::Rect::from_min_size(ui.cursor().min, Vec2::new(remaining.max(4.0), row_height));
                 let target = ui.interact(zone, egui::Id::unique("toolbar_background"), egui::Sense::click());
                 toolbar.context(&target, p, bar, style, None, toolbar_settings.locked);
                 let mut rects = Vec::new();
@@ -4040,9 +4565,11 @@ pub fn bottom_bar(
                     .id_salt("toolbar_scroll")
                     .auto_shrink([false, false])
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                    .max_height(22.0)
+                    .max_height(row_height)
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
+                        // Reserve the full row before centering its contents: a live
+                        // block is taller than the default horizontal layout height.
+                        ui.horizontal_centered(|ui| {
                             ui.spacing_mut().item_spacing.x = gap;
                             if lead > 0.0 {
                                 ui.add_space(lead - gap);
@@ -4060,6 +4587,7 @@ pub fn bottom_bar(
                                 bar,
                                 style,
                                 editing,
+                                floating: false,
                             };
                             let look = |b: &crate::ui::skin::ToolButton| {
                                 let at = buttons.iter().position(|x| x.command == b.command).unwrap_or(0);
@@ -4068,16 +4596,23 @@ pub fn bottom_bar(
                                     icon: if labelled { 16.0 } else { (w - 6.0).clamp(10.0, 16.0) },
                                     mode: style.mode,
                                     editing,
+                                    size: Vec2::new(w, row_height),
                                     ..ButtonLook::bar(w)
                                 }
                             };
                             rects = toolbar_row(ui, p, icons, buttons, look, toolbar, panels, mic, &row, &mut action);
                         });
                     });
-                toolbar.drop_bar(&target, bar, &rects, p, toolbar_settings.locked);
+                toolbar.drop_bar(
+                    &target,
+                    bar,
+                    display.original(),
+                    &display.full_rects(&rects),
+                    toolbar_settings.locked,
+                );
             });
         });
-    if let Some((painter, slot)) = glass {
+    if let Some((painter, slot)) = glass.filter(|_| !editing) {
         super::widgets::finish_bar_glass(&painter, slot, resp.response.rect, p);
     }
     (out, action, resp.response.rect.top(), width_committed)
@@ -4616,7 +5151,7 @@ mod tests {
             ("inventory", "inventory", |p| p.inventory),
             ("gestures", "gestures", |p| p.gestures),
             ("people", "people", |p| p.people),
-            ("preferences", "options", |p| p.settings),
+            ("preferences", super::super::options::WINDOW, |p| p.settings),
             ("areasearch", super::super::area_search::WINDOW, |p| p.area_search),
             ("soundexplorer", super::super::sound_explorer::WINDOW, |p| p.sound_explorer),
             ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
@@ -4637,6 +5172,9 @@ mod tests {
             ("statistics", "perf", |p| p.perf),
             ("voice", super::super::voice_controls::WINDOW, |p| p.voice_controls),
             ("omnifilter", super::super::omnifilter::WINDOW, |p| p.omnifilter),
+            ("aboutland", super::super::land::window_id(false), |p| p.about_land),
+            ("regioninfo", super::super::region::WINDOW, |p| p.region_estate),
+            ("myenvironments", "environment_selector", |p| p.environment),
         ] {
             run_command(&ctx, cmd, &mut panels);
             if !open(&panels) {
@@ -4651,6 +5189,31 @@ mod tests {
         ctx.data_mut(|d| d.insert_persisted(egui::Id::unique(("conversations", "minimized")), false));
         run_command(&ctx, "conversations", &mut panels);
         assert!(!panels.chat);
+    }
+
+    #[test]
+    fn a_toolbar_button_expands_the_legacy_layout_window() {
+        // About Land and Region / Estate draw a floater of their own in
+        // the Legacy layout: the button expands that one
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        panels.about_land_classic = true;
+        panels.region_estate_classic = true;
+        for (cmd, id, open) in [
+            (
+                "aboutland",
+                super::super::land::window_id(true),
+                (|p| p.about_land) as fn(&Panels) -> bool,
+            ),
+            ("regioninfo", super::super::region::CLASSIC_WINDOW, |p| p.region_estate),
+        ] {
+            run_command(&ctx, cmd, &mut panels);
+            assert!(open(&panels), "{cmd} opens");
+            super::super::widgets::minimize_floater(&ctx, id);
+            run_command(&ctx, cmd, &mut panels);
+            assert!(open(&panels), "{cmd}: a minimized window stays open, to expand");
+            assert!(super::super::widgets::floater_expand_pending(&ctx, id), "{cmd} expands {id}");
+        }
     }
 
     #[test]
@@ -4704,6 +5267,15 @@ mod tests {
         assert!(!command_active("ao_mini", &panels, false, false, false));
         panels.ao_mini = true;
         assert!(command_active("ao_mini", &panels, false, false, false));
+    }
+
+    /// The toolbar's Photo button is left to the app, which toggles the
+    /// window of the chosen style (#4625).
+    #[test]
+    fn snapshot_button_asks_the_app_to_toggle_the_photo_window() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(matches!(run_command(&ctx, "snapshot", &mut panels), BarAction::PhotoToggle));
     }
 
     #[test]
@@ -4830,9 +5402,21 @@ mod tests {
             report_abuse: true,
             marketplace_listings: true,
             teleport_history: true,
+            build_tools: [false, false, true, false, false],
         };
         for cmd in commands {
             assert_eq!(all.lit(cmd), Some(true), "{cmd}");
+        }
+        // the build window's modes: only the one it shows lights
+        for (cmd, lit) in [
+            ("build_edit", true),
+            ("build_create", false),
+            ("build_land", false),
+            ("build_focus", false),
+            ("build_grab", false),
+        ] {
+            assert_eq!(none.lit(cmd), Some(false), "{cmd}");
+            assert_eq!(all.lit(cmd), Some(lit), "{cmd}");
         }
         assert_eq!(all.lit("landmark_here"), None);
         assert_eq!(all.lit("inventory"), None);
@@ -4913,3 +5497,6 @@ mod tests {
 
 #[cfg(test)]
 mod import_menu_tests;
+
+#[cfg(test)]
+mod customization_tests;

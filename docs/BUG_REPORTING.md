@@ -82,7 +82,10 @@ What each part tells the one who fixes it:
   (system crash, power loss). A shutdown or restart of Windows itself is
   heard by the watcher and never reported. On Linux, a viewer stopped by
   SIGTERM, SIGHUP or SIGINT (log out, shutdown, a closed terminal, Ctrl+C)
-  is not reported either.
+  is not reported either. Nor is a new version that an update's helper
+  ended before its first frame and rolled back, the previous version
+  coming back with its "did not complete" notice; a rollback that could
+  not restore the previous version is still reported.
 - **Window**: answering until the end, or not answering for the last N s.
 - **GPU device lost**: the renderer's device-lost callback fired (driver
   reset, GPU removed).
@@ -105,6 +108,12 @@ What each part tells the one who fixes it:
   to) and the card was lost again, each later loss in the same words,
   numbered (`loss 2: …`). "nothing submitted yet (lost while starting)"
   there is a recovery whose new device was lost before its first frame.
+- **Open files at the loss** (Linux): how many files the viewer had open
+  when the card was lost, against its open-file limit, and what held them
+  (`812 of 1024 (sockets 690, sync files 3, files 119)`). At the limit,
+  Mesa reports the descriptor it could not get as "out of memory" and the
+  card is lost, so the row tells that apart from video memory that ran out
+  (#2970). Counts only, never a file name.
 - **GPU recoveries**: the graphics card resets the viewer recovered from
   during the session (Preferences › Graphics, on by default), how many, and for the first
   five when in the session, how long the recovery took and whether it came

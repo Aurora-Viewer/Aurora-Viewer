@@ -1,4 +1,5 @@
-//! Drag to reorder a list of rows of one height: the row pressed and
+//! Drag to reorder a list of rows (of one height, or each its own: the
+//! photo filters' cards open to their settings): the row pressed and
 //! dragged is carried under the pointer as a lifted card, the others slide
 //! out of its way, and once released it waits where it was let go until
 //! the caller's new order shows, then glides into place. Shared by the
@@ -78,6 +79,14 @@ pub struct Layout {
     pub started: Option<usize>,
     /// The row released this frame at another place: (from, to).
     pub moved: Option<(usize, usize)>,
+    /// The row held (carried, or dropped and waiting) and the place it
+    /// takes: (from, to).
+    pub held: Option<(usize, usize)>,
+    /// The row carried is out of its list, under the pointer (`free`
+    /// only): it touches what lies past the list's end (the list scrolled
+    /// to that end), or the pointer is past the band that scrolls it. A
+    /// drop then does not move it, but may take it out.
+    pub out: bool,
 }
 
 impl Layout {
@@ -93,27 +102,6 @@ impl Layout {
     }
 }
 
-/// The place a card whose top is `card_top` below the first row takes
-/// among `n` rows one every `pitch`.
-pub fn target_slot(card_top: f32, pitch: f32, n: usize) -> usize {
-    if n == 0 || pitch <= 0.0 {
-        return 0;
-    }
-    ((card_top / pitch).round().max(0.0) as usize).min(n - 1)
-}
-
-/// Where the row `i` stands while the row at `from` is carried to `to`:
-/// the rows between make way, one step toward the place it left.
-pub fn shifted_slot(i: usize, from: usize, to: usize) -> usize {
-    if from < to && i > from && i <= to {
-        i - 1
-    } else if to < from && i >= to && i < from {
-        i + 1
-    } else {
-        i
-    }
-}
-
 /// Where something dropped at `y` (screen) goes among `n` rows starting at
 /// `top0`, one every `pitch`: before the row under the pointer when over
 /// its upper half, after it over its lower half (0..=n).
@@ -124,11 +112,109 @@ pub fn insert_slot(y: f32, top0: f32, pitch: f32, n: usize) -> usize {
     (((y - top0) / pitch).round().max(0.0) as usize).min(n)
 }
 
+/// Whether the pointer `at` has left the visible list `clip` (above or
+/// below it, past the band that scrolls it).
+fn out_of(clip: Rect, at: egui::Pos2) -> bool {
+    at.y < clip.top() - SCROLL_EDGE || at.y > clip.bottom() + SCROLL_EDGE
+}
+
+/// The place row `i` takes while the row at `from` is held over place `to`:
+/// the rows between make way, one step toward the place it left.
+pub fn place_in(i: usize, from: usize, to: usize) -> usize {
+    if i == from {
+        to
+    } else if from < to && i > from && i <= to {
+        i - 1
+    } else if to < from && i >= to && i < from {
+        i + 1
+    } else {
+        i
+    }
+}
+
+/// The top of each row (from the first row's top, indexed by row) once the
+/// rows of `heights`, `spacing` apart, stand in `order`.
+fn tops_in(order: &[usize], heights: &[f32], spacing: f32) -> Vec<f32> {
+    let mut tops = vec![0.0; heights.len()];
+    let mut y = 0.0;
+    for &i in order {
+        tops[i] = y;
+        y += heights[i] + spacing;
+    }
+    tops
+}
+
+/// The order of the rows once the one at `from` is put at `to`.
+fn moved_order(n: usize, from: usize, to: usize) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..n).filter(|&i| i != from).collect();
+    order.insert(to.min(order.len()), from);
+    order
+}
+
+/// The place the row carried from `from`, its card's top at `card_top`
+/// (from the first row's top), takes among rows of `heights`, `spacing`
+/// apart: the place whose top, in the new order, is nearest. For rows of
+/// one height it is the place under half its row.
+pub fn target_place(card_top: f32, heights: &[f32], spacing: f32, from: usize) -> usize {
+    let n = heights.len();
+    if n == 0 {
+        return 0;
+    }
+    let (mut best, mut best_d) = (0, f32::INFINITY);
+    let mut top = 0.0;
+    let mut others = (0..n).filter(|&i| i != from);
+    for place in 0..n {
+        let d = (card_top - top).abs();
+        // a tie goes on: half a row carries it to the next place
+        if d <= best_d {
+            (best, best_d) = (place, d);
+        }
+        if let Some(i) = others.next() {
+            top += heights[i] + spacing;
+        }
+    }
+    best
+}
+
+/// Where something dropped at `y` (screen) goes among rows drawn at
+/// `rows`: before the first row whose middle is below it (0..=n). For rows
+/// of one height it is `insert_slot`.
+pub fn insert_place(y: f32, rows: &[Rect]) -> usize {
+    rows.iter().position(|r| y < r.center().y).unwrap_or(rows.len())
+}
+
 /// One frame of the list `keys`, whose rows were allocated as `rows` (same
 /// order, one height, evenly spaced). `enabled` false lets no row be picked
-/// up (and drops one carried); `gap` opens room before that row, for
-/// something carried from elsewhere.
+/// up (and drops one carried); `gap` opens room of one row before that row,
+/// for something carried from elsewhere.
 pub fn update<K>(ui: &egui::Ui, id: egui::Id, keys: &[K], rows: &[egui::Response], enabled: bool, gap: Option<usize>) -> Layout
+where
+    K: Clone + Eq + Hash + Send + Sync + 'static,
+{
+    let pitch = match rows {
+        [a, b, ..] => b.rect.top() - a.rect.top(),
+        [a] => a.rect.height(),
+        [] => 0.0,
+    };
+    update_sized(ui, id, keys, rows, enabled, gap.map(|g| (g, pitch)), false)
+}
+
+/// `update` for rows that may each have their own height (laid out one
+/// under the other, the space between the first two kept between all);
+/// `gap` opens that much room (points, its spacing included) before that
+/// row. `free`: a card carried out of the visible list follows the pointer
+/// there (to be dropped somewhere else: the photo filters' take-out zone),
+/// the other rows back in their places, instead of staying in the list
+/// while it scrolls under it.
+pub fn update_sized<K>(
+    ui: &egui::Ui,
+    id: egui::Id,
+    keys: &[K],
+    rows: &[egui::Response],
+    enabled: bool,
+    gap: Option<(usize, f32)>,
+    free: bool,
+) -> Layout
 where
     K: Clone + Eq + Hash + Send + Sync + 'static,
 {
@@ -141,15 +227,19 @@ where
     // A list not drawn for a frame or more (its window closed, another
     // folder shown) forgets its carry: the button let go meanwhile would
     // otherwise read as a drop on its return, and its rows start in place.
-    let frame = ui.ctx().cumulative_frame_nr();
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     if st.frame + 1 < frame {
         st = State::default();
     }
     st.frame = frame;
     let keys = &keys[..n];
     let top0 = rows[0].rect.top();
-    let height = rows[0].rect.height();
-    let pitch = if n > 1 { rows[1].rect.top() - top0 } else { height };
+    let heights: Vec<f32> = rows[..n].iter().map(|r| r.rect.height()).collect();
+    let spacing = if n > 1 {
+        (rows[1].rect.top() - rows[0].rect.bottom()).max(0.0)
+    } else {
+        0.0
+    };
     let pointer = ui.input(|i| i.pointer.interact_pos());
     let down = ui.input(|i| i.pointer.primary_down());
     let dt = ui.input(|i| i.stable_dt).min(0.1);
@@ -184,25 +274,59 @@ where
         }
     }
     let clip = ui.clip_rect();
+    // a free card leaves its list as soon as it touches what lies past
+    // the list's end, once the list is scrolled as far as it goes that way
+    // (until then, the band at its edge scrolls the list under the card);
+    // or when the pointer goes past that band
+    let out = free
+        && match (&st.carry, pointer) {
+            (Some(carry), Some(at)) => {
+                let top = at.y - carry.grab;
+                let bottom = top + heights[carry.from];
+                // (the list's own ends: its room may reach past its rows)
+                let (start, end) = (rows[0].rect.top(), rows[n - 1].rect.bottom());
+                let at_top = start >= clip.top() - 0.5;
+                let at_end = end <= clip.bottom() + 0.5;
+                out_of(clip, at) || (at_end && bottom > end + 1.0) || (at_top && top < start - 1.0)
+            }
+            _ => false,
+        };
     // the row held (carried, or dropped and waiting): where it stood, the
     // top of its card, the place it takes
     let held: Option<(usize, f32, usize)> = match (&st.carry, &st.dropped) {
         (Some(carry), _) => pointer.map(|at| {
+            if out {
+                // out of the list: under the pointer, its place kept
+                return (carry.from, at.y - carry.grab - top0, carry.from);
+            }
             // kept inside the visible list, which scrolls under it instead
+            let height = heights[carry.from];
             let top = (at.y - carry.grab).clamp(clip.top(), (clip.bottom() - height).max(clip.top())) - top0;
-            (carry.from, top, target_slot(top, pitch, n))
+            (carry.from, top, target_place(top, &heights, spacing, carry.from))
         }),
         (None, Some(drop)) => Some((drop.carry.from, drop.card_top, drop.to)),
         _ => None,
     };
+    layout.held = held.map(|(from, _, to)| (from, to));
+    layout.out = out;
     let ease = 1.0 - (-dt * EASE).exp();
     let mut moving = false;
+    // where the rows stand: making way for the one held, or for a gap
+    let places = match held {
+        Some((from, _, to)) => tops_in(&moved_order(n, from, to), &heights, spacing),
+        None => {
+            let mut tops = tops_in(&(0..n).collect::<Vec<_>>(), &heights, spacing);
+            if let Some((g, room)) = gap {
+                tops.iter_mut().skip(g).for_each(|t| *t += room);
+            }
+            tops
+        }
+    };
     for (i, key) in keys.iter().enumerate() {
         let carried = held.is_some_and(|(from, _, _)| from == i);
         let target = match held {
             Some((_, top, _)) if carried => top,
-            Some((from, _, to)) => shifted_slot(i, from, to) as f32 * pitch,
-            None => (i + usize::from(gap.is_some_and(|g| i >= g))) as f32 * pitch,
+            _ => places[i],
         };
         let was = st.drawn.get(key).copied().unwrap_or(target);
         // the card follows the pointer at once, the others glide
@@ -236,6 +360,7 @@ where
     // near the top or bottom of the visible list, it scrolls under the card
     if st.carry.is_some()
         && let Some(at) = pointer
+        && !out
     {
         let push = if at.y < clip.top() + SCROLL_EDGE {
             (clip.top() + SCROLL_EDGE - at.y) / SCROLL_EDGE

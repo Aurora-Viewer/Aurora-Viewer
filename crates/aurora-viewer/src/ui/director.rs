@@ -34,8 +34,8 @@ mod shots;
 pub const WINDOW: &str = "director";
 
 const WIDTH: f32 = 340.0;
-const LABEL_W: f32 = 112.0;
-pub(super) const SLIDER_W: f32 = 120.0;
+const LABEL_W: f32 = widgets::FORM_LABEL_W;
+pub(super) const SLIDER_W: f32 = widgets::FORM_SLIDER_W;
 /// What the window keeps clear of the room the bars leave: its own title
 /// and margins, the timeline strip under it, and a little air.
 const WINDOW_MARGIN: f32 = 230.0;
@@ -129,6 +129,8 @@ pub struct Looks<'a> {
     pub settings: &'a mut crate::snapshot::Settings,
     /// The user's LUTs, by file name.
     pub luts: &'a [String],
+    /// The catalogue's pictures: their slot by look id.
+    pub thumbs: &'a std::collections::HashMap<String, usize>,
     /// What the editor asks of the app (import, remove, open the folder).
     pub out: &'a mut Vec<super::snapshot::Action>,
 }
@@ -215,38 +217,8 @@ pub struct Env<'a> {
     pub out: &'a mut Vec<EnvAction>,
 }
 
-pub(super) fn row<R>(ui: &mut egui::Ui, p: &Palette, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let font = widgets::control_font(ui, 12.5);
-    let label_width = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), font.clone(), p.ink)
-        .size()
-        .x
-        .max(LABEL_W);
-    // Leave a slider and its editable value room at the active text size.
-    // Shorter fields use the same breakpoint, keeping the form consistent.
-    let value_width = ui
-        .painter()
-        .layout_no_wrap("000.0".to_owned(), egui::TextStyle::Button.resolve(ui.style()), p.ink)
-        .size()
-        .x
-        + ui.spacing().button_padding.x * 2.0;
-    let field_width = SLIDER_W + ui.spacing().item_spacing.x + value_width;
-    let label = egui::Label::new(RichText::new(label).font(font).color(p.ink)).wrap();
-    if label_width + ui.spacing().item_spacing.x + field_width > ui.available_width() {
-        ui.vertical(|ui| {
-            ui.add(label);
-            ui.horizontal_wrapped(add).inner
-        })
-        .inner
-    } else {
-        ui.horizontal_top(|ui| {
-            ui.add_sized(Vec2::new(label_width, 0.0), label);
-            add(ui)
-        })
-        .inner
-    }
-}
+/// The Director's label row, shared with the other tool windows.
+pub(super) use super::widgets::form_row as row;
 
 fn text_button_size(ui: &egui::Ui) -> Vec2 {
     let font = widgets::control_font(ui, 12.5);
@@ -418,11 +390,15 @@ pub fn window(
                         // the Photo window's own looks and LUTs: one stack,
                         // the photos' and the films'
                         ui.add(egui::Label::new(RichText::new(aurora_i18n::tr!("director-filters-note")).size(12.0).color(p.muted)).wrap());
+                        let thumbs = looks.thumbs;
+                        let thumb = |id: &str| thumbs.get(id).copied();
                         let opts = super::looks_editor::Options {
                             list_height: 260.0,
+                            height: None,
                             compare: false,
                             luts: looks.luts,
                             pano: false,
+                            thumb: &thumb,
                         };
                         looks
                             .ui
@@ -760,6 +736,26 @@ fn picture_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, locked: boo
                 );
             });
         }
+    }
+    // the Director's own shutter: its motion blur, at the film's rate
+    let mut blur = d.motion_blur.is_some();
+    if widgets::checkbox(ui, p, &mut blur, aurora_i18n::tr!("director-motion-blur"))
+        .on_hover_text(aurora_i18n::tr!("director-motion-blur-hint"))
+        .changed()
+    {
+        d.motion_blur = blur.then_some(director::DEFAULT_SHUTTER);
+    }
+    if let Some(shutter) = &mut d.motion_blur {
+        row(ui, p, aurora_i18n::tr!("director-shutter"), |ui| {
+            ui.spacing_mut().slider_width = SLIDER_W;
+            ui.add(
+                egui::Slider::new(shutter, director::SHUTTER_RANGE)
+                    .custom_parser(aurora_i18n::parse_number)
+                    .fixed_decimals(0)
+                    .suffix("°"),
+            )
+            .on_hover_text(aurora_i18n::tr!("director-shutter-tip"));
+        });
     }
 }
 

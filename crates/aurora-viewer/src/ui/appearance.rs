@@ -52,6 +52,10 @@ pub struct AppearanceUi {
     pub editing: bool,
     edit_tab: usize,
     search: String,
+    /// The window was open (and expanded) at the last frame, and its
+    /// outfit filter is to take the keyboard (`show`).
+    was_open: bool,
+    focus_search: bool,
     outfit_selection: selection::Selection,
     reveal_outfit: Option<Uuid>,
     /// The current outfit to bring into view in the gallery or the list
@@ -397,10 +401,15 @@ impl AppearanceUi {
         }
         let mut items = HashSet::new();
         let mut ready = !ids.is_empty();
+        let mut skipped = false;
         for id in &ids {
             ready &= model::loaded(inv, *id);
             for link in model::folder_links(inv, *id).into_iter().filter(|link| !link.folder) {
                 if inv.broken(&link.target) {
+                    continue;
+                }
+                if inv.can_skip_wear_original(&link.target) {
+                    skipped = true;
                     continue;
                 }
                 ready &= inv.items.contains_key(&link.target);
@@ -408,6 +417,7 @@ impl AppearanceUi {
             }
         }
         let count = items.len();
+        ready &= !skipped || count > 0;
         self.selection_info = Some(SelectionInfo {
             generation: inv.generation,
             ids,
@@ -470,10 +480,6 @@ impl AppearanceUi {
         agent: Uuid,
         worn: &HashSet<Uuid>,
     ) -> Vec<aurora_net::NetCommand> {
-        // a failed read is asked again (`Inventory::items_failed` counts them)
-        for id in inv.take_item_retries() {
-            self.requested_items.remove(&id);
-        }
         let filtering_contents = self.tab < 2 && !self.search.trim().is_empty();
         let scope_changed = self.prepared.as_ref().is_none_or(|p| p.filtering_contents != filtering_contents);
         let changed = scope_changed || self.prepared.as_ref().is_none_or(|p| p.generation != inv.generation);
@@ -541,8 +547,14 @@ impl AppearanceUi {
                     .missing
                     .values()
                     .flat_map(|(_, targets)| targets)
-                    .filter(|id| !inv.items.contains_key(id) && !inv.missing_items.contains(id)),
+                    .filter(|id| !inv.items.contains_key(id)),
             );
+        }
+        missing.retain(|id| !inv.broken(id) && !inv.read_exhausted(id));
+        for id in &missing {
+            if inv.take_item_retry(id) {
+                self.requested_items.remove(id);
+            }
         }
         self.filter_requests(model::fetch_items(missing, agent))
     }
@@ -704,6 +716,9 @@ impl AppearanceUi {
     ) -> Vec<aurora_net::NetCommand> {
         self.requested_items.clear();
         self.prepared = None;
+        for id in model::prepare_folders(inv) {
+            inv.retry(id);
+        }
         self.prepare(inv, agent, worn)
     }
 }
@@ -1301,7 +1316,7 @@ fn outfit_list(
                                     st.outfit_selection.single(*id);
                                 }
                                 st.select_item(&response, *id, it.id, &order);
-                                items::double_click(&response, world, it, worn.contains_key(&it.id), actions);
+                                items::double_click(&response, world, it, worn.contains_key(&it.id), Some(*id), actions);
                                 let selected = st.selected_items(*id, it.id, &order);
                                 items::context_menu(&response, p, world, st, items::List::Outfit(*id), it, &selected, actions);
                             });
@@ -1482,7 +1497,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                 st.layers.row(it.id, it.flags & 0xff, &resp);
             }
             let removable = locks.can_remove(it.id);
-            items::double_click(&resp, world, it, true, actions);
+            items::double_click(&resp, world, it, true, None, actions);
             if edit {
                 if resp.clicked() {
                     clipboard::request_focus(ui.ctx());
@@ -1745,14 +1760,15 @@ fn add_folder(
             if !matches!(it.asset_type, 5 | 6 | 13) || worn.contains(&it.id) {
                 continue;
             }
-            let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
-            widgets::reveal_search_selection(ui, &response, st.selected_item == Some(it.id));
+            let entry = model::wear_entry(inv, id, it.id);
+            let response = row(ui, p, it, "", st.selected_item == Some(entry), None);
+            widgets::reveal_search_selection(ui, &response, st.selected_item == Some(entry));
             row_gap(ui);
             if response.clicked() {
-                st.selected_item = Some(it.id);
+                st.selected_item = Some(entry);
             }
-            if response.double_clicked() && locks.wear(inv, it.id, 0).add {
-                actions.push(Action::Add(it.id));
+            if response.double_clicked() && locks.wear(inv, entry, 0).add {
+                actions.push(Action::Add(entry));
                 st.adding = false;
             }
         }
@@ -1779,6 +1795,15 @@ pub fn show(
     floater.min_size = Vec2::new(390.0, 520.0);
     let inventory_hidden = world.rlva.has("showinv");
     st.follow_showinv(inventory_hidden);
+    // A window that opens (or is expanded) on the filter it kept hands it
+    // the keyboard, its text selected (`widgets::select_on_focus`), as the
+    // Inventory and Preferences focus their search on opening
+    // (`focus_search`, inventory/controls.rs and options.rs). An Aurora
+    // addition: the Legacy Viewer's outfit filter takes the keyboard on
+    // Ctrl+F only (LLSidepanelAppearance::handleKeyHere). The window shown
+    // again after mouselook or with the interface hidden is still open: it
+    // does not take it again.
+    st.focus_search = *open && !st.editing && (st.focus_search || (!st.was_open && !st.search.is_empty()));
     if *open {
         st.read_pictures(world);
     }
@@ -1892,12 +1917,16 @@ pub fn show(
         if !st.editing {
             ui.horizontal(|ui| {
                 let width = (ui.available_width() - 28.0 - ui.spacing().item_spacing.x).max(100.0);
-                widgets::search_text_edit(ui, p, &mut st.search, |edit| {
+                let field = widgets::search_text_edit(ui, p, &mut st.search, |edit| {
                     edit.hint_text(aurora_i18n::tr!("ui-appearance-filter-outfits"))
                         .align(egui::Align2::LEFT_CENTER)
                         .desired_width(width)
                         .min_size(Vec2::new(width, 28.0))
                 });
+                if st.focus_search && !ui.is_sizing_pass() && ui.is_enabled() {
+                    st.focus_search = false;
+                    field.request_focus();
+                }
                 icon_menu(
                     ui,
                     p,
@@ -2194,7 +2223,9 @@ pub fn show(
                 // add lock on its folder.
                 let locks = world.rlva_wear_locks();
                 let unlocked = selection.iter().all(|id| locks.folder_allows(*id, true));
-                let ready = available && unlocked && st.selection_info(&world.inventory, selection).1;
+                let wear_ready =
+                    st.pending.is_none() && model::cof(&world.inventory).is_some_and(|cof| model::complete_for_wear(&world.inventory, cof));
+                let ready = wear_ready && unlocked && st.selection_info(&world.inventory, selection).1;
                 for (icon, label, kind, append) in [
                     ("plus", aurora_i18n::tr!("common-add"), ActionKind::Flat, true),
                     ("shirt-filled", aurora_i18n::tr!("common-wear"), ActionKind::Primary, false),
@@ -2212,6 +2243,7 @@ pub fn show(
             ui.ctx().request_discard("appearance rows below the list changed height");
         }
     });
+    st.was_open = *open && !widgets::floater_minimized(ctx, "appearance");
     if let Some(mut name) = st.save_as.clone() {
         let mut close = false;
         let response = crate::ui::widgets::Modal::new(egui::Id::unique("outfit_save_as")).show(ctx, |ui| {
@@ -2372,9 +2404,116 @@ pub fn demo_showcase(inv: &mut crate::world::inventory::Inventory, st: &mut Appe
     st.outfit_selection.single(Uuid::from_u128(703));
 }
 
+/// `AURORA_DEMO_APPEARANCE_SIZE=<width>,<height>`: the Appearance window's
+/// size for the run, in points, the showcase's widening skipped (#4633: a
+/// height where the preview just overflows).
+pub fn demo_size(ctx: &egui::Context) {
+    let Ok(value) = std::env::var("AURORA_DEMO_APPEARANCE_SIZE") else {
+        return;
+    };
+    let Some(size) = parse_demo_size(&value) else {
+        log::warn!("AURORA_DEMO_APPEARANCE_SIZE: expected <width>,<height>, got {value:?}");
+        return;
+    };
+    widgets::size_floater(ctx, "appearance", size);
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::unique("appearance_showcase_widened"), true));
+}
+
+fn parse_demo_size(value: &str) -> Option<Vec2> {
+    let (width, height) = value.split_once(',')?;
+    let size = Vec2::new(width.trim().parse().ok()?, height.trim().parse().ok()?);
+    (size.x.is_finite() && size.y.is_finite() && size.x > 0.0 && size.y > 0.0).then_some(size)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_demo_size_reads_width_and_height() {
+        assert_eq!(parse_demo_size("1080, 1134"), Some(Vec2::new(1080.0, 1134.0)));
+        for bad in ["1080", "a,b", "0,500", "1080,-1", "inf,500"] {
+            assert_eq!(parse_demo_size(bad), None, "{bad}");
+        }
+    }
+
+    /// One frame of the window, `open` or not, beside another text field.
+    fn frame_beside(
+        ctx: &egui::Context,
+        world: &mut World,
+        st: &mut AppearanceUi,
+        other: &mut String,
+        mut open: bool,
+        events: Vec<egui::Event>,
+    ) {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                ui.add(egui::TextEdit::singleline(other).id(egui::Id::unique("beside_appearance")));
+                show(
+                    ui.ctx(),
+                    &crate::theme::Theme::default().palette(),
+                    world,
+                    st,
+                    &mut open,
+                    41_748,
+                    &HashMap::new(),
+                );
+            },
+        );
+        // Headless tests do not submit texture uploads to a renderer.
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn outfits_reopened_on_a_kept_filter_take_the_keyboard_but_not_when_shown_again() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut world = wardrobe(0);
+        let mut st = AppearanceUi::default();
+        let mut other = String::new();
+        let typed = |text: &str| vec![egui::Event::Text(text.into())];
+        for _ in 0..3 {
+            frame_beside(&ctx, &mut world, &mut st, &mut other, true, Vec::new());
+        }
+        frame_beside(&ctx, &mut world, &mut st, &mut other, true, typed("w"));
+        assert!(st.search.is_empty(), "an empty filter does not take the keyboard");
+        // closed, then opened again on the filter it kept
+        st.search = "beach".into();
+        for open in [false, false, true, true, true] {
+            frame_beside(&ctx, &mut world, &mut st, &mut other, open, Vec::new());
+        }
+        let search = ctx.memory(|m| m.focused()).expect("the reopened filter has the keyboard");
+        frame_beside(&ctx, &mut world, &mut st, &mut other, true, typed("n"));
+        assert_eq!(st.search, "n", "its text was selected: the first character replaces it");
+        // the keyboard goes elsewhere, then nowhere (a click on the world)
+        st.search = "beach".into();
+        let beside = egui::Id::unique("beside_appearance");
+        ctx.memory_mut(|m| m.request_focus(beside));
+        frame_beside(&ctx, &mut world, &mut st, &mut other, true, typed("x"));
+        ctx.memory_mut(|m| m.surrender_focus(beside));
+        frame_beside(&ctx, &mut world, &mut st, &mut other, true, Vec::new());
+        // mouselook, or Alt+Shift+U twice: the window was open all along
+        widgets::hide_windows(&ctx, true, widgets::HideKeep::None);
+        for _ in 0..3 {
+            frame_beside(&ctx, &mut world, &mut st, &mut other, true, Vec::new());
+        }
+        widgets::hide_windows(&ctx, false, widgets::HideKeep::None);
+        for _ in 0..3 {
+            frame_beside(&ctx, &mut world, &mut st, &mut other, true, Vec::new());
+        }
+        assert!(
+            !ctx.memory(|m| m.has_focus(search)),
+            "shown again, the filter does not take the keyboard"
+        );
+        frame_beside(&ctx, &mut world, &mut st, &mut other, true, typed("w"));
+        assert_eq!(st.search, "beach", "a movement key does not type into the filter");
+        assert_eq!(other, "x");
+    }
 
     /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
     /// (indra/newview/rlvhandler.cpp): when the restriction starts, the list
@@ -3576,8 +3715,13 @@ mod tests {
                     actions.extend(draw(&ctx, &mut world, &mut st, None));
                 }
             }
+            let entry = if world.inventory.items[&item].asset_type == 5 {
+                second
+            } else {
+                item
+            };
             assert!(
-                matches!(&actions[..], [Action::WearItem { item: id, replace: false, point: 0 }] if *id == item),
+                matches!(&actions[..], [Action::WearItem { item: id, replace: false, point: 0 }] if *id == entry),
                 "{actions:?}"
             );
         }
@@ -3929,7 +4073,10 @@ mod tests {
         else {
             panic!("{actions:?}");
         };
-        assert_eq!(items.iter().copied().collect::<HashSet<_>>(), HashSet::from(targets));
+        assert_eq!(
+            items.iter().copied().collect::<HashSet<_>>(),
+            HashSet::from([Uuid::from_u128(990), targets[1]])
+        );
         assert!(model::plan(&world.inventory, actions[0].clone(), &HashMap::new()).is_ok());
         click_row(
             &ctx,
@@ -4375,6 +4522,26 @@ mod tests {
         inv.folders.get_mut(&outfit).expect("outfit").state = crate::world::inventory::FetchState::Unknown;
         st.prepare(inv, agent, &HashSet::new());
         assert!(inv.queue.contains(&(outfit, false)));
+    }
+
+    #[test]
+    fn a_view_opened_during_cooldown_can_retry_without_a_new_folder_version() {
+        let mut world = wardrobe(0);
+        let agent = world.agent_id;
+        let inv = &mut world.inventory;
+        let target = Uuid::from_u128(723);
+        let unrelated = Uuid::from_u128(900);
+        assert!(inv.items.remove(&target).is_some());
+        inv.items_failed(&[unrelated]);
+        for _ in 0..crate::world::inventory::ITEM_FETCH_ATTEMPTS {
+            inv.items_failed(&[target]);
+        }
+
+        let mut st = AppearanceUi::default();
+        assert!(!fetched(&st.prepare(inv, agent, &HashSet::new())).contains(&target));
+        inv.expire_given_up(std::time::Instant::now() + crate::world::inventory::ITEM_GIVE_UP);
+        assert!(fetched(&st.prepare(inv, agent, &HashSet::new())).contains(&target));
+        assert!(inv.take_item_retry(&unrelated));
     }
 
     #[test]
@@ -4952,7 +5119,6 @@ mod tests {
             model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
             let id = Uuid::from_u128(target);
             let name = world.inventory.items[&id].name.clone();
-            let before = world.inventory.generation;
             let mut st = AppearanceUi::default();
             st.open(2, false);
             for _ in 0..5 {
@@ -4966,6 +5132,9 @@ mod tests {
                 egui::Modifiers::NONE,
                 egui::PointerButton::Secondary,
             );
+            // Read after the draws: opening the window asks for its folders,
+            // and each folder read changes the generation.
+            let before = world.inventory.generation;
             let actions = click_menu(&ctx, &mut world, &mut st, aurora_i18n::tr!("ui-appearance-items-show-original"));
             assert!(
                 matches!(actions.as_slice(), [Action::ShowOriginal(actual)] if *actual == id),

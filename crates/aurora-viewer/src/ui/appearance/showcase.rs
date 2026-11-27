@@ -225,6 +225,7 @@ pub(super) fn show(
         st.showcase_state = state;
         out
     };
+    let filter = st.showcase_state.filter;
     if let Some(rail) = rail {
         ui.painter().rect_filled(rail, radius, face);
         let mut r = ui.new_child(egui::UiBuilder::new().max_rect(rail.shrink(6.0)).id_salt("showcase_rail"));
@@ -239,7 +240,31 @@ pub(super) fn show(
         collection_menu(&mut g, p, world, st, entries, shown.len(), favorites, no_picture);
         g.add_space(6.0);
     }
-    let scope = banner_scope(st.showcase_state.filter, shown, &outfits, no_picture, no_picture_here);
+    // The batch portraits' window at any time (#5025): the banner below
+    // goes once no outfit lacks a picture or its cross is clicked, and the
+    // window takes pictures again too. Over our own outfits of the
+    // collection shown; a folder of My Outfits is named in the window.
+    let folder = match filter {
+        Filter::Folder(id) => Some(id),
+        _ => None,
+    };
+    g.horizontal(|ui| {
+        if widgets::action_button(
+            ui,
+            p,
+            "camera-filled",
+            aurora_i18n::tr!("ui-appearance-batch-title"),
+            widgets::ActionKind::Flat,
+            Vec2::new(ui.available_width(), 28.0),
+        )
+        .clicked()
+        {
+            let own = outfits.iter().copied().filter(|id| own_outfit(world, *id)).collect();
+            actions.push(Action::OutfitBatch(own, folder));
+        }
+    });
+    g.add_space(6.0);
+    let scope = banner_scope(filter, shown, &outfits, no_picture, no_picture_here);
     banner(&mut g, p, world, st, scope, actions);
     egui::ScrollArea::vertical()
         .id_salt("appearance_showcase")
@@ -265,11 +290,16 @@ pub(super) fn show(
             .focus
             .filter(|id| shown.contains(id))
             .or(current.filter(|id| shown.contains(id)));
+        // the picture's side as if the bar showed, whether it does or not:
+        // sized from the width the bar leaves, a panel that just overflows
+        // would fit once the bar narrows it, hide the bar, widen and
+        // overflow again, frame after frame (#4633)
+        let side = widgets::scrolled_width(&v);
         egui::ScrollArea::vertical()
             .id_salt("appearance_showcase_preview")
             .auto_shrink([false, false])
             .show(&mut v, |ui| match picked {
-                Some(id) => preview_panel(ui, p, world, st, id, actions, images),
+                Some(id) => preview_panel(ui, p, world, st, id, side, actions, images),
                 None => {
                     ui.add_space(24.0);
                     ui.vertical_centered(|ui| {
@@ -705,9 +735,9 @@ fn hover_actions(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appeara
     }
 }
 
-/// The preview of the outfit `id`: its picture and the ways to set one, its
-/// folder and name, Wear / Add / Take off (Edit for the current outfit),
-/// and its items by kind.
+/// The preview of the outfit `id`: its picture (a square of `side`, at most
+/// the width) and the ways to set one, its folder and name, Wear / Add /
+/// Take off (Edit for the current outfit), and its items by kind.
 #[allow(clippy::too_many_arguments)]
 fn preview_panel(
     ui: &mut egui::Ui,
@@ -715,6 +745,7 @@ fn preview_panel(
     world: &World,
     st: &mut AppearanceUi,
     id: Uuid,
+    side: f32,
     actions: &mut Vec<Action>,
     images: &HashMap<Uuid, egui::TextureHandle>,
 ) {
@@ -728,7 +759,7 @@ fn preview_panel(
         rules.remove &= locks.folder_allows(id, false);
         rules
     });
-    let side = ui.available_width();
+    let side = side.min(ui.available_width());
     let (picture, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
     let radius = ui.visuals().window_corner_radius;
     ui.painter().rect_filled(picture, radius, p.panel);
@@ -979,14 +1010,14 @@ fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi
                     st.outfit_selection.single(id);
                 }
                 st.select_item(&response, id, it.id, &order);
-                items::double_click(&response, world, it, label.is_some(), actions);
+                items::double_click(&response, world, it, label.is_some(), Some(id), actions);
                 let selected = st.selected_items(id, it.id, &order);
                 items::context_menu(&response, p, world, st, items::List::Outfit(id), it, &selected, actions);
                 // the menu's Wear, for this item alone (wear_action, replace)
                 if label.is_none()
                     && matches!(it.asset_type, 5 | 6 | 13)
                     && ui.rect_contains_pointer(response.rect)
-                    && locks.wear(inv, it.id, 0).replace
+                    && locks.wear(inv, items::outfit_wear_entry(inv, id, it.id), 0).replace
                 {
                     let wear = aurora_i18n::tr!("common-wear");
                     let width = widgets::action_button_fit(ui, "", wear);
@@ -1000,7 +1031,7 @@ fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi
                         .clicked()
                     {
                         actions.push(Action::WearItem {
-                            item: it.id,
+                            item: items::outfit_wear_entry(inv, id, it.id),
                             replace: true,
                             point: 0,
                         });
@@ -1159,6 +1190,88 @@ mod tests {
         actions
     }
 
+    /// The Outfit portraits button stays over the cards once every outfit
+    /// has a picture and the banner is closed (#5025), and opens the batch
+    /// over every outfit shown.
+    #[test]
+    fn batch_portraits_can_be_reopened_when_all_outfits_have_pictures() {
+        let (mut world, mut st) = grouped();
+        let (outfits, _, _) = collection(&world, &mut st, Filter::All);
+
+        for (index, id) in outfits.iter().enumerate() {
+            world.inventory.folders.get_mut(id).expect("outfit").info.thumbnail = Uuid::from_u128(9000 + index as u128);
+        }
+        world.inventory.generation += 1;
+
+        assert_eq!(collection(&world, &mut st, Filter::All).2, 0);
+        st.showcase_state.banner_hidden = true;
+
+        let ctx = egui::Context::default();
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+
+        let (_, shown) = frame(&ctx, &mut world, &mut st, Vec::new());
+        let label = aurora_i18n::tr!("ui-appearance-batch-title");
+        let at = shown
+            .iter()
+            .find(|(text, _)| text == label)
+            .map(|(_, pos)| *pos + Vec2::new(4.0, 4.0))
+            .expect("permanent outfit portraits button");
+
+        let actions = click(&ctx, &mut world, &mut st, at);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            Action::OutfitBatch(ids, None)
+                if ids.len() == outfits.len()
+                    && outfits.iter().all(|id| ids.contains(id))
+        )));
+    }
+
+    /// The button hands the batch the outfits of the collection shown:
+    /// all, the favorites, those without a picture, or a folder of My
+    /// Outfits with its id.
+    #[test]
+    fn batch_portraits_respect_the_selected_collection() {
+        let (mut world, mut st) = grouped();
+        let ctx = egui::Context::default();
+        let folder = Uuid::from_u128(741);
+
+        let club_red = Uuid::from_u128(744);
+        world.inventory.folders.get_mut(&club_red).expect("Club Red").info.favorite = true;
+        world.inventory.folders.get_mut(&club_red).expect("Club Red").info.thumbnail = Uuid::from_u128(9000);
+        world.inventory.generation += 1;
+
+        for filter in [Filter::All, Filter::Favorites, Filter::Folder(folder), Filter::NoPicture] {
+            let (expected, _, _) = collection(&world, &mut st, filter);
+            let expected_folder = match filter {
+                Filter::Folder(id) => Some(id),
+                _ => None,
+            };
+
+            for _ in 0..4 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+
+            let (_, shown) = frame(&ctx, &mut world, &mut st, Vec::new());
+            let label = aurora_i18n::tr!("ui-appearance-batch-title");
+            let at = shown
+                .iter()
+                .find(|(text, _)| text == label)
+                .map(|(_, pos)| *pos + Vec2::new(4.0, 4.0))
+                .expect("permanent outfit portraits button");
+
+            let actions = click(&ctx, &mut world, &mut st, at);
+            assert!(actions.iter().any(|action| matches!(
+                action,
+                Action::OutfitBatch(ids, target)
+                    if *target == expected_folder
+                        && ids.len() == expected.len()
+                        && expected.iter().all(|id| ids.contains(id))
+            )));
+        }
+    }
+
     /// The first time it shows, the showcase widens the window to its rail,
     /// grid and preview; the cards' star, hover Wear and the preview's
     /// Wear push the actions of the outfit menu.
@@ -1227,6 +1340,44 @@ mod tests {
             actions.iter().any(|a| matches!(a, Action::Wear(id, false) if *id == club_red)),
             "{actions:?}"
         );
+    }
+
+    /// The preview's picture does not depend on its scroll bar (#4633): at
+    /// every window height, the bar's strip taking the picture's width when
+    /// the panel just overflows must not make it fit again, which hid the
+    /// bar and looped frame after frame.
+    #[test]
+    fn the_preview_keeps_its_scroll_bar_steady() {
+        let (mut world, mut st) = grouped();
+        st.outfit_selection.focus = Some(Uuid::from_u128(744));
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        ctx.data_mut(|d| d.insert_persisted(egui::Id::unique("appearance_showcase_widened"), true));
+        let preview = |ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 1600.0))),
+                ..Default::default()
+            };
+            let (_, shapes) = draw_output(ctx, world, st, input);
+            let window = ctx.memory(|m| m.area_rect(egui::Id::unique("appearance"))).expect("window");
+            let mut shown = texts(&shapes);
+            shown.retain(|(_, p)| p.x > window.right() - PREVIEW_W);
+            shown
+        };
+        let mut flipped = Vec::new();
+        for height in (420..1400).step_by(2) {
+            crate::ui::widgets::size_floater(&ctx, "appearance", Vec2::new(OPEN_WIDTH, height as f32));
+            // past the bar's fade in or out, which eases the rows' right edge
+            for _ in 0..12 {
+                preview(&ctx, &mut world, &mut st);
+            }
+            let (a, b) = (preview(&ctx, &mut world, &mut st), preview(&ctx, &mut world, &mut st));
+            assert!(!a.is_empty(), "the preview at {height}");
+            if a != b {
+                flipped.push(height);
+            }
+        }
+        assert!(flipped.is_empty(), "the preview's layout flips at heights {flipped:?}");
     }
 
     /// The window keeps its size and its footer in view with the showcase,
