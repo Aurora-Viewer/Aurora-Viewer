@@ -8,8 +8,8 @@ description: Pick the next pull request of someone else to review from the revie
 The rules are in AGENTS.md section 11 ("Which PR of someone else's to review
 next", then the review itself) and in `scripts/tools/review-queue.ps1`. The
 queue only changes **which** PR you take and adds the claim; the review is
-the same as before: approve the outside CI, wait for it, review, post the
-comment yourself, offer the merge.
+the same as before: get the outside CI approved, wait for it, review, post
+the comment yourself, offer the merge.
 
 Commands: Windows `./scripts/review-queue.ps1`; Linux and macOS
 `pwsh ./scripts/review-queue.ps1` (the form the "Claude permissions" rules
@@ -19,7 +19,8 @@ alone, with no `cd` or `;` around it.
 **Never end your turn while a review you started waits for CI.** A turn that
 ends "I'll review it once CI is green" leaves the review hanging: nothing
 wakes you reliably. Wait in the turn (step 4), or release the claim (step 8).
-The only waits that end a turn are a question to your human (step 3).
+The only waits that end a turn are a question to your human: the CI
+approval (step 3), a decision (step 6), the merge (step 7).
 
 1. **Your approved PRs first**:
 
@@ -38,8 +39,8 @@ The only waits that end a turn are a question to your human (step 3).
      with no review heading (a `## Changes requested` would leave the PR
      waiting on them for good, since a merge of main is no answer); it comes
      back here with a new head, to re-review.
-   - `ci`: `Approval`, approve and wait (steps 3 and 4); `Run` or `None`,
-     wait (step 4); `Fail`, read the failing job (step 4) and ask the author
+   - `ci`: `Approval`, it joins the approval question of step 3, then the
+     wait of step 4; `Run` or `None`, wait (step 4); `Fail`, read the failing job (step 4) and ask the author
      to fix it.
    - Otherwise (head reviewed, green CI, no conflict): it goes in the merge
      offer of step 7.
@@ -72,21 +73,27 @@ The only waits that end a turn are a question to your human (step 3).
      ```
 
    - **CI waits for "Approve and run"** (note `CI waits for Approve and run`,
-     or no CI run at all): if no file is under `.github/`, `scripts/`,
-     `.cargo/` or `packaging/`, and none is a `Cargo.toml`, `Cargo.lock`,
-     `build.rs` or `rust-toolchain.toml`, approve the runs of the head
-     yourself: your human is the maintainer who asked for the review.
+     or no CI run at all): your human approves it (AGENTS.md section 11).
+     Gather what they need to decide, for every PR you claimed (and those
+     of step 1) before asking, so that one question covers them all:
+     whether the PR changes a file under `.github/`, `scripts/`, `.cargo/`
+     or `packaging/`, a `Cargo.toml`, `Cargo.lock`, `build.rs` or
+     `rust-toolchain.toml` (name those files), and the runs waiting:
 
      ```
      gh api "repos/Aurora-Viewer/Aurora-Viewer/actions/runs?head_sha=<head>" --jq '.workflow_runs[] | select(.conclusion == "action_required") | .id'
-     gh api -X POST repos/Aurora-Viewer/Aurora-Viewer/actions/runs/<id>/approve
      ```
 
      `gh pr checks` can show only the description check as passed while
-     the real CI never ran: always list the runs of the head commit. If the
-     PR changes one of those files, or your tool refuses the `gh api` call,
-     ask your human in the end-of-turn question (with the commands, when
-     your tool refused them) and stop there.
+     the real CI never ran: always list the runs of the head commit. Ask in
+     the end-of-turn question with buttons ("Approve the CI of #3475 and
+     #4449?": "Approve them" / "Only #3475"), and stop there: the one
+     wait of the review that ends a turn before the code. Meanwhile, PRs
+     whose CI is already green go on to step 5 in the same turn. On their
+     yes, approve each run (`gh api -X POST
+     repos/Aurora-Viewer/Aurora-Viewer/actions/runs/<id>/approve`) and go
+     straight to step 4 in that turn. If your tool refuses the call, give
+     your human the commands.
    - `last reviewed by <someone>`: read their review and the author's
      answers first; a re-review checks every point of it.
 
@@ -146,8 +153,8 @@ The only waits that end a turn are a question to your human (step 3).
    PR, first read its head again: a head other than the one you reviewed
    (a push since) is not merged, it goes back to step 1 as a re-review.
    Then list the runs of the head: one at `action_required` gets the PR
-   dropped from the merge queue at once; approve it and wait for green
-   first. Then:
+   dropped from the merge queue at once; it needs your human's approval
+   first (step 3), then green CI. Then:
 
    ```
    pwsh ./scripts/merge-pr.ps1 -Pr <n>

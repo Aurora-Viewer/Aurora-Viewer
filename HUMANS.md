@@ -133,9 +133,10 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
   you, to merge" (`-ToMerge` alone), and your agents offer you their merge
   if the head is still the one the review names ("Reviewed head:"); after a
   push, a merge of main included, they review it again first.
-  An agent that reviews from the queue approves the outside CI itself
-  (unless the PR changes `.github/`, scripts or build files: then it asks
-  you), waits for it, posts its review and asks you before any merge.
+  An agent that reviews from the queue asks you once to approve the
+  outside CI of the PRs it claimed (naming any that changes `.github/`,
+  scripts or build files), waits for it, posts its review and asks you
+  before any merge.
 - **Outside contributors' CI** waits for a maintainer: on their PR, "Approve
   and run" (look first that it does not change `.github/`). Review it only
   once that CI is green and the description is complete.

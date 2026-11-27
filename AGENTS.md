@@ -818,11 +818,12 @@ queue keeps them off each other's PRs.
   description, green CI before reading the code).
 - **The review itself does not change**: the queue picks the PR and adds
   the claim, then the review goes to its end in the same turn, as for your
-  own PR (section 8, steps 8 and 9): approve the outside CI (below), wait
-  for it with `gh pr checks <n> --watch` without handing back, review, post
-  the comment yourself, and offer your human the merge of a ✅ PR as a
-  question they answer (rule 5), then `merge-pr.ps1`. Never end a turn on
-  "I will review it once CI is green": release the claim instead.
+  own PR (section 8, steps 8 and 9): once the outside CI is approved
+  (below; one question to your human for all the PRs you claimed), wait
+  for it without handing back, review, post the comment yourself, and
+  offer your human the merge of a ✅ PR as a question they answer (rule 5),
+  then `merge-pr.ps1`. Never end a turn on "I will review it once CI is
+  green": release the claim instead.
 - **Approved PRs**: the queue leaves out a PR you approved, so nobody else
   merges it. `-ToMerge` lists yours that nobody queued: offer their merge
   with the next reviews. A review names the head it read (``Reviewed head:
@@ -836,13 +837,8 @@ file given to `--body-file` (like the one of the PR description) is a draft
 in `.scratch/`, never committed: the review lives in the PR comment, not in
 the repository. **Someone else's PR** is reviewed only once its description
 is complete (no `needs-description` label) and its PR CI is green: an
-outside contributor's CI waits for a maintainer's "Approve and run". Your
-human is that maintainer: when the PR changes no file under `.github/`,
-`scripts/`, `.cargo/` or `packaging/`, no `Cargo.toml`, `Cargo.lock`,
-`build.rs` nor `rust-toolchain.toml`, approve its runs yourself (`gh api -X
-POST repos/<repo>/actions/runs/<id>/approve`, for each run of its head
-commit at `action_required`); when it changes one, ask your human to
-approve it. Do not read the code before it is green. When you ask the
+outside contributor's CI waits for a maintainer's "Approve and run", so ask
+your human to approve it, and do not read the code before. When you ask the
 author of someone else's PR for changes,
 open that comment with `## Changes requested`: the PR tracking of
 `aurora-tools.cmd` lists the PR as waiting on its author until a new
