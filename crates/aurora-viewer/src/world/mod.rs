@@ -380,6 +380,17 @@ pub struct ChatLine {
     /// How RLVa's `@shownames` left the resident who wrote the line when it
     /// arrived (`World::rlva_freeze_line`).
     pub speaker: Speaker,
+    /// Read back into a private conversation, in the conversation or on a
+    /// page of its History window, decided when the history loads, where
+    /// the other resident is known (`peer` of `World::history_lines` and
+    /// `World::service_lines`, `World::private_peer`): its sender's name,
+    /// ours included, is looked up each time it is drawn, as a live line's,
+    /// when the name the file gives is that resident's
+    /// (`ui::chat::log_names_resolve`, `cached_line_sender`, #4261). False
+    /// for every other line: the nearby chat's, a group's or a conference's
+    /// history keep the name the file gives, in the conversation and in the
+    /// History window.
+    pub private_history: bool,
 }
 
 impl ChatLine {
@@ -1017,6 +1028,15 @@ fn saved_prefix(timestamp: u32) -> String {
 pub const MAX_REGION_SIZE: u32 = 4096;
 
 impl World {
+    /// At exit: the objects of the live store and of the regions parked
+    /// after a far teleport (`Parked`, kept about 50 s until their
+    /// simulator is removed) are let go without freeing them on the main
+    /// thread (`ObjectStore::leak_at_exit`). Nothing in them saves a file.
+    pub(crate) fn leak_at_exit(&mut self) {
+        self.objects.leak_at_exit();
+        std::mem::forget(std::mem::take(&mut self.parked));
+    }
+
     pub fn add_tracked_region(&mut self, name: &str, label: &str) {
         if self.region_tracker.add(name, label) {
             self.save_tracked_regions();
@@ -2702,6 +2722,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         self.notice_topics.note(&line, topic);
         self.push_chat(line);
@@ -2720,6 +2741,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         self.notice_topics.note(&line, topic);
         self.conversation_push(session, line, false);
@@ -5509,6 +5531,7 @@ impl World {
             blocked: false,
             beyond_range,
             speaker,
+            private_history: false,
         });
     }
 
@@ -5605,6 +5628,7 @@ impl World {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             };
             let opened = !self.chat_log.conversations.known.contains(&im.from_agent_id);
             let (line_time, line_text) = (line.time, line.text.clone());
@@ -5723,6 +5747,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         });
     }
 
@@ -6828,6 +6853,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let (line_time, line_text) = (line.time, line.text.clone());
         self.conversation_push(to, line, false);
@@ -6871,7 +6897,17 @@ impl World {
     /// Turn the drawn bodies of the standing avatars toward where they face
     /// or travel (LLVOAvatar::updateRootPositionAndRotation). Returns our
     /// own avatar's turn (+1 left, -1 right, 0) for the control flags.
-    pub fn update_bodies(&mut self, now: Instant, dt: f32, cam_at: Vec3, mouselook: bool, step_back: bool, turn_speed: f32) -> i8 {
+    pub fn update_bodies(
+        &mut self,
+        now: Instant,
+        dt: f32,
+        cam_at: Vec3,
+        mouselook: bool,
+        step_back: bool,
+        turn_speed: f32,
+        rotate_threshold_slow: f32,
+        rotate_threshold_fast: f32,
+    ) -> i8 {
         let mut own_turn = 0;
         let mut seen = std::collections::HashSet::new();
         for (_, o) in self.objects.avatars() {
@@ -6902,6 +6938,8 @@ impl World {
                     flying: a.flying,
                     step_back: walking,
                     turn_speed,
+                    rotate_threshold_slow,
+                    rotate_threshold_fast,
                 }
             } else {
                 body::Input {
@@ -6912,6 +6950,11 @@ impl World {
                     flying: false,
                     step_back: walking,
                     turn_speed,
+                    // every avatar drawn, like the turn speed: the Legacy
+                    // Viewer reads both settings for each
+                    // (LLVOAvatar::updateRootPositionAndRotation)
+                    rotate_threshold_slow,
+                    rotate_threshold_fast,
                 }
             };
             let no_rotate = self

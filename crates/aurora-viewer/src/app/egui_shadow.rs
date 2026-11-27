@@ -53,6 +53,15 @@ impl EguiShadow {
         }
     }
 
+    /// At exit (`App::leak_session_at_exit`): the copies are let go without
+    /// freeing them on the main thread, as the world's and the scene's are.
+    /// They are plain CPU pixels, with no GPU handle and nothing to save;
+    /// after a long session Windows may have moved them out to disk, and
+    /// freeing them read them back first (#4533).
+    pub fn leak_at_exit(&mut self) {
+        std::mem::forget(std::mem::take(&mut self.images));
+    }
+
     /// Bytes held, for the log.
     pub fn bytes(&self) -> usize {
         self.images.values().map(|d| d.image.size()[0] * d.image.size()[1] * 4).sum()
@@ -91,6 +100,23 @@ mod tests {
     fn pixels(d: &ImageDelta) -> Vec<Color32> {
         let ImageData::Color(c) = &d.image;
         c.pixels.clone()
+    }
+
+    #[test]
+    fn the_copies_are_let_go_at_exit() {
+        let pixels = image(2, 2, Color32::RED);
+        let ImageData::Color(held) = &pixels;
+        let held = held.clone();
+        let mut shadow = EguiShadow::default();
+        let mut d = delta(
+            vec![(TextureId::Managed(1), ImageDelta::full(pixels, TextureOptions::LINEAR))],
+            vec![],
+        );
+        shadow.note(&d);
+        d.clear();
+        shadow.leak_at_exit();
+        drop(shadow);
+        assert_eq!(std::sync::Arc::strong_count(&held), 2, "left behind, not freed");
     }
 
     #[test]

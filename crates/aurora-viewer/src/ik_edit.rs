@@ -643,6 +643,9 @@ impl Editor {
                 self.degrees = Vec3::new(x, y, z) * (180.0 / std::f32::consts::PI);
             }
         }
+        if self.clip.frees_joints() {
+            self.free_joint();
+        }
         if self.disabled.contains(&bone) {
             self.released_pose(frame);
         } else if self.authoring.owns(bone) {

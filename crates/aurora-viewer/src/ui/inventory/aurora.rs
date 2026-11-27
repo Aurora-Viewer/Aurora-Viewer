@@ -154,6 +154,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-smart-wide"
             | "aurora-keyboard-wide"
             | "aurora-type-ahead-ime"
+            | "aurora-ime"
             | "aurora-delete-confirm-wide"
             | "aurora-rights"
             | "aurora-columns"

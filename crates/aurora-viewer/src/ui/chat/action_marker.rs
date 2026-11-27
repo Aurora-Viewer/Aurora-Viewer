@@ -147,7 +147,7 @@ pub(super) fn link(
             ..emphasis.format(ui.ctx(), size, color)
         },
     );
-    let (origin, galley, response) = egui::Label::new(job).sense(egui::Sense::click()).layout_in_ui(ui);
+    let (origin, galley, response) = super::select::wrapping_label(ui, job.into(), ui.wrap_mode(), egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, ui.is_enabled(), text));
     if ui.is_rect_visible(response.rect) {
         let underline = if response.hovered() || response.has_focus() {

@@ -18,7 +18,9 @@ struct Triangle {
 struct Preview {
     triangles: Vec<Triangle>,
     bounds: Rect,
-    painted: RefCell<Option<(Rect, Color32, Arc<Mesh>)>>,
+    /// The meshes last painted, by place and colour: the same shape can be
+    /// shown in several cells (a captured shape beside its own button).
+    painted: RefCell<Vec<(Rect, Color32, Arc<Mesh>)>>,
 }
 
 type Key = (u64, [u32; 4]);
@@ -98,26 +100,34 @@ impl Preview {
         Self {
             triangles,
             bounds,
-            painted: RefCell::new(None),
+            painted: RefCell::new(Vec::new()),
         }
     }
 
     fn paint(&self, ui: &egui::Ui, rect: Rect, color: Color32) {
+        // a few places at once; more, the oldest is made again
+        const KEPT: usize = 4;
         let mut painted = self.painted.borrow_mut();
-        if painted
-            .as_ref()
-            .is_none_or(|(last_rect, last_colors, _)| *last_rect != rect || *last_colors != color)
-        {
-            *painted = Some((rect, color, Arc::new(self.mesh(rect, color))));
-        }
-        if let Some((_, _, mesh)) = painted.as_ref() {
-            aurora_render::preview::paint_antialiased_mesh(
-                ui,
-                ui.scope_id().with(("primitive-thumbnail", self as *const Self as usize)),
-                rect,
-                mesh.clone(),
-            );
-        }
+        let at = match painted.iter().position(|(r, c, _)| *r == rect && *c == color) {
+            Some(at) => at,
+            None => {
+                if painted.len() >= KEPT {
+                    painted.remove(0);
+                }
+                painted.push((rect, color, Arc::new(self.mesh(rect, color))));
+                painted.len() - 1
+            }
+        };
+        let mesh = painted[at].2.clone();
+        aurora_render::preview::paint_antialiased_mesh(ui, self.target_id(ui.scope_id(), rect), rect, mesh);
+    }
+
+    /// The id of the image painted at `rect`, one per cell: two cells of the
+    /// same shape under one id took each other's image, and one stayed
+    /// empty (a captured shape beside its own button, 2026-11-24).
+    fn target_id(&self, scope: egui::Id, rect: Rect) -> egui::Id {
+        let place = (rect.min.x.to_bits(), rect.min.y.to_bits());
+        scope.with(("primitive-thumbnail", self as *const Self as usize, place))
     }
 
     fn mesh(&self, rect: Rect, color: Color32) -> Mesh {
@@ -232,6 +242,46 @@ mod tests {
                 assert!(mesh.vertices.iter().all(|v| v.color.a() == 255));
             }
         }
+    }
+
+    /// A captured shape beside its own button (2026-11-24): the same shape
+    /// in two cells gives two images, each under an id of its own, and
+    /// neither is made again at each frame.
+    #[test]
+    fn one_shape_in_two_cells_paints_twice_under_two_ids() {
+        let shape = &crate::build::shapes::shapes()[0];
+        let preview = Preview::new(&shape.params(), shape.rotation());
+        let ctx = egui::Context::default();
+        let cells = [
+            Rect::from_min_size(Pos2::new(10.0, 10.0), Vec2::splat(40.0)),
+            Rect::from_min_size(Pos2::new(10.0, 200.0), Vec2::splat(40.0)),
+        ];
+        let mut meshes = Vec::new();
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                for rect in cells {
+                    preview.paint(ui, rect, Color32::WHITE);
+                }
+            });
+            output.textures_delta.clear();
+            let callbacks: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Callback(callback) => Some(callback.clone()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(callbacks.len(), 2, "both cells are painted");
+            meshes.push(preview.painted.borrow().iter().map(|(_, _, m)| Arc::as_ptr(m)).collect::<Vec<_>>());
+        }
+        assert_eq!(meshes[0], meshes[1], "the meshes are kept from one frame to the next");
+        let scope = egui::Id::unique("grid");
+        assert_ne!(
+            preview.target_id(scope, cells[0]),
+            preview.target_id(scope, cells[1]),
+            "two targets, not one"
+        );
     }
 
     #[test]

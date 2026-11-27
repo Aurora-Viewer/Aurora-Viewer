@@ -97,7 +97,12 @@ impl ObjectProfileUi {
             aurora_i18n::tr!("ui-context-object-profile"),
             egui::pos2(260.0, 100.0),
             egui::vec2(490.0, 760.0),
-        );
+        )
+        // its body is laid out in the window's rect: the General panel's
+        // rows measured a little wider than the room they were given, and
+        // a resize grew the window by that much at every frame until it
+        // filled the screen (#4864)
+        .steady_size();
         floater.min_size = egui::vec2(380.0, 420.0);
         floater.show(ctx, p, &mut open, |ui| {
             ui.push_id(id, |ui| {

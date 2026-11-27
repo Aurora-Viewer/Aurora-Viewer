@@ -627,6 +627,7 @@ fn demo_mode() -> Option<&'static str> {
                 || mode.starts_with("aurora-keyboard")
                 || mode.starts_with("type-ahead-ime")
                 || mode.starts_with("aurora-type-ahead-ime")
+                || matches!(mode.as_str(), "ime" | "aurora-ime")
                 || mode.starts_with("enter")
                 || mode.contains("rename-focus")
                 || mode.contains("rename-window")
@@ -796,6 +797,34 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
             log::info!(
                 "demo inventory type-ahead IME: frame={frame}, selected={:?}, prefix={:?}, list_focus={}",
                 st.selected,
+                st.type_ahead.text(),
+                ctx.memory(|m| m.has_focus(focus_id(st)))
+            );
+        }
+        return Vec::new();
+    }
+    if mode == "ime" {
+        // scripts/test-ime-linux.py: click Animations so the list holds the
+        // keyboard, then leave the keys to the system's input method and log
+        // where they went once a second. No synthetic IME event.
+        if matches!(frame, 650 | 651)
+            && let Some(pos) =
+                ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, crate::demo::u(10)))))
+        {
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 650,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        if frame >= 700 && frame.is_multiple_of(60) {
+            log::info!(
+                "demo inventory ime: frame={frame}, selected={:?}, prefix={:?}, list_focus={}",
+                st.selected.map(|id| id.as_u128()),
                 st.type_ahead.text(),
                 ctx.memory(|m| m.has_focus(focus_id(st)))
             );

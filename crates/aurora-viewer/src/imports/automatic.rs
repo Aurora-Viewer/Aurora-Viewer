@@ -9,6 +9,8 @@ pub(super) struct Confirmed {
     maximum: i32,
     meshes: HashMap<Uuid, i32>,
     requested: HashSet<Uuid>,
+    /// A quick import's entries (`Imports::with_only`).
+    only: Option<Vec<Uuid>>,
 }
 
 impl Imports {
@@ -75,6 +77,7 @@ impl Imports {
                 maximum,
                 meshes,
                 requested: HashSet::new(),
+                only: self.only.clone(),
             });
         }
     }
@@ -88,7 +91,12 @@ impl Imports {
         let Some(confirmed) = self.pending_confirmed.take() else {
             return Vec::new();
         };
-        self.with_choice(confirmed.choice, |imports| imports.advance_for(confirmed, world, inventory))
+        match confirmed.only.clone() {
+            Some(ids) => self.with_choice(confirmed.choice, |imports| {
+                imports.with_only(&ids, |imports| imports.advance_for(confirmed, world, inventory))
+            }),
+            None => self.with_choice(confirmed.choice, |imports| imports.advance_for(confirmed, world, inventory)),
+        }
     }
 
     fn advance_for(

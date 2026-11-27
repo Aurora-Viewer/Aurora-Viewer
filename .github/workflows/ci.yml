@@ -1,9 +1,10 @@
 name: CI
 
 # Two stages. A pull request gets the quick checks (formatting, clippy,
-# secrets) while its author reviews it. The full run (tests too) happens in
-# the merge queue, on the PR combined with the latest main: what lands on
-# main is exactly what was tested, and nobody has to update a branch.
+# secrets, the translation catalogues' tests) while its author reviews it.
+# The full run (every test) happens in the merge queue, on the PR combined
+# with the latest main: what lands on main is exactly what was tested, and
+# nobody has to update a branch.
 #
 # A push to main is the commit the queue has just tested: its Windows jobs
 # neither lint nor test it again. They only rebuild the Rust cache when its
@@ -87,6 +88,16 @@ jobs:
       - name: Clippy (warnings are errors)
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || steps.cache.outputs.cache-hit != 'true')
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings
+      # pull requests: the tests of the translation catalogues, which build
+      # aurora-i18n and its few dependencies only (seconds, not the viewer).
+      # A catalogue can break without its own change: a reworded or removed
+      # English message that en-GB overrides, a new one with an American
+      # spelling and no override, a removed key left in another catalogue.
+      # Here the author sees it on the PR, not when the queue rejects it.
+      # The merge queue runs them with every other test (tests below)
+      - name: Translation catalogues
+        if: steps.changes.outputs.code == 'true' && github.event_name == 'pull_request'
+        run: cargo test --profile ci --workspace --locked --test catalogs --test user_catalog --test user_catalog_regional
       # a few seconds to a minute; hung for hours once (see concurrency)
       - name: Save the Rust cache
         if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
@@ -202,7 +213,8 @@ jobs:
 
   tests:
     # Not on pull requests: the agent ran them locally (check.ps1) and the
-    # merge queue runs them on the combined code before anything lands.
+    # merge queue runs them on the combined code before anything lands. A
+    # pull request runs the catalogues' tests alone (lint, above).
     #
     # The run is split in three parts on three runners, each building the
     # tests itself in 4 to 7 minutes, by the processor GitHub's runner

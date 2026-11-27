@@ -23,6 +23,7 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         blocked: false,
         beyond_range: false,
         speaker: Default::default(),
+        private_history: false,
     }
 }
 

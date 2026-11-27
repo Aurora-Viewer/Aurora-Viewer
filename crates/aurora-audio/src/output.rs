@@ -170,14 +170,50 @@ impl OutputThread {
     }
 }
 
+/// How long the engine waits for its output thread to end. The thread
+/// stops within a few milliseconds of its channel closing, but its last
+/// step, dropping the cpal stream, waits for the audio driver, which can
+/// hang (#3133: 71 s at exit, the window not answering). The dropping
+/// thread waits at most this long, then leaves the thread behind.
+///
+/// The microphone instead hands its join to a closer thread and returns at
+/// once (`close_in_background`, `capture.rs`, #2635). That would not help
+/// here: the viewer creates the engine once (`AudioEngine::new_with_device`
+/// in app.rs), and its last clone goes with `App` at the end of `main`. A
+/// closer thread would die with the process at once and give the stream no
+/// time to close, while a short bounded wait lets a normal close finish.
+const STOP_WAIT: Duration = Duration::from_secs(2);
+
 impl Drop for OutputThread {
     fn drop(&mut self) {
         // Disconnecting the command channel stops the thread.
         drop(self.ctl.take());
         if let Some(h) = self.handle.take() {
-            let _ = h.join();
+            join_or_detach(h, STOP_WAIT);
         }
     }
+}
+
+/// Joins `h` if it ends within `limit`, otherwise leaves it running (stuck
+/// in the audio driver) and returns. The engine is dropped on the main
+/// thread at exit, and when its device fails to start (`spawn`'s error
+/// path, where the thread has already ended), so it must not wait for the
+/// driver.
+/// Returns whether the thread was joined.
+fn join_or_detach(h: thread::JoinHandle<()>, limit: Duration) -> bool {
+    let start = Instant::now();
+    while !h.is_finished() {
+        if start.elapsed() >= limit {
+            log::warn!(
+                "audio output: the device has not closed after {} s; the audio driver is holding it, leaving it behind",
+                limit.as_secs()
+            );
+            return false;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let _ = h.join();
+    true
 }
 
 /// Main-mix-clock voice frames (48 kHz) waiting for the independent voice
@@ -1020,6 +1056,40 @@ mod tests {
     use crate::Channel;
     use crate::mixer::{ClipVoice, Command, SharedParams};
     use cpal::Sample;
+
+    #[test]
+    fn a_thread_that_ends_is_joined() {
+        let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = ended.clone();
+        let h = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(30));
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let start = Instant::now();
+        assert!(join_or_detach(h, Duration::from_secs(5)));
+        // joined: the thread had really ended, and well before the limit
+        assert!(ended.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn dropping_the_output_does_not_wait_for_a_stuck_driver() {
+        let (tx, rx) = unbounded::<OutputCmd>();
+        // A thread that, like one stuck dropping its cpal stream, does not
+        // end when its channel closes.
+        let handle = thread::spawn(move || {
+            drop(rx);
+            thread::sleep(Duration::from_secs(30));
+        });
+        let started = Instant::now();
+        drop(OutputThread {
+            ctl: Some(tx),
+            handle: Some(handle),
+        });
+        let waited = started.elapsed();
+        assert!(waited >= STOP_WAIT, "waits a moment for a clean close: {waited:?}");
+        assert!(waited < STOP_WAIT + Duration::from_secs(3), "then returns: {waited:?}");
+    }
 
     #[test]
     fn health_counts_callbacks_later_than_the_queued_sound() {

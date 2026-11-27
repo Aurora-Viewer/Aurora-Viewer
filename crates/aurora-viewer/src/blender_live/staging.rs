@@ -3,7 +3,7 @@
 //! given up when it is lost (`Live::forget_gpu`, app/gpu_recovery.rs), and the
 //! thread stages in the new device's pool from its next snapshot on
 //! (`Live::gpu_reset`).
-use super::protocol::{Prepared, PreparedImage};
+use super::protocol::{CachedImage, Prepared, PreparedImage};
 use aurora_render::{StagedTexture, StagingPool};
 use std::{collections::HashMap, sync::Arc};
 use uuid::Uuid;
@@ -17,16 +17,16 @@ pub(crate) struct Staging {
     lost: bool,
     /// Counts the devices: a snapshot begun for one is not taken for another.
     device: u64,
-    /// The images of the connection's last snapshot, not staged again when
-    /// the next one has them too.
-    images: HashMap<Uuid, PreparedImage>,
+    /// The images of the connection's last snapshot, not decoded nor staged
+    /// again when the next one has them too.
+    images: HashMap<Uuid, CachedImage>,
 }
 
 /// What a snapshot is prepared with, while the device may be replaced.
 pub(crate) struct Turn {
     device: u64,
     pub pool: Option<Arc<StagingPool>>,
-    pub images: HashMap<Uuid, PreparedImage>,
+    pub images: HashMap<Uuid, CachedImage>,
 }
 
 impl Staging {
@@ -52,7 +52,7 @@ impl Staging {
         if self.lost || turn.device != self.device {
             return false;
         }
-        self.images = snapshot.images.iter().map(|image| (image.id, image.clone())).collect();
+        self.images = snapshot.images.iter().map(|image| (image.id, CachedImage::of(image))).collect();
         true
     }
 
@@ -73,6 +73,45 @@ impl Staging {
         self.lost = false;
         self.device += 1;
         self.images.clear();
+    }
+}
+
+/// Images staged again from their pixels on a job, for one pool
+/// (`Live::restage_missing`).
+pub(crate) struct Restaging {
+    pool: std::sync::Weak<StagingPool>,
+    rx: std::sync::Mutex<std::sync::mpsc::Receiver<HashMap<Uuid, Arc<StagedTexture>>>>,
+}
+
+impl Restaging {
+    pub fn start(mut images: Vec<PreparedImage>, pool: Arc<StagingPool>) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let weak = Arc::downgrade(&pool);
+        rayon::spawn(move || {
+            let mut done = HashMap::new();
+            restage(&mut images, Some(&pool), &mut done);
+            let _ = tx.send(done);
+        });
+        Self {
+            pool: weak,
+            rx: std::sync::Mutex::new(rx),
+        }
+    }
+
+    /// The images staged, once the job is done; none for another pool than
+    /// `pool` (the device was replaced meanwhile) or a job that failed.
+    pub fn done(&self, pool: &Arc<StagingPool>) -> Option<HashMap<Uuid, Arc<StagedTexture>>> {
+        use std::sync::mpsc::TryRecvError;
+        let received = self.rx.lock().unwrap_or_else(|e| e.into_inner()).try_recv();
+        match received {
+            Ok(done) => Some(if std::ptr::eq(self.pool.as_ptr(), Arc::as_ptr(pool)) {
+                done
+            } else {
+                HashMap::new()
+            }),
+            Err(TryRecvError::Disconnected) => Some(HashMap::new()),
+            Err(TryRecvError::Empty) => None,
+        }
     }
 }
 
@@ -100,7 +139,7 @@ pub(super) fn restage(images: &mut [PreparedImage], pool: Option<&StagingPool>, 
         });
         if image.staged.is_none() {
             log::warn!(
-                "Blender live: an image could not be staged again after the GPU recovery; the preview waits for Blender's next snapshot"
+                "Blender live: an image could not be staged again from its pixels; the preview waits for it or for Blender's next snapshot"
             );
         }
     }
@@ -110,13 +149,55 @@ pub(super) fn restage(images: &mut [PreparedImage], pool: Option<&StagingPool>, 
 mod tests {
     use super::*;
 
-    fn snapshot() -> Prepared {
+    fn bytes(images: usize) -> Vec<u8> {
         use base64::Engine;
         let mut value = super::super::tests::triangle();
-        let rgba = base64::engine::general_purpose::STANDARD.encode([255u8; 4]);
-        value["images"] = serde_json::json!([{"width": 1, "height": 1, "rgba": rgba}]);
-        let bytes = serde_json::to_vec(&value).expect("JSON");
-        super::super::protocol::prepare(&bytes, &["mPelvis".to_owned()].into()).expect("snapshot")
+        let images: Vec<_> = (0..images)
+            .map(|i| {
+                let rgba = base64::engine::general_purpose::STANDARD.encode([255u8, i as u8, 0, 255]);
+                serde_json::json!({"width": 1, "height": 1, "rgba": rgba})
+            })
+            .collect();
+        value["images"] = serde_json::json!(images);
+        serde_json::to_vec(&value).expect("JSON")
+    }
+
+    fn snapshot() -> Prepared {
+        super::super::protocol::prepare(&bytes(1), &["mPelvis".to_owned()].into()).expect("snapshot")
+    }
+
+    /// The listener's cache gives the next snapshot the pixels it decoded,
+    /// and holds no staged copy: one kept alive there pinned a staging chunk
+    /// for the whole connection, and held every upload back.
+    #[test]
+    fn blender_live_cache_keeps_pixels_not_the_staged_copy() {
+        let supported = ["mPelvis".to_owned()].into();
+        let first = snapshot();
+        let mut staging = Staging::default();
+        let turn = staging.begin().expect("a device");
+        assert!(staging.finish(&turn, &first));
+        let turn = staging.begin().expect("a device");
+        assert!(
+            turn.images[&first.images[0].id].reuse().staged.is_none(),
+            "the cache holds no staged copy"
+        );
+        let second = super::super::protocol::prepare_staged(&bytes(1), &supported, None, &turn.images).expect("next snapshot");
+        assert!(Arc::ptr_eq(&second.images[0].pixels, &first.images[0].pixels), "not decoded again");
+        assert!(second.images[0].staged.is_none(), "uploaded already: not staged again");
+    }
+
+    /// The safety net stages again only the images neither on the GPU nor
+    /// staged; those on the GPU give their staged copies up.
+    #[test]
+    fn blender_live_restages_only_images_neither_on_the_gpu_nor_staged() {
+        let snapshot = super::super::protocol::prepare(&bytes(2), &["mPelvis".to_owned()].into()).expect("snapshot");
+        let (shown, missing) = (snapshot.images[0].id, snapshot.images[1].id);
+        let mut live = super::super::Live::default();
+        live.receive(snapshot);
+        live.release_staged(|id| *id == shown);
+        let unstaged = live.unstaged(|id| *id == shown);
+        assert_eq!(unstaged.iter().map(|image| image.id).collect::<Vec<_>>(), [missing]);
+        assert!(live.unstaged(|_| true).is_empty(), "all on the GPU: nothing to stage");
     }
 
     #[test]
