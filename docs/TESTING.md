@@ -4604,10 +4604,15 @@ choices. The other menus/commands still open the full manager directly.
 
 Mini AO window: `AURORA_DEMO_AO=mini` seeds the same complete swimming set
 with the Mini AO window open, as after a relog with it open, and closes the
-full manager at frame 360. Capture around frame 600. Check the "now playing"
-line, previous / next, the set list, Sits, Settings (the full AO window opens
-and the mini window stays open), and the AO popup's "Open mini AO window",
-hidden while the window is shown and expanding it when it is minimized.
+full manager at frame 360. Capture around frame 600. The mini window is a
+one-line strip without a title bar (moved by its background, closed by its
+cross). Check the "now playing" area (set, state and place, the animation's
+name; a click lists the sets and "Manage sets…"), then the icon buttons and
+their tooltips: AO on / off, previous / auto cycle / next, Override sits,
+Swimming (greyed out while required animations are missing), Water walk and
+Settings (the full AO window opens and the mini window stays open). The AO
+popup's "Open mini AO window" is hidden while the strip is shown; a strip
+left minimized by an older layout comes back whole.
 
 For #1394 on the grid, turn automatic cycling off, choose a non-first stand
 from the manager and then from the quick arrows, and check it after logout/login

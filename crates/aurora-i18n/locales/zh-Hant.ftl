@@ -13891,7 +13891,6 @@ ao-quick-manager = 設定
 ao-quick-previous = 上一個動畫（{ $state }）
 ao-quick-next = 下一個動畫（{ $state }）
 ao-quick-cycle = 自動切換（{ $state }，每 { $seconds } 秒）
-ao-quick-cycle-entry = 自動切換（{ $state }，每次啟動時）
 ao-category-general = 一般
 ao-category-ground = 地面
 ao-category-jumping = 跳躍

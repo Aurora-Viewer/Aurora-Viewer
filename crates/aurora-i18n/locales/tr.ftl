@@ -13922,7 +13922,6 @@ ao-quick-manager = Ayarlar
 ao-quick-previous = Önceki animasyon ({ $state })
 ao-quick-next = Sonraki animasyon ({ $state })
 ao-quick-cycle = Otomatik geçiş ({ $state }, her { $seconds } s)
-ao-quick-cycle-entry = Otomatik geçiş ({ $state }, her başlatıldığında)
 ao-category-general = Genel
 ao-category-ground = Yerde
 ao-category-jumping = Zıplama

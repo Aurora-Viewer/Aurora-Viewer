@@ -2822,6 +2822,13 @@ pub fn minimize_floater(ctx: &egui::Context, id: &str) {
     cascade::minimized(ctx, egui::Id::unique(id), true);
 }
 
+/// Undoes `minimize_floater` at once, for a window without a title bar that
+/// an older layout left minimized (the mini AO strip).
+pub fn unminimize_floater(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((id, "minimized")), false));
+    cascade::minimized(ctx, egui::Id::unique(id), false);
+}
+
 /// The accent that says something waits behind `rect`: a violet wash of
 /// strength `wash` (`ButtonFlash`) and a light outline that widens with it.
 /// A minimized conversations bar and the Conversations button wear the same

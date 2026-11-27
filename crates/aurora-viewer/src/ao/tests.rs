@@ -303,7 +303,8 @@ fn native_movelock_idle_waits_for_coasting_then_prepares_before_sitting() {
             raw.extend_from_slice(&echoes);
             let mut f = frame(&raw);
             f.anchor_hold = lock.standing_since(seated).map(|since| signal(State::Standing, since));
-            let (pose, changes) = ao.update_with_easing(Some(&set), f, now, |_| true, |_| Some(Duration::from_millis(400)), |_| 0);
+            let (pose, changes) =
+                ao.update_with_easing(Some(&set), f, now, |_| true, |_| Some(Duration::from_millis(400)), |_| None, |_| 0);
             if moving {
                 assert_eq!(ao.current, Some(state), "retain locomotion after key release at {ms} ms");
                 assert!(pose.iter().any(|a| a.id == step(&set, state, 0)));
@@ -378,6 +379,7 @@ fn native_movelock_preserves_the_stand_cycle_and_broadcasts_walk_before_stopping
         t,
         |_| true,
         |_| Some(Duration::from_millis(400)),
+        |_| None,
         |_| 0,
     );
     let stand = changes.iter().find(|(_, start)| *start).expect("stand start").0;
@@ -385,7 +387,15 @@ fn native_movelock_preserves_the_stand_cycle_and_broadcasts_walk_before_stopping
     let raw = [stock, echo];
     let mut f = frame(&raw);
     f.anchor_hold = Some(signal(State::Standing, at(1000)));
-    let (_, changes) = r.update_with_easing(Some(&set), f, at(1000), |_| true, |_| Some(Duration::from_millis(400)), |_| 0);
+    let (_, changes) = r.update_with_easing(
+        Some(&set),
+        f,
+        at(1000),
+        |_| true,
+        |_| Some(Duration::from_millis(400)),
+        |_| None,
+        |_| 0,
+    );
     assert!(r.anchor_prepared(Some(1)));
     assert!(!r.anchor_prepared(Some(2)), "a different region cannot reuse the old preparation");
     assert!(changes.is_empty(), "taking ownership must not cycle or restart the existing stand");
@@ -393,7 +403,15 @@ fn native_movelock_preserves_the_stand_cycle_and_broadcasts_walk_before_stopping
     let raw = [sit, echo];
     let mut f = frame(&raw);
     f.anchor_hold = Some(signal(State::Standing, at(1000)));
-    let (_, changes) = r.update_with_easing(Some(&set), f, at(1250), |_| true, |_| Some(Duration::from_millis(400)), |_| 0);
+    let (_, changes) = r.update_with_easing(
+        Some(&set),
+        f,
+        at(1250),
+        |_| true,
+        |_| Some(Duration::from_millis(400)),
+        |_| None,
+        |_| 0,
+    );
     assert!(changes.is_empty(), "the native sit echo must not change the standing group");
     let walking = signal(State::Walking, at(2000));
     let (pose, changes) = r.update_with_easing(
@@ -402,6 +420,7 @@ fn native_movelock_preserves_the_stand_cycle_and_broadcasts_walk_before_stopping
         at(2000),
         |_| true,
         |_| Some(Duration::from_millis(800)),
+        |_| None,
         |_| 0,
     );
     let walk = step(&set, State::Walking, 0);
@@ -418,6 +437,7 @@ fn native_movelock_preserves_the_stand_cycle_and_broadcasts_walk_before_stopping
         at(3049),
         |_| true,
         |_| Some(Duration::from_millis(800)),
+        |_| None,
         |_| 0,
     );
     assert!(
@@ -430,6 +450,7 @@ fn native_movelock_preserves_the_stand_cycle_and_broadcasts_walk_before_stopping
         at(3050),
         |_| true,
         |_| Some(Duration::from_millis(800)),
+        |_| None,
         |_| 0,
     );
     assert!(changes.contains(&(stand, false)));
@@ -1840,4 +1861,152 @@ fn a_dropped_selection_of_animations_is_linked_in_one_request() {
         change.operations.last(),
         Some(Operation::Links { parent, links }) if *parent == folders[0] && links.len() == 3 && links[0].desc == "0"
     ));
+}
+
+/// "Auto" (cycle on, cycle time 0) moves on when the playing animation's own
+/// length ends, not before; the cycle time and Manual keep their rules.
+#[test]
+fn auto_cycle_moves_on_when_the_playing_animation_ends() {
+    let (_, mut set) = fixture();
+    let state = State::Standing;
+    let config = set.states.get_mut(&state).expect("standing");
+    assert!(config.steps.len() >= 2, "the demo set has several stands");
+    config.cycle = Cycle {
+        cycle: true,
+        random: false,
+        seconds: 0.0,
+    };
+    let folder = config.folder;
+    let first = step(&set, state, 0);
+    let lengths = |id: &Uuid| {
+        Some(if *id == first {
+            Duration::from_secs(4)
+        } else {
+            Duration::from_secs(9)
+        })
+    };
+    let mut runtime = Runtime::default();
+    let now = Instant::now();
+    let raw = [signal(state, now)];
+    runtime.update_timed(Some(&set), frame(&raw), now, lengths);
+    let start = runtime.index(state, folder);
+    let playing = step(&set, state, start);
+    let own = if playing == first { 4 } else { 9 };
+    runtime.update_timed(Some(&set), frame(&raw), now + Duration::from_secs(own - 1), lengths);
+    assert_eq!(runtime.index(state, folder), start, "still playing before its length ends");
+    runtime.update_timed(Some(&set), frame(&raw), now + Duration::from_secs(own), lengths);
+    let next = runtime.index(state, folder);
+    assert_eq!(next, (start + 1) % set.states[&state].steps.len(), "the next one, in order");
+
+    // Manual: the lengths never move it on.
+    set.states.get_mut(&state).expect("standing").cycle.cycle = false;
+    for later in [30, 60, 600] {
+        runtime.update_timed(Some(&set), frame(&raw), now + Duration::from_secs(later), lengths);
+    }
+    assert_eq!(runtime.index(state, folder), next, "Manual stays on its animation");
+}
+
+/// An entry whose asset is still downloading has no length yet: "Auto" waits
+/// for it, then gives it its whole length from then.
+#[test]
+fn auto_cycle_waits_for_the_length_of_an_animation_still_loading() {
+    let (_, mut set) = fixture();
+    let state = State::Standing;
+    let config = set.states.get_mut(&state).expect("standing");
+    config.cycle = Cycle {
+        cycle: true,
+        random: false,
+        seconds: 0.0,
+    };
+    let folder = config.folder;
+    let mut runtime = Runtime::default();
+    let now = Instant::now();
+    let raw = [signal(state, now)];
+    runtime.update_timed(Some(&set), frame(&raw), now, |_| None);
+    let start = runtime.index(state, folder);
+    runtime.update_timed(Some(&set), frame(&raw), now + Duration::from_secs(120), |_| None);
+    assert_eq!(runtime.index(state, folder), start, "no length, no turn");
+    let loaded = now + Duration::from_secs(130);
+    let five = |_: &Uuid| Some(Duration::from_secs(5));
+    runtime.update_timed(Some(&set), frame(&raw), loaded, five);
+    runtime.update_timed(Some(&set), frame(&raw), loaded + Duration::from_secs(4), five);
+    assert_eq!(runtime.index(state, folder), start, "its length counts from its arrival");
+    runtime.update_timed(Some(&set), frame(&raw), loaded + Duration::from_secs(5), five);
+    assert_ne!(runtime.index(state, folder), start);
+}
+
+/// A group plays its members together: its turn lasts as long as its longest
+/// member. A very short animation still keeps the least turn.
+#[test]
+fn auto_cycle_times_a_group_by_its_longest_member_and_keeps_a_least_turn() {
+    let (_, set) = fixture();
+    let state = State::Standing;
+    let config = &set.states[&state];
+    let chosen = std::collections::HashSet::from([config.steps[0].id, config.steps[1].id]);
+    let mut set = set.clone();
+    {
+        // the group as the catalogue reads it: one step holding both members
+        let c = set.states.get_mut(&state).expect("standing");
+        let members: Vec<_> = c
+            .steps
+            .iter()
+            .filter(|s| chosen.contains(&s.id))
+            .flat_map(|s| s.members.clone())
+            .collect();
+        c.steps.retain(|s| !chosen.contains(&s.id));
+        c.steps.insert(
+            0,
+            Step {
+                id: Uuid::from_u128(0xA0),
+                name: "Together".into(),
+                order: 0,
+                group: true,
+                members,
+            },
+        );
+        // and one more single entry after it
+        let mut single = c.steps[0].members[0].clone();
+        single.asset = Uuid::from_u128(0xB1);
+        single.link = Uuid::from_u128(0xB2);
+        c.steps.push(Step {
+            id: Uuid::from_u128(0xB2),
+            name: "Single".into(),
+            order: 1,
+            group: false,
+            members: vec![single],
+        });
+        c.cycle = Cycle {
+            cycle: true,
+            random: false,
+            seconds: 0.0,
+        };
+    }
+    let folder = set.states[&state].folder;
+    let group = &set.states[&state].steps[0];
+    let (short, long) = (group.members[0].asset, group.members[1].asset);
+    let lengths = move |id: &Uuid| {
+        Some(if *id == short {
+            Duration::from_secs(2)
+        } else if *id == long {
+            Duration::from_secs(7)
+        } else {
+            Duration::from_millis(100)
+        })
+    };
+    let mut runtime = Runtime::default();
+    let now = Instant::now();
+    let raw = [signal(state, now)];
+    runtime.update_timed(Some(&set), frame(&raw), now, lengths);
+    runtime.choose(state, folder, 0);
+    runtime.update_timed(Some(&set), frame(&raw), now, lengths);
+    assert_eq!(runtime.index(state, folder), 0, "the group plays");
+    runtime.update_timed(Some(&set), frame(&raw), now + Duration::from_secs(6), lengths);
+    assert_eq!(runtime.index(state, folder), 0, "until its longest member ends");
+    runtime.update_timed(Some(&set), frame(&raw), now + Duration::from_secs(7), lengths);
+    assert_eq!(runtime.index(state, folder), 1);
+    let at = now + Duration::from_secs(7);
+    runtime.update_timed(Some(&set), frame(&raw), at + Duration::from_millis(500), lengths);
+    assert_eq!(runtime.index(state, folder), 1, "a 0.1 s animation keeps its turn for a second");
+    runtime.update_timed(Some(&set), frame(&raw), at + Duration::from_secs(1), lengths);
+    assert_ne!(runtime.index(state, folder), 1);
 }

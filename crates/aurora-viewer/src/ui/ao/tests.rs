@@ -1160,10 +1160,11 @@ fn shows_text(f: &mut Fixture, text: &str) -> bool {
     shapes.iter_mut().any(|shape| contains_text(&shape.shape, text))
 }
 
-/// The popup's pin is LLFloaterReg::showInstance: it expands a minimized mini
-/// window, and it is hidden while the mini window is already shown.
+/// The popup's pin is LLFloaterReg::showInstance; it is hidden while the
+/// mini window is shown. The strip cannot be folded: a mini window left
+/// minimized by an older layout comes back whole, without its pin.
 #[test]
-fn quick_pin_expands_a_minimized_mini_window_and_hides_while_it_is_shown() {
+fn quick_pin_hides_while_the_mini_window_is_shown_and_an_old_minimized_strip_expands() {
     let mut f = quick_fixture(true);
     let pin = aurora_i18n::tr!("ao-quick-pin");
     f.click(pin);
@@ -1175,15 +1176,11 @@ fn quick_pin_expands_a_minimized_mini_window_and_hides_while_it_is_shown() {
     assert!(!shows_text(&mut f, pin), "no pin while the mini window is shown");
     super::super::widgets::minimize_floater(&f.ctx, mini::WINDOW);
     f.settle();
-    assert!(super::super::widgets::floater_minimized(&f.ctx, mini::WINDOW));
-    assert!(shows_text(&mut f, pin), "the pin comes back for a minimized window");
-    f.click(pin);
-    f.settle();
-    assert!(f.account.mini_open);
     assert!(
         !super::super::widgets::floater_minimized(&f.ctx, mini::WINDOW),
-        "the pin expands the minimized mini window"
+        "the strip expands itself"
     );
+    assert!(!shows_text(&mut f, pin));
 }
 
 /// Unlike FloaterAO::onClickMore, which turns its one floater into the full
@@ -1195,7 +1192,7 @@ fn mini_ao_settings_opens_the_manager_and_keeps_the_mini_window_open() {
     f.account.mini_open = true;
     f.settle();
     assert!(!f.manager_open);
-    f.click(aurora_i18n::tr!("ao-quick-manager"));
+    f.click_icon("settings-filled");
     f.settle();
     assert!(f.manager_open, "Settings opens the full AO window");
     assert!(f.account.mini_open, "the mini window stays open");
@@ -1215,11 +1212,11 @@ fn mini_ao_shows_a_failed_sits_save_in_the_window() {
     let reason = reason.as_str();
     f.settle();
     assert!(!shows_text(&mut f, reason));
-    let actions = f.click(aurora_i18n::tr!("ao-sits"));
+    let actions = f.click_icon("armchair");
     assert!(!actions.iter().any(|a| matches!(a, Action::Edit(..))), "nothing to send");
     assert!(shows_text(&mut f, reason), "the refusal is shown in the window");
     f.catalog.sets.iter_mut().find(|s| s.id == selected).expect("set").name = name;
-    assert!(matches!(f.click(aurora_i18n::tr!("ao-sits")).as_slice(), [Action::Edit(_, None)]));
+    assert!(matches!(f.click_icon("armchair").as_slice(), [Action::Edit(_, None)]));
     assert!(!shows_text(&mut f, reason), "a saved switch clears the message");
 }
 
@@ -1258,7 +1255,7 @@ fn mini_ao_movement_switches_emit_preference_changes() {
     f.account.mini_open = true;
     f.settle();
     assert!(
-        f.click(aurora_i18n::tr!("movement-swimming"))
+        f.click_icon("swimming")
             .iter()
             .any(|action| matches!(action, Action::MovementPreferences))
     );
@@ -1271,7 +1268,7 @@ fn mini_ao_can_toggle_sit_override_without_opening_the_manager() {
     f.quick = None;
     f.account.mini_open = true;
     f.settle();
-    assert!(matches!(f.click(aurora_i18n::tr!("ao-sits")).as_slice(), [Action::Edit(_, None)]));
+    assert!(matches!(f.click_icon("armchair").as_slice(), [Action::Edit(_, None)]));
 }
 
 #[test]
@@ -1284,12 +1281,12 @@ fn mini_ao_shows_the_current_step_and_stays_open_after_outside_clicks() {
     f.settle();
     let set = f.catalog.selected(f.account.selected).expect("set").clone();
     let name = set.animation_config(State::Standing).expect("stands").steps[0].name.clone();
-    let text = aurora_i18n::tr!("ao-now-playing", state = State::Standing.label(), name = name);
+    let text = name;
     let mut shapes = f.draw(Vec::new()).1;
     assert!(shapes.iter_mut().any(|shape| contains_text(&shape.shape, &text)), "{text}");
     f.runtime.step(&set, State::Standing, true);
     let next = set.animation_config(State::Standing).expect("stands").steps[1].name.clone();
-    let next_text = aurora_i18n::tr!("ao-now-playing", state = State::Standing.label(), name = next);
+    let next_text = next;
     let mut shapes = f.draw(Vec::new()).1;
     assert!(
         shapes.iter_mut().any(|shape| contains_text(&shape.shape, &next_text)),

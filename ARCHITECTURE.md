@@ -5225,10 +5225,12 @@ popup behavior. Its set selector and enable switch edit the same account as
 the manager; swim/water-walk and run/flight boosts edit existing movement
 preferences and retain the selected set's swimming-readiness gate. Child set
 menus keep the parent open; Escape/outside clicks dismiss it, and the manager
-button opens the existing floater. The popup and persistent `ui/ao/mini.rs`
-window share the state-step controls and show the current state and animation;
-the shared controls include the set's sit override. The mini window can be
-pinned from the popup (which expands it when minimized), toggled from the
+button opens the existing floater. The popup and the persistent
+`ui/ao/mini.rs` window share the state-step controls, the sit override save
+and the swimming gate (`quick::cycle_buttons`, `save_sits`,
+`swimming_guard`). Since 2026-11-27 the mini window is a one-line strip
+without a title bar: what plays now (a click opens the set list), then icon
+buttons with tooltips. It can be pinned from the popup, toggled from the
 toolbar, and is remembered per account; its Settings button opens the manager
 beside it.
 `ui/ao/category.rs` partitions every state

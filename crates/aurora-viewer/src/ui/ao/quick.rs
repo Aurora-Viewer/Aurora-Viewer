@@ -7,8 +7,9 @@
 use super::*;
 use crate::movement::Preferences;
 
-/// Switching auto cycle on from the panel without an interval arms this one:
-/// at 0 s a stand would only change on its next entry, never while standing.
+/// Switching auto cycle on from the panel without an interval arms this one,
+/// as the panel always did (0 s, "Auto", now switches when each animation
+/// ends: see `crate::ao::runtime`).
 const QUICK_CYCLE_SECONDS: f32 = 30.0;
 
 /// The auto-cycle button flips the state's `:CY` option, the manager's
@@ -36,7 +37,7 @@ pub(super) fn now_playing<'a>(set: Option<&'a Set>, runtime: &Runtime) -> Option
     config.steps.get(index).map(|step| (state, step.name.as_str()))
 }
 
-/// Previous, auto cycle, next, after the set selector.
+/// Previous, auto cycle, next, after the set selector, each button of `size`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn cycle_buttons(
     ui: &mut egui::Ui,
@@ -46,11 +47,11 @@ pub(super) fn cycle_buttons(
     runtime: &mut Runtime,
     enabled: bool,
     busy: bool,
+    size: Vec2,
     out: &mut Vec<Action>,
 ) {
     let state = target(runtime);
     let label = state.label();
-    let size = Vec2::new(30.0, ui.spacing().interact_size.y);
     ui.spacing_mut().item_spacing.x = 4.0;
     let steps = set.and_then(|s| s.animation_config(state)).map_or(0, |c| c.steps.len());
     // Like AOEngine::cycle, stepping needs the AO on; it works with or
@@ -80,7 +81,7 @@ pub(super) fn cycle_buttons(
             seconds = aurora_i18n::number(f64::from(seconds), decimals)
         )
     } else {
-        aurora_i18n::tr!("ao-quick-cycle-entry", state = label)
+        aurora_i18n::tr!("ao-quick-cycle-auto", state = label)
     };
     let kind = if on {
         widgets::ActionKind::Primary
@@ -145,7 +146,8 @@ pub(super) fn body(
                 .is_some();
         });
         let set = catalog.selected(account.selected);
-        cycle_buttons(ui, p, set, inv, runtime, account.enabled, busy, out);
+        let size = Vec2::new(30.0, ui.spacing().interact_size.y);
+        cycle_buttons(ui, p, set, inv, runtime, account.enabled, busy, size, out);
     });
     if super::enabled(ui, p, runtime, account) {
         out.push(Action::Preferences);
@@ -155,18 +157,7 @@ pub(super) fn body(
         let mut sits = set.sits;
         let changed = ui.add_enabled_ui(!busy, |ui| super::toggle(ui, p, "ao-sits", &mut sits)).inner;
         if changed {
-            let mut edit = set.clone();
-            edit.sits = sits;
-            match inventory::save_set(inv, &edit) {
-                Ok(change) => {
-                    out.push(Action::Edit(change, None));
-                    ui.data_mut(|d| d.remove::<String>(message_id));
-                }
-                Err(reason) => {
-                    log::warn!("AO compact sit override: {reason}");
-                    ui.data_mut(|d| d.insert_temp(message_id, reason));
-                }
-            }
+            save_sits(ui, inv, set, sits, message_id, out);
         }
     }
     if let Some(message) = ui.data(|d| d.get_temp::<String>(message_id)) {
@@ -178,14 +169,7 @@ pub(super) fn body(
         let state = runtime.current.unwrap_or(State::Standing);
         ui.label(aurora_i18n::tr!("ao-now-playing-none", state = state.label()));
     }
-    let ready = catalog.swimming_ready(account.selected);
-    // app/movement.rs's rule: only an AO loaded without swimming animations
-    // turns swimming off. While it loads (at login, when the mini window is
-    // drawn before the AO folder arrives) or after a failed fetch, the
-    // setting stays: it was switched off and saved at every login.
-    if !ready && !catalog.loading && !catalog.failed {
-        prefs.swimming = false;
-    }
+    let ready = swimming_guard(catalog, account, prefs);
     let shown = prefs.swimming && ready;
     let mut swimming = shown;
     ui.add_enabled_ui(ready, |ui| {
@@ -208,6 +192,36 @@ pub(super) fn body(
             super::swimming_warning(ui, p);
         }
     }
+}
+
+/// Saves the set's Override sits; a failure stays shown in the window under
+/// `message_id` until a later save succeeds.
+pub(super) fn save_sits(ui: &egui::Ui, inv: &Inventory, set: &Set, sits: bool, message_id: egui::Id, out: &mut Vec<Action>) {
+    let mut edit = set.clone();
+    edit.sits = sits;
+    match inventory::save_set(inv, &edit) {
+        Ok(change) => {
+            out.push(Action::Edit(change, None));
+            ui.data_mut(|d| d.remove::<String>(message_id));
+        }
+        Err(reason) => {
+            log::warn!("AO compact sit override: {reason}");
+            ui.data_mut(|d| d.insert_temp(message_id, reason));
+        }
+    }
+}
+
+/// Whether the selected set can swim. app/movement.rs's rule: only an AO
+/// loaded without swimming animations turns swimming off. While it loads (at
+/// login, when the mini window is drawn before the AO folder arrives) or
+/// after a failed fetch, the setting stays: it was switched off and saved at
+/// every login.
+pub(super) fn swimming_guard(catalog: &inventory::Catalog, account: &Account, prefs: &mut Preferences) -> bool {
+    let ready = catalog.swimming_ready(account.selected);
+    if !ready && !catalog.loading && !catalog.failed {
+        prefs.swimming = false;
+    }
+    ready
 }
 
 #[derive(Default)]

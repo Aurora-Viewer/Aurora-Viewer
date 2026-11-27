@@ -13906,7 +13906,6 @@ ao-quick-manager = Innstillinger
 ao-quick-previous = Forrige animasjon ({ $state })
 ao-quick-next = Neste animasjon ({ $state })
 ao-quick-cycle = Bytt automatisk ({ $state }, hvert { $seconds } s)
-ao-quick-cycle-entry = Bytt automatisk ({ $state }, hver gang den starter)
 ao-category-general = Generelt
 ao-category-ground = Bakke
 ao-category-jumping = Hopping
