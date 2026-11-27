@@ -430,7 +430,9 @@ impl Ocean {
     /// The maps at `time` (s) for a wind blowing toward `toward` at
     /// `speed` m/s over `fetch` m; `chop` sharpens the crests (0 smooth,
     /// about 1 sharp), `scale` multiplies the heights (the Sea panel's,
-    /// the height limit's).
+    /// the height limit's). `lakes`: whether any water around takes the
+    /// lakes' cascade (`SeaDriver::set_lakes`); without, its maps stay flat
+    /// and its FFTs and foam are not worked out (a third of the work).
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -441,6 +443,7 @@ impl Ocean {
         chop: f32,
         fetch: f32,
         scale: f32,
+        lakes: bool,
     ) -> std::sync::Arc<OceanMaps> {
         let toward = toward.try_normalize().unwrap_or(Vec2::X);
         let speed = speed.max(0.0);
@@ -463,16 +466,20 @@ impl Ocean {
         // one job per cascade and packed pair of fields: the spectrum at
         // `time`, then its inverse FFT (real fields: A + iB comes back as
         // a + ib)
-        let grids: Vec<Vec<C>> = std::thread::scope(|scope| {
+        // (the lakes' cascade only where some water takes it)
+        let grids: Vec<Option<Vec<C>>> = std::thread::scope(|scope| {
             let jobs: Vec<_> = (0..OCEAN_TILES.len() * 4)
-                .map(|job| scope.spawn(move || field(h0, job / 4, job % 4, time, chop, scale)))
+                .map(|job| (lakes || job / 4 != LAKE).then(|| scope.spawn(move || field(h0, job / 4, job % 4, time, chop, scale))))
                 .collect();
             jobs.into_iter()
-                .map(|j| j.join().unwrap_or_else(|_| vec![C::default(); n * n]))
+                .map(|j| j.map(|j| j.join().unwrap_or_else(|_| vec![C::default(); n * n])))
                 .collect()
         });
         let mut texels = vec![[0.0f32; 4]; OCEAN_TILES.len() * OCEAN_BLOCKS * n * n];
         for (job, grid) in grids.iter().enumerate() {
+            let Some(grid) = grid else {
+                continue;
+            };
             let (c, f) = (job / 4, job % 4);
             // fields 0, 1 fill `disp` (xy, zw), 2, 3 fill `slope`
             let rows = c * OCEAN_BLOCKS * n + (f / 2) * n;
@@ -483,7 +490,7 @@ impl Ocean {
                 t[lane + 1] = v.1;
             }
         }
-        self.linger(&mut texels, time, toward, speed);
+        self.linger(&mut texels, time, toward, speed, lakes);
         self.maps = std::sync::Arc::new(OceanMaps {
             texels,
             height,
@@ -509,7 +516,8 @@ impl Ocean {
     /// for a moment (carried downwind at the crest's speed, `ride_speed`
     /// in a wind of `speed`, fading over `FOAM_RIDE`): a breaking crest
     /// keeps a cap of foam at its tip that trails off behind it.
-    fn linger(&mut self, texels: &mut [[f32; 4]], time: f64, toward: Vec2, speed: f32) {
+    /// (`lakes`: as `update`'s; without, the lakes' foam is let go.)
+    fn linger(&mut self, texels: &mut [[f32; 4]], time: f64, toward: Vec2, speed: f32, lakes: bool) {
         let n = OCEAN_N;
         let dt = match self.foam_time {
             // (a jump in time: the sea starts afresh)
@@ -532,6 +540,11 @@ impl Ocean {
             let k = (FOAM_STREAK * dt / (texel * texel)).min(0.45);
             let foam = &mut self.foam[c * n * n..(c + 1) * n * n];
             let ride = &mut self.ride[c * n * n..(c + 1) * n * n];
+            if c == LAKE && !lakes {
+                foam.fill(0.0);
+                ride.fill(0.0);
+                continue;
+            }
             // (a lake's chop, 2 to 4.5 m long, runs at under 2.7 m/s)
             let rides = if c == LAKE { (0.15 * speed).min(2.7) } else { ride_speed(c, speed) };
             let shift = toward * rides * dt / texel;
@@ -682,8 +695,8 @@ mod tests {
     #[test]
     fn the_sea_is_as_high_as_its_spectrum_says_and_grows_with_the_wind() {
         let mut ocean = Ocean::new();
-        let calm = ocean.update(10.0, Vec2::X, 2.0, Spectrum::Jonswap, 0.8, FETCH, 1.0);
-        let gale = ocean.update(10.0, Vec2::X, 18.0, Spectrum::Jonswap, 0.8, FETCH, 1.0);
+        let calm = ocean.update(10.0, Vec2::X, 2.0, Spectrum::Jonswap, 0.8, FETCH, 1.0, true);
+        let gale = ocean.update(10.0, Vec2::X, 18.0, Spectrum::Jonswap, 0.8, FETCH, 1.0, true);
         assert!(calm.height < 0.15 && gale.height > 0.8, "{} {}", calm.height, gale.height);
         // the heights in the maps match the spectrum's (Hs = 4σ), the
         // first cascade holding most of it
@@ -706,7 +719,7 @@ mod tests {
     #[test]
     fn a_lake_s_chop_is_short_and_steep_and_apart_from_the_open_sea() {
         let mut ocean = Ocean::new();
-        let gale = ocean.update(10.0, Vec2::X, 20.0, Spectrum::Jonswap, 1.0, FETCH, 1.0);
+        let gale = ocean.update(10.0, Vec2::X, 20.0, Spectrum::Jonswap, 1.0, FETCH, 1.0, true);
         assert!(gale.lake_height > 0.15 && gale.lake_height < 0.6, "{}", gale.lake_height);
         assert!(gale.lake_height < 0.2 * gale.height, "{} vs {}", gale.lake_height, gale.height);
         // a wave's length as its heights' RMS over its slopes' (2π / k)
@@ -726,14 +739,14 @@ mod tests {
         let p = Vec2::new(12.3, -4.5);
         assert_eq!(gale.sample(p), gale.sample_weighted(p, [1.0, 1.0, 0.0]));
         // a lighter wind, lower chop
-        let breeze = ocean.update(10.0, Vec2::X, 8.0, Spectrum::Jonswap, 1.0, FETCH, 1.0);
+        let breeze = ocean.update(10.0, Vec2::X, 8.0, Spectrum::Jonswap, 1.0, FETCH, 1.0, true);
         assert!(breeze.lake_height < 0.5 * gale.lake_height, "{}", breeze.lake_height);
     }
 
     #[test]
     fn its_slope_is_its_height_s_gradient_and_its_crests_fold() {
         let mut ocean = Ocean::new();
-        let maps = ocean.update(3.0, Vec2::new(0.8, 0.6), 14.0, Spectrum::Jonswap, 1.0, FETCH, 1.0);
+        let maps = ocean.update(3.0, Vec2::new(0.8, 0.6), 14.0, Spectrum::Jonswap, 1.0, FETCH, 1.0, true);
         let h = 0.05;
         for p in [Vec2::new(3.3, 7.1), Vec2::new(-40.0, 12.5), Vec2::new(100.2, -66.0)] {
             let at = maps.sample(p);
@@ -757,13 +770,13 @@ mod tests {
     fn the_foam_of_a_fold_lingers_then_fades_and_streaks_downwind() {
         let mut ocean = Ocean::new();
         let toward = Vec2::X;
-        ocean.update(10.0, toward, 16.0, Spectrum::Jonswap, 1.0, FETCH, 1.0);
+        ocean.update(10.0, toward, 16.0, Spectrum::Jonswap, 1.0, FETCH, 1.0, true);
         let n = OCEAN_N;
         let mut texels = vec![[0.0f32; 4]; OCEAN_TILES.len() * OCEAN_BLOCKS * n * n];
         // a single fold on the long cascade: ∂Dx/∂x = -0.5
         texels[n * n + 40 * n + 40][2] = -0.5;
         ocean.foam_time = None;
-        ocean.linger(&mut texels, 0.0, toward, 16.0);
+        ocean.linger(&mut texels, 0.0, toward, 16.0, true);
         let foam = |t: &[[f32; 4]], x: usize, y: usize| t[2 * n * n + y * n + x][0];
         assert!((foam(&texels, 40, 40) - 0.5).abs() < 1e-5);
         // the crest moves on: the foam stays, fades, and spreads along x
@@ -771,7 +784,7 @@ mod tests {
         let mut t = 0.0;
         for _ in 0..60 {
             t += 1.0 / 30.0;
-            ocean.linger(&mut texels, t, toward, 16.0);
+            ocean.linger(&mut texels, t, toward, 16.0, true);
         }
         // (a fold one texel wide spreads fast: its peak falls by both)
         let left = foam(&texels, 40, 40);
@@ -781,7 +794,7 @@ mod tests {
         // and is gone some seconds later
         for _ in 0..900 {
             t += 1.0 / 30.0;
-            ocean.linger(&mut texels, t, toward, 16.0);
+            ocean.linger(&mut texels, t, toward, 16.0, true);
         }
         assert!(foam(&texels, 40, 40) < 0.01);
     }
@@ -789,17 +802,17 @@ mod tests {
     #[test]
     fn a_breaking_crest_carries_its_foam_on_for_a_moment() {
         let mut ocean = Ocean::new();
-        ocean.update(10.0, Vec2::X, 16.0, Spectrum::Jonswap, 1.0, FETCH, 1.0);
+        ocean.update(10.0, Vec2::X, 16.0, Spectrum::Jonswap, 1.0, FETCH, 1.0, true);
         let n = OCEAN_N;
         let mut texels = vec![[0.0f32; 4]; OCEAN_TILES.len() * OCEAN_BLOCKS * n * n];
         texels[n * n + 40 * n + 40][2] = -0.5;
         ocean.foam_time = None;
-        ocean.linger(&mut texels, 0.0, Vec2::X, 16.0);
+        ocean.linger(&mut texels, 0.0, Vec2::X, 16.0, true);
         texels[n * n + 40 * n + 40][2] = 0.0;
         let mut t = 0.0;
         for _ in 0..8 {
             t += 1.0 / 30.0;
-            ocean.linger(&mut texels, t, Vec2::X, 16.0);
+            ocean.linger(&mut texels, t, Vec2::X, 16.0, true);
         }
         // a quarter second on, at 7.2 m/s over 1.5 m texels: some 1.3
         // texels downwind there is more foam than as far upwind
@@ -819,8 +832,8 @@ mod tests {
                     .map(|i| m.sample(side + toward * (i as f32 * 0.5)).offset.z)
                     .collect::<Vec<f32>>()
             };
-            let a = line(&ocean.update(50.0, toward, 12.0, Spectrum::Jonswap, 0.0, FETCH, 1.0));
-            let b = line(&ocean.update(50.25, toward, 12.0, Spectrum::Jonswap, 0.0, FETCH, 1.0));
+            let a = line(&ocean.update(50.0, toward, 12.0, Spectrum::Jonswap, 0.0, FETCH, 1.0, true));
+            let b = line(&ocean.update(50.25, toward, 12.0, Spectrum::Jonswap, 0.0, FETCH, 1.0, true));
             let fit = |s: i32| (40..344).map(|i| a[i as usize] * b[(i + s) as usize]).sum::<f32>();
             let best = (-20i32..=20).max_by(|&x, &y| fit(x).total_cmp(&fit(y))).unwrap_or(0);
             assert!(best > 0, "the waves went {} m against the wind", -best as f32 * 0.5);
@@ -830,7 +843,7 @@ mod tests {
     #[test]
     fn it_tiles_and_moves_on_in_time() {
         let mut ocean = Ocean::new();
-        let a = ocean.update(5.0, Vec2::X, 10.0, Spectrum::Phillips, 0.8, FETCH, 1.0);
+        let a = ocean.update(5.0, Vec2::X, 10.0, Spectrum::Phillips, 0.8, FETCH, 1.0, true);
         let p = Vec2::new(12.0, 5.0);
         // the first cascade alone repeats every tile: the second's period
         // is 27.3 m, so 7 of the first's (1344 m) are 49.2 of the second's;
@@ -842,7 +855,7 @@ mod tests {
         let far = one.sample(p + Vec2::new(OCEAN_TILES[0], -2.0 * OCEAN_TILES[0]));
         let near = one.sample(p);
         assert!((near.offset - far.offset).length() < 1e-4, "{near:?} {far:?}");
-        let b = ocean.update(5.5, Vec2::X, 10.0, Spectrum::Phillips, 0.8, FETCH, 1.0);
+        let b = ocean.update(5.5, Vec2::X, 10.0, Spectrum::Phillips, 0.8, FETCH, 1.0, true);
         assert_ne!(a.sample(p).offset, b.sample(p).offset);
         assert!(b.height > 0.0);
     }

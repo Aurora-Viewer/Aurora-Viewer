@@ -388,7 +388,16 @@ mod tests {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
         let mut ocean = Ocean::new();
         // hours online: the loop keeps the phases the same on both sides
-        let maps = ocean.update(5.0 * 3600.0 + 7.25, Vec2::new(0.8, 0.6), 12.0, Spectrum::Jonswap, 0.9, FETCH, 1.0);
+        let maps = ocean.update(
+            5.0 * 3600.0 + 7.25,
+            Vec2::new(0.8, 0.6),
+            12.0,
+            Spectrum::Jonswap,
+            0.9,
+            FETCH,
+            1.0,
+            true,
+        );
         let mut gpu = OceanGpu::new(&device);
         gpu.prepare(&queue, &maps);
         assert!(gpu.ready);

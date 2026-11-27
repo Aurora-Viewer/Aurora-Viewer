@@ -94,6 +94,19 @@ struct SeaGrid {
     /// swell reach and chop) on this grid's cells, and when this one was baked.
     prev: std::sync::Arc<[[f32; 6]]>,
     baked_at: f32,
+    /// Whether it or the previous grid has water that takes the lakes'
+    /// chop (`takes_lakes`).
+    lakes: bool,
+}
+
+/// Whether a sea grid's `cells` have water that takes the lakes' chop: a
+/// short fetch (`ocean_weights`' lake share above 0). Out of the grid the
+/// sea is open; without such water nothing reads the lakes' cascade, and
+/// its FFTs are left out (`SeaDriver::set_lakes`).
+fn takes_lakes(cells: &[[f32; 6]]) -> bool {
+    cells
+        .iter()
+        .any(|c| c[0] > 0.0 && aurora_render::water_sea::ocean_weights(c[5])[1] > 0.0)
 }
 
 /// A sea grid baking on a worker thread (water_shelter::bake_grid).
@@ -411,6 +424,17 @@ impl Effects {
             Some(old) => old.shown(time, origin, &grid).into(),
             None => grid.iter().copied().collect::<Vec<_>>().into(),
         };
+        let lakes = takes_lakes(&grid) || takes_lakes(&prev);
+        if self.sea_grid.as_ref().is_none_or(|g| g.lakes != lakes) {
+            log::info!(
+                "water sea grid: {}",
+                if lakes {
+                    "water with a short fetch around, the lakes' chop worked out"
+                } else {
+                    "no water with a short fetch around, the lakes' chop left out"
+                }
+            );
+        }
         self.sea_grid = Some(SeaGrid {
             origin,
             checked_at: time,
@@ -418,6 +442,7 @@ impl Effects {
             grid,
             prev,
             baked_at: time,
+            lakes,
         });
     }
 
@@ -1099,6 +1124,8 @@ impl Scene {
             spectrum: tune.spectrum.filter(|_| waves),
             ..tune
         });
+        // (the lakes' chop only while some water around takes it)
+        effects.sea.set_lakes(effects.sea_grid.as_ref().is_some_and(|g| g.lakes));
         self.lists.water_sea = effects.sea.advance(time, wind, eye.truncate());
         self.lists.water_spray = if waves && settings.splashes { tune.spray } else { 0.0 };
         // (the CPU's samplers read the maps of this frame, as the GPU)
@@ -1276,6 +1303,7 @@ mod tests {
             grid: vec![calm; SEA_GRID * SEA_GRID].into(),
             prev: vec![open; SEA_GRID * SEA_GRID].into(),
             baked_at: 10.0,
+            lakes: true,
         };
         // just baked: it still shows the open sea it fades from
         let fresh = vec![calm; SEA_GRID * SEA_GRID];
@@ -1291,6 +1319,45 @@ mod tests {
         let done = old.shown(10.0 + SEA_FADE, Vec2::ZERO, &fresh)[0];
         assert!(done.iter().zip(calm).all(|(a, b)| (a - b).abs() < 1e-5), "{done:?}");
     }
+    #[test]
+    fn the_lakes_chop_is_worked_out_only_where_some_water_takes_it() {
+        // open sea (a long fetch), land with any exposure, and a lake
+        let sea = [8.0, 1.0, 6.0, 0.0, 1.0, 1.0];
+        let land = [-2.0, 1.0, 6.0, 0.0, 0.0, 0.2];
+        let lake = [3.0, 1.0, 6.0, 0.0, 0.0, 0.3];
+        assert!(!takes_lakes(&[sea, land, sea]));
+        assert!(takes_lakes(&[sea, lake, land]));
+        // a sheltered cove: short fetch, so the lakes' chop
+        assert!(takes_lakes(&[[2.0, 0.5, 6.0, 0.0, 0.3, 0.5]]));
+        // and the FFTs follow: flat lake maps without, the open sea's alike
+        let mut ocean = aurora_render::water_fft::Ocean::new();
+        let with = ocean.update(
+            10.0,
+            Vec2::X,
+            14.0,
+            aurora_render::water_fft::Spectrum::Jonswap,
+            1.0,
+            1000.0,
+            1.0,
+            true,
+        );
+        let mut ocean = aurora_render::water_fft::Ocean::new();
+        let without = ocean.update(
+            10.0,
+            Vec2::X,
+            14.0,
+            aurora_render::water_fft::Spectrum::Jonswap,
+            1.0,
+            1000.0,
+            1.0,
+            false,
+        );
+        let lake = |m: &aurora_render::water_fft::OceanMaps| m.sample_weighted(Vec2::new(3.3, 1.7), [0.0, 0.0, 1.0]).offset;
+        assert!(lake(&with).length() > 1e-3 && lake(&without).length() == 0.0);
+        let open = |m: &aurora_render::water_fft::OceanMaps| m.sample_weighted(Vec2::new(3.3, 1.7), [1.0, 1.0, 0.0]).offset;
+        assert_eq!(open(&with), open(&without));
+    }
+
     #[test]
     fn a_scan_that_found_nothing_is_not_run_again_at_the_next_frame() {
         assert!(scan_due(None, 0.0));

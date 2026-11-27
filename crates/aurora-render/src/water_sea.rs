@@ -670,6 +670,8 @@ pub struct SeaDriver {
     ocean: Option<(OceanJob, Spectrum)>,
     maps: Arc<OceanMaps>,
     tune: SeaTune,
+    /// Whether any water around takes the lakes' cascade (`set_lakes`).
+    lakes: bool,
 }
 
 impl Default for SeaDriver {
@@ -688,6 +690,7 @@ impl Default for SeaDriver {
                 spectrum: None,
                 ..SeaTune::default()
             },
+            lakes: true,
         }
     }
 }
@@ -696,6 +699,14 @@ impl SeaDriver {
     /// The sea now.
     pub fn sea(&self) -> Sea {
         self.sea
+    }
+
+    /// Whether any water around takes the lakes' cascade (a cell of the sea
+    /// grid with a short fetch: `ocean_weights`' lake share above 0). Without,
+    /// its FFTs and foam are not worked out (water_fft.rs `Ocean::update`):
+    /// out of the grid the sea is open, so nothing reads it. On until told.
+    pub fn set_lakes(&mut self, lakes: bool) {
+        self.lakes = lakes;
     }
 
     /// Shape the sea as the Sea panel says (`SeaTune`).
@@ -791,13 +802,13 @@ impl SeaDriver {
         // the spectrum's crests sharpen with the wind, as the trains'
         let chop = (0.6 + 0.4 * sea.frame[3]) * finite(tune.choppiness, 1.0);
         let fetch = finite(tune.fetch, crate::water_fft::FETCH);
-        let (heading, speed) = (self.heading, self.speed);
+        let (heading, speed, lakes) = (self.heading, self.speed, self.lakes);
         // its first maps at once (later ones come from the worker): the sea
         // never starts out without its chop, and the limit knows its height
         if self.maps.texels.is_empty()
             && let Some((OceanJob::Idle(ocean), kind)) = &mut self.ocean
         {
-            self.maps = ocean.update(f64::from(time), heading, speed, *kind, chop, fetch, 1.0);
+            self.maps = ocean.update(f64::from(time), heading, speed, *kind, chop, fetch, 1.0, lakes);
         }
         let chop_height = if self.ocean.is_some() {
             if self.maps.texels.is_empty() {
@@ -848,7 +859,7 @@ impl SeaDriver {
             let next = f64::from(time) + f64::from(dt.clamp(0.0, 0.1));
             let job = match job {
                 OceanJob::Idle(mut ocean) => OceanJob::Busy(std::thread::spawn(move || {
-                    let maps = ocean.update(next, heading, speed, kind, chop, fetch, 1.0);
+                    let maps = ocean.update(next, heading, speed, kind, chop, fetch, 1.0, lakes);
                     (ocean, maps)
                 })),
                 busy => busy,
