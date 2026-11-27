@@ -14196,6 +14196,7 @@ ao-quick-manager = Налаштування
 ao-quick-previous = Попередня анімація ({ $state })
 ao-quick-next = Наступна анімація ({ $state })
 ao-quick-cycle = Перемикати автоматично ({ $state }, кожні { $seconds } с)
+ao-quick-cycle-entry = Перемикати автоматично ({ $state }, щоразу під час запуску)
 ao-category-general = Загальне
 ao-category-ground = На землі
 ao-category-jumping = Стрибки

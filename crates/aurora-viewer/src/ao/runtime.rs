@@ -13,10 +13,6 @@ use std::time::{Duration, Instant};
 /// pose for as long as the avatar stays in the water.
 const LOADING_HOLD: Duration = Duration::from_secs(3);
 
-/// Shortest turn of an "Auto" cycle: an animation of a few frames would
-/// otherwise switch every few frames.
-const AUTO_LEAST: Duration = Duration::from_secs(1);
-
 pub struct Frame<'a> {
     pub raw: &'a [PlayingAnimation],
     /// Movement enhancer's bounded ground-contact grace; never changes raw signals.
@@ -45,9 +41,6 @@ struct Cursor {
     manual: bool,
     choice_changed: bool,
     cycle: Option<Cycle>,
-    /// An "Auto" cycle waits for the length of the entry it plays (its asset
-    /// still downloading) before it can time the next one.
-    auto_wait: bool,
 }
 
 pub struct Runtime {
@@ -327,16 +320,6 @@ impl Runtime {
         }
     }
 
-    /// The entry a list plays: kept, or the next one on entering the state,
-    /// when its timer ends, or after a manual choice. The timer is the cycle
-    /// time (`:CT`) or, at 0 with the cycle on ("Auto"), the length of the
-    /// entry being played (`length` of its index; the longest member of a
-    /// group).
-    ///
-    /// Difference with the Legacy Viewer: AOEngine::cycle with a cycle time of
-    /// 0 only moves on at the next entry into the state. Aurora moves on when
-    /// the animation's own length ends (the human's choice, 2026-11-27), and
-    /// still on each entry.
     #[allow(clippy::too_many_arguments)]
     fn pick(
         &mut self,
@@ -347,7 +330,6 @@ impl Runtime {
         signal: Instant,
         now: Instant,
         roll: &mut impl FnMut(usize) -> usize,
-        length: &mut dyn FnMut(usize) -> Option<Duration>,
     ) -> Option<(usize, bool)> {
         if len == 0 {
             return None;
@@ -363,25 +345,15 @@ impl Runtime {
         self.choices_changed |= changed;
         c.choice_changed |= changed;
         let config_changed = c.cycle.as_ref() != Some(cycle);
-        let auto = cycle.cycle && !(cycle.seconds.is_finite() && cycle.seconds > 0.0) && len > 1;
         if changed || config_changed {
             c.signal = Some(signal);
             c.next = if cycle.cycle && cycle.seconds.is_finite() && cycle.seconds > 0.0 {
                 now.checked_add(Duration::from_secs_f32(cycle.seconds.clamp(0.01, 86400.0)))
-            } else if auto {
-                length(c.index).and_then(|d| now.checked_add(d.max(AUTO_LEAST)))
             } else {
                 None
             };
-            c.auto_wait = auto && c.next.is_none();
             c.manual = false;
             c.cycle = Some(cycle.clone());
-        } else if c.auto_wait
-            && let Some(d) = length(c.index)
-        {
-            // The entry's asset arrived: it starts now, its turn with it.
-            c.next = now.checked_add(d.max(AUTO_LEAST));
-            c.auto_wait = false;
         }
         Some((c.index, changed))
     }
@@ -393,28 +365,12 @@ impl Runtime {
         signal: Instant,
         now: Instant,
         roll: &mut impl FnMut(usize) -> usize,
-        length: &mut impl FnMut(&Uuid) -> Option<Duration>,
         desired: &mut Vec<Uuid>,
     ) {
         let Some(config) = set.animation_config(state) else {
             return;
         };
-        let mut step_length = |i: usize| {
-            config
-                .steps
-                .get(i)
-                .and_then(|s| s.members.iter().filter_map(|a| length(&a.asset)).max())
-        };
-        if let Some((index, changed)) = self.pick(
-            state,
-            config.folder,
-            config.steps.len(),
-            &config.cycle,
-            signal,
-            now,
-            roll,
-            &mut step_length,
-        ) {
+        if let Some((index, changed)) = self.pick(state, config.folder, config.steps.len(), &config.cycle, signal, now, roll) {
             if changed {
                 for a in &config.steps[index].members {
                     self.completed.remove(&a.asset);
@@ -423,17 +379,7 @@ impl Runtime {
             desired.extend(config.steps[index].members.iter().map(|a| a.asset).filter(|id| !id.is_nil()));
         }
         for track in &config.tracks {
-            let mut member_length = |i: usize| track.members.get(i).and_then(|a| length(&a.asset));
-            if let Some((index, changed)) = self.pick(
-                state,
-                track.id,
-                track.members.len(),
-                &track.cycle,
-                signal,
-                now,
-                roll,
-                &mut member_length,
-            ) {
+            if let Some((index, changed)) = self.pick(state, track.id, track.members.len(), &track.cycle, signal, now, roll) {
                 let asset = track.members[index].asset;
                 if changed {
                     self.completed.remove(&asset);
@@ -454,20 +400,7 @@ impl Runtime {
         ready: impl FnMut(&Uuid) -> bool,
         roll: impl FnMut(usize) -> usize,
     ) -> (Vec<PlayingAnimation>, Vec<(Uuid, bool)>) {
-        self.update_with_easing(set, frame, now, ready, |_| Some(Duration::ZERO), |_| None, roll)
-    }
-
-    /// `update`, the animations' lengths known (an "Auto" cycle times its
-    /// turns with them).
-    #[cfg(test)]
-    pub fn update_timed(
-        &mut self,
-        set: Option<&Set>,
-        frame: Frame<'_>,
-        now: Instant,
-        length: impl FnMut(&Uuid) -> Option<Duration>,
-    ) -> (Vec<PlayingAnimation>, Vec<(Uuid, bool)>) {
-        self.update_with_easing(set, frame, now, |_| true, |_| Some(Duration::ZERO), length, |_| 0)
+        self.update_with_easing(set, frame, now, ready, |_| Some(Duration::ZERO), roll)
     }
 
     pub fn update_with_easing(
@@ -477,7 +410,6 @@ impl Runtime {
         now: Instant,
         mut ready: impl FnMut(&Uuid) -> bool,
         mut ease_in: impl FnMut(&Uuid) -> Option<Duration>,
-        mut length: impl FnMut(&Uuid) -> Option<Duration>,
         mut roll: impl FnMut(usize) -> usize,
     ) -> (Vec<PlayingAnimation>, Vec<(Uuid, bool)>) {
         let previous_state = self.current;
@@ -597,7 +529,7 @@ impl Runtime {
                 };
                 if allowed {
                     let start = desired.len();
-                    self.state_assets(set, state, a.continuous_start, now, &mut roll, &mut length, &mut desired);
+                    self.state_assets(set, state, a.continuous_start, now, &mut roll, &mut desired);
                     if desired.len() > start {
                         states.insert(state);
                         remap.push((base, desired[start..].to_vec()));
@@ -609,7 +541,7 @@ impl Runtime {
             }
             if let Some(a) = frame.raw.iter().find(|a| a.id == State::Typing.motion()) {
                 let start = desired.len();
-                self.state_assets(set, State::Typing, a.continuous_start, now, &mut roll, &mut length, &mut desired);
+                self.state_assets(set, State::Typing, a.continuous_start, now, &mut roll, &mut desired);
                 if desired.len() > start {
                     states.insert(State::Typing);
                     remap.push((State::Typing, desired[start..].to_vec()));
@@ -622,7 +554,7 @@ impl Runtime {
                 .and_then(|c| c.signal)
                 .unwrap_or(now);
             self.cursors.entry((State::Always, Uuid::nil())).or_default().signal = Some(signal);
-            self.state_assets(set, State::Always, signal, now, &mut roll, &mut length, &mut desired);
+            self.state_assets(set, State::Always, signal, now, &mut roll, &mut desired);
             states.insert(State::Always);
         }
         if !running
@@ -632,7 +564,7 @@ impl Runtime {
         {
             // Active swimming owns its slots even when the regular AO
             // is off/paused. Broadcast through the same AgentAnimation owner.
-            self.state_assets(set, state, signal.continuous_start, now, &mut roll, &mut length, &mut desired);
+            self.state_assets(set, state, signal.continuous_start, now, &mut roll, &mut desired);
             states.insert(state);
             remap.push((state, desired.clone()));
         }

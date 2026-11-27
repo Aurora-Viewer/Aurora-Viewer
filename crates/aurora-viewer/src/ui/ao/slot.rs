@@ -18,8 +18,8 @@ struct EntryDrag {
     entry: Uuid,
 }
 
-/// The slider's stops: Auto, then seconds. Auto (0) switches when the
-/// playing animation's own length ends; see `crate::ao::runtime`.
+/// The slider's stops: "Each time" (0, AOEngine's cycle without a timer: the
+/// next one at each entry into the state), then seconds.
 pub(super) const STOPS: [f32; 6] = [0.0, 10.0, 20.0, 30.0, 60.0, 120.0];
 /// Height of an entry's row.
 const ROW: f32 = 34.0;
@@ -361,12 +361,12 @@ impl Editor<'_> {
                                     );
                                     commit |= response.drag_stopped() || response.lost_focus();
                                 } else {
-                                    ui.label(aurora_i18n::tr!("ao-turns-auto"));
+                                    ui.label(aurora_i18n::tr!("ao-turns-each-time"));
                                 }
                             });
                             ui.horizontal(|ui| {
                                 ui.set_height(28.0);
-                                ui.label(RichText::new(aurora_i18n::tr!("ao-auto")).small().color(p.muted));
+                                ui.label(RichText::new(aurora_i18n::tr!("ao-each-time")).small().color(p.muted));
                                 let mut stop = stop_of(edit.seconds);
                                 let before = stop;
                                 ui.spacing_mut().slider_width = (ui.available_width() - 44.0).max(60.0);

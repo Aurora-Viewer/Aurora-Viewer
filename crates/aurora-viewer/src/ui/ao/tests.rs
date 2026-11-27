@@ -1525,7 +1525,7 @@ fn order_menu_and_slider_stops_map_the_saved_cycle() {
     assert_eq!(manual, cycle(false, true, 20.0), "Manual keeps the random flag and the time");
     assert_eq!(Order::Sequence.apply(&manual), cycle(true, false, 20.0));
     assert_eq!(Order::Shuffle.apply(&manual), cycle(true, true, 20.0));
-    assert_eq!(stop_of(0.0), 0, "Auto");
+    assert_eq!(stop_of(0.0), 0, "Each time");
     assert_eq!(stop_of(-3.0), 0);
     assert_eq!(stop_of(12.0), 1);
     assert_eq!(stop_of(45.1), 4);

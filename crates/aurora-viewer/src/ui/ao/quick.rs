@@ -7,9 +7,8 @@
 use super::*;
 use crate::movement::Preferences;
 
-/// Switching auto cycle on from the panel without an interval arms this one,
-/// as the panel always did (0 s, "Auto", now switches when each animation
-/// ends: see `crate::ao::runtime`).
+/// Switching auto cycle on from the panel without an interval arms this one:
+/// at 0 s a stand would only change on its next entry, never while standing.
 const QUICK_CYCLE_SECONDS: f32 = 30.0;
 
 /// The auto-cycle button flips the state's `:CY` option, the manager's
@@ -81,7 +80,7 @@ pub(super) fn cycle_buttons(
             seconds = aurora_i18n::number(f64::from(seconds), decimals)
         )
     } else {
-        aurora_i18n::tr!("ao-quick-cycle-auto", state = label)
+        aurora_i18n::tr!("ao-quick-cycle-entry", state = label)
     };
     let kind = if on {
         widgets::ActionKind::Primary

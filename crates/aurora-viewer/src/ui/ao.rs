@@ -12,9 +12,9 @@
 //! - its state list is one combo box; here every slot of a group is shown,
 //!   with what it holds, and the five groups and Essentials narrow the list;
 //! - its cycle checkbox, random checkbox and seconds field become one order
-//!   menu (In order / Shuffle / Manual) and a time slider. "Auto" (0 s)
-//!   switches when the playing animation's own length ends, where AOEngine
-//!   waits for the next entry into the state (see `crate::ao::runtime`).
+//!   menu (In order / Shuffle / Manual) and a time slider whose first stop,
+//!   "Each time" (0 s), is AOEngine's cycle without a timer: the next one at
+//!   each entry into the state.
 
 use super::widgets::{self, Floater};
 use crate::ao::{Account, Cycle, Set, State, inventory, runtime::Runtime};

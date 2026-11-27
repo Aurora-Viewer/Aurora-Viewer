@@ -359,14 +359,6 @@ impl App {
                         .get(id)
                         .and_then(|a| std::time::Duration::try_from_secs_f32(a.anim.ease_in.clamp(0.0, 60.0)).ok())
                 },
-                // the animation's own length, for an "Auto" cycle
-                |id| {
-                    stream
-                        .borrow_mut()
-                        .get(id)
-                        .and_then(|a| std::time::Duration::try_from_secs_f32(a.anim.duration.clamp(0.0, 3600.0)).ok())
-                        .filter(|d| !d.is_zero())
-                },
                 |len| ((Uuid::new_v4().as_u128() >> 64) as usize) % len.max(1),
             )
         };

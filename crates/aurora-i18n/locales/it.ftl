@@ -13888,6 +13888,7 @@ ao-quick-manager = Impostazioni
 ao-quick-previous = Animazione precedente ({ $state })
 ao-quick-next = Animazione successiva ({ $state })
 ao-quick-cycle = Cambia automaticamente ({ $state }, ogni { $seconds } s)
+ao-quick-cycle-entry = Cambia automaticamente ({ $state }, a ogni avvio)
 ao-category-general = Generale
 ao-category-ground = A terra
 ao-category-jumping = Salto
