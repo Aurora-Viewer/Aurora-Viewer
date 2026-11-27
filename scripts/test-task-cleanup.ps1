@@ -2,7 +2,7 @@
 .SYNOPSIS
     Tests the last build date of a task's target\ (Get-LastBuildTime and
     Set-LastBuildMarker, common.ps1) and the lookup of a task's PR, its head
-    on origin or on a fork (Get-BranchPr's offline parts), which the
+    on origin or on a fork (Get-BranchPr, gh replaced by a function), which the
     housekeeping of new-task.ps1, end-task.ps1 and the task list of
     aurora-tools.cmd read, and the main repository's remote (Get-MainRepo),
     which those and the scripts that work on GitHub read. Fixture folders and a fixture repository only, in
