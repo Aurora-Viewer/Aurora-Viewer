@@ -71,6 +71,38 @@ pub const BUILTINS: [Builtin; 4] = [
 
 /// The embedded font of a setting; "" (files older than the setting) is
 /// the default one.
+/// The family the script editor draws with when its own font is chosen.
+pub const EDITOR_FAMILY: &str = "aurora-editor";
+
+/// Its face in the installed definitions.
+const EDITOR_FACE: &str = "aurora-editor-face";
+
+const EDITOR_CHOICE_ID: &str = "aurora-editor-choice";
+
+const EDITOR_READY_ID: &str = "aurora-editor-ready";
+
+/// The families the picker offers: the coding fonts most PCs have, in the
+/// order it lists them.
+const MONO_FAMILIES: &[&str] = &[
+    "Cascadia Code",
+    "Cascadia Mono",
+    "Consolas",
+    "Courier New",
+    "DejaVu Sans Mono",
+    "Fira Code",
+    "Hack",
+    "IBM Plex Mono",
+    "JetBrains Mono",
+    "Liberation Mono",
+    "Lucida Console",
+    "Menlo",
+    "Monaco",
+    "Noto Sans Mono",
+    "Roboto Mono",
+    "Source Code Pro",
+    "Ubuntu Mono",
+];
+
 pub fn builtin(choice: &str) -> Option<&'static Builtin> {
     let name = if choice.is_empty() { DEFAULT } else { choice };
     BUILTINS.iter().find(|b| b.name == name)
@@ -233,6 +265,80 @@ fn xdg_font_dirs(home: Option<PathBuf>, data_home: Option<PathBuf>, data_dirs: O
 /// first, shortest way, and a loop does not use up the scan's budget.
 fn first_visit(seen: &mut std::collections::HashSet<PathBuf>, dir: &std::path::Path) -> bool {
     std::fs::canonicalize(dir).map_or(true, |real| seen.insert(real))
+}
+
+/// Installs the editor's own face when the choice changes (the app calls it
+/// once per frame): a family this PC has, or the built-in monospace when the
+/// choice is empty or missing -- never a UI font, so the code stays aligned.
+pub fn set_editor_font(ctx: &egui::Context, choice: &str) {
+    let attempted = ctx.data(|data| data.get_temp::<String>(egui::Id::unique(EDITOR_CHOICE_ID)));
+    if attempted.as_deref() == Some(choice) {
+        return;
+    }
+    let Some(definitions) = ctx
+        .data(|data| data.get_temp::<Arc<egui::FontDefinitions>>(egui::Id::unique(DEFINITIONS_ID)))
+        .map(|definitions| (*definitions).clone())
+    else {
+        return;
+    };
+    let mut definitions = definitions;
+    definitions.font_data.remove(EDITOR_FACE);
+    definitions.families.remove(&egui::FontFamily::Name(EDITOR_FAMILY.into()));
+    let mut ready = false;
+    let file = system_fonts_ready()
+        .unwrap_or_default()
+        .iter()
+        .find(|font| font.name == choice)
+        .map(|font| font.path.clone());
+    if !choice.is_empty()
+        && let Some(path) = file
+        && let Ok(bytes) = std::fs::read(&path)
+    {
+        definitions
+            .font_data
+            .insert(EDITOR_FACE.into(), Arc::new(egui::FontData::from_owned(bytes)));
+        // the editor's own face, with the built-in monospace for what it lacks
+        definitions.families.insert(
+            egui::FontFamily::Name(EDITOR_FAMILY.into()),
+            vec![EDITOR_FACE.into(), "Hack".into()],
+        );
+        ready = true;
+    }
+    install(ctx, definitions);
+    ctx.data_mut(|data| {
+        data.insert_temp(egui::Id::unique(EDITOR_CHOICE_ID), choice.to_owned());
+        data.insert_temp(egui::Id::unique(EDITOR_READY_ID), ready);
+    });
+}
+
+/// The coding families this PC has, by name, for the editor's font picker: the
+/// built-in monospace is the empty choice, which the window labels itself.
+pub fn editor_font_choices() -> Vec<String> {
+    let Some(fonts) = system_fonts_ready() else {
+        return Vec::new();
+    };
+    MONO_FAMILIES
+        .iter()
+        .filter_map(|wanted| {
+            fonts
+                .iter()
+                .find(|font| font.name.eq_ignore_ascii_case(wanted))
+                .map(|font| font.name.clone())
+        })
+        .collect()
+}
+
+/// The family the script editor draws with: its chosen face when this PC has
+/// it, the built-in monospace otherwise.
+pub fn editor_family(ctx: &egui::Context, choice: &str) -> egui::FontFamily {
+    let ready = ctx
+        .data(|data| data.get_temp::<bool>(egui::Id::unique(EDITOR_READY_ID)))
+        .unwrap_or(false);
+    if ready && !choice.is_empty() {
+        egui::FontFamily::Name(EDITOR_FAMILY.into())
+    } else {
+        egui::FontFamily::Monospace
+    }
 }
 
 #[cfg(test)]

@@ -627,6 +627,137 @@ fn clear_filter(ui: &mut egui::Ui, p: &Palette, text: &mut String, response: &mu
     }
 }
 
+/// What a tab of a strip of closable tabs holds, as the open scripts' strip
+/// draws its own.
+pub struct TabPill<'a> {
+    /// Its name, cut at `room` with an ellipsis.
+    pub label: &'a str,
+    /// The most of itself the name takes before it is cut.
+    pub room: f32,
+    /// The icon before the name, and its tint; the scripts' own is the item's.
+    pub icon: Option<(&'a str, egui::Color32)>,
+    /// The unsaved star after the name: `Some(true)` says it has unsaved text,
+    /// `Some(false)` keeps its room (so a save moves no tab), `None` keeps
+    /// none.
+    pub star: Option<bool>,
+    /// The one in front: its face is `background`, the surface under the strip.
+    pub active: bool,
+    /// Whether its cross is drawn: a strip that keeps one tab closes none.
+    pub closable: bool,
+}
+
+/// The room a tab takes: its name cut at `room`, its icon, its star and its
+/// cross. A strip measures its tabs with it before it draws them, so that both
+/// agree on what fits.
+pub fn tab_pill_width(ui: &mut egui::Ui, font: &FontId, tab: &TabPill<'_>) -> f32 {
+    let name = ui.fonts_mut(|fonts| fonts.layout_job(tab_name(tab.label, font, tab.room, egui::Color32::PLACEHOLDER)));
+    let icon = if tab.icon.is_some() { TAB_ICON } else { 0.0 };
+    let star = if tab.star.is_some() { TAB_STAR + STAR_GAP } else { 0.0 };
+    let cross = if tab.closable { TAB_PAD + TAB_CROSS + TAB_PAD } else { TAB_PAD };
+    TAB_PAD + icon + name.size().x + star + cross
+}
+
+/// One tab of a strip of closable tabs, drawn as the open scripts' strip draws
+/// its own: rounded at the top only, its bottom flush on the surface below, its
+/// name in ink when it is the one in front, a star while its text is unsaved,
+/// and a cross that closes it. A middle click closes it too; the strip adds its
+/// menu and its drag of the tab. Returns its rect, its response, and whether a
+/// click asked to close it.
+pub fn tab_pill(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tab: &TabPill<'_>,
+    height: f32,
+    font: &FontId,
+    background: egui::Color32,
+) -> (egui::Rect, egui::Response, bool) {
+    let name = ui.painter().layout_job(tab_name(tab.label, font, tab.room, p.muted));
+    let width = tab_pill_width(ui, font, tab);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click_and_drag());
+    let fill = p.tab_face(tab.active, response.hovered(), background);
+    // rounded at the top only: the tab's bottom sits flush on the surface
+    // below, the chosen tab's face being that surface's own colour
+    let radius = ui.visuals().window_corner_radius;
+    ui.painter().rect_filled(
+        rect,
+        egui::CornerRadius {
+            nw: radius.nw,
+            ne: radius.ne,
+            sw: 0,
+            se: 0,
+        },
+        fill,
+    );
+    let center = rect.center().y;
+    let mut left = rect.left() + TAB_PAD;
+    if let Some((icon, tint)) = tab.icon
+        && let Some(texture) = crate::ui::icons::global(icon)
+    {
+        ui.painter().image(
+            texture.id(),
+            egui::Rect::from_center_size(egui::pos2(left + 6.0, center), Vec2::splat(13.0)),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            tint,
+        );
+        left += TAB_ICON;
+    }
+    ui.painter().galley(
+        egui::pos2(left, center - name.size().y / 2.0),
+        name.clone(),
+        if tab.active { p.ink } else { p.muted },
+    );
+    if let Some(unsaved) = tab.star
+        && unsaved
+    {
+        ui.painter().text(
+            egui::pos2(left + name.size().x + STAR_GAP, center),
+            egui::Align2::LEFT_CENTER,
+            "*",
+            font.clone(),
+            if tab.active { p.violet_light } else { p.muted },
+        );
+    }
+    let mut closed = false;
+    if tab.closable {
+        let cross = egui::Rect::from_center_size(egui::pos2(rect.right() - TAB_PAD - TAB_CROSS / 2.0, center), Vec2::splat(TAB_CROSS));
+        let hit = ui.interact(cross, response.id.with("close"), Sense::click());
+        if let Some(texture) = crate::ui::icons::global("x") {
+            ui.painter().image(
+                texture.id(),
+                egui::Rect::from_center_size(cross.center(), Vec2::splat(10.0)),
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                if hit.hovered() { p.ink } else { p.muted },
+            );
+        }
+        let hit = hit.on_hover_text(aurora_i18n::tr!("common-close"));
+        closed = hit.clicked() || response.middle_clicked();
+    }
+    (rect, response, closed)
+}
+
+/// The room a tab keeps, at each of its sides, before its icon and after its
+/// cross.
+const TAB_PAD: f32 = 6.0;
+/// The icon's room before a tab's name, the star's after it, and its cross.
+const TAB_ICON: f32 = 15.0;
+const TAB_STAR: f32 = 12.0;
+const TAB_CROSS: f32 = 15.0;
+
+/// The air between a tab's name and its star.
+const STAR_GAP: f32 = 2.0;
+
+/// The name of a tab, on one line, cut at `room` with an ellipsis.
+fn tab_name(label: &str, font: &FontId, room: f32, color: egui::Color32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::single_section(label.to_owned(), egui::TextFormat::simple(font.clone(), color));
+    job.wrap = egui::text::TextWrapping {
+        max_width: room,
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    job
+}
+
 #[cfg(test)]
 mod chip_row_tests {
     use super::*;
