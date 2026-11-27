@@ -137,6 +137,10 @@ struct MediaTexture {
     size: (u32, u32),
     /// Holds a frame: faces may show it.
     ready: bool,
+    /// Its texture refused a layer (video memory or the page table full):
+    /// not made again before then (`upload_textures`), rather than a
+    /// full-size black frame built and dropped every frame.
+    retry_at: Option<Instant>,
 }
 
 pub struct MediaImpl {
@@ -214,6 +218,7 @@ impl MediaImpl {
                 slot: 0,
                 size: (0, 0),
                 ready: false,
+                retry_at: None,
             },
             interest: 0.0,
             distance: 0.0,
@@ -728,6 +733,7 @@ impl MediaManager {
         for m in &mut self.impls {
             m.texture.slot = 0;
             m.texture.ready = false;
+            m.texture.retry_at = None;
         }
         self.pending_free.clear();
     }

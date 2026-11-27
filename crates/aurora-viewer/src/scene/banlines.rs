@@ -11,6 +11,7 @@ use crate::world::World;
 use aurora_render::types::flags;
 use aurora_render::{DrawCmd, DrawRecord, MeshAlloc, MipLevel, Renderer, Vertex, build_mips};
 use glam::{Mat4, Vec3, Vec4};
+use std::time::{Duration, Instant};
 
 /// PARCEL_GRID_STEP_METERS.
 const STEP: f32 = 4.0;
@@ -24,12 +25,18 @@ const MIN_DIST_SQ: f32 = DIST_OFFSET * DIST_OFFSET;
 const MAX_DIST_SQ: f32 = 169.0;
 const SOUTH: u8 = 1;
 const WEST: u8 = 2;
+/// How long the stripes wait when their layers were refused for good (the
+/// page table full) before they are made again.
+const REFUSED_RETRY: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
 pub struct BanLines {
     quad: Option<MeshAlloc>,
     /// Stripe textures: blocked (yellow), pass (green).
     tex: Option<[u32; 2]>,
+    /// Their layers refused (video memory or the page table full): not
+    /// made again before then, rather than built and dropped every frame.
+    retry_at: Option<Instant>,
     records: Vec<u32>,
     /// Blended draws with their distance to the camera (sorted with the
     /// other alpha faces).
@@ -77,6 +84,7 @@ impl BanLines {
                 renderer.free_texture(s);
             }
         }
+        self.retry_at = None;
     }
 
     /// The renderer could not stage the texels of these slots: when one is
@@ -122,11 +130,21 @@ impl BanLines {
             ];
             self.quad = renderer.upload_mesh(&v, &[0, 1, 3, 0, 3, 2, 0, 3, 1, 0, 2, 3]);
         }
-        if self.tex.is_none() {
+        let now = Instant::now();
+        if self.tex.is_none() && self.retry_at.is_none_or(|at| now >= at) {
             let blocked = upload(renderer, stripes([222, 214, 98], [236, 232, 170]));
             let pass = upload(renderer, stripes([96, 176, 72], [150, 206, 128]));
             if let (Some(a), Some(b)) = (blocked, pass) {
                 self.tex = Some([a, b]);
+                self.retry_at = None;
+            } else {
+                // (the one made is not kept alone; both again when video
+                // memory may hold their page, or a little later)
+                for s in [blocked, pass].into_iter().flatten() {
+                    renderer.free_texture(s);
+                }
+                let at = renderer.textures.retry_after_refusal().filter(|&at| at > now);
+                self.retry_at = Some(at.unwrap_or(now + REFUSED_RETRY));
             }
         }
         let (Some(quad), Some(tex)) = (self.quad, self.tex) else {

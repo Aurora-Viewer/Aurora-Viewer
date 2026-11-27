@@ -44,24 +44,17 @@ impl SnowDetail {
     /// The renderer could not stage the texels of these slots: each of the
     /// two that is is sent again into its slot (a lost first upload left it
     /// the loading placeholder, so a layer is taken again, which video
-    /// memory may refuse too); they leave `lost`. Should that fail, both
-    /// are made again at the next use.
-    pub fn texture_lost(&mut self, lost: &mut Vec<u32>, renderer: &mut Renderer) {
-        if !self.made.iter().any(|(s, ..)| lost.contains(s)) {
-            return;
+    /// memory may refuse too); they leave `lost`. One refused again keeps
+    /// its texels and goes to `refused`, to be sent again after a longer
+    /// wait (app/lost_textures.rs): its slot shows the placeholder until
+    /// then.
+    pub fn texture_lost(&mut self, lost: &mut Vec<u32>, renderer: &mut Renderer, refused: &mut Vec<u32>) {
+        for (s, levels) in &self.made {
+            if lost.contains(s) && !renderer.replace_texture(*s, &mip_levels(levels)) {
+                refused.push(*s);
+            }
         }
-        let resent = (self.made.iter())
-            .filter(|(s, _)| lost.contains(s))
-            .all(|(s, levels)| renderer.replace_texture(*s, &mip_levels(levels)));
         lost.retain(|s| !self.made.iter().any(|(m, ..)| m == s));
-        if resent {
-            return;
-        }
-        for (s, ..) in self.made.drain(..) {
-            renderer.free_texture(s);
-        }
-        self.slot = None;
-        self.tried = false;
     }
 }
 

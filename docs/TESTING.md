@@ -6314,8 +6314,10 @@ both open states and the selection count. Capture at frame 620.
   texture it showed before (the flat normal of a derived normal map), and
   its owner sends it again after 2 s, then up to 30 s apart while the
   refusals go on (`textures: … sent again after video memory refused their
-  staging buffer`); one sent again that video memory has no layer for
-  waits its turn again. With `0` nothing is ever made: the world's textures stay black
+  staging buffer`); a streamer texture or the snow detail sent again that
+  video memory has no layer for waits its turn again, and media, the ban
+  lines and the Director's title cards are not made again before video
+  memory may hold their page. With `0` nothing is ever made: the world's textures stay black
   (in the demo, the plaza's floor, pillars, sculpture and avatars; the sky
   and the ground draw as usual), the device is not lost and the
   interface keeps drawing. Before, wgpu made the staging buffer of every
