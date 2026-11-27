@@ -17321,9 +17321,9 @@ impl App {
                 }
             }
             BarAction::Contacts => self.reveal_contacts(),
-            BarAction::ChatPrefs => {
+            BarAction::AutoReplyPrefs => {
                 ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
-                self.options_ui.open(ui::options::Page::Chat, 0);
+                self.options_ui.open_auto_replies();
             }
             BarAction::VoicePrefs => {
                 ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);

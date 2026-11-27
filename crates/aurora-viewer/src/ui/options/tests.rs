@@ -41,6 +41,37 @@ fn a_search_reaching_the_system_fonts_row_does_not_wait_for_the_list() {
     assert!(!frame(&mut st), "the row still waits once the list is there");
 }
 
+/// The Online status menu's "Auto-reply messages…" opens the tab that holds
+/// the auto-reply texts, and asks for their first row.
+#[test]
+fn auto_reply_messages_open_the_away_and_replies_tab() {
+    assert_eq!(
+        super::pages::tabs(Page::Chat)[super::AWAY_AND_REPLIES_TAB],
+        aurora_i18n::tr!("ui-options-tab-away-and-replies")
+    );
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut settings = Settings::default();
+    let defaults = Settings::default();
+    let mut st = OptionsUi::default();
+    let mut result = OptionsResult::default();
+    st.open_setting("autoresponse.dnd_text".to_owned());
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        count(ui, &p, &mut settings, &defaults, &mut st, &mut result);
+    });
+    assert!(matches!(st.go_to, Some((Page::Chat, super::AWAY_AND_REPLIES_TAB, Some(_)))));
+    st.open_auto_replies();
+    assert_eq!((st.page, st.tab), (Page::Chat, super::AWAY_AND_REPLIES_TAB));
+    assert_eq!(
+        st.reveal,
+        Some((
+            Page::Chat,
+            super::AWAY_AND_REPLIES_TAB,
+            aurora_i18n::tr!("ui-options-in-do-not-disturb-mode")
+        ))
+    );
+}
+
 #[test]
 fn a_shared_preference_link_finds_the_row_without_changing_its_value() {
     let ctx = egui::Context::default();
