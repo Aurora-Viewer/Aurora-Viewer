@@ -3439,12 +3439,13 @@ fn water_fx_wave(p: vec2<f32>, level: f32) -> vec3<f32> {
     var held=1.0;
     if(water_fx_on(1u)) {
         let at=water_fx_sea_at(p);
-        // The swell's geometry flattens 280-310 m out: past 320 m a water
-        // patch is one quad (scene/water.rs `draws`, WAVE_GRID_REACH), and a
-        // displaced grid meeting it left a wall of water along the patch's
-        // edge. The far water keeps the swell in its normals. (Flattened
-        // from 130 m, the sea turned to a flat sheet at a visible line.)
-        let reach=1.0-smoothstep(280.0,310.0,distance(p,frame.camera_pos.xy));
+        // The swell's geometry flattens 860 m to 1 km out, by the 3D
+        // distance: past it a water patch is one quad (scene/water.rs
+        // `draws`, WAVE_REACH), and a displaced grid meeting it would leave a
+        // wall of water along their edge. The far water keeps the swell in
+        // its normals. (Flattened from 280 m, the waves' shape ended at a
+        // line on a calm sea.)
+        let reach=1.0-smoothstep(860.0,1000.0,distance(vec3<f32>(p,level),frame.camera_pos.xyz));
         offset+=water_sea(p,frame.camera_pos.w,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(p,0.0,false,at),0.0).offset*reach;
         held=at.cap;
     }

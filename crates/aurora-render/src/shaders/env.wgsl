@@ -1183,80 +1183,56 @@ struct WaterOut {
     @location(2) rest: vec2<f32>,
 };
 
-// The close patches' grid (scene/water.rs `mesh`, marked by its u past 4)
-// drawn in toward the camera: its lines, a quarter as far apart beside the
-// camera (some 7 cm at the highest quality) and wider toward the patch's
-// far edges, so the short waves' pinched crests are in the surface's shape
-// and not only its light. Per axis on the patch's own span around the
-// camera's place on it, so two patches meeting along an edge put their
-// vertices there alike.
-fn water_near_warp(u: vec2<f32>, model: mat4x4<f32>) -> vec2<f32> {
-    let span = vec2<f32>(length(model[0].xyz), length(model[1].xyz));
-    let c = clamp((frame.camera_pos.xy - model[3].xy) / max(span, vec2<f32>(1e-3)), vec2<f32>(0.0), vec2<f32>(1.0));
-    let below = c - c * pow(max(c - u, vec2<f32>(0.0)) / max(c, vec2<f32>(1e-4)), vec2<f32>(2.0));
-    let above = c + (1.0 - c) * pow(max(u - c, vec2<f32>(0.0)) / max(1.0 - c, vec2<f32>(1e-4)), vec2<f32>(2.0));
-    return mix(u, select(above, below, u < c), 0.75);
+// The waves' grids (scene/water.rs `lod_params`, the same table): the
+// finest level the quality takes, and how many of a level's cells away from
+// the camera it holds (level l's cells are 12.5 cm · 2^l).
+fn water_lod_params(q: u32) -> vec2<f32> {
+    return array<vec2<f32>, 4>(vec2<f32>(2.0, 32.0), vec2<f32>(1.0, 48.0), vec2<f32>(0.0, 64.0), vec2<f32>(0.0, 96.0))[min(q, 3u)];
 }
-// How many cells a side scene/water.rs `draws` gives a patch of `span`
-// whose nearest point is `reach` m from the camera: its near grid within
-// 24 m, its grid within 160 m, the coarsest grid within 320 m
-// (WAVE_GRID_REACH), else one quad.
-fn water_patch_cells(reach: f32, span: vec2<f32>) -> f32 {
-    let q = min(water_fx.counts.w, 3u);
-    if (max(span.x, span.y) > 64.1 || reach >= 320.0) { return 1.0; }
-    if (reach < 24.0) { return f32(array<u32, 4>(64u, 96u, 160u, 224u)[q]); }
-    if (reach < 160.0) { return f32(array<u32, 4>(32u, 48u, 64u, 96u)[q]); }
-    return 32.0;
-}
-// A patch's edges follow the coarser of it and its neighbour there: a
-// vertex on an edge takes the waves between the two vertices of the
-// coarser grid on either side of it, so the seam is the same line from
-// both patches. (Each sampling the waves at its own vertices, two grids of
-// different sizes drew different lines along a patch's or a region's edge:
-// a step or a crack, as tall as the waves are steep.)
-fn water_patch_reach(origin: vec2<f32>, span: vec2<f32>) -> f32 {
-    let eye = frame.camera_pos.xy;
-    return distance(eye, clamp(eye, origin, origin + span));
-}
-fn water_edge_wave(pos: vec2<f32>, model: mat4x4<f32>, level: f32) -> vec3<f32> {
-    let span = vec2<f32>(length(model[0].xyz), length(model[1].xyz));
-    let origin = model[3].xy;
-    let on_x = pos.x <= 0.0 || pos.x >= 1.0;
-    // the neighbour across this edge: the same size, one span over
-    let side = select(vec2<f32>(0.0, select(-1.0, 1.0, pos.y >= 1.0)), vec2<f32>(select(-1.0, 1.0, pos.x >= 1.0), 0.0), on_x);
-    let own = water_patch_cells(water_patch_reach(origin, span), span);
-    let other = water_patch_cells(water_patch_reach(origin + side * span, span), span);
-    let n = min(own, other);
-    let t = select(pos.x, pos.y, on_x);
-    let k = floor(t * n);
-    let f = t * n - k;
-    let a = select(vec2<f32>(k / n, pos.y), vec2<f32>(pos.x, k / n), on_x);
-    let b = select(vec2<f32>(min(k + 1.0, n) / n, pos.y), vec2<f32>(pos.x, min(k + 1.0, n) / n), on_x);
-    let wa = water_fx_wave((model * vec4<f32>(a, 0.0, 1.0)).xy, level);
-    if (f < 1e-4) { return wa; }
-    return mix(wa, water_fx_wave((model * vec4<f32>(b, 0.0, 1.0)).xy, level), f);
+// A waves' grid vertex at `p` (on its lattice of `cell` m) slid onto each
+// coarser level's lattice as its distance from the camera passes three
+// quarters of that level's reach, all the way by its reach: where
+// scene/water.rs `draws` gives the patches that coarser grid, so two
+// patches of different levels meet on the same vertices (no crack) and a
+// patch changing level changes nothing on the screen (no pop). By where the
+// vertex is in the world and not by its patch, so nothing swims as the
+// camera moves. scene/water.rs `lod_morph` is the same, for its tests.
+fn water_lod_morph(p: vec2<f32>, cell: f32, z: f32) -> vec2<f32> {
+    let k = water_lod_params(water_fx.counts.w).y;
+    var q = p;
+    var c = cell;
+    // (levels up to the coarsest's, 32 m)
+    for (var i = 0; i < 9 && c < 32.5; i++) {
+        let top = k * c;
+        let m = smoothstep(0.75 * top, top, distance(vec3<f32>(q, z), frame.camera_pos.xyz));
+        if (m <= 0.0) { break; }
+        // (the odd lines of this lattice onto the even ones: the coarser's)
+        let index = round(q / c);
+        let odd = index - floor(index * 0.5) * 2.0;
+        q -= odd * c * m;
+        c *= 2.0;
+    }
+    return q;
 }
 fn water_vertex(in: VsIn) -> WaterOut {
     let rec = records[in.instance];
-    var pos = in.pos;
-    let near = in.uv.x > 3.0 && water_fx_on(1u);
-    if (near) { pos = vec3<f32>(water_near_warp(pos.xy, rec.model), pos.z); }
-    var wp = rec.model * vec4<f32>(pos, 1.0);
-    var wave = vec3<f32>(0.0);
-    if(water_fx_on(1u) || water_fx_on(16u)){
-        let edge = any(in.pos.xy <= vec2<f32>(0.0)) || any(in.pos.xy >= vec2<f32>(1.0));
-        if (edge) { wave = water_edge_wave(pos.xy, rec.model, wp.z); } else { wave = water_fx_wave(wp.xy, wp.z); }
+    var wp = rec.model * vec4<f32>(in.pos, 1.0);
+    // a waves' grid (scene/water.rs `lod_mesh`): its u.y marks it, past 999,
+    // with its cells across its patch
+    if (in.uv.y > 999.0) {
+        let cell = length(rec.model[0].xyz) / max(in.uv.y - 1000.0, 1.0);
+        wp = vec4<f32>(water_lod_morph(wp.xy, cell, wp.z), wp.z, 1.0);
     }
+    let still = wp.xyz;
+    var wave = vec3<f32>(0.0);
+    if (water_fx_on(1u) || water_fx_on(16u)) { wave = water_fx_wave(wp.xy, wp.z); }
     // Huge void tiles cannot resolve waves. Fade their geometry to avoid aliasing.
-    let tile = max(length(rec.model[0].xyz),length(rec.model[1].xyz));
-    let geometry = 1.0-smoothstep(70.0,140.0,tile);
-    // (the swell itself flattens 130-155 m out, in water_fx_wave, as the
-    // CPU's samplers see it)
-    wp = vec4<f32>(wp.xyz+wave*geometry,1.0);
+    let tile = max(length(rec.model[0].xyz), length(rec.model[1].xyz));
+    let geometry = 1.0 - smoothstep(70.0, 140.0, tile);
+    wp = vec4<f32>(wp.xyz + wave * geometry, 1.0);
     var out: WaterOut;
     out.clip = world_clip(wp.xyz);
     out.world_pos = wp.xyz;
-    let still = rec.model * vec4<f32>(pos,1.0);
     out.level = still.z;
     out.rest = still.xy;
     return out;

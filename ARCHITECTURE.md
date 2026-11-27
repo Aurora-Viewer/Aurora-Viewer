@@ -5055,8 +5055,9 @@ a turn or stop. Length-normalized kernels keep the reconstructed ribbon stable
 across emission/frame rates. One small pass touches only segment bounds;
 coarse compute excludes these historical segments. The atlas keeps the existing
 scene bindings/samplers, with no surface-pixel event loop or GPU readback.
-Fine height displaces the denser 64–224 grids in close 64 m patches (within
-24 m of the camera); ordinary distant grids remain 32–96. Fine normals,
+Fine height displaces the waves' grids, whose 64 m patches take cells by their
+distance (12.5 cm by the camera to 32 m by 1 km, `scene/water.rs` `lod_*`),
+the vertices morphing between levels (env.wgsl `water_lod_morph`). Fine normals,
 refraction, Fresnel and local micro-wave damping reveal the furrow even with
 spray/bubbles or contact foam disabled. Foam remains independently switchable.
 The same terrain/water-level guards reject dry or mismatched region water.
