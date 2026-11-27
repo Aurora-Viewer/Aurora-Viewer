@@ -799,20 +799,21 @@ queue keeps them off each other's PRs.
 ```
 
 - **Order**: re-reviews (a maintainer reviewed it and its author answered
-  since), then PRs tied to a crash, then the `fix` label, then the rest not
-  reviewed yet; the longest waiting first in each. A PR your human already
-  claimed comes before all of them: finish it first.
+  since), then PRs tied to a crash, then fixes (the `fix` label or a
+  `fix(area):` title), then the rest not reviewed yet. In each, crash
+  before fix before the rest, then the longest waiting. A PR your human
+  already claimed comes before all of them: finish it first.
 - **Claim before you read** the PR. `-Claim` refuses a PR another
   maintainer holds: a claim (an assignee whose review is not posted yet),
-  or a re-review that belongs to its previous reviewer for 2 days after the
-  author's answer. Take the next one; never remove another maintainer's
+  a re-review that belongs to its previous reviewer for 2 days after the
+  author's answer, or a decision their review left open (⚠️ verdict). Take the next one; never remove another maintainer's
   assignment. A claim ends with the review you post; `-Release` it if you
   stop without one.
 - A claim shown as stale (no word from its maintainer for 3 days) is still
   theirs: tell your human, who asks them.
 - The queue leaves out drafts, bots, `on-hold`, `waiting-for-slot`,
   `needs-description`, the merge queue, red CI, PRs waiting on their author
-  and approved ones; it does not replace the rules below (complete
+  or on a team decision, and approved ones; it does not replace the rules below (complete
   description, green CI before reading the code).
 - On Linux the agents run it with `pwsh ./scripts/review-queue.ps1`.
 

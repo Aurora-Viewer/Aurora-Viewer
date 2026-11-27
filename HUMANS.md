@@ -118,8 +118,9 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
   lists the open PRs in order: **re-reviews** first (you or another
   maintainer reviewed it and its author answered since: a commit, a
   comment), then the PRs tied to a **crash** (a linked issue the crash
-  triage signed, or a crash in the title), then the **`fix`** label, then
-  the rest **not reviewed yet**, the longest waiting first. Several
+  triage signed, or a crash in the title), then the **fixes** (the `fix`
+  label or a `fix(area):` title), then the rest **not reviewed yet**; in
+  each, crash before fix before the rest, then the longest waiting. Several
   maintainers review at once, so the queue keeps them apart: whoever starts
   a PR **claims** it (`-Claim <n>`, which makes them its assignee) and the
   others' queues leave it out until their review is posted; a re-review

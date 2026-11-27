@@ -31,9 +31,11 @@ next") and in `scripts/tools/review-queue.ps1`; this is the routine.
 
 3. **Before reading the code**, the checks of AGENTS.md section 11 for
    someone else's PR:
-   - a note `CI waits for Approve and run`: look first that the PR does not
-     change `.github/`, then approve its run; wait for it to be green. While
-     it runs you may claim and start the next entry, and come back.
+   - a note `CI waits for Approve and run`: ask your human to approve the
+     run (AGENTS.md section 11), after you looked that the PR does not change
+     `.github/`; approve it yourself only if your human told you to. Do not
+     read the code before it is green; meanwhile you may claim the next
+     entry, and come back.
    - `CI running`: wait for it (`gh pr checks <n> --watch`).
    - `conflict with main`: the review asks the author to merge main.
    - `last reviewed by <someone>`: read their review first, and check that

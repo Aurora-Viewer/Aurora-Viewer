@@ -128,6 +128,42 @@ Assert-Queue ($e.SkipKind -eq 'Held') '…and the re-review then follows the han
 $e = Get-Entry (New-Node 49 -Assignees 'odessa' -Assigned @(, @('odessa', 10)) -Comments @(, @('odessa', 'MEMBER', 50, $changes)) -Commits @(@(200, 1), @(20, 1)))
 Assert-Queue ($e.SkipKind -eq 'Claimed') 'a claim taken after their last review holds (the re-review in progress)'
 
+# a claim comes before what else the PR waits for (-Claim refuses it)
+$e = Get-Entry (New-Node 60 -Rollup 'FAILURE' -Assignees 'odessa' -Assigned @(, @('odessa', 5)))
+Assert-Queue ($e.SkipKind -eq 'Claimed' -and (Get-ClaimRefusal $e 'maya')) 'a claimed PR whose CI turned red stays theirs'
+$e = Get-Entry (New-Node 61 -Draft -Assignees 'odessa' -Assigned @(, @('odessa', 5)))
+Assert-Queue ($e.SkipKind -eq 'Claimed') 'a claimed PR turned draft stays theirs'
+$e = Get-Entry (New-Node 62 -Rollup 'FAILURE' -Comments @(, @('odessa', 'MEMBER', 100, $changes)) -Commits @(@(200, 1), @(10, 1)))
+Assert-Queue ($e.SkipKind -eq 'Held' -and (Get-ClaimRefusal $e 'maya')) 'a fresh re-review with a red CI stays with its reviewer'
+$e = Get-Entry (New-Node 63 -Comments @(, @('odessa', 'MEMBER', 100, $warn)))
+Assert-Queue ((Get-ClaimRefusal $e 'maya') -and -not (Get-ClaimRefusal $e 'odessa')) 'a decision left by a review: only its reviewer may claim it'
+Assert-Queue ((Get-ClaimRefusal (Get-Entry (New-Node 64 -Author 'maya')) 'maya') -match 'own') 'your own PR cannot be claimed'
+Assert-Queue (-not (Get-ClaimRefusal (Get-Entry (New-Node 65 -Rollup 'FAILURE')) 'maya')) 'a free PR can be claimed, whatever it waits for'
+$e = Get-Entry (New-Node 66 -Assignees 'alice' -Assigned @(, @('alice', 5)))
+Assert-Queue ($e.Tier -eq 4) 'the PR''s author assigned to it claims nothing'
+$e = Get-Entry (New-Node 67 -Assignees 'odessa' -Comments @(, @('odessa', 'MEMBER', 50, $changes)))
+Assert-Queue ($e.SkipKind -eq 'WaitAuthor') 'a claim of unknown time is ended by any review of its maintainer'
+$e = Get-Entry (New-Node 68 -Assignees 'odessa', 'tom' -Assigned @(@('tom', 2), @('odessa', 9)))
+Assert-Queue ($e.Owner -eq 'odessa') 'with two claims, the oldest is the owner'
+# two claims seconds apart: the later one backs off
+$item = ConvertTo-ReviewItem (New-Node 69 -Assignees 'maya', 'odessa' -Assigned @(@('odessa', 0.002), @('maya', 0.001))) @{}
+Assert-Queue ((Get-EarlierClaim $item 'maya') -eq 'odessa' -and -not (Get-EarlierClaim $item 'odessa')) 'the later of two claims backs off'
+# a reviewer claiming their re-review again: the new assignment holds
+$e = Get-Entry (New-Node 70 -Assignees 'odessa' -Assigned @(, @('odessa', 1)) -Comments @(, @('odessa', 'MEMBER', 100, $changes)) -Commits @(@(200, 1), @(60, 1)))
+Assert-Queue ($e.SkipKind -eq 'Claimed') 'a reviewer who claims again holds their re-review past the hand-over'
+
+# --- more on reviews and answers ------------------------------------------
+$e = Get-Entry (New-Node 71 -Comments @(@('odessa', 'MEMBER', 100, $warn), @('alice', 'CONTRIBUTOR', 70, 'Tested on macOS, it works.'))) 'odessa'
+Assert-Queue ($e.Tier -eq 1) 'an answer after a decision is a re-review'
+$e = Get-Entry (New-Node 72 -Comments @(, @('maya', 'MEMBER', 100, $changes)) -Reviews @(, @('alice', 'CONTRIBUTOR', 20, 'COMMENTED')))
+Assert-Queue ($e.Tier -eq 1) 'a review reply of the author is an answer'
+$e = Get-Entry (New-Node 73 -Comments @(, @('odessa', 'MEMBER', 100, 'Nice idea, will look later.')))
+Assert-Queue ($e.Tier -eq 4) 'a maintainer comment without a review heading is no review'
+$e = Get-Entry (New-Node 74 -Title 'fix(ui): the field keeps its focus')
+Assert-Queue ($e.Tier -eq 3) 'a fix(area): title without the label is tier 3'
+$e = Get-Entry (New-Node 75 -Title 'feat(ui): fixes for the crash triage page')
+Assert-Queue ($e.Tier -eq 4) 'crash triage is no crash, a feat title no fix'
+
 # --- order -----------------------------------------------------------------
 $nodes = @(
     (New-Node 50 -CreatedHoursAgo 900)                                                      # new, oldest
@@ -148,6 +184,12 @@ $n = (Get-BodyIssueNumbers "Closes #12`nRefs #34`nrefs: #56`nFixes #12`nSee #78"
 Assert-Queue ($n -eq '12,34,56') "issue lines of a body; got $n"
 Assert-Queue ((Get-ReviewCommentKind "Some text`n## Changes requested") -eq $null) 'a heading further down is no review'
 Assert-Queue ((ConvertTo-UtcTime '2026-11-27T10:00:00Z').Hour -eq 10) 'GitHub times are read as UTC'
+$local = [datetime]::SpecifyKind([datetime]'2026-11-27T10:00:00', [DateTimeKind]::Utc).ToLocalTime()
+Assert-Queue ((ConvertTo-UtcTime $local).Hour -eq 10 -and (ConvertTo-UtcTime $local).Kind -eq 'Utc') 'a time PowerShell 7 already made local is put back in UTC'
+$n = @(Get-BodyIssueNumbers 'Refs #123456789012').Count
+Assert-Queue ($n -eq 0) 'a number too long for an issue is ignored'
+$one = @(Get-OrderedReviewQueue (Get-ReviewQueue @(ConvertTo-ReviewItem (New-Node 80) @{}) 'maya' $now))
+Assert-Queue ($one.Count -eq 1) 'a queue of one PR counts one'
 
 if ($failures) { Write-Host "$failures review queue test(s) failed." -ForegroundColor Red; exit 1 }
 Write-Host 'Review queue rules: all tests pass.' -ForegroundColor Green

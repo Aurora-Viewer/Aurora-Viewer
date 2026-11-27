@@ -52,6 +52,7 @@ function Invoke-Gh {
     $output
 }
 if ($As -and ($Claim -or $Release)) { throw '-As only shows a queue: claim and release act as you.' }
+if ($Claim -and $Release) { throw 'Give -Claim or -Release, not both.' }
 $me = if ($As) { $As } else { [string](Invoke-Gh api user --jq .login) }
 
 # The fields of a pull request the rules read (ConvertTo-ReviewItem). No
@@ -72,28 +73,53 @@ $prFields = @'
         reviews(last: 30) { nodes { author { login } authorAssociation state submittedAt } }
 '@
 
+# One PR, through the same fields, or $null when there is no such PR. A
+# local 'Continue': gh writes GraphQL errors on stderr, which Windows
+# PowerShell 5.1 turns into a terminating error under 'Stop', 2>$null or not.
+function Read-Pr([int]$Number) {
+    $ErrorActionPreference = 'Continue'
+    $out = & gh api graphql -f "query=query(`$o: String!, `$n: String!, `$p: Int!) { repository(owner: `$o, name: `$n) { pullRequest(number: `$p) { $prFields } } }" -f "o=$owner" -f "n=$name" -F "p=$Number" 2>$null
+    if (-not $out) { return $null }
+    ($out | Out-String | ConvertFrom-Json).data.repository.pullRequest
+}
+function Test-Assigned($Pr) { @($Pr.assignees.nodes | ForEach-Object { $_.login }) -contains $me }
+
 # Release: you hand a PR back without reviewing it.
 if ($Release) {
+    $one = Read-Pr $Release
+    if (-not $one) { Write-Host "#${Release}: no such pull request." -ForegroundColor Yellow; exit 1 }
+    if (-not (Test-Assigned $one)) { Write-Host "#${Release} is not assigned to you: nothing to release."; exit 0 }
     Invoke-Gh pr edit $Release --repo $repo --remove-assignee '@me' | Out-Null
     Write-Host "#${Release}: released."
     exit 0
 }
 
 # Claim: the PR read again just before, through the same rules as the queue,
-# so a PR another maintainer holds (a claim, a fresh re-review of theirs) is
-# refused. Its body's "Refs" issues are not read: they only change the order.
+# so a PR another maintainer holds is refused (Get-ClaimRefusal). Its body's
+# "Refs" issues are not read: they only change the order.
 if ($Claim) {
-    $one = (Invoke-Gh api graphql -f "query=query(`$o: String!, `$n: String!, `$p: Int!) { repository(owner: `$o, name: `$n) { pullRequest(number: `$p) { $prFields } } }" -f "o=$owner" -f "n=$name" -F "p=$Claim" | Out-String | ConvertFrom-Json).data.repository.pullRequest
+    $one = Read-Pr $Claim
     if (-not $one) { Write-Host "#${Claim}: no such pull request." -ForegroundColor Yellow; exit 1 }
     if ($one.state -ne 'OPEN') { Write-Host "#${Claim} is $(([string]$one.state).ToLower()): nothing to claim." -ForegroundColor Yellow; exit 1 }
     $entry = Get-ReviewQueue @(ConvertTo-ReviewItem $one @{}) $me (Get-Date).ToUniversalTime()
-    if ($entry.Mine) { Write-Host "#${Claim} is already yours." ; exit 0 }
-    if ($entry.SkipKind -in 'Own', 'Claimed', 'StaleClaim', 'Held') {
-        $ask = if ($entry.Owner) { " Ask $($entry.Owner) before taking it." } else { '' }
-        Write-Host "#${Claim} not claimed: $($entry.Skip).$ask" -ForegroundColor Yellow
-        exit 1
-    }
+    if ($entry.Mine) { Write-Host "#${Claim} is already yours."; exit 0 }
+    $refusal = Get-ClaimRefusal $entry $me
+    if ($refusal) { Write-Host "#${Claim} not claimed: $refusal." -ForegroundColor Yellow; exit 1 }
+    # still assigned from your last review, which ended that claim: a new
+    # assignment starts a new one (an assignee added again may leave no
+    # new assignment event)
+    if (Test-Assigned $one) { Invoke-Gh pr edit $Claim --repo $repo --remove-assignee '@me' | Out-Null }
     Invoke-Gh pr edit $Claim --repo $repo --add-assignee '@me' | Out-Null
+    # two maintainers claiming within seconds: the later one backs off
+    $again = Read-Pr $Claim
+    if ($again) {
+        $first = Get-EarlierClaim (ConvertTo-ReviewItem $again @{}) $me
+        if ($first) {
+            Invoke-Gh pr edit $Claim --repo $repo --remove-assignee '@me' | Out-Null
+            Write-Host "#${Claim} not claimed: $first claimed it a moment before you." -ForegroundColor Yellow
+            exit 1
+        }
+    }
     $why = if ($entry.Skip) { " Note: $($entry.Skip)." } else { '' }
     Write-Host "#${Claim}: claimed by $me.$why https://github.com/$repo/pull/$Claim"
     exit 0
@@ -121,7 +147,11 @@ $issues = @{}
 for ($i = 0; $i -lt $wanted.Count; $i += 50) {
     $chunk = $wanted[$i..([Math]::Min($i + 49, $wanted.Count - 1))]
     $fields = ($chunk | ForEach-Object { "i${_}: issueOrPullRequest(number: $_) { ... on Issue { number title labels(first: 20) { nodes { name } } } }" }) -join ' '
+    # a number that is no issue makes gh exit 1 with the rest of the data:
+    # read it anyway, under a local 'Continue' (Read-Pr says why)
+    $ErrorActionPreference = 'Continue'
     $out = & gh api graphql -f "query=query(`$o: String!, `$n: String!) { repository(owner: `$o, name: `$n) { $fields } }" -f "o=$owner" -f "n=$name" 2>$null
+    $ErrorActionPreference = 'Stop'
     if (-not $out) { Write-Warning 'Could not read the issues the PRs name: crash links from "Refs #n" are missing.'; continue }
     $data = ($out | Out-String | ConvertFrom-Json).data.repository
     if (-not $data) { continue }
@@ -133,7 +163,7 @@ for ($i = 0; $i -lt $wanted.Count; $i += 50) {
 
 $items = @($nodes | ForEach-Object { ConvertTo-ReviewItem $_ $issues })
 $entries = @(Get-ReviewQueue $items $me (Get-Date).ToUniversalTime())
-$queue = Get-OrderedReviewQueue $entries
+$queue = @(Get-OrderedReviewQueue $entries)
 
 if ($Json) {
     $list = @($queue | Select-Object -First $Top | ForEach-Object {

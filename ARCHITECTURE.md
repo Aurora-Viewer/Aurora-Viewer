@@ -2327,7 +2327,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 │  ├─ automation-window-border.ps1 dashed yellow outline of the automated-test windows (Windows)
 │  ├─ review-queue.ps1          the maintainers' review queue: others' PRs in review order, claims (rules in `tools/review-queue.ps1`, tested by `test-review-queue.ps1`)
 │  ├─ ffmpeg-pack.sh            the Director's ffmpeg pack (bash): its pinned sources, build per system, check, archive and corresponding source; run by `.github/workflows/ffmpeg-pack.yml`
-│  └─ tools/                    aurora-tools: menu, interface (ui), checks and repair (checks), actions, live PRs (prs), releases, reset (reset), Claude Code permissions (claude)
+│  └─ tools/                    aurora-tools: menu, interface (ui), checks and repair (checks), actions, live PRs (prs), releases, reset (reset), Claude Code permissions (claude), review slots (pr-slots), review queue rules (review-queue)
 ├─ .claude/                     Claude Code settings shared by every contributor's agents: `settings.json` runs `hooks/shell-rules.sh` before each shell command of an agent, which refuses the ones AGENTS.md forbids (section 5, "Tools"; tested by `scripts/test-agent-hook.ps1`); `skills/` holds the routines the agents load by name (`review-next`: the next PR of the review queue)
 └─ .github/                     CI and wiki publication (workflows/, actions/), release and nightly betas, PR template, Dependabot
 ```

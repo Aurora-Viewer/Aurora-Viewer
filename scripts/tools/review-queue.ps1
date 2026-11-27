@@ -10,7 +10,7 @@
 #      only a new commit);
 #   2. crash: not reviewed yet, and tied to a crash (a linked issue that the
 #      crash triage signed, or whose title or the PR's says crash or panic);
-#   3. fix: not reviewed yet, with the fix label;
+#   3. fix: not reviewed yet, with the fix label or a "fix(area):" title;
 #   4. the rest not reviewed yet.
 # Inside a tier: crash before fix before the rest, then the longest waiting.
 #
@@ -53,9 +53,17 @@ function Get-ReviewCommentKind([string]$Body) {
     'Decision'
 }
 
-# A crash in a title: the word, not "crashpad" or a "crash window" label.
+# A crash in a title: the word, not "crashpad", nor the crash window, its
+# reports and their triage, nor a "panic button".
 function Test-CrashTitle([string]$Title) {
-    $Title -match '(?i)\b(crash(es|ed|ing)?|panic(s|ked)?|device lost)\b' -and $Title -notmatch '(?i)crash (window|report(er)?s? window)'
+    $Title -match '(?i)\b(crash(es|ed|ing)?|panic(s|ked)?|device lost)\b' -and
+        $Title -notmatch '(?i)\bcrash (window|reports?|reporter|triage|handler)\b|\bpanic button'
+}
+
+# A fix: the fix label, or a conventional "fix(area):" title (an outside
+# contributor cannot set labels).
+function Test-FixPr([string[]]$Labels, [string]$Title) {
+    ($Labels -contains 'fix') -or $Title -match '^\s*fix(\([^)]*\))?!?:'
 }
 
 # An issue tied to a crash: signed by the crash triage, or a crash title.
@@ -67,7 +75,7 @@ function Test-CrashIssue($Issue) {
 # The issue numbers a PR body names on its issue lines (AGENTS.md section 9:
 # "Closes #n", "Refs #n"; also the other closing words GitHub reads).
 function Get-BodyIssueNumbers([string]$Body) {
-    $found = [regex]::Matches([string]$Body, '(?im)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\s*:?\s+#(\d+)\b')
+    $found = [regex]::Matches([string]$Body, '(?im)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\s*:?\s+#(\d{1,9})\b')
     @($found | ForEach-Object { [int]$_.Groups[1].Value } | Sort-Object -Unique)
 }
 
@@ -138,10 +146,12 @@ function ConvertTo-ReviewItem($Node, $Issues) {
         if (-not $linked.ContainsKey($n) -and $Issues -and $Issues.ContainsKey($n)) { $linked[$n] = $Issues[$n] }
     }
     $crashIssues = @($linked.Keys | Where-Object { Test-CrashIssue $linked[$_] } | Sort-Object)
-    # claims: who is assigned, and since when (the last assignment event)
+    # claims: who is assigned, and since when (the last assignment event);
+    # the PR's author assigned to it claims nothing
     $claims = @()
     foreach ($a in $Node.assignees.nodes) {
         $login = [string]$a.login
+        if ($login -eq $author) { continue }
         $since = $null
         foreach ($e in $Node.timelineItems.nodes) {
             if ($e.assignee.login -eq $login -and $e.createdAt) { $since = (ConvertTo-UtcTime $e.createdAt) }
@@ -157,7 +167,7 @@ function ConvertTo-ReviewItem($Node, $Issues) {
         Ci = $ci; Created = (ConvertTo-UtcTime $Node.createdAt)
         Crash = [bool]$crashIssues.Count -or (Test-CrashTitle ([string]$Node.title))
         CrashIssues = $crashIssues
-        Fix = $labels -contains 'fix'
+        Fix = Test-FixPr $labels ([string]$Node.title)
         Events = @($events | Sort-Object At)
         Said = $said
         Claims = $claims
@@ -185,6 +195,19 @@ function Get-ReviewState($Item) {
     [pscustomobject]@{ State = $state; Reviewer = $last.By; Since = $last.At }
 }
 
+# The claims that hold, oldest first: a claim holds until its maintainer
+# posts a review after taking it; the review ends it, whether or not they
+# unassigned themselves. A claim whose time is unknown is ended by any
+# review of theirs.
+function Get-ActiveClaims($Item) {
+    @($Item.Claims | Where-Object {
+        $c = $_
+        -not @($Item.Events | Where-Object {
+            $_.By -eq $c.Login -and $_.Kind -in 'Approved', 'Changes', 'Decision' -and (-not $c.Since -or $_.At -gt $c.Since)
+        }).Count
+    } | Sort-Object @{ Expression = { $null -eq $_.Since } }, @{ Expression = { $_.Since } }, @{ Expression = { $_.Login } })
+}
+
 # The queue of maintainer $Me: every PR with its Tier (1 to 4, 0 when it is
 # not in the queue), why it is out (Skip), whose it is (Owner) and notes.
 # $Now: the time the rules compare with (a fixed one in the tests).
@@ -192,26 +215,14 @@ function Get-ReviewQueue($Items, [string]$Me, [datetime]$Now) {
     foreach ($item in $Items) {
         $review = Get-ReviewState $item
         $skip = $null; $kind = $null; $owner = $null; $notes = @()
-        # a claim holds until its maintainer posts a review: the review
-        # ends it, whether or not they unassigned themselves
-        $claims = @($item.Claims | Where-Object {
-            $c = $_
-            -not @($item.Events | Where-Object {
-                $_.By -eq $c.Login -and $_.Kind -in 'Approved', 'Changes', 'Decision' -and (-not $c.Since -or $_.At -gt $c.Since)
-            }).Count
-        })
+        $claims = Get-ActiveClaims $item
         $others = @($claims | Where-Object { $_.Login -ne $Me })
         $mine = [bool]@($claims | Where-Object { $_.Login -eq $Me }).Count
         $held = @($item.Labels | Where-Object { $ReviewQueueSkipLabels -contains $_ })
+        # whose it is comes first: a PR another maintainer holds is theirs,
+        # whatever else it waits for, so that -Claim refuses it
         if ($item.Author -eq $Me) { $kind = 'Own'; $skip = 'your own PR' }
         elseif ($item.Bot) { $kind = 'Bot'; $skip = 'bot (dependency update: needs the human''s agreement)' }
-        elseif ($item.Draft) { $kind = 'Draft'; $skip = 'draft' }
-        elseif ($held.Count) { $kind = 'Label'; $skip = $held -join ', ' }
-        elseif ($item.Queued) { $kind = 'Queued'; $skip = 'in the merge queue' }
-        elseif ($review.State -eq 'Approved') { $kind = 'Approved'; $skip = "approved by $($review.Reviewer), to merge" }
-        elseif ($review.State -eq 'WaitAuthor') { $kind = 'WaitAuthor'; $skip = "changes asked by $($review.Reviewer), waiting on its author" }
-        elseif ($review.State -eq 'Decision') { $kind = 'Decision'; $skip = "waiting on a decision ($($review.Reviewer)'s review)"; $owner = $review.Reviewer }
-        elseif ($item.Ci -eq 'Fail') { $kind = 'CiRed'; $skip = 'CI red: waiting on its author' }
         elseif ($others.Count -and -not $mine) {
             $owner = $others[0].Login
             $kind = 'Claimed'
@@ -226,6 +237,13 @@ function Get-ReviewQueue($Items, [string]$Me, [datetime]$Now) {
             $hours = [int][Math]::Ceiling($ReviewQueueHandOverDays * 24 - ($Now - $review.Since).TotalHours)
             $skip = "re-review for $owner, open to anyone in $hours h"
         }
+        elseif ($item.Draft) { $kind = 'Draft'; $skip = 'draft' }
+        elseif ($held.Count) { $kind = 'Label'; $skip = $held -join ', ' }
+        elseif ($item.Queued) { $kind = 'Queued'; $skip = 'in the merge queue' }
+        elseif ($review.State -eq 'Approved') { $kind = 'Approved'; $skip = "approved by $($review.Reviewer), to merge" }
+        elseif ($review.State -eq 'WaitAuthor') { $kind = 'WaitAuthor'; $skip = "changes asked by $($review.Reviewer), waiting on its author" }
+        elseif ($review.State -eq 'Decision') { $kind = 'Decision'; $skip = "waiting on a decision ($($review.Reviewer)'s review)"; $owner = $review.Reviewer }
+        elseif ($item.Ci -eq 'Fail') { $kind = 'CiRed'; $skip = 'CI red: waiting on its author' }
         $tier = 0
         if (-not $skip) {
             $tier = if ($review.State -eq 'ReReview') { 1 } elseif ($item.Crash) { 2 } elseif ($item.Fix) { 3 } else { 4 }
@@ -245,6 +263,27 @@ function Get-ReviewQueue($Items, [string]$Me, [datetime]$Now) {
             Mine = $mine; Owner = $owner; Skip = $skip; SkipKind = $kind; Notes = $notes
         }
     }
+}
+
+# Why $Me may not claim a PR ($Entry: its line of Get-ReviewQueue), or
+# $null: their own PR, or a PR another maintainer holds (a claim, a fresh
+# re-review of theirs, a decision their review left open).
+function Get-ClaimRefusal($Entry, [string]$Me) {
+    if ($Entry.Mine) { return $null }
+    if ($Entry.SkipKind -eq 'Own') { return 'it is your own PR' }
+    if ($Entry.Owner -and $Entry.Owner -ne $Me) { return "$($Entry.Skip); ask $($Entry.Owner) before taking it" }
+    $null
+}
+
+# After $Me assigned themselves: the maintainer whose claim came first, if
+# another claim holds and is older (two claims a few seconds apart: the
+# later one backs off), else $null.
+function Get-EarlierClaim($Item, [string]$Me) {
+    foreach ($c in Get-ActiveClaims $Item) {
+        if ($c.Login -eq $Me) { return $null }
+        return $c.Login
+    }
+    $null
 }
 
 # The queue in order: the PRs already claimed by $Me first (finish what you
