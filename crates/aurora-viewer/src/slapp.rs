@@ -39,6 +39,98 @@ pub fn preference_link(path: &str) -> Option<String> {
     valid_preference_path(path).then(|| format!("{PREFIX}preferences/{path}"))
 }
 
+/// The longest Preferences search a link carries, in bytes of UTF-8: the
+/// Legacy Viewer's search field (`search_prefs_edit`, `max_length_bytes`
+/// 255 in floater_preferences.xml), so every search either viewer copies
+/// opens here whole. A longer one is cut on a character, as that field
+/// cuts what it is given.
+const PREFERENCES_SEARCH_MAX: usize = 255;
+
+/// The address of a Preferences search before its value is decoded, longer
+/// ones are refused unread: every byte of the longest search escaped, and
+/// room for the other keys of the Legacy Viewer's form.
+const PREFERENCES_SEARCH_RAW_MAX: usize = 3 * PREFERENCES_SEARCH_MAX + 64;
+
+/// The query a search link opens: no control nor invisible direction
+/// character (the label of the link in chat shows it), cut to
+/// [`PREFERENCES_SEARCH_MAX`] bytes, trimmed. Empty: nothing to search.
+fn preferences_search_query(query: &str) -> String {
+    let mut out = String::with_capacity(query.len().min(PREFERENCES_SEARCH_MAX));
+    for c in query.chars() {
+        let c = match c {
+            // a line break or a tab inside the field's single line
+            c if c.is_control() => ' ',
+            // zero width and direction marks, embeddings, overrides and
+            // isolates: they would reorder or hide the label's text
+            '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}' => continue,
+            c => c,
+        };
+        if out.len() + c.len_utf8() > PREFERENCES_SEARCH_MAX {
+            break;
+        }
+        out.push(c);
+    }
+    out.trim().to_owned()
+}
+
+/// The link of a Preferences search in the Legacy Viewer's form
+/// (LLFloaterPreference::onCopySearch, indra/newview/llfloaterpreference.cpp:
+/// `openfloater/preferences?search=` and the text through LLURI::escape,
+/// `slurl::encode` here), so that it opens in both viewers. None for an
+/// empty search. One difference: a final `.` is written `%2E`, which
+/// LLURI::unescape reads the same, since the chat's link finder leaves a
+/// final full stop to the sentence (`ui/chat.rs`, `next_link`).
+pub fn preferences_search_link(query: &str) -> Option<String> {
+    let query = preferences_search_query(query);
+    if query.is_empty() {
+        return None;
+    }
+    let mut escaped = crate::slurl::encode(&query);
+    if escaped.ends_with('.') {
+        escaped.pop();
+        escaped.push_str("%2E");
+    }
+    Some(format!("{PREFIX}openfloater/preferences?search={escaped}"))
+}
+
+/// `%XX` decoded strictly: None for a `%` without two hex digits after it
+/// or bytes that are not UTF-8, where `unescape` keeps what it can.
+fn unescape_strict(text: &str) -> Option<String> {
+    let b = text.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            let hex = text.get(i + 1..i + 3)?;
+            if !hex.bytes().all(|h| h.is_ascii_hexdigit()) {
+                return None;
+            }
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// `openfloater/preferences?search=…`: the search, or None when the link
+/// has no usable one. The key is read as LLURI::queryMap reads it (exact
+/// case, the last one wins); a `tab=` beside it is not read, since the
+/// Legacy Viewer's tabs are not Aurora's pages (it would open that tab and
+/// leave the search).
+fn preferences_search(query: &str) -> Option<String> {
+    if query.len() > PREFERENCES_SEARCH_RAW_MAX {
+        return None;
+    }
+    let (_, raw) = query
+        .split('&')
+        .filter_map(|kv| kv.split_once('='))
+        .rfind(|(k, _)| *k == "search")?;
+    Some(preferences_search_query(&unescape_strict(raw)?)).filter(|q| !q.is_empty())
+}
+
 /// What a verb of `secondlife:///app/agent/<id>/<verb>` does besides showing
 /// the profile (LLAgentHandler::handle).
 #[derive(Debug, Clone, PartialEq)]
@@ -161,6 +253,11 @@ pub enum AppLink {
     },
     /// `preferences/<setting path>` only opens and highlights a setting.
     Preferences(String),
+    /// `openfloater/preferences?search=<query>` (LLFloaterOpenHandler,
+    /// LLFloaterPreference::onOpen): Preferences with the query in its
+    /// search field, as if typed; no setting changes. The query is
+    /// `preferences_search_query`'s, never empty.
+    PreferencesSearch(String),
     AreaSearch(Box<crate::settings::area_search::Filters>),
     Blocked(Blocked),
     /// Any other command, or one whose arguments are wrong: the Legacy
@@ -216,6 +313,9 @@ pub fn parse(url: &str) -> Option<AppLink> {
         "openfloater" if tokens.len() == 2 && token(1) == "area_search" => {
             crate::settings::area_search::Filters::from_query(query).map(|f| AppLink::AreaSearch(Box::new(f)))
         }
+        // UNTRUSTED_THROTTLE like every `openfloater`: a click runs it, a
+        // link from outside waits its turn (`external_url.rs`)
+        "openfloater" if tokens.len() == 2 && token(1) == "preferences" => preferences_search(query).map(AppLink::PreferencesSearch),
         "agent" => agent(&tokens[1..]),
         "group" => match (id(token(1)), token(2)) {
             (Some(g), "about" | "inspect") => Some(AppLink::Group(g)),
@@ -458,6 +558,146 @@ mod tests {
         ] {
             assert_eq!(parse(url), Some(AppLink::Unsupported), "{url}");
         }
+    }
+
+    fn search(query: &str) -> Option<AppLink> {
+        Some(AppLink::PreferencesSearch(query.to_owned()))
+    }
+
+    /// LLURI::escape (indra/llcommon/lluri.cpp): the unreserved characters
+    /// as they are, every other byte of the UTF-8 text as `%XX` in capitals;
+    /// a space is `%20`, never `+`.
+    #[test]
+    fn a_copied_search_is_escaped_like_the_legacy_viewer() {
+        let link = |q: &str| preferences_search_link(q).expect("a search");
+        let head = "secondlife:///app/openfloater/preferences?search=";
+        // the example of LLFloaterPreference::onOpen
+        assert_eq!(link("# of lines"), format!("{head}%23%20of%20lines"));
+        for (query, escaped) in [
+            ("draw distance", "draw%20distance"),
+            ("a&b", "a%26b"),
+            ("why?", "why%3F"),
+            ("100%", "100%25"),
+            ("1+1=2", "1%2B1%3D2"),
+            ("café", "caf%C3%A9"),
+            ("日本", "%E6%97%A5%E6%9C%AC"),
+            ("say \"hi\" 'there'", "say%20%22hi%22%20%27there%27"),
+            ("a/b\\c", "a%2Fb%5Cc"),
+            ("Az09-._~", "Az09-._~"),
+            // a final full stop stays in the link the chat finds
+            ("v1.", "v1%2E"),
+        ] {
+            assert_eq!(link(query), format!("{head}{escaped}"), "{query}");
+        }
+    }
+
+    #[test]
+    fn a_copied_search_opens_the_same_search() {
+        for query in [
+            "# of lines",
+            "draw distance",
+            "a&b=c?d#e",
+            "100% sure",
+            "1+1",
+            "café crème",
+            "日本語の設定",
+            "\"quoted\" and 'single'",
+            "v1.",
+            "~tilde",
+        ] {
+            let url = preferences_search_link(query).expect("a search");
+            assert_eq!(parse(&url), search(query), "{url}");
+        }
+        // what the field holds around it is cleaned the same way both sides
+        let url = preferences_search_link("  two\twords \u{202E}\n").expect("a search");
+        assert_eq!(parse(&url), search("two words"));
+        // nothing to share
+        for query in ["", "   ", "\u{200B}", "\n\t"] {
+            assert_eq!(preferences_search_link(query), None, "{query:?}");
+        }
+    }
+
+    #[test]
+    fn legacy_search_links_open_their_search() {
+        let head = "secondlife:///app/openfloater/preferences";
+        assert_eq!(parse(&format!("{head}?search=%23%20of%20lines")), search("# of lines"));
+        // the Legacy Viewer's own links (llstatusbar.cpp), lower case hex,
+        // `secondlife://app/` handed over from outside (`external_url.rs`)
+        assert_eq!(parse(&format!("{head}?search=StatusBarTimeFormat")), search("StatusBarTimeFormat"));
+        assert_eq!(parse(&format!("{head}?search=caf%c3%a9")), search("café"));
+        assert_eq!(parse(&format!("{head}/?search=x")), search("x"));
+        // LLURI::unescape keeps `+`; LLURI::queryMap keeps the last key
+        assert_eq!(parse(&format!("{head}?search=a+b")), search("a+b"));
+        assert_eq!(parse(&format!("{head}?search=first&search=last")), search("last"));
+        assert_eq!(parse(&format!("{head}?tab=chat&search=volume")), search("volume"));
+        // control and direction characters never reach the field nor the label
+        assert_eq!(parse(&format!("{head}?search=a%0Ab%E2%80%AEc%00")), search("a bc"));
+    }
+
+    #[test]
+    fn a_search_link_without_a_usable_search_is_unsupported() {
+        let head = "secondlife:///app/openfloater/preferences";
+        for url in [
+            head.to_owned(),
+            format!("{head}?"),
+            format!("{head}?search"),
+            format!("{head}?search="),
+            format!("{head}?search=%20%20"),
+            format!("{head}?search=%E2%80%8B"),
+            format!("{head}?tab=chat"),
+            format!("{head}?Search=volume"),
+            // bad escapes: no digits, one digit, a lone byte of UTF-8
+            format!("{head}?search=%ZZ"),
+            format!("{head}?search=abc%2"),
+            format!("{head}?search=abc%"),
+            format!("{head}?search=caf%C3"),
+            format!("{head}?search=%FF%FE"),
+            // longer than any search either viewer copies
+            format!("{head}?search={}", "%41".repeat(PREFERENCES_SEARCH_MAX + 30)),
+            // another floater, or more than its name
+            "secondlife:///app/openfloater/preferences/chat?search=volume".to_owned(),
+            "secondlife:///app/openfloater/Preferences?search=volume".to_owned(),
+            "secondlife:///app/openfloater/camera?search=volume".to_owned(),
+        ] {
+            assert_eq!(parse(&url), Some(AppLink::Unsupported), "{url}");
+        }
+    }
+
+    /// A search a little longer than the field is cut on a character (the
+    /// address much longer than any copy is refused unread, above).
+    #[test]
+    fn a_long_search_is_cut_on_a_character_like_the_legacy_field() {
+        let head = "secondlife:///app/openfloater/preferences?search=";
+        // 260 bytes: two-byte letters, the 128th would end past 255
+        let long = "é".repeat(130);
+        let Some(AppLink::PreferencesSearch(query)) = parse(&format!("{head}{}", crate::slurl::encode(&long))) else {
+            panic!("a long search still opens");
+        };
+        assert_eq!(query, "é".repeat(127));
+        // the copy is cut the same way: what is copied is what opens, even
+        // from a much longer field
+        for typed in [long, "é".repeat(400)] {
+            let url = preferences_search_link(&typed).expect("a search");
+            assert_eq!(parse(&url), search(&query));
+        }
+        // a search of the full length opens whole
+        let full = "a".repeat(PREFERENCES_SEARCH_MAX);
+        let url = preferences_search_link(&full).expect("a search");
+        assert_eq!(parse(&url), search(&full));
+    }
+
+    /// The links to one setting (#4414) are read as before.
+    #[test]
+    fn setting_links_and_search_links_stay_apart() {
+        assert_eq!(
+            parse("secondlife:///app/preferences/chat_timestamps_nearby"),
+            Some(AppLink::Preferences("chat_timestamps_nearby".to_owned()))
+        );
+        assert_eq!(parse("secondlife:///app/preferences/?search=volume"), Some(AppLink::Unsupported));
+        assert_eq!(
+            parse("secondlife:///app/openfloater/area_search?nm=box").map(|l| matches!(l, AppLink::AreaSearch(_))),
+            Some(true)
+        );
     }
 
     #[test]

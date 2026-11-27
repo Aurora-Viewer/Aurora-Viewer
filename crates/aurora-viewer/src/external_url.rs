@@ -191,6 +191,19 @@ mod tests {
         assert_eq!(classify("secondlife:///app/nothing/here"), Request::App(AppLink::Unsupported));
     }
 
+    /// `openfloater` is UNTRUSTED_THROTTLE (LLFloaterOpenHandler): a search
+    /// link from outside runs, on the throttled path of `Request::App`.
+    #[test]
+    fn a_preferences_search_from_outside_is_a_throttled_command() {
+        let want = Request::App(AppLink::PreferencesSearch("# of lines".into()));
+        assert_eq!(classify("secondlife:///app/openfloater/preferences?search=%23%20of%20lines"), want);
+        assert_eq!(classify("secondlife://app/openfloater/preferences?search=%23%20of%20lines"), want);
+        assert_eq!(
+            classify("secondlife:///app/openfloater/preferences?search=%ZZ"),
+            Request::App(AppLink::Unsupported)
+        );
+    }
+
     #[test]
     fn other_text_is_ignored() {
         for url in [

@@ -10421,16 +10421,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   an inventory item, two experiences (the region's treasure hunt by its
   name; the experience of `AURORA_DEMO_EXPERIENCE`, "unknown" without that
   scenario), a classified and an event (their address, as in the Legacy
-  Viewer), the map, a chat on channel 42, a search, a resident's IM, the
-  same resident's profile glued to the sentence ("…/about's hat": the
+  Viewer), the map, a chat on channel 42, a search, a Preferences search
+  (`openfloater/preferences?search=draw%20distance`: Preferences open with
+  "draw distance" in their search field, no setting changed), a resident's
+  IM, the same resident's profile glued to the sentence ("…/about's hat": the
   name, then "'s hat" as text), a folder to wear and an unknown command. Each opens what the Legacy Viewer
   opens on a click (group profile, place profile, remote object
   inspector, inventory, experience profile, the classified or the event
   alone in Search, the map); the folder to wear is refused (a notice), as
   is the unknown command. With a command name instead of `1` (`group`,
   `parcel`, `objectim`, `inventory`, `experience`, `classified`, `event`,
-  `worldmap`, `chat`, `search`, `agent`, `wear_folder`, `frobnicate`) its
-  first link is clicked once the scene is set, for a capture. Also accepts
+  `worldmap`, `chat`, `search`, `openfloater`, `agent`, `wear_folder`,
+  `frobnicate`) its first link is clicked once the scene is set, for a capture. Also accepts
   `profile`, `pay`, `report` and `inventory-show`, and `unmute` / `unblock`:
   the resident Violet Wolf, or the sign that says the links in the chat
   console, is blocked first, then its `unmute` or `unblock` link is clicked;

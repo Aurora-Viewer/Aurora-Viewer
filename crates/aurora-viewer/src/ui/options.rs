@@ -745,6 +745,25 @@ impl OptionsUi {
         self.go_to = None;
     }
 
+    /// Follow a Preferences search link (`AppLink::PreferencesSearch`): the
+    /// query goes into the search field and runs as if typed there, as
+    /// LLFloaterPreference::onOpen sets its filter and runs
+    /// onUpdateFilterTerm (indra/newview/llfloaterpreference.cpp). Nothing
+    /// is changed: a search only shows rows.
+    pub fn open_search(&mut self, query: String) {
+        self.query = query;
+        // what a change typed in the field does (`sidebar`)
+        self.modified_view = false;
+        self.cancel_capture();
+        // a setting link or a row asked before must not take the search back
+        self.pending_setting = None;
+        self.reveal = None;
+        self.go_to = None;
+        self.open_parent = None;
+        self.count_stale = true;
+        self.focus_search = true;
+    }
+
     /// Opens the Chat page on the YouTube player's settings (a player's
     /// cog, #848).
     pub fn open_videos(&mut self) {
@@ -1998,7 +2017,8 @@ fn sidebar(
     ui.add_space(12.0);
     let width = ui.available_width();
     ui.horizontal(|ui| {
-        let field = super::widgets::clearable_search_box(ui, p, &mut st.query, aurora_i18n::tr!("ui-options-search-settings"), width);
+        let field_w = width - COPY_SEARCH_W - ui.spacing().item_spacing.x;
+        let field = super::widgets::clearable_search_box(ui, p, &mut st.query, aurora_i18n::tr!("ui-options-search-settings"), field_w);
         if st.focus_search && !ui.is_sizing_pass() && ui.is_enabled() {
             st.focus_search = false;
             field.request_focus();
@@ -2010,6 +2030,9 @@ fn sidebar(
         if field.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             st.query.clear();
         }
+        // as tall as the field's face (the row so far), not its text
+        let height = ui.min_rect().height();
+        copy_search_button(ui, p, &st.query, height);
     });
     ui.add_space(6.0);
     let searching = !st.query.trim().is_empty();
@@ -2090,6 +2113,28 @@ fn sidebar(
 
 /// The number at the right of a page's entry: its search hits while
 /// searching, its modified settings otherwise.
+/// The width of the button beside the search field: the Legacy Viewer's
+/// `copy_search_slurl_btn` (floater_preferences.xml).
+const COPY_SEARCH_W: f32 = 28.0;
+
+/// "Copy search as link" beside the search field (LLFloaterPreference::
+/// onCopySearch, indra/newview/llfloaterpreference.cpp): the search as a
+/// link in the Legacy Viewer's form (`slapp::preferences_search_link`),
+/// which opens it again in both viewers; greyed while there is no search.
+fn copy_search_button(ui: &mut egui::Ui, p: &Palette, query: &str, height: f32) {
+    let link = crate::slapp::preferences_search_link(query);
+    let tip = aurora_i18n::tr!("ui-options-copy-search-link");
+    let size = vec2(COPY_SEARCH_W, height);
+    let button = super::widgets::action_button_if(ui, p, "link-filled", "", super::widgets::ActionKind::Flat, size, link.is_some());
+    // an icon alone: its name for the screen readers
+    button.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, link.is_some(), tip));
+    if button.on_hover_text(tip).clicked()
+        && let Some(link) = link
+    {
+        ui.ctx().copy_text(link);
+    }
+}
+
 fn nav_chip(st: &OptionsUi, page: Page, searching: bool) -> Option<usize> {
     let n = if searching {
         st.counts.hits(page)

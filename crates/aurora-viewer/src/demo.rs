@@ -2669,6 +2669,8 @@ pub fn applinks_text(item: Option<(Uuid, String)>) -> String {
         format!("{app}/worldmap/Pine%20Grove/40/80/22"),
         format!("{app}/chat/42/Hello%20from%20a%20link"),
         format!("{app}/search/places/beach"),
+        // a Preferences search, as both viewers copy it (#5120)
+        format!("{app}/openfloater/preferences?search=draw%20distance"),
         format!("{app}/agent/{DEMO_LOUP}/im"),
         // a verb glued to the sentence, as objects write it (LLUrlEntryAgent)
         format!("{app}/agent/{DEMO_LOUP}/about's hat"),
@@ -2686,8 +2688,8 @@ pub fn applinks_text(item: Option<(Uuid, String)>) -> String {
 }
 
 /// `AURORA_DEMO_APPLINKS=<command>` (group, parcel, objectim, inventory,
-/// experience, classified, event, worldmap, chat, search, agent,
-/// wear_folder, frobnicate): the first link of that command in `text` is
+/// experience, classified, event, worldmap, chat, search, openfloater,
+/// agent, wear_folder, frobnicate): the first link of that command in `text` is
 /// clicked once the scene is set.
 pub fn applinks_click(text: &str) -> Option<crate::slapp::AppLink> {
     let kind = std::env::var("AURORA_DEMO_APPLINKS").ok()?;
