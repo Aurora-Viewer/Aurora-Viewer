@@ -1115,6 +1115,10 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
+| `AURORA_TOUCH=1\|0` | The touch controls on or off for this launch, whatever the Preferences say (see Details) |
+| `AURORA_DEMO_TOUCH=<scenario>` | Scripted fingers on the touch layer: `orbit`, `pinch`, `spread-out`, `pan`, `tap`, `double-tap`, `hold`, `reset`, `stick`, `stick-hold`, `fly`, `mouselook`, `tour` (see Details) |
+| `AURORA_DEVICE=tablet\|phone\|desktop` | The device the viewer takes itself to run on: the interface's scale and the touch controls from the start (see Details) |
+| `AURORA_SAFE_AREA="top,right,bottom,left"` | Insets of the window the interface stays clear of, in points, as a tablet's status bar and home bar |
 | `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha\|orbit\|capture\|anim\|montage\|titles\|render` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, a second of the track recorded, the track replaced by an orbit shot round the avatar, a path flown by hand made keyframes, keyframes with an animation, a lens and a time of day, a montage of two shots, fades and titles played, or a second rendered as PNG images (see Details) |
 | `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
 | `AURORA_DIRECTOR_FFMPEG=pack` | The Director looks for no ffmpeg but the project's pack, to try its download on a computer that has ffmpeg (see Details) |
@@ -1160,6 +1164,43 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
+- **`AURORA_TOUCH`, `AURORA_DEMO_TOUCH`, `AURORA_DEVICE`, `AURORA_SAFE_AREA`**:
+  the touch layer (`src/touch.rs`, `app/touch.rs`, `ui/touch.rs`) without a
+  touch screen. `AURORA_DEMO_TOUCH` plays fingers from frame 600, in demo
+  mode: they go through `App::touch_event` as the window's do, and a finger
+  that lands on the interface is played to it as the pointer egui-winit
+  makes of a finger. Positions are shares of the window: `tap,0.5,0.4`,
+  `double-tap,x,y`, `hold,x,y`. Each scenario logs
+  `touch demo frame <n>: camera … agent … mouselook … flying … menu … stick …`
+  at its key frames:
+  - `orbit` drags one finger (the camera turns around the avatar), `pinch`
+    and `spread-out` zoom, `pan` moves two fingers together, `reset` taps
+    with two fingers (the view comes back behind the avatar);
+  - `hold,x,y` on the world opens the menu of what is there (`menu true`
+    at frame 720, or a capture at frame 715); on a text field it opens Cut,
+    Copy and Paste, on an inventory row its menu;
+  - `stick` pushes the movement stick forward, to its rim (a run), then
+    sideways; `stick-hold` leaves the thumb on it, for a capture;
+  - `fly` presses the Fly button, holds Up, and presses Fly again
+    (`flying true`, then `false`); `mouselook` presses the eye button and
+    drags a finger (the yaw follows);
+  - `tour` chains orbit, pinch, reset and stick.
+
+  The scenarios that use the stick or a button (`stick`, `stick-hold`,
+  `fly`, `mouselook`, `tour`) need the controls shown from the start:
+  `AURORA_DEVICE=tablet` or `AURORA_TOUCH=1`. Without them the log says
+  `the Fly button is not shown`. The gestures run on the clock and the
+  scripts count frames: the 120 frames of `hold` are a long press (0.5 s)
+  up to 240 frames per second; set `AURORA_FPS_LIMIT=60` on a faster
+  screen. The touch buttons answer the mouse too:
+  `AURORA_DEMO_POINTER="x,y,l"` on one clicks it.
+
+  For a tablet's screen: `AURORA_DEVICE=tablet AURORA_WINDOW_SIZE=1366,1024
+  AURORA_SAFE_AREA=24,0,20,0`; for a phone held sideways:
+  `AURORA_DEVICE=phone AURORA_WINDOW_SIZE=874,402 AURORA_SAFE_AREA=0,59,21,59`
+  (a phone's window is allowed under the usual smallest size). The bars,
+  the windows' work area and the touch controls must stay inside the
+  insets. `AURORA_UI_SCALE` still overrides the scale.
 - **`AURORA_DEMO_AVATAR_ALIGN=nearest|full|mini`**: every turn logs
   `avatar align: bearing <before>° -> <after>°` (bearings from north,
   clockwise); the steps come after the loading fade. `nearest`: the avatar

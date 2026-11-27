@@ -624,6 +624,9 @@ are planned or in progress: they are not in the viewer yet.
   plugins, and a macOS application for
   Apple Silicon, drawn through Metal, with web pages and video in the world
   ([install guide](docs/MACOS.md)).
+- **Touch screens**: fingers drive the camera and the avatar (tap, hold for
+  the menu, drag to look around, pinch to zoom), with a movement stick and
+  buttons over the world (Preferences › Controls › Touch screen).
 
 ## Performance
 

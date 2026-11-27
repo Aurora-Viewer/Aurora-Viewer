@@ -23,7 +23,12 @@ impl App {
             .with_visible(cfg!(target_os = "macos"))
             .with_active(plan.active)
             .with_inner_size(plan.size)
-            .with_min_inner_size(winit::dpi::LogicalSize::new(800, 560))
+            // (a test's phone, `AURORA_DEVICE=phone`, takes a phone's size)
+            .with_min_inner_size(if super::touch::device() == crate::touch::Device::Phone {
+                winit::dpi::LogicalSize::new(320, 320)
+            } else {
+                winit::dpi::LogicalSize::new(800, 560)
+            })
             .with_fullscreen(plan.fullscreen.clone())
             // none yet at start (it is decoded in the background)
             .with_window_icon(self.window_icon.clone());

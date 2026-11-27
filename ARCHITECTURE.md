@@ -3896,6 +3896,37 @@ the fog is off. Its demo scenes are `demo_fog.rs` (`AURORA_DEMO_FOG`).
 
 ## Life of a frame
 
+### Touch screens
+
+`touch.rs` is the pure part of the touch layer: the world's gestures as a
+state machine over the fingers (`World`: tap, long press, one-finger drag,
+pinch and two-finger pan, two-finger tap), the movement stick (`Stick`,
+`stick_move`), the device kinds (`Device`) and a test's insets
+(`safe_area`). `touch/demo.rs` scripts fingers for
+`AURORA_DEMO_TOUCH`. `app/touch.rs` gives each finger an owner when it
+lands (the interface, the stick, a touch button or the world) and keeps it
+until it lifts: only the interface's finger reaches egui, since egui-winit
+makes one finger its pointer. The world's gestures call what the mouse
+calls (`mouse_input`, `camera_mouse_delta`, `camera_wheel`,
+`open_context_menu`, `reset_camera_view`), so a tap is a click with
+everything a click does. A still thumb in the stick's zone taps or
+long-presses the world there; the interface's finger held still right-clicks
+where it is, which opens every menu the right button opens. `touch_frame`
+runs at the start of the frame, while the renderer is still in `App` for
+the picks. `ui/touch.rs` draws the stick and the buttons under the windows
+and hands their rectangles back for the layer's own hit test.
+`touch_raw_input` adds a test's insets (`AURORA_SAFE_AREA`) to egui's
+safe area, and `draw_ui` is given a child of the root inside
+`Context::content_rect`, so the bars and the work area stay clear of them
+(`widgets::pointer_over_ui` then counts the bars itself: egui's root no
+longer knows them). The same function hands the interface the right click
+of a finger held still (`touch::interface_long_press`): the finger's own
+press is released first and egui's click delay is shortened to the long
+press's while a finger is on the interface, so the hold never also clicks.
+The owner of a finger is decided by the pure `touch::owner`. The touch
+buttons are egui areas of their own in the background's order: a window, a
+bar or a menu drawn over one takes the finger, and a mouse clicks them.
+
 `joystick/` owns persisted NDOF settings, native input and the six-axis flycam
 pose. `backend.rs` reads generic joysticks through gilrs-core and SpaceMouse
 HID reports through hidapi on one worker. Joystick and Gamepad preferences
