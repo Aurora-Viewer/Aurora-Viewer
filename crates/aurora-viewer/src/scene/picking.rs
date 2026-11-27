@@ -3321,6 +3321,47 @@ pub(crate) mod tests {
         (world, scene, front, back)
     }
 
+    /// Runs `walk` on what `setup` builds, on a thread of its own, and fails
+    /// when the walk has not returned within 10 s (it takes milliseconds):
+    /// a walk that no longer ends (#5021) fails by name instead of holding
+    /// the test run until it is killed. The clock starts once `setup` is
+    /// done. A walk that ends is waited for until its thread has dropped what
+    /// `setup` built, and a panic there fails the test; a spinning thread is
+    /// left behind, and the test process ends it.
+    #[track_caller]
+    pub(crate) fn walk_ends<S, T: Send + 'static>(
+        setup: impl FnOnce() -> S + Send + 'static,
+        walk: impl FnOnce(&mut S) -> T + Send + 'static,
+    ) -> T {
+        use std::sync::mpsc::{RecvTimeoutError, channel};
+        const LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
+        let (ready, set_up) = channel();
+        let (done, ended) = channel();
+        let thread = std::thread::spawn(move || {
+            let mut state = setup();
+            let _ = ready.send(());
+            let _ = done.send(walk(&mut state));
+        });
+        // a panic in `setup` or `walk` drops its sender: report it as is
+        let rethrow = |thread: std::thread::JoinHandle<()>| -> ! {
+            match thread.join() {
+                Err(panic) => std::panic::resume_unwind(panic),
+                Ok(()) => unreachable!("the thread sent its result"),
+            }
+        };
+        if set_up.recv().is_err() {
+            rethrow(thread);
+        }
+        match ended.recv_timeout(LIMIT) {
+            Ok(out) => match thread.join() {
+                Ok(()) => out,
+                Err(panic) => std::panic::resume_unwind(panic),
+            },
+            Err(RecvTimeoutError::Timeout) => panic!("the walk did not end within {LIMIT:?}"),
+            Err(RecvTimeoutError::Disconnected) => rethrow(thread),
+        }
+    }
+
     pub(crate) fn scene_with_two_objects() -> (World, Scene, usize, usize) {
         let lib = Arc::new(AvatarLibrary::load());
         let mut world = World::new(lib.clone());
@@ -5408,12 +5449,14 @@ pub(crate) mod tests {
 
     #[test]
     fn ground_march_behind_a_far_avatar_face_ends() {
-        // #5021: from 2^24 m on, `t + 1.0 == t` in f32, while the avatar
+        // #5021: at these depths `t + 1.0 == t` in f32, while the avatar
         // branch's limit (drawn.rs, `(at + 0.1).next_up()`) stays above `t`
-        let (world, scene, _, _) = scene_with_two_objects();
         let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
         for at in [16_777_216.0_f32, 1.0e9, f32::MAX / 2.0] {
-            assert_eq!(scene.point_behind_rigged(&world, ray, at, (at + 0.1).next_up(), None, None), None);
+            let found = walk_ends(scene_with_two_objects, move |(world, scene, _, _)| {
+                scene.point_behind_rigged(world, ray, at, (at + 0.1).next_up(), None, None)
+            });
+            assert_eq!(found, None, "face at {at} m");
         }
     }
 }
