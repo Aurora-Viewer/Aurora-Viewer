@@ -49,6 +49,8 @@ pub struct Keyword {
     /// `integer llAbs(integer Value)`, `timer()`, `float PI = 3.14159265`.
     pub signature: String,
     pub tooltip: String,
+    /// The language has deprecated it (the definitions' `deprecated`).
+    pub deprecated: bool,
 }
 
 /// The cache file of a syntax (LLSyntaxIdLSL::buildFullFileSpec).
@@ -210,6 +212,7 @@ fn keyword(name: &str, group: Group, entry: &Llsd) -> Keyword {
         data_type,
         signature,
         tooltip: text(&entry["tooltip"]),
+        deprecated: entry["deprecated"].as_bool(),
     }
 }
 
@@ -250,7 +253,7 @@ mod tests {
           <key>touch_start</key><map><key>arguments</key><array><map><key>NumberOfTouches</key><map><key>type</key><string>integer</string></map></map></array></map>
         </map>
         <key>functions</key><map>
-          <key>llSay</key><map><key>return</key><string>void</string><key>arguments</key><array>
+          <key>llSay</key><map><key>deprecated</key><boolean>true</boolean><key>return</key><string>void</string><key>arguments</key><array>
             <map><key>Channel</key><map><key>type</key><string>integer</string></map></map>
             <map><key>Text</key><map><key>type</key><string>string</string></map></map>
           </array><key>tooltip</key><string>Says Text.</string></map>
@@ -285,6 +288,8 @@ mod tests {
         );
         assert_eq!(get(&words, "EOF").signature, "string EOF = \\\n\\\n\\\n");
         assert_eq!(get(&words, "if").tooltip, "if block\nif (x) {}");
+        assert!(get(&words, "llSay").deprecated, "the document says so");
+        assert!(!get(&words, "timer").deprecated, "and only where it does");
         assert_eq!(
             (get(&words, "integer").group, get(&words, "integer").signature.as_str()),
             (Group::Type, "integer")
