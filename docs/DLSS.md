@@ -99,7 +99,9 @@ On Linux the folder is `$AURORA_DLSS_DIR`, else
   beside it for Ray Reconstruction (optional: the driver ships its own),
   and `libnvidia-ngx-dlssg.so.<version>` for frame generation (optional);
 - `libsl_ngx.so`, sl-ngx built against the SDK
-  (`make DLSS_SDK=<the SDK>`). It holds NVIDIA's NGX core from the SDK's
+  (`make DLSS_SDK=<the SDK>`), and the same as `libsl_ngx.<commit>.so`,
+  named after the sl-ngx commit it was built from (its first 12
+  characters). It holds NVIDIA's NGX core from the SDK's
   `libnvsdk_ngx.a`: keep it for your own use;
 - `NVIDIA-DLSS-LICENSE.txt`, NVIDIA's licence you accepted.
 
@@ -109,6 +111,20 @@ The viewer names its Vulkan instance and device to sl-ngx
 To update DLSS, run the setup again. To remove it:
 `./dlss-setup.sh --remove`. Both refuse an `AURORA_DLSS_DIR` anywhere
 inside an SDK checkout.
+
+**After a viewer update.** Each viewer version names the sl-ngx commit it
+was made for, and loads `libsl_ngx.<commit>.so` when the folder has it
+(else `libsl_ngx.so`). When the folder lacks it, the viewer runs
+`dlss-setup.sh --update` in the background at its start, with the SDK
+already installed: it builds that commit, installs it under its versioned
+name only and keeps the three newest, so viewers of other versions on the
+PC keep theirs. Its output goes to `update.log` in the folder. The new
+sl-ngx is used from the next start; until then the viewer runs with the
+one it loaded. Preferences › Graphics › Anti-aliasing says it under
+**Frame generation**: being built, built (restart to use it), or why not.
+The update never shows NVIDIA's licence: when the SDK's licence differs
+from the one you accepted, it stops, and you run `./dlss-setup.sh` to read
+it.
 
 ## Ray Reconstruction
 
@@ -175,15 +191,40 @@ Reconstruction's extensions, or refuses them, is made with super
 resolution's alone (the log says which are missing), and DLSS draws super
 resolution there.
 
-## Frame generation (prototype, Linux)
+## Frame generation (Linux)
 
 With DLSS on, Preferences › Graphics › Anti-aliasing › **Frame generation**
 (experimental, off by default; Windows: *Frame generation on Windows*,
 below) has DLSS make a frame between
 each two the viewer draws, shown before the drawn one. The frame is drawn
-aside, into a texture in the window's format; at its end the generated
-frame is presented in the window image acquired at the frame's start, then
-the drawn one in a second. DLSS makes the frame from the drawn one before
+aside, into a texture in the window's format.
+
+**sl-ngx's presenter** shows the frames when it can. The viewer lets go of
+the window's surface and makes a new one, which it hands to sl-ngx
+(`slngxPresenterCreate`) without making a swapchain on it. At each frame's
+end it hands over the generated frame and the drawn one, in a ring of
+three. A thread of sl-ngx, on a queue of its own, copies them into its own
+swapchain and presents the generated frame first and the drawn one half a
+frame later, under Fifo, with Reflex in low-latency mode where the driver
+has `VK_NV_low_latency2`. Turned off, the presenter stops and the window
+gets a swapchain of the viewer's again. It needs an sl-ngx with the
+presenter (one built from the commit the viewer names: *After a viewer
+update*, above) and a second queue in the graphics family.
+
+**The fallback** (the first prototype), when the presenter cannot run: at
+the frame's end the generated frame is presented in the window image
+acquired at the frame's start, then the drawn one in a second. It has no
+Reflex. It runs until the setting is next turned off, except while the
+second camera holds the window: the presenter starts once it closes.
+
+**Under the switch**, while it runs, Preferences says what shows the frames
+(the presenter, or the fallback and why), whether Reflex is on, and the
+mode with the frames shown per second against the frames drawn: the
+viewer's own frame rate counts only the drawn ones. With the presenter
+the shown frames are the ones it presented, or, where the driver has
+present timing, the ones the screen showed.
+
+DLSS makes the frame from the drawn one before
 the interface; the interface on the generated frame is the drawn frame's,
 laid over it wherever the interface drew. While it runs the window presents under Fifo,
 whatever the vsync setting, and the frame rate limit stands aside (the
@@ -206,7 +247,9 @@ the script again after updating the viewer), the SDK's
 Streamline is asked when DLSS starts, and the choice is greyed while it is
 off and not offered (on, it can always be turned off, with a note under it).
 The viewer's GPU timers do not see NGX's pass; the log's
-`DLSS frame generation:` lines count the runs and the frames presented.
+`DLSS frame generation:` lines count the runs and the frames presented,
+and with the presenter, its own numbers (frames taken and skipped,
+swapchains made, its copies' GPU time, low latency, its last error).
 
 ## Windows
 

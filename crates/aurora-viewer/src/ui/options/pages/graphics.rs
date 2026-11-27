@@ -1438,6 +1438,18 @@ fn image(cx: &mut Cx) {
             if restart {
                 cx.note(tr!("ui-options-dlss-fg-restart"));
             }
+            // what runs once it is on: what shows the frames (and, the
+            // fallback, why and what it costs), Reflex, and the frames
+            // shown against the drawn ones the viewer's frame rate counts
+            if on && ready && !restart {
+                for line in fg_status_lines(&aurora_render::dlss_fg_status()) {
+                    cx.note(&line);
+                }
+                cx.ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+            }
+            if let Some(line) = dlss_update_line(&aurora_render::dlss_update()) {
+                cx.note(&line);
+            }
         });
         // FSR's sharpening, hidden under DLSS, which the CAS below
         // sharpens instead
@@ -1828,4 +1840,126 @@ fn parcel_rows<'a, T, K: egui::AsIdSalt>(
             }
         });
     remove
+}
+
+/// Preferences' lines under the frame generation switch, from what runs
+/// (`aurora_render::dlss_fg_status`): what shows the frames, Reflex, and
+/// the frames shown per second against the drawn ones.
+fn fg_status_lines(status: &aurora_render::DlssFgStatus) -> Vec<String> {
+    use aurora_i18n::tr;
+    use aurora_render::{DlssFgRefusal, DlssFgShown};
+    let mut lines = Vec::new();
+    match &status.shown {
+        DlssFgShown::Off => {
+            lines.push(tr!("ui-options-dlss-fg-status-not-running").to_owned());
+            return lines;
+        }
+        DlssFgShown::Presenter => lines.push(tr!("ui-options-dlss-fg-status-presenter").to_owned()),
+        DlssFgShown::Streamline(None) => lines.push(tr!("ui-options-dlss-fg-status-streamline").to_owned()),
+        DlssFgShown::Streamline(Some(status)) => {
+            lines.push(tr!("ui-options-dlss-fg-status-streamline-off", status = status.as_str()));
+            return lines;
+        }
+        DlssFgShown::TwoPresents(why) => {
+            let why = match why {
+                Some(DlssFgRefusal::OldSlNgx) => tr!("ui-options-dlss-fg-why-old-sl-ngx").to_owned(),
+                Some(DlssFgRefusal::NoQueue) => tr!("ui-options-dlss-fg-why-no-queue").to_owned(),
+                Some(DlssFgRefusal::SecondCamera) => tr!("ui-options-dlss-fg-why-second-camera").to_owned(),
+                Some(DlssFgRefusal::Stalled) => tr!("ui-options-dlss-fg-why-stalled").to_owned(),
+                Some(DlssFgRefusal::Failed(detail)) => tr!("ui-options-dlss-fg-why-failed", detail = detail.as_str()),
+                None => tr!("ui-options-dlss-fg-why-none").to_owned(),
+            };
+            lines.push(tr!("ui-options-dlss-fg-status-fallback", why = why.as_str()));
+        }
+    }
+    let presenter = status.shown == DlssFgShown::Presenter;
+    if status.reflex {
+        lines.push(tr!("ui-options-dlss-fg-status-reflex-on").to_owned());
+    } else if presenter {
+        lines.push(tr!("ui-options-dlss-fg-status-reflex-off").to_owned());
+    }
+    if status.per_drawn > 0.0 && status.shown_fps > 0.0 {
+        let mode = (status.per_drawn * 10.0).round() / 10.0;
+        let mode = if mode.fract() == 0.0 {
+            format!("{mode:.0}")
+        } else {
+            format!("{mode:.1}")
+        };
+        let (shown, drawn) = (format!("{:.0}", status.shown_fps), format!("{:.0}", status.drawn_fps));
+        lines.push(tr!(
+            "ui-options-dlss-fg-status-rate",
+            mode = mode.as_str(),
+            shown = shown.as_str(),
+            drawn = drawn.as_str(),
+        ));
+    } else {
+        lines.push(tr!("ui-options-dlss-fg-status-measuring").to_owned());
+    }
+    lines
+}
+
+/// Preferences' line on sl-ngx's update for this viewer
+/// (`aurora_render::dlss_update`), if there is one to say.
+fn dlss_update_line(update: &aurora_render::DlssUpdate) -> Option<String> {
+    use aurora_i18n::tr;
+    use aurora_render::DlssUpdate;
+    let script = aurora_render::DLSS_SETUP;
+    Some(match update {
+        DlssUpdate::None => return None,
+        DlssUpdate::Running => tr!("ui-options-dlss-update-running").to_owned(),
+        DlssUpdate::Done => tr!("ui-options-dlss-update-done").to_owned(),
+        DlssUpdate::Licence => tr!("ui-options-dlss-update-licence", script = script),
+        DlssUpdate::Failed(why) => tr!("ui-options-dlss-update-failed", why = why.as_str(), script = script),
+    })
+}
+
+#[cfg(test)]
+mod fg_status_tests {
+    use super::{dlss_update_line, fg_status_lines};
+    use aurora_render::{DlssFgRefusal, DlssFgShown, DlssFgStatus, DlssUpdate};
+
+    #[test]
+    fn the_presenter_says_reflex_and_the_frames_shown_against_the_drawn() {
+        let status = DlssFgStatus {
+            shown: DlssFgShown::Presenter,
+            reflex: true,
+            per_drawn: 1.98,
+            drawn_fps: 59.6,
+            shown_fps: 118.4,
+        };
+        let lines = fg_status_lines(&status).join("\n");
+        assert!(lines.contains("presenter"), "{lines}");
+        assert!(lines.contains("Reflex: on"), "{lines}");
+        assert!(lines.contains("2×") && lines.contains("118") && lines.contains("60"), "{lines}");
+    }
+
+    #[test]
+    fn the_fallback_says_why_and_has_no_reflex_line() {
+        let status = DlssFgStatus {
+            shown: DlssFgShown::TwoPresents(Some(DlssFgRefusal::Failed(String::from("VK_ERROR_SURFACE_LOST_KHR")))),
+            ..DlssFgStatus::default()
+        };
+        let lines = fg_status_lines(&status);
+        assert!(lines[0].contains("VK_ERROR_SURFACE_LOST_KHR"), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.contains("Reflex: ")), "{lines:?}");
+    }
+
+    #[test]
+    fn streamline_off_at_this_size_says_only_that() {
+        let status = DlssFgStatus {
+            shown: DlssFgShown::Streamline(Some(String::from("eFailResolutionTooLow"))),
+            reflex: true,
+            ..DlssFgStatus::default()
+        };
+        let lines = fg_status_lines(&status);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("eFailResolutionTooLow"));
+    }
+
+    #[test]
+    fn the_update_says_nothing_once_current() {
+        assert_eq!(dlss_update_line(&DlssUpdate::None), None);
+        assert!(dlss_update_line(&DlssUpdate::Done).is_some_and(|l| l.to_lowercase().contains("restart")));
+        assert!(dlss_update_line(&DlssUpdate::Licence).is_some_and(|l| l.contains(aurora_render::DLSS_SETUP)));
+    }
 }

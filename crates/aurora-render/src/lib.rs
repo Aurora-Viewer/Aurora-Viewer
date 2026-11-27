@@ -209,6 +209,45 @@ pub fn dlss_fg_restart(setting: bool) -> bool {
 /// stands aside (dlss_fg.rs; Linux only, Windows' Streamline paces its
 /// own presents).
 pub use dlss_fg::running as dlss_fg_running;
+/// DLSS frame generation as it runs in the window, over the last second:
+/// what shows its frames, Reflex, frames shown per frame drawn and both
+/// rates (dlss_fg.rs), for Preferences.
+pub use dlss_fg::{FgRefusal as DlssFgRefusal, FgShown as DlssFgShown, FgStatus as DlssFgStatus, status as dlss_fg_status};
+
+/// The DLSS folder's sl-ngx against this viewer's (Linux; dlss.rs): one
+/// built for another viewer version is updated in the background at the
+/// start, and used from the next.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DlssUpdate {
+    /// nothing to say: the folder has this viewer's sl-ngx, or no DLSS
+    None,
+    /// being built now
+    Running,
+    /// built: used from the next start
+    Done,
+    /// NVIDIA's licence changed since the install: the setup script, run
+    /// by hand, shows it
+    Licence,
+    /// not updated, with the script's last line or why it did not run
+    Failed(String),
+}
+
+/// sl-ngx's update for this viewer, for Preferences.
+pub fn dlss_update() -> DlssUpdate {
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    {
+        use dlss::update::State;
+        match dlss::update::state() {
+            State::Unknown | State::Current => DlssUpdate::None,
+            State::Running => DlssUpdate::Running,
+            State::Done(_) => DlssUpdate::Done,
+            State::Licence => DlssUpdate::Licence,
+            State::Failed(why) => DlssUpdate::Failed(why),
+        }
+    }
+    #[cfg(not(all(feature = "dlss", target_os = "linux")))]
+    DlssUpdate::None
+}
 /// DLSS Ray Reconstruction can be chosen: the device was opened with its
 /// extensions and Streamline did not refuse it (dlss.rs).
 pub fn dlss_rr_ready() -> bool {

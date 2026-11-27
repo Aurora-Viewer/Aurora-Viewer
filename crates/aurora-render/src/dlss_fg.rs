@@ -21,6 +21,13 @@
 //! presents pace the real frames at half the refresh rate; the viewer's
 //! frame cap stands aside then ([`running`]).
 //!
+//! With sl-ngx's presenter (dlss.rs `Presenter`, Linux), the window's
+//! surface is the presenter's instead: the frames are drawn into a ring of
+//! [`RING`] slots, each a real frame and the generated one as shown (the
+//! window's format), handed over at the frame's end and kept until the
+//! presenter has read them. It presents both, half a frame apart, on a
+//! queue of its own, with Reflex on its swapchain.
+//!
 //! `AURORA_DLSS_FG_DUMP=<folder>` writes the three images of three frames
 //! in a row as PPM, from the `AURORA_DLSS_FG_DUMP_AT`-th generation (300
 //! by default): the test of what generation makes, before it is shown.
@@ -42,17 +49,153 @@ pub fn running() -> bool {
     RUNNING.load(Ordering::Relaxed)
 }
 
+/// What shows frame generation's frames, for Preferences ([`status`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum FgShown {
+    /// not running on the last frames drawn for the window
+    #[default]
+    Off,
+    /// Linux: sl-ngx's presenter, on a swapchain of its own
+    Presenter,
+    /// Linux: the viewer's own two presents a frame (the prototype), and
+    /// why sl-ngx's presenter does not show them
+    TwoPresents(Option<FgRefusal>),
+    /// Windows: Streamline, at the present; with the status it gave when
+    /// it turned frame generation off at this window size
+    Streamline(Option<String>),
+}
+
+/// Why sl-ngx's presenter does not show frame generation's frames
+/// (Linux): the viewer presents them the prototype's way instead.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FgRefusal {
+    /// the sl-ngx loaded predates the presenter (updated, it runs from
+    /// the next start)
+    OldSlNgx,
+    /// the device was opened without the presenter's queue (no second
+    /// queue in the graphics family)
+    NoQueue,
+    /// the second camera holds the window's surface (tried again once
+    /// it lets go)
+    SecondCamera,
+    /// a frame handed over was not released within 1 s
+    Stalled,
+    /// anything else, as the log says it (a Vulkan result, a call)
+    Failed(String),
+}
+
+/// Frame generation as it runs in the window, over the last second.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FgStatus {
+    pub shown: FgShown,
+    /// Reflex in low-latency mode on the swapchain that shows the frames
+    pub reflex: bool,
+    /// frames shown per frame drawn (2: one generated for each); 0 not
+    /// known yet
+    pub per_drawn: f32,
+    /// frames drawn and frames shown per second; `shown_fps` 0 not known
+    /// yet. Linux counts what was presented (or, with present timing,
+    /// what the screen showed); Windows multiplies the drawn by what
+    /// Streamline says it presents per frame drawn.
+    pub drawn_fps: f32,
+    pub shown_fps: f32,
+}
+
+static STATUS: std::sync::Mutex<Option<FgStatus>> = std::sync::Mutex::new(None);
+
+/// Frame generation as it runs in the window (Preferences says it under
+/// the switch); [`FgShown::Off`] while it does not.
+pub fn status() -> FgStatus {
+    STATUS.lock().ok().and_then(|s| s.clone()).unwrap_or_default()
+}
+
+pub(crate) fn set_status(status: Option<FgStatus>) {
+    if let Ok(mut s) = STATUS.lock() {
+        *s = status;
+    }
+}
+
+/// Frame generation's frames counted over about a second, for [`status`].
+pub(crate) struct Meter {
+    since: std::time::Instant,
+    /// frames drawn since `since`, frames generated among them
+    drawn: u64,
+    /// the shown and the real frames' running totals at `since`, where
+    /// they are counted
+    totals: Option<(u64, u64)>,
+}
+
+/// What a [`Meter`] measured over its second.
+pub(crate) struct Measured {
+    pub drawn_fps: f32,
+    /// frames shown and real frames shown per second, from the totals
+    /// given at both ends of the second
+    pub shown_fps: f32,
+    pub per_drawn: f32,
+}
+
+impl Meter {
+    pub(crate) fn new(now: std::time::Instant, totals: Option<(u64, u64)>) -> Self {
+        Self {
+            since: now,
+            drawn: 0,
+            totals,
+        }
+    }
+
+    /// One frame drawn with frame generation on. Once a second has
+    /// passed, true: the caller reads its totals and calls [`Meter::take`].
+    pub(crate) fn frame(&mut self, now: std::time::Instant) -> bool {
+        self.drawn += 1;
+        now.duration_since(self.since) >= std::time::Duration::from_secs(1)
+    }
+
+    /// The second's numbers, from the shown and real frames' running
+    /// totals now (None where they are not counted: shown 0, per drawn
+    /// 0), and the next second started.
+    pub(crate) fn take(&mut self, now: std::time::Instant, totals: Option<(u64, u64)>) -> Measured {
+        let secs = now.duration_since(self.since).as_secs_f32().max(1e-3);
+        let (shown, real) = match (self.totals, totals) {
+            (Some((s0, r0)), Some((s1, r1))) => (s1.saturating_sub(s0), r1.saturating_sub(r0)),
+            _ => (0, 0),
+        };
+        let measured = Measured {
+            drawn_fps: self.drawn as f32 / secs,
+            shown_fps: shown as f32 / secs,
+            per_drawn: if real == 0 { 0.0 } else { shown as f32 / real as f32 },
+        };
+        *self = Self::new(now, totals);
+        measured
+    }
+}
+
 pub(crate) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// frames dumped in a row
 const DUMP_FRAMES: u64 = 3;
 
+/// the slots handed to sl-ngx's presenter in turn (its header asks at
+/// least three: one drawn, one waiting, one being read)
+pub(crate) const RING: usize = 3;
+
+/// One frame's images: the frame as drawn (`real`), and with the
+/// presenter the generated frame as shown (`shown`, the window's format),
+/// both read by it until `released`.
+struct Slot {
+    real: wgpu::Texture,
+    real_view: wgpu::TextureView,
+    shown: Option<wgpu::Texture>,
+    /// the presenter's `released` value these images wait for, 0 if none
+    released: u64,
+}
+
 pub(crate) struct FrameGen {
     size: (u32, u32),
     format: wgpu::TextureFormat,
-    /// the frame as drawn, presented after the generated one
-    pub real: wgpu::Texture,
-    pub real_view: wgpu::TextureView,
+    /// the frames as drawn, presented after the generated ones: one, or
+    /// with the presenter a ring of [`RING`] (`slot` this frame's)
+    slots: Vec<Slot>,
+    slot: usize,
     pub back: wgpu::TextureView,
     pub hudless: wgpu::TextureView,
     pub out: wgpu::TextureView,
@@ -71,6 +214,8 @@ pub(crate) struct FrameGen {
     /// presents of generated and of real frames
     pub presented_generated: u64,
     pub presented_real: u64,
+    /// frames the presenter did not take (paused, or still busy)
+    pub not_taken: u64,
     dump: Option<Dump>,
 }
 
@@ -82,7 +227,9 @@ struct Dump {
 }
 
 impl FrameGen {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, size: (u32, u32), format: wgpu::TextureFormat) -> Self {
+    /// The images at `size`, the window's `format`; `ring`: for sl-ngx's
+    /// presenter ([`RING`] slots, each with its generated frame as shown).
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, size: (u32, u32), format: wgpu::TextureFormat, ring: bool) -> Self {
         let make = |label, usage| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
@@ -126,31 +273,48 @@ impl FrameGen {
             },
             out.texture().size(),
         );
-        let real = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("DLSS FG real frame"),
-            size: wgpu::Extent3d {
-                width: size.0,
-                height: size.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let real_view = real.create_view(&wgpu::TextureViewDescriptor::default());
+        let window_image = |label| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: size.0,
+                    height: size.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            })
+        };
+        let slots = (0..if ring { RING } else { 1 })
+            .map(|_| {
+                let real = window_image("DLSS FG real frame");
+                Slot {
+                    real_view: real.create_view(&wgpu::TextureViewDescriptor::default()),
+                    real,
+                    shown: ring.then(|| window_image("DLSS FG generated frame for the presenter")),
+                    released: 0,
+                }
+            })
+            .collect();
         let back = make("DLSS FG shown", wgpu::TextureUsages::RENDER_ATTACHMENT);
         let hudless = make("DLSS FG hudless", wgpu::TextureUsages::RENDER_ATTACHMENT);
         let mixed = make("DLSS FG generated as shown", wgpu::TextureUsages::RENDER_ATTACHMENT);
         let (mix_pipeline, mix_group) = mix(device, [&back, &hudless, &out]);
-        log::info!("DLSS frame generation: images made at {}x{}", size.0, size.1);
+        log::info!(
+            "DLSS frame generation: images made at {}x{}{}",
+            size.0,
+            size.1,
+            if ring { ", a ring of 3 for sl-ngx's presenter" } else { "" }
+        );
         Self {
             size,
             format,
-            real,
-            real_view,
+            slots,
+            slot: 0,
             present_blit: wgpu::util::TextureBlitter::new(device, format),
             back,
             hudless,
@@ -164,12 +328,69 @@ impl FrameGen {
             generated: 0,
             presented_generated: 0,
             presented_real: 0,
+            not_taken: 0,
             dump,
         }
     }
 
-    pub fn fits(&self, size: (u32, u32), format: wgpu::TextureFormat) -> bool {
-        self.size == size && self.format == format
+    pub fn fits(&self, size: (u32, u32), format: wgpu::TextureFormat, ring: bool) -> bool {
+        self.size == size && self.format == format && (self.slots.len() > 1) == ring
+    }
+
+    /// This frame's real frame, drawn into.
+    pub fn real(&self) -> &wgpu::Texture {
+        &self.slots[self.slot].real
+    }
+
+    /// This frame's generated frame as shown, for the presenter.
+    pub fn shown(&self) -> Option<&wgpu::Texture> {
+        self.slots[self.slot].shown.as_ref()
+    }
+
+    /// The size of the images.
+    #[cfg_attr(
+        not(all(feature = "dlss", target_os = "linux")),
+        allow(dead_code, reason = "sl-ngx's presenter only")
+    )]
+    pub fn size(&self) -> (u32, u32) {
+        self.size
+    }
+
+    /// The next slot becomes this frame's: the presenter's `released`
+    /// value to wait for before its images are written, 0 if none.
+    #[cfg_attr(
+        not(all(feature = "dlss", target_os = "linux")),
+        allow(dead_code, reason = "sl-ngx's presenter only")
+    )]
+    pub fn advance(&mut self) -> u64 {
+        self.slot = (self.slot + 1) % self.slots.len();
+        std::mem::take(&mut self.slots[self.slot].released)
+    }
+
+    /// This frame's images were taken by the presenter, until `released`
+    /// reaches `value`.
+    #[cfg_attr(
+        not(all(feature = "dlss", target_os = "linux")),
+        allow(dead_code, reason = "sl-ngx's presenter only")
+    )]
+    pub fn handed(&mut self, value: u64) {
+        self.slots[self.slot].released = value;
+    }
+
+    /// The images handed to the presenter left in the layout it reads
+    /// them in (transfer source; it leaves them so): the real frame, and
+    /// the generated one as shown when there is one. Last in the frame.
+    pub fn for_presenter(&self, encoder: &mut wgpu::CommandEncoder, generated: bool) {
+        let slot = &self.slots[self.slot];
+        let shown = slot.shown.as_ref().filter(|_| generated);
+        encoder.transition_resources(
+            std::iter::empty(),
+            std::iter::once(&slot.real).chain(shown).map(|texture| wgpu::TextureTransition {
+                texture,
+                selector: None,
+                state: wgpu::TextureUses::COPY_SRC,
+            }),
+        );
     }
 
     /// The generated frame (`generated`), under the real frame's
@@ -200,7 +421,7 @@ impl FrameGen {
             drop(pass);
             &self.mixed
         } else {
-            &self.real_view
+            &self.slots[self.slot].real_view
         };
         self.present_blit.copy(device, encoder, source, &target);
     }

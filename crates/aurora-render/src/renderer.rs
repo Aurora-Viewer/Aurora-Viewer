@@ -2093,6 +2093,16 @@ struct FrameGroups {
 
 /// What a frame draws into: the swapchain image, presented, or a photo's
 /// own texture (`Capture::Snapshot`), read back and dropped.
+/// `Backend::remake_surface`'s answer when another renderer holds the
+/// window's surface (the second camera's).
+const SURFACE_SHARED: &str = "the second camera holds the window";
+
+/// How long a frame handed to sl-ngx's presenter waits for the frame
+/// before it to be taken up: past it, the frame is not shown. Under Fifo
+/// the presenter takes one every two refreshes (33 ms at 60 Hz).
+#[cfg(all(feature = "dlss", target_os = "linux"))]
+const FG_HAND_OVER_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
+
 enum FrameTarget {
     Surface(wgpu::SurfaceTexture),
     Offscreen(wgpu::Texture),
@@ -2509,6 +2519,18 @@ pub(crate) struct Backend {
     dlss_aside: Option<(crate::dlss::Dlss, Instant)>,
     /// DLSS frame generation's images while it runs (`fg_on`, dlss_fg.rs)
     fg: Option<crate::dlss_fg::FrameGen>,
+    /// Linux: sl-ngx's presenter on the window's surface while frame
+    /// generation runs (dlss.rs `Presenter`), and why it last could not
+    /// run or stopped: frame generation then presents the prototype's way
+    /// (two presents a frame, dlss_fg.rs) until the setting is next off
+    /// (or, for the second camera, until it lets go of the surface)
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    fg_presenter: Option<crate::dlss::Presenter>,
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    fg_present_refused: Option<crate::dlss_fg::FgRefusal>,
+    /// frame generation's frames counted over a second, while it runs,
+    /// for Preferences (`dlss_fg::status`)
+    fg_meter: Option<crate::dlss_fg::Meter>,
     /// Windows' frame generation (Streamline's, at the present): the
     /// window's image before the interface, in its format and size
     #[cfg(windows)]
@@ -2563,6 +2585,9 @@ impl Drop for Backend {
     /// (#1650). A lost device only closes the viewer, so the surface is left
     /// to the process, which releases it with the driver's objects.
     fn drop(&mut self) {
+        // sl-ngx's presenter before the surface it presents to
+        #[cfg(all(feature = "dlss", target_os = "linux"))]
+        drop(self.fg_presenter.take());
         if self.lost.get() {
             // (DLSS's features stay with the lost device: the flag says so
             // to dlss.rs, which never calls Streamline on it again)
@@ -5499,6 +5524,11 @@ impl Backend {
             dlss_drew: None,
             dlss_aside: None,
             fg: None,
+            #[cfg(all(feature = "dlss", target_os = "linux"))]
+            fg_presenter: None,
+            #[cfg(all(feature = "dlss", target_os = "linux"))]
+            fg_present_refused: None,
+            fg_meter: None,
             #[cfg(windows)]
             fg_hudless: None,
             #[cfg(windows)]
@@ -8548,7 +8578,7 @@ impl Backend {
         self.config.width = width;
         self.config.height = height;
         if !self.external {
-            crate::present::configure(&self.surface, &self.device, &self.config);
+            self.configure_window();
         }
         self.rebuild_targets();
     }
@@ -9350,10 +9380,16 @@ impl Backend {
         if self.external {
             return;
         }
+        // (sl-ngx's presenter's swapchain is Fifo, its own: the mode is
+        // the window's again once it stops)
+        #[cfg(all(feature = "dlss", target_os = "linux"))]
+        if self.fg_presenter.is_some() {
+            return;
+        }
         if renew && self.renew_surface() {
             return;
         }
-        crate::present::configure(&self.surface, &self.device, &self.config);
+        self.configure_window();
     }
 
     /// The window's surface made again and configured, before DLSS frame
@@ -9364,19 +9400,32 @@ impl Backend {
     /// device, or the renderers of a VR session or of the second camera
     /// holding it (its picture may be in this frame's interface).
     fn renew_surface(&mut self) -> bool {
-        let Some(window) = self.window.clone() else {
+        if let Err(why) = self.remake_surface() {
+            if why == SURFACE_SHARED {
+                log::info!("presentation: the window's surface is shared (second camera), not made again for DLSS frame generation");
+            }
             return false;
+        }
+        crate::present::configure(&self.surface, &self.device, &self.config);
+        log::info!("presentation: the window's surface made again for DLSS frame generation");
+        true
+    }
+
+    /// The window's surface let go and made afresh, not configured. Err,
+    /// with nothing changed, when it cannot be let go (`renew_surface`).
+    fn remake_surface(&mut self) -> Result<(), &'static str> {
+        let Some(window) = self.window.clone() else {
+            return Err("not on Wayland");
         };
         if self.lost.get() {
-            return false;
+            return Err("the device is lost");
         }
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         if self.xr_world.is_some() {
-            return false;
+            return Err("a VR session holds the window");
         }
         if Arc::strong_count(&self.surface) != 1 {
-            log::info!("presentation: the window's surface is shared (second camera), not made again for DLSS frame generation");
-            return false;
+            return Err(SURFACE_SHARED);
         }
         // SAFETY: the surface is taken out once and `self.surface` is
         // written again below, on every path that does not abort, before
@@ -9398,9 +9447,219 @@ impl Backend {
                 std::process::abort();
             }
         }
+        Ok(())
+    }
+
+    /// The window configured at `config`, or with sl-ngx's presenter
+    /// running, its swapchain sized: the window is the presenter's then,
+    /// and no swapchain of wgpu's may be made on it.
+    fn configure_window(&self) {
+        #[cfg(all(feature = "dlss", target_os = "linux"))]
+        if let Some(presenter) = &self.fg_presenter {
+            presenter.resize(self.config.width, self.config.height);
+            return;
+        }
         crate::present::configure(&self.surface, &self.device, &self.config);
-        log::info!("presentation: the window's surface made again for DLSS frame generation");
+    }
+
+    /// Linux: sl-ngx's presenter started while frame generation runs, on
+    /// a window surface made afresh, and stopped when it ends; before the
+    /// presentation mode is set. Once it could not run, frame generation
+    /// presents the prototype's way until the setting is next off.
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    fn sync_fg_presenter(&mut self) {
+        use crate::dlss_fg::FgRefusal;
+        let want = !self.external && self.fg_on();
+        // (the second camera's hold on the surface ends: tried again)
+        if !want || (self.fg_present_refused == Some(FgRefusal::SecondCamera) && Arc::strong_count(&self.surface) == 1) {
+            self.fg_present_refused = None;
+        }
+        let want = want && self.fg_present_refused.is_none();
+        if want == self.fg_presenter.is_some() {
+            return;
+        }
+        if !want {
+            self.stop_fg_presenter(None);
+            return;
+        }
+        if let Err(why) = self.remake_surface() {
+            self.fg_present_refused = Some(if why == SURFACE_SHARED {
+                FgRefusal::SecondCamera
+            } else {
+                FgRefusal::Failed(why.to_string())
+            });
+            log::info!(
+                "DLSS frame generation: sl-ngx's presenter cannot have the window ({why}): frame generation presents the prototype's way"
+            );
+            return;
+        }
+        match crate::dlss::Presenter::new(&self.device, &self.lost, &self.surface, &self.config) {
+            Ok(presenter) => {
+                self.fg_presenter = Some(presenter);
+                // (the ring made at the next frame)
+                self.fg = None;
+            }
+            Err(why) => {
+                log::warn!(
+                    "DLSS frame generation: sl-ngx's presenter did not start ({why:?}): frame generation presents the prototype's way"
+                );
+                self.fg_present_refused = Some(why);
+                crate::present::configure(&self.surface, &self.device, &self.config);
+            }
+        }
+    }
+
+    /// Linux: sl-ngx's presenter stopped (with the reason it failed, if
+    /// it did), its ring let go and the window configured again.
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    fn stop_fg_presenter(&mut self, failed: Option<crate::dlss_fg::FgRefusal>) {
+        if let Some(why) = failed {
+            log::error!("DLSS frame generation: sl-ngx's presenter stops: {why:?}; frame generation presents the prototype's way");
+            self.fg_present_refused = Some(why);
+        }
+        if let Some(presenter) = self.fg_presenter.take() {
+            // (every frame handed over released by it, before the images go)
+            drop(presenter);
+            self.fg = None;
+            crate::present::configure(&self.surface, &self.device, &self.config);
+        }
+    }
+
+    /// Linux: with sl-ngx's presenter, this frame's slot of the ring (made
+    /// or made again at the window's size), once the presenter has read
+    /// what it held. False without the presenter, or when it stopped.
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    fn fg_slot(&mut self) -> bool {
+        let Some(presenter) = &self.fg_presenter else {
+            return false;
+        };
+        let (size, format) = ((self.config.width, self.config.height), self.config.format);
+        if self.fg.as_ref().is_none_or(|fg| !fg.fits(size, format, true)) {
+            // (the old ring's images may still be read: paused first)
+            let paused = presenter.pause();
+            self.fg = Some(crate::dlss_fg::FrameGen::new(&self.device, &self.queue, size, format, true));
+            drop(paused);
+        }
+        let Some(fg) = &mut self.fg else {
+            return false;
+        };
+        let wait = fg.advance();
+        if wait != 0 && !presenter.wait_released(wait) {
+            self.stop_fg_presenter(Some(crate::dlss_fg::FgRefusal::Stalled));
+            return false;
+        }
         true
+    }
+
+    /// Linux: this frame handed to sl-ngx's presenter, once submitted:
+    /// the generated frame as shown, if one was made, and the real one.
+    /// True when it was taken (it will be presented).
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    fn fg_hand_over(&mut self, generated: bool) -> bool {
+        let (Some(presenter), Some(fg)) = (&mut self.fg_presenter, &mut self.fg) else {
+            return false;
+        };
+        let size = fg.size();
+        let shown = fg.shown().filter(|_| generated).map(|t| (t, size));
+        let r = presenter.hand_over(&self.queue, shown, (fg.real(), size), FG_HAND_OVER_WAIT);
+        match r {
+            Ok(Some(value)) => {
+                fg.handed(value);
+                fg.presented_generated += u64::from(generated);
+                fg.presented_real += 1;
+                true
+            }
+            Ok(None) => {
+                fg.not_taken += 1;
+                false
+            }
+            Err(why) => {
+                self.stop_fg_presenter(Some(crate::dlss_fg::FgRefusal::Failed(why)));
+                false
+            }
+        }
+    }
+
+    /// Frame generation as it runs, for Preferences (`dlss_fg::status`):
+    /// published once a second while it runs on the window (`on`), and
+    /// taken back once it stops.
+    fn publish_fg_status(&mut self, on: bool) {
+        use crate::dlss_fg::{FgStatus, Meter};
+        if !on || self.external {
+            if self.fg_meter.take().is_some() {
+                crate::dlss_fg::set_status(None);
+            }
+            return;
+        }
+        let now = Instant::now();
+        if self.fg_meter.is_none() {
+            let totals = self.fg_totals();
+            self.fg_meter = Some(Meter::new(now, totals));
+            return;
+        }
+        if !self.fg_meter.as_mut().is_some_and(|m| m.frame(now)) {
+            return;
+        }
+        let totals = self.fg_totals();
+        let Some(measured) = self.fg_meter.as_mut().map(|m| m.take(now, totals)) else {
+            return;
+        };
+        #[allow(unused_mut)] // (set by platform below)
+        let mut status = FgStatus {
+            drawn_fps: measured.drawn_fps,
+            shown_fps: measured.shown_fps,
+            per_drawn: measured.per_drawn,
+            ..FgStatus::default()
+        };
+        #[cfg(target_os = "linux")]
+        {
+            use crate::dlss_fg::FgShown;
+            status.shown = FgShown::TwoPresents(None);
+            #[cfg(feature = "dlss")]
+            match &self.fg_presenter {
+                Some(presenter) => {
+                    status.shown = FgShown::Presenter;
+                    status.reflex = presenter.reflex() && presenter.stats().is_some_and(|st| st.low_latency != 0);
+                }
+                None => status.shown = FgShown::TwoPresents(self.fg_present_refused.clone()),
+            }
+        }
+        // (Windows: Streamline paces and counts its presents; Reflex in
+        // low-latency mode is what frame generation was allowed on)
+        #[cfg(windows)]
+        {
+            let (per_drawn, refused) = self
+                .taa
+                .as_ref()
+                .and_then(|t| t.dlss.as_ref())
+                .map(|(d, _)| d.fg_shown())
+                .unwrap_or_default();
+            status.shown = crate::dlss_fg::FgShown::Streamline(refused);
+            status.reflex = true;
+            status.per_drawn = per_drawn as f32;
+            status.shown_fps = status.drawn_fps * per_drawn as f32;
+        }
+        crate::dlss_fg::set_status(Some(status));
+    }
+
+    /// Frame generation's running totals of frames shown and of real
+    /// frames shown (Linux): sl-ngx's presenter's (what the screen showed,
+    /// with present timing; else what it presented), or the prototype's
+    /// presents. None where they are not counted (Windows).
+    fn fg_totals(&self) -> Option<(u64, u64)> {
+        #[cfg(all(feature = "dlss", target_os = "linux"))]
+        if let Some(presenter) = &self.fg_presenter {
+            let st = presenter.stats()?;
+            return Some(if st.present_timing != 0 {
+                (st.generated_shown + st.real_shown, st.real_shown)
+            } else {
+                (st.generated_presented + st.real_presented, st.real_presented)
+            });
+        }
+        self.fg
+            .as_ref()
+            .filter(|_| cfg!(target_os = "linux"))
+            .map(|fg| (fg.presented_generated + fg.presented_real, fg.presented_real))
     }
 
     // ---------------------------------------------------------------- frame
@@ -9974,6 +10233,10 @@ impl Backend {
             })();
             match created {
                 Ok(world) => {
+                    // (the mirror presents to the window: sl-ngx's
+                    // presenter gives it back first)
+                    #[cfg(all(feature = "dlss", target_os = "linux"))]
+                    self.stop_fg_presenter(None);
                     self.xr_world = Some(Box::new(world));
                     self.xr_retry = (0, None);
                     log::info!("XR world: independent eye renderers initialized");
@@ -10039,7 +10302,7 @@ impl Backend {
                     self.vr.finish(false);
                 }
                 self.motion_cut = true;
-                crate::present::configure(&self.surface, &self.device, &self.config);
+                self.configure_window();
                 return Err(Box::new(packet));
             }
         };
@@ -10163,7 +10426,7 @@ impl Backend {
             self.adopt_eye_workers(&mut world);
             self.vr.finish(true);
             self.motion_cut = true;
-            crate::present::configure(&self.surface, &self.device, &self.config);
+            self.configure_window();
         } else {
             self.xr_world = Some(world);
         }
@@ -10402,6 +10665,10 @@ impl Backend {
         // is made again for the new one)
         self.drop_second_view();
         self.shed_world();
+        // (the new one configures the window: sl-ngx's presenter, which
+        // owns it, stopped first; the new one starts its own)
+        #[cfg(all(feature = "dlss", target_os = "linux"))]
+        self.stop_fg_presenter(None);
         // (how long a try holds the frame: the render thread makes the
         // whole renderer, its pipelines included)
         let started = Instant::now();
@@ -10679,6 +10946,19 @@ impl Backend {
         // window image is acquired (Linux's; Windows' Streamline paces its
         // own presents)
         if output.is_none() && snapshot.is_none() {
+            // Linux: sl-ngx's presenter takes the window, or gives it back;
+            // its frame's token and Reflex's sleep, before the input
+            #[cfg(all(feature = "dlss", target_os = "linux"))]
+            {
+                self.sync_fg_presenter();
+                let token = self.fg_presenter.as_mut().and_then(|p| {
+                    p.begin(index);
+                    p.token()
+                });
+                if let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut()) {
+                    dlss.set_frame_token(token);
+                }
+            }
             self.set_presentation(self.vsync, cfg!(target_os = "linux") && self.fg_on());
             // Windows' frame generation: the frame's token, Reflex's
             // sleep and its first markers, before the acquire
@@ -10690,6 +10970,13 @@ impl Backend {
             }
         }
         let t_acquire = Instant::now();
+        // Linux: with sl-ngx's presenter, the frame is drawn into its ring
+        // and handed over at its end, no window image acquired (never on a
+        // lost device: the ring is not made or waited on)
+        #[cfg(all(feature = "dlss", target_os = "linux"))]
+        let fg_presented = !self.lost.get() && output.is_none() && snapshot.is_none() && self.fg_slot();
+        #[cfg(not(all(feature = "dlss", target_os = "linux")))]
+        let fg_presented = false;
         let surface_tex = if self.lost.get() {
             // a lost device: nothing is drawn or presented until the app
             // replaces the renderer, and the frame is retired as a skipped
@@ -10737,6 +11024,8 @@ impl Backend {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             })))
+        } else if fg_presented {
+            self.fg.as_ref().map(|fg| FrameTarget::Offscreen(fg.real().clone()))
         } else {
             match self.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(FrameTarget::Surface(t)),
@@ -10748,7 +11037,7 @@ impl Backend {
                         if let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut()) {
                             dlss.fg_off();
                         }
-                        crate::present::configure(&self.surface, &self.device, &self.config);
+                        self.configure_window();
                     }
                     None
                 }
@@ -10770,8 +11059,16 @@ impl Backend {
             let capture = (wanted == Some(Capture::Full))
                 .then(|| self.encode_capture(&mut encoder, surface_tex.texture(), false))
                 .flatten();
+            // (sl-ngx's presenter: the interface alone, as the real frame)
+            if fg_presented && let Some(fg) = &self.fg {
+                fg.for_presenter(&mut encoder, false);
+            }
             cmds.push(encoder.finish());
             crate::device_lost::submit_tracked(&self.lost, &self.queue, index, upload_cmds.into_iter().chain(cmds));
+            #[cfg(all(feature = "dlss", target_os = "linux"))]
+            if fg_presented {
+                stats.presented = self.fg_hand_over(false);
+            }
             if let FrameTarget::Surface(t) = surface_tex {
                 // (Windows' frame generation: off for a present with no
                 // scene, and the frame's markers to its end)
@@ -10817,11 +11114,11 @@ impl Backend {
         let (surface_tex, fg_held) = match surface_tex {
             FrameTarget::Surface(t) if fg_linux => {
                 let (size, format) = ((self.config.width, self.config.height), self.config.format);
-                if self.fg.as_ref().is_none_or(|fg| !fg.fits(size, format)) {
-                    self.fg = Some(crate::dlss_fg::FrameGen::new(&self.device, &self.queue, size, format));
+                if self.fg.as_ref().is_none_or(|fg| !fg.fits(size, format, false)) {
+                    self.fg = Some(crate::dlss_fg::FrameGen::new(&self.device, &self.queue, size, format, false));
                 }
                 match &self.fg {
-                    Some(fg) => (FrameTarget::Offscreen(fg.real.clone()), Some(t)),
+                    Some(fg) => (FrameTarget::Offscreen(fg.real().clone()), Some(t)),
                     None => (FrameTarget::Surface(t), None),
                 }
             }
@@ -15430,7 +15727,7 @@ impl Backend {
         // before the interface. Only for a frame DLSS drew,
         // and not under a modal's blur (the image before the interface is
         // not blurred: all of it would differ, as if interface)
-        let fg_frame = fg_held.is_some() && dlss_cmds.is_some() && self.ui_blur.is_none();
+        let fg_frame = (fg_held.is_some() || fg_presented) && dlss_cmds.is_some() && self.ui_blur.is_none();
         if fg_frame {
             if let Some(fg) = &self.fg {
                 fg.copy_hudless(&self.device, &mut encoder, &surface_view);
@@ -15880,12 +16177,34 @@ impl Backend {
                     fg_generated = generated;
                     if fg.runs == 1 || fg.runs.is_multiple_of(600) {
                         log::info!(
-                            "DLSS frame generation: {} runs, {} frames generated; presented {} generated, {} real",
+                            "DLSS frame generation: {} runs, {} frames generated; presented {} generated, {} real; {} not taken by the presenter",
                             fg.runs,
                             fg.generated,
                             fg.presented_generated,
-                            fg.presented_real
+                            fg.presented_real,
+                            fg.not_taken
                         );
+                        // (sl-ngx's presenter's own numbers)
+                        #[cfg(all(feature = "dlss", target_os = "linux"))]
+                        if let Some(st) = self.fg_presenter.as_ref().and_then(|p| p.stats()) {
+                            log::info!(
+                                "DLSS frame generation: the presenter took {}, skipped {}, presented {} generated and {} real, \
+                                 {} swapchains at {}x{}, copies {:.2} ms on the GPU, {:.1} ms between frames, {:.1} ms between \
+                                 the two presents, low latency {}, last error {}",
+                                st.frames_accepted,
+                                st.frames_skipped,
+                                st.generated_presented,
+                                st.real_presented,
+                                st.swapchains_made,
+                                st.width,
+                                st.height,
+                                st.copy_gpu_ms,
+                                st.interval_ms,
+                                st.present_half_ms,
+                                st.low_latency != 0,
+                                st.last_error
+                            );
+                        }
                     }
                     fg_cmds.push(commands);
                 }
@@ -15905,6 +16224,21 @@ impl Backend {
                 label: Some("DLSS FG present"),
             });
             fg.present_into(&self.device, &mut encoder, &held.texture, fg_generated);
+            fg_cmds.push(encoder.finish());
+            if fg_ran {
+                fg_cmds.extend(fg.encode_dump(&self.device));
+            }
+        }
+        // with sl-ngx's presenter, the generated frame under the real
+        // frame's interface into the slot's, then both left for it to read
+        if fg_presented && let Some(fg) = &mut self.fg {
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("DLSS FG for the presenter"),
+            });
+            if fg_generated && let Some(shown) = fg.shown() {
+                fg.present_into(&self.device, &mut encoder, shown, true);
+            }
+            fg.for_presenter(&mut encoder, fg_generated);
             fg_cmds.push(encoder.finish());
             if fg_ran {
                 fg_cmds.extend(fg.encode_dump(&self.device));
@@ -16009,7 +16343,15 @@ impl Backend {
         self.part_pick.after_submit();
         prof.mark("submit");
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
-        if let Some(held) = fg_held {
+        if fg_presented {
+            // sl-ngx's presenter: both frames, half a frame apart
+            #[cfg(all(feature = "dlss", target_os = "linux"))]
+            {
+                stats.presented = self.fg_hand_over(fg_generated);
+            }
+            prof.mark("fg hand over");
+            stats.input_ms = input_at.map(|at| at.elapsed().as_secs_f32() * 1000.0);
+        } else if let Some(held) = fg_held {
             // DLSS frame generation: the generated frame, then the real one
             // in a second window image (under Fifo, a refresh later)
             self.queue.present(held);
@@ -16031,7 +16373,7 @@ impl Backend {
                         self.queue.present(t);
                     }
                     wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost if !self.external => {
-                        crate::present::configure(&self.surface, &self.device, &self.config);
+                        self.configure_window();
                     }
                     _ => {}
                 }
@@ -16061,6 +16403,7 @@ impl Backend {
             stats.presented = true;
             stats.input_ms = input_at.map(|at| at.elapsed().as_secs_f32() * 1000.0);
         }
+        self.publish_fg_status(if cfg!(windows) { fg_on } else { fg_linux });
         self.lost.poll(&self.device);
         // a click answered by now goes back with this frame's result
         self.depth_pick.harvest_clicks();

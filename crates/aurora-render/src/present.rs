@@ -139,8 +139,14 @@ static RECREATIONS: AtomicU64 = AtomicU64::new(0);
 /// almost every frame, 33 ms each in demo at 3200 x 1800 (RTX 3060 Laptop). The
 /// crash reports say how many there were just before the end (#1701, a
 /// device lost while the window was being resized).
+///
+/// sl-ngx's presenter, if one runs, is paused through it (dlss.rs
+/// `pause_presenter`): wgpu waits for the whole device when it makes a
+/// swapchain again, which no queue may be used beside.
 pub(crate) fn configure(surface: &wgpu::Surface<'_>, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
     RECREATIONS.fetch_add(1, Ordering::Relaxed);
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    let _paused = crate::dlss::pause_presenter();
     surface.configure(device, config);
 }
 

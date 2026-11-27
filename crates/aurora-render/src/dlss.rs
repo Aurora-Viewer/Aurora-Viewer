@@ -1187,6 +1187,28 @@ mod sl {
         assert!(offset_of!(DlssgState, is_dynamic_mfg_supported) == 80);
         assert!(size_of::<ReflexOptions>() == 48 && offset_of!(ReflexOptions, use_markers_to_optimize) == 40);
         assert!(offset_of!(ReflexOptions, virtual_key) == 42 && offset_of!(ReflexOptions, id_thread) == 44);
+        // sl-ngx's presenter (include/sl_ngx/present.h), Linux only
+        #[cfg(target_os = "linux")]
+        {
+            use present::{Desc, Frame, Image, Stats};
+            assert!(size_of::<Desc>() == 48 && align_of::<Desc>() == 8);
+            assert!(offset_of!(Desc, surface) == 8 && offset_of!(Desc, queue_family) == 16);
+            assert!(offset_of!(Desc, device_bits) == 24 && offset_of!(Desc, width) == 28);
+            assert!(offset_of!(Desc, format) == 36 && offset_of!(Desc, color_space) == 40);
+            assert!(offset_of!(Desc, min_image_count) == 44);
+            assert!(size_of::<Image>() == 24 && offset_of!(Image, layout) == 8 && offset_of!(Image, height) == 16);
+            assert!(size_of::<Frame>() == 88 && offset_of!(Frame, frame) == 4 && offset_of!(Frame, generated) == 8);
+            assert!(offset_of!(Frame, real) == 32 && offset_of!(Frame, ready) == 56);
+            assert!(offset_of!(Frame, ready_value) == 64 && offset_of!(Frame, released) == 72);
+            assert!(offset_of!(Frame, released_value) == 80);
+            assert!(size_of::<Stats>() == 104 && offset_of!(Stats, frames_accepted) == 8);
+            assert!(offset_of!(Stats, present_timing) == 56 && offset_of!(Stats, swapchains_made) == 68);
+            assert!(offset_of!(Stats, copy_gpu_ms) == 80 && offset_of!(Stats, last_error) == 92);
+            assert!(offset_of!(Stats, device_lost) == 96);
+        }
+        assert!(size_of::<ReflexOptions>() == 48 && offset_of!(ReflexOptions, mode) == 32);
+        assert!(offset_of!(ReflexOptions, frame_limit_us) == 36 && offset_of!(ReflexOptions, use_markers_to_optimize) == 40);
+        assert!(offset_of!(ReflexOptions, virtual_key) == 42 && offset_of!(ReflexOptions, id_thread) == 44);
     };
 
     /// `wchar_t`: one UTF-32 unit on Linux, one UTF-16 unit on Windows.
@@ -1228,6 +1250,9 @@ mod sl {
         /// that the library sees them made and their swapchains
         #[cfg(windows)]
         pub get_instance_proc_addr: vk::PFN_vkGetInstanceProcAddr,
+        /// Linux: sl-ngx's presenter, when this sl-ngx has it
+        #[cfg(target_os = "linux")]
+        pub presenter: Option<present::Fns>,
         /// the library's own module, kept open for the process
         #[allow(dead_code)]
         pub handle: *mut c_void,
@@ -1261,6 +1286,106 @@ mod sl {
         pub reflex_set_options: unsafe extern "C" fn(*const ReflexOptions) -> i32,
         pub reflex_sleep: unsafe extern "C" fn(FrameToken) -> i32,
         pub pcl_set_marker: unsafe extern "C" fn(u32, FrameToken) -> i32,
+    }
+
+    /// Linux: Reflex's and PCL's functions alone, from `slGetFeatureFunction`
+    /// (sl-ngx has no `slDLSSG*`: its frame generation is evaluated, and
+    /// shown by its presenter, [`present`]).
+    #[cfg(target_os = "linux")]
+    pub struct Latency {
+        pub reflex_set_options: unsafe extern "C" fn(*const ReflexOptions) -> i32,
+        pub reflex_sleep: unsafe extern "C" fn(FrameToken) -> i32,
+        pub pcl_set_marker: unsafe extern "C" fn(u32, FrameToken) -> i32,
+    }
+
+    /// sl-ngx's presenter (`include/sl_ngx/present.h`, MIT, sl-ngx's
+    /// own, not Streamline's): frame generation shown without swapchain
+    /// hooks. The application hands it a surface it does not present to,
+    /// and once per rendered frame the generated frame and the rendered
+    /// one; a thread of the presenter, on a queue of its own, copies and
+    /// presents both, half a frame apart, with VK_NV_low_latency2 on its
+    /// swapchain so that Reflex works. Found by name ([`Lib::presenter`]):
+    /// an sl-ngx without it presents the prototype's way (dlss_fg.rs).
+    #[cfg(target_os = "linux")]
+    pub mod present {
+        use ash::vk;
+        use std::ffi::c_void;
+
+        /// `SLNGX_PRESENTER_VERSION`
+        pub const VERSION: u32 = 1;
+
+        /// `SlngxPresenterDesc`
+        #[repr(C)]
+        pub struct Desc {
+            pub version: u32,
+            pub surface: vk::SurfaceKHR,
+            pub queue_family: u32,
+            pub queue_index: u32,
+            pub device_bits: u32,
+            pub width: u32,
+            pub height: u32,
+            pub format: vk::Format,
+            pub color_space: vk::ColorSpaceKHR,
+            pub min_image_count: u32,
+        }
+
+        /// `SlngxPresentImage`
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        pub struct Image {
+            pub image: vk::Image,
+            pub layout: vk::ImageLayout,
+            pub width: u32,
+            pub height: u32,
+        }
+
+        /// `SlngxPresentFrame`
+        #[repr(C)]
+        pub struct Frame {
+            pub version: u32,
+            pub frame: u32,
+            pub generated: Image,
+            pub real: Image,
+            pub ready: vk::Semaphore,
+            pub ready_value: u64,
+            pub released: vk::Semaphore,
+            pub released_value: u64,
+        }
+
+        /// `SlngxPresenterStats`
+        #[repr(C)]
+        #[derive(Clone, Copy, Default, Debug)]
+        pub struct Stats {
+            pub version: u32,
+            pub frames_accepted: u64,
+            pub frames_skipped: u64,
+            pub generated_presented: u64,
+            pub real_presented: u64,
+            pub generated_shown: u64,
+            pub real_shown: u64,
+            pub present_timing: u32,
+            pub low_latency: u32,
+            pub latency_reports: u32,
+            pub swapchains_made: u32,
+            pub width: u32,
+            pub height: u32,
+            pub copy_gpu_ms: f32,
+            pub interval_ms: f32,
+            pub present_half_ms: f32,
+            pub last_error: i32,
+            pub device_lost: u32,
+        }
+
+        /// The presenter's functions (`PFN_slngx*`).
+        pub struct Fns {
+            pub create: unsafe extern "C" fn(*const Desc, *mut *mut c_void) -> vk::Result,
+            pub present: unsafe extern "C" fn(*mut c_void, *const Frame, u64) -> vk::Result,
+            pub resize: unsafe extern "C" fn(*mut c_void, u32, u32),
+            pub pause: unsafe extern "C" fn(*mut c_void) -> vk::Result,
+            pub resume: unsafe extern "C" fn(*mut c_void),
+            pub destroy: unsafe extern "C" fn(*mut c_void),
+            pub get_stats: unsafe extern "C" fn(*mut c_void, *mut Stats) -> vk::Result,
+        }
     }
 
     /// The library the user put in the folder: sl-ngx built on their
@@ -1363,6 +1488,14 @@ mod sl {
         // the handle and every address taken from it live for the process
         LIB.get_or_init(|| unsafe {
             let dir = std::path::absolute(dir).unwrap_or_else(|_| std::path::PathBuf::from(dir));
+            // Linux: this viewer's sl-ngx by its commit, else the one the
+            // install left (older: what it lacks falls back, `Lib`'s
+            // optional parts)
+            #[cfg(target_os = "linux")]
+            let path = Some(dir.join(super::versioned_shim()))
+                .filter(|p| p.is_file())
+                .unwrap_or_else(|| dir.join(SHIM));
+            #[cfg(not(target_os = "linux"))]
             let path = dir.join(SHIM);
             let handle = match open(&path) {
                 Ok(handle) => handle,
@@ -1402,6 +1535,26 @@ mod sl {
                 free: sym(handle, c"slFreeResources")?,
                 #[cfg(windows)]
                 get_instance_proc_addr: sym(handle, c"vkGetInstanceProcAddr")?,
+                // SAFETY: the types present.h gives these names
+                #[cfg(target_os = "linux")]
+                presenter: (|| {
+                    let fns = present::Fns {
+                        create: as_fn(symbol(handle, c"slngxPresenterCreate"))?,
+                        present: as_fn(symbol(handle, c"slngxPresent"))?,
+                        resize: as_fn(symbol(handle, c"slngxPresenterResize"))?,
+                        pause: as_fn(symbol(handle, c"slngxPresenterPause"))?,
+                        resume: as_fn(symbol(handle, c"slngxPresenterResume"))?,
+                        destroy: as_fn(symbol(handle, c"slngxPresenterDestroy"))?,
+                        get_stats: as_fn(symbol(handle, c"slngxPresenterGetStats"))?,
+                    };
+                    Some(fns)
+                })()
+                .or_else(|| {
+                    log::info!(
+                        "DLSS: this {SHIM} has no presenter: frame generation presents the prototype's way (rebuild it with {SETUP})"
+                    );
+                    None
+                }),
                 dir,
                 handle,
             })
@@ -1454,6 +1607,23 @@ mod sl {
                 Ok(Dlssg {
                     set_options: self.function(FEATURE_DLSS_G, c"slDLSSGSetOptions")?,
                     get_state: self.function(FEATURE_DLSS_G, c"slDLSSGGetState")?,
+                    reflex_set_options: self.function(FEATURE_REFLEX, c"slReflexSetOptions")?,
+                    reflex_sleep: self.function(FEATURE_REFLEX, c"slReflexSleep")?,
+                    pcl_set_marker: self.function(FEATURE_PCL, c"slPCLSetMarker")?,
+                })
+            }
+        }
+
+        /// Linux: Reflex's and PCL's functions, as [`Lib::dlss`].
+        ///
+        /// # Safety
+        /// As [`Lib::dlss`].
+        #[cfg(target_os = "linux")]
+        pub unsafe fn latency(&self) -> Result<Latency, String> {
+            // SAFETY: the types sl_reflex.h and sl_pcl.h give these
+            // names; the caller's contract
+            unsafe {
+                Ok(Latency {
                     reflex_set_options: self.function(FEATURE_REFLEX, c"slReflexSetOptions")?,
                     reflex_sleep: self.function(FEATURE_REFLEX, c"slReflexSleep")?,
                     pcl_set_marker: self.function(FEATURE_PCL, c"slPCLSetMarker")?,
@@ -1664,6 +1834,13 @@ mod imp {
         /// without the lock, so a renderer stuck in a Streamline call or
         /// left behind still has it; nothing more runs on a lost device
         lost: DeviceLost,
+        /// Linux: sl-ngx's presenter running on this start ([`Presenter`]),
+        /// and how many pauses hold it ([`pause_presenter`]). slShutdown,
+        /// and slSetVulkanInfo with another device, end it under the lock.
+        #[cfg(target_os = "linux")]
+        presenter: Option<usize>,
+        #[cfg(target_os = "linux")]
+        presenter_pauses: u32,
     }
 
     /// The lock, also after a panic under it (the state is plain values).
@@ -1787,6 +1964,29 @@ mod imp {
 
     /// The device was opened with Ray Reconstruction's extensions too.
     static RR_DEVICE: AtomicBool = AtomicBool::new(false);
+
+    /// Linux: the device was opened with a second queue in family 0, for
+    /// sl-ngx's presenter of frame generation ([`PRESENTER_QUEUE`]), with
+    /// what was enabled for it (`SlngxPresenterDeviceBits`) below that bit;
+    /// 0 when it opened without the queue. Set once the device is open.
+    #[cfg(target_os = "linux")]
+    static PRESENTER_DEVICE: AtomicU32 = AtomicU32::new(0);
+    /// [`PRESENTER_DEVICE`]: the queue is there.
+    #[cfg(target_os = "linux")]
+    const PRESENTER_QUEUE: u32 = 1 << 31;
+    /// `SLNGX_DEVICE_LOW_LATENCY2` (sl_ngx/present.h): VK_NV_low_latency2
+    /// and VK_KHR_present_id, with `presentId`, so that Reflex works on the
+    /// presenter's swapchain.
+    #[cfg(target_os = "linux")]
+    const PRESENTER_LOW_LATENCY2: u32 = 1 << 0;
+
+    /// Linux: what the device opened with for sl-ngx's presenter: None
+    /// without its queue, else the `SlngxPresenterDeviceBits` enabled.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn presenter_device() -> Option<u32> {
+        let bits = PRESENTER_DEVICE.load(Ordering::Relaxed);
+        (bits & PRESENTER_QUEUE != 0 && opened().is_some()).then_some(bits & !PRESENTER_QUEUE)
+    }
     /// Streamline, started on this device, said whether Ray Reconstruction
     /// is supported there ([`RR_UNAVAILABLE`]): until then the renderer
     /// draws no guides ([`rr_ready_on`], [`rr_probe`]).
@@ -1965,6 +2165,122 @@ mod imp {
 
     /// The folder with the DLSS library the user downloaded, when the file
     /// is there.
+    /// Linux: sl-ngx brought up to this viewer's commit at start
+    /// ([`super::SL_NGX_COMMIT`]): when the DLSS folder has no
+    /// `libsl_ngx.<commit>.so`, the setup script beside the viewer runs
+    /// with `--update`, off the main thread. It asks nothing, and installs
+    /// nothing when NVIDIA's licence changed since the install; the
+    /// library it builds is loaded from the next start, the one there
+    /// until then. Its output is `update.log` in the folder.
+    #[cfg(target_os = "linux")]
+    pub(crate) mod update {
+        use std::sync::Mutex;
+
+        /// What the update did, for Preferences.
+        #[derive(Clone, Debug, PartialEq)]
+        pub(crate) enum State {
+            /// not looked at (no DLSS folder)
+            Unknown,
+            /// the folder has this viewer's sl-ngx
+            Current,
+            Running,
+            /// built: loaded from the next start (the script's last line)
+            Done(String),
+            /// NVIDIA's licence changed: the user runs the script
+            Licence,
+            /// the script's last line, or why it did not run
+            Failed(String),
+        }
+
+        static STATE: Mutex<State> = Mutex::new(State::Unknown);
+
+        pub(crate) fn state() -> State {
+            STATE.lock().map(|s| s.clone()).unwrap_or(State::Unknown)
+        }
+
+        fn set(state: State) {
+            if let Ok(mut s) = STATE.lock() {
+                *s = state;
+            }
+        }
+
+        /// The setup script: beside the viewer, as a release ships it or
+        /// as a package names it, or in the source checkout of a build.
+        fn script() -> Option<std::path::PathBuf> {
+            let exe = std::env::current_exe().ok()?;
+            let here = exe.parent()?;
+            [
+                here.join(crate::DLSS_SETUP),
+                here.join("aurora-viewer-dlss-setup"),
+                here.join("../../scripts").join(crate::DLSS_SETUP),
+            ]
+            .into_iter()
+            .find(|p| p.is_file())
+        }
+
+        pub(super) fn begin(dir: &str) {
+            let dir = std::path::PathBuf::from(dir);
+            if dir.join(super::super::versioned_shim()).is_file() {
+                set(State::Current);
+                return;
+            }
+            let Some(script) = script() else {
+                log::warn!(
+                    "DLSS: {} has no sl-ngx {} and {} is not beside the viewer: run it with --update",
+                    dir.display(),
+                    &super::super::SL_NGX_COMMIT[..12],
+                    crate::DLSS_SETUP
+                );
+                set(State::Failed(format!("{} not found beside the viewer", crate::DLSS_SETUP)));
+                return;
+            };
+            set(State::Running);
+            let spawned = std::thread::Builder::new().name("dlss-update".into()).spawn(move || {
+                log::info!(
+                    "DLSS: building sl-ngx {} for this viewer ({} --update; its output: {})",
+                    &super::super::SL_NGX_COMMIT[..12],
+                    script.display(),
+                    dir.join("update.log").display()
+                );
+                let log_path = dir.join("update.log");
+                let run = std::fs::File::create(&log_path).and_then(|out| {
+                    let err = out.try_clone()?;
+                    std::process::Command::new("bash")
+                        .arg(&script)
+                        .arg("--update")
+                        .stdin(std::process::Stdio::null())
+                        .stdout(out)
+                        .stderr(err)
+                        .status()
+                });
+                let last = std::fs::read_to_string(&log_path)
+                    .ok()
+                    .and_then(|text| text.lines().rev().find(|l| !l.trim().is_empty()).map(str::to_owned))
+                    .unwrap_or_default();
+                let state = match run {
+                    Ok(status) if status.success() => State::Done(last),
+                    Ok(status) if status.code() == Some(3) => State::Licence,
+                    Ok(_) => State::Failed(last),
+                    Err(e) => State::Failed(format!("bash {}: {e}", script.display())),
+                };
+                match &state {
+                    State::Done(line) => log::info!("DLSS: {line}"),
+                    State::Licence => {
+                        log::warn!(
+                            "DLSS: NVIDIA's licence changed since the install: sl-ngx not updated; run {} to read it",
+                            crate::DLSS_SETUP
+                        )
+                    }
+                    other => log::error!("DLSS: sl-ngx was not updated: {other:?}"),
+                }
+                set(state);
+            });
+            if let Err(e) = spawned {
+                set(State::Failed(format!("no thread: {e}")));
+            }
+        }
+    }
+
     fn folder() -> Option<&'static str> {
         static DIR: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
         DIR.get_or_init(|| {
@@ -1983,6 +2299,8 @@ mod imp {
             match found {
                 Some(file) => {
                     log::info!("DLSS: the user's library is {}", file.display());
+                    #[cfg(target_os = "linux")]
+                    update::begin(&dir);
                     Some(dir)
                 }
                 None => {
@@ -2231,6 +2549,55 @@ mod imp {
         }
         log::info!("DLSS: Ray Reconstruction's device extensions beyond super resolution's: {extra:?}");
         Some(extra)
+    }
+
+    /// Linux: what the device opens with for sl-ngx's presenter of frame
+    /// generation (sl_ngx/present.h), beyond `wanted`: a second queue in
+    /// family 0, the one wgpu takes its queue from, and with it, where
+    /// the library names them and the device has them with `presentId`,
+    /// VK_KHR_present_id and VK_NV_low_latency2 (Reflex on the presenter's
+    /// swapchain): those extensions and whether they are there. None,
+    /// with the reason in the log, without the second queue: frame
+    /// generation then presents the prototype's way (dlss_fg.rs). The
+    /// library's other presenter extensions (present_id2, present_wait2,
+    /// present_timing) want feature structures this ash does not have:
+    /// the presenter runs without them, its shown counts unmeasured.
+    /// After [`device_extensions`] (which named the adapter), under the
+    /// lock.
+    #[cfg(target_os = "linux")]
+    fn presenter_device_extensions(
+        lib: &sl::Lib,
+        adapter: &wgpu::hal::vulkan::Adapter,
+        wanted: &[&'static CStr],
+    ) -> Option<(Vec<&'static CStr>, bool)> {
+        let instance = adapter.shared_instance().raw_instance();
+        let physical = adapter.raw_physical_device();
+        // SAFETY: a query of the adapter's live physical device
+        let families = unsafe { instance.get_physical_device_queue_family_properties(physical) };
+        let count = families.first().map_or(0, |f| f.queue_count);
+        if count < 2 {
+            log::info!(
+                "DLSS: frame generation presents the prototype's way: queue family 0 has {count} queue(s), the presenter wants a second"
+            );
+            return None;
+        }
+        let names = [vk::KHR_PRESENT_ID_NAME, vk::NV_LOW_LATENCY2_NAME];
+        let listed = requirements(lib, sl::FEATURE_DLSS_G).map(|(_, device)| device).unwrap_or_default();
+        let caps = adapter.physical_device_capabilities();
+        let mut present_id = vk::PhysicalDevicePresentIdFeaturesKHR::default();
+        let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut present_id);
+        // SAFETY: as above; `features` and its chain live through the call
+        unsafe { instance.get_physical_device_features2(physical, &mut features) };
+        let low_latency = present_id.present_id == vk::TRUE && names.iter().all(|n| listed.contains(n) && caps.supports_extension(n));
+        if !low_latency {
+            log::info!("DLSS: frame generation's presenter without Reflex: no VK_NV_low_latency2 with VK_KHR_present_id here");
+        }
+        let extra = if low_latency {
+            names.into_iter().filter(|n| !wanted.contains(n)).collect()
+        } else {
+            Vec::new()
+        };
+        Some((extra, low_latency))
     }
 
     /// The library's instance extensions, for the instance OpenXR makes
@@ -2755,6 +3122,9 @@ mod imp {
         desc: &wgpu::DeviceDescriptor,
         limits: wgpu::Limits,
     ) -> Option<(wgpu::Device, wgpu::Queue)> {
+        // (what the last device had for the presenter is not this one's)
+        #[cfg(target_os = "linux")]
+        PRESENTER_DEVICE.store(0, Ordering::Relaxed);
         if !opening_device(false) || !INSTANCE.load(Ordering::Relaxed) {
             return None;
         }
@@ -2771,13 +3141,27 @@ mod imp {
         // has them all (it is switched on and off with the device open).
         // Whether they were added is known for sure only once it is open,
         // so RR_DEVICE is set there.
-        let open = |with_rr: bool| {
+        // `with_fg` (Linux): sl-ngx's presenter's queue and extensions too
+        // ([`presenter_device_extensions`]); `fg` comes back with what was
+        // added for it ([`PRESENTER_DEVICE`]).
+        let open = |with_rr: bool, with_fg: bool| {
             let mut added = Err(String::from("the device was opened without asking"));
             let mut rr = false;
+            let mut fg = 0u32;
+            // (the presenter's two queues share family 0, as wgpu's does)
+            #[cfg(target_os = "linux")]
+            static PRIORITIES: [f32; 2] = [1.0, 1.0];
+            #[cfg(target_os = "linux")]
+            let mut present_id = vk::PhysicalDevicePresentIdFeaturesKHR::default().present_id(true);
+            #[cfg(target_os = "linux")]
+            let present_id = &mut present_id;
+            #[cfg(not(target_os = "linux"))]
+            let _ = with_fg;
             // SAFETY: features, limits and hints are the descriptor's, as
             // wgpu's own `request_device` passes them; the callback asks
             // the library with this adapter's live instance and physical
-            // device, and only adds extensions the device supports
+            // device, and only adds extensions, queues and features the
+            // device supports, the feature structure outliving the call
             let opened = unsafe {
                 raw_adapter.open_with_callback(
                     desc.required_features,
@@ -2789,6 +3173,20 @@ mod imp {
                                 wanted.extend(extra);
                                 rr = true;
                             }
+                            #[cfg(target_os = "linux")]
+                            if with_fg
+                                && let Some((extra, low_latency)) = presenter_device_extensions(lib, &raw_adapter, &wanted)
+                                && let Some(family) = args.queue_create_infos.first_mut()
+                            {
+                                *family = family.queue_priorities(&PRIORITIES);
+                                wanted.extend(extra);
+                                fg = PRESENTER_QUEUE;
+                                if low_latency {
+                                    let info = std::mem::take(args.create_info);
+                                    *args.create_info = info.push_next(present_id);
+                                    fg |= PRESENTER_LOW_LATENCY2;
+                                }
+                            }
                             for name in wanted {
                                 if !args.extensions.contains(&name) {
                                     args.extensions.push(name);
@@ -2798,16 +3196,26 @@ mod imp {
                     })),
                 )
             };
-            (opened, added, rr)
+            (opened, added, rr, fg)
         };
         // (an instance without Ray Reconstruction's extensions opens its
         // devices for super resolution alone: `RR_INSTANCE`)
-        let (mut opened, mut added, mut rr) = open(rr_forced() != Some(false) && RR_INSTANCE.load(Ordering::Relaxed));
+        let with_rr = rr_forced() != Some(false) && RR_INSTANCE.load(Ordering::Relaxed);
+        let with_fg = cfg!(target_os = "linux");
+        let (mut opened, mut added, mut rr, mut fg) = open(with_rr, with_fg);
+        // refused with the presenter's queue and extensions: without them,
+        // and frame generation presents the prototype's way
+        if fg != 0
+            && let Err(e) = &opened
+        {
+            log::error!("DLSS: device with frame generation's presenter queue failed: {e}: opening it without");
+            (opened, added, rr, fg) = open(with_rr, false);
+        }
         // refused with Ray Reconstruction's extensions: super resolution's
         // alone before the usual way, so DLSS is not lost for it
         if rr && let Err(e) = &opened {
             log::error!("DLSS: device with Ray Reconstruction's extensions failed: {e}: opening it with super resolution's alone");
-            (opened, added, rr) = open(false);
+            (opened, added, rr, fg) = open(false, false);
         }
         drop(held);
         let opened = match (opened, added) {
@@ -2829,10 +3237,19 @@ mod imp {
             Ok(pair) => {
                 *self::opened() = Some((adapter.clone(), pair.0.clone()));
                 RR_DEVICE.store(rr, Ordering::Relaxed);
+                #[cfg(target_os = "linux")]
+                PRESENTER_DEVICE.store(fg, Ordering::Relaxed);
+                #[cfg(not(target_os = "linux"))]
+                let _ = fg;
                 log::info!(
-                    "DLSS: device opened with the DLSS extensions on {}{}",
+                    "DLSS: device opened with the DLSS extensions on {}{}{}",
                     adapter.get_info().name,
-                    if rr { ", Ray Reconstruction's included" } else { "" }
+                    if rr { ", Ray Reconstruction's included" } else { "" },
+                    match fg {
+                        0 => "",
+                        f if f & 1 != 0 => ", with frame generation's presenter queue and Reflex",
+                        _ => ", with frame generation's presenter queue",
+                    }
                 );
                 Some(pair)
             }
@@ -3123,6 +3540,10 @@ mod imp {
                         start: STARTS.fetch_add(1, Ordering::Relaxed) + 1,
                         viewports: Vec::new(),
                         lost: lost.clone(),
+                        #[cfg(target_os = "linux")]
+                        presenter: None,
+                        #[cfg(target_os = "linux")]
+                        presenter_pauses: 0,
                     });
                 }
                 Err(e) => {
@@ -3134,6 +3555,476 @@ mod imp {
             }
         }
         held.as_mut().map(f)
+    }
+
+    /// Linux: sl-ngx's presenter of frame generation on the window's
+    /// surface (`sl::present`), with the two timelines its frames are
+    /// handed over by: `ready`, signalled on the viewer's queue once a
+    /// frame's images are written, and `released`, signalled by the
+    /// presenter once it has read them. Every call is made under
+    /// Streamline's lock, for the start it was made on: slShutdown, and
+    /// slSetVulkanInfo with another device, end the presenter under that
+    /// lock, after which its handle is never called again ([`Presenter::call`]).
+    #[cfg(target_os = "linux")]
+    pub(crate) struct Presenter {
+        raw: usize,
+        lib: &'static sl::Lib,
+        device: wgpu::Device,
+        lost: DeviceLost,
+        start: u64,
+        vk: ash::Device,
+        ready: vk::Semaphore,
+        released: vk::Semaphore,
+        /// the last value given to `ready` (and `released`)
+        value: u64,
+        /// Reflex in low-latency mode on the presenter's swapchain
+        reflex: bool,
+        /// this frame's token, from [`Presenter::begin`], and its value
+        token: Option<(usize, u32)>,
+        /// a Reflex or PCL call failed: said once, then they stop
+        latency_failed: bool,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Presenter {
+        /// The presenter on `surface`, which no swapchain uses (renderer.rs
+        /// drops the window's configured surface and makes it afresh), at
+        /// `config`'s size and format. Err with the reason: frame
+        /// generation then presents the prototype's way.
+        pub(crate) fn new(
+            device: &wgpu::Device,
+            lost: &DeviceLost,
+            surface: &wgpu::Surface<'_>,
+            config: &wgpu::SurfaceConfiguration,
+        ) -> Result<Self, crate::dlss_fg::FgRefusal> {
+            use crate::dlss_fg::FgRefusal;
+            let lib = sl::loaded().ok_or_else(|| FgRefusal::Failed(String::from("no sl-ngx")))?;
+            let fns = lib.presenter.as_ref().ok_or(FgRefusal::OldSlNgx)?;
+            let bits = presenter_device().ok_or(FgRefusal::NoQueue)?;
+            Self::make(device, lost, surface, config, lib, fns, bits).map_err(FgRefusal::Failed)
+        }
+
+        fn make(
+            device: &wgpu::Device,
+            lost: &DeviceLost,
+            surface: &wgpu::Surface<'_>,
+            config: &wgpu::SurfaceConfiguration,
+            lib: &'static sl::Lib,
+            fns: &'static sl::present::Fns,
+            bits: u32,
+        ) -> Result<Self, String> {
+            let format = match config.format {
+                wgpu::TextureFormat::Bgra8Unorm => vk::Format::B8G8R8A8_UNORM,
+                wgpu::TextureFormat::Bgra8UnormSrgb => vk::Format::B8G8R8A8_SRGB,
+                wgpu::TextureFormat::Rgba8Unorm => vk::Format::R8G8B8A8_UNORM,
+                wgpu::TextureFormat::Rgba8UnormSrgb => vk::Format::R8G8B8A8_SRGB,
+                other => return Err(format!("the window's format {other:?} is not one the presenter is given")),
+            };
+            // SAFETY: only the handle is read, while `surface` lives (the
+            // renderer destroys the presenter before it lets the surface go)
+            let raw_surface = unsafe { surface.as_hal::<Vulkan>() }
+                .and_then(|s| unsafe { s.raw_native_handle() })
+                .ok_or("not a Vulkan surface")?;
+            // SAFETY: the device's handle, cloned: it lives as long as
+            // `device`, which this holds
+            let vk_device = unsafe { device.as_hal::<Vulkan>() }
+                .map(|hal| hal.raw_device().clone())
+                .ok_or("not a Vulkan device")?;
+            let timeline = || {
+                let mut kind = vk::SemaphoreTypeCreateInfo::default()
+                    .semaphore_type(vk::SemaphoreType::TIMELINE)
+                    .initial_value(0);
+                let info = vk::SemaphoreCreateInfo::default().push_next(&mut kind);
+                // SAFETY: a plain timeline semaphore on the live device
+                unsafe { vk_device.create_semaphore(&info, None) }.map_err(|e| format!("a timeline semaphore: {e}"))
+            };
+            let ready = timeline()?;
+            let released = match timeline() {
+                Ok(s) => s,
+                Err(e) => {
+                    // SAFETY: just made, never used
+                    unsafe { vk_device.destroy_semaphore(ready, None) };
+                    return Err(e);
+                }
+            };
+            let desc = sl::present::Desc {
+                version: sl::present::VERSION,
+                surface: raw_surface,
+                queue_family: 0,
+                queue_index: 1,
+                device_bits: bits,
+                width: config.width,
+                height: config.height,
+                format,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+                min_image_count: 0,
+            };
+            let reflex_wanted = bits & PRESENTER_LOW_LATENCY2 != 0;
+            // SAFETY: under the lock, on the start running on this device;
+            // `desc` lives through the call; the surface has no swapchain,
+            // the queue (family 0, index 1) is used by nothing else, the
+            // device was opened with what `bits` says
+            let made = with_started(lib, device, lost, false, |st| unsafe {
+                let mut raw = std::ptr::null_mut();
+                let r = (fns.create)(&desc, &mut raw);
+                if r != vk::Result::SUCCESS || raw.is_null() {
+                    return Err(format!("slngxPresenterCreate: {r}"));
+                }
+                st.presenter = Some(raw as usize);
+                st.presenter_pauses = 0;
+                // Reflex in low-latency mode, without a frame limit: the
+                // presenter's Fifo already holds the rendered frames to
+                // half the refresh rate, and a limit there drops
+                // generated frames (sl-ngx's cap test, 2026-11-27)
+                let reflex = reflex_wanted
+                    && lib
+                        .latency()
+                        .and_then(|f| {
+                            let options = sl::ReflexOptions::new(sl::REFLEX_LOW_LATENCY);
+                            sl::check((f.reflex_set_options)(&options)).map_err(|e| format!("slReflexSetOptions: {e}"))
+                        })
+                        .map_err(|e| log::error!("DLSS frame generation: Reflex stays off: {e}"))
+                        .is_ok();
+                Ok((raw as usize, st.start, reflex))
+            });
+            let (raw, start, reflex) = match made {
+                Some(Ok(made)) => made,
+                other => {
+                    // SAFETY: never handed to the presenter
+                    unsafe {
+                        vk_device.destroy_semaphore(ready, None);
+                        vk_device.destroy_semaphore(released, None);
+                    }
+                    return Err(match other {
+                        Some(Err(e)) => e,
+                        _ => String::from("DLSS is not started on this device"),
+                    });
+                }
+            };
+            log::info!(
+                "DLSS frame generation: sl-ngx's presenter runs at {}x{}, {:?}{}",
+                config.width,
+                config.height,
+                format,
+                if reflex {
+                    ", Reflex in low-latency mode"
+                } else {
+                    ", without Reflex"
+                }
+            );
+            Ok(Self {
+                raw,
+                lib,
+                device: device.clone(),
+                lost: lost.clone(),
+                start,
+                vk: vk_device,
+                ready,
+                released,
+                value: 0,
+                reflex,
+                token: None,
+                latency_failed: false,
+            })
+        }
+
+        /// `f` with the presenter's functions and handle, under the lock,
+        /// while the start it was made on runs with it: None once that
+        /// start ended it (slShutdown, another device), or the device is
+        /// lost.
+        fn call<T>(&self, f: impl FnOnce(&sl::present::Fns, *mut std::ffi::c_void) -> T) -> Option<T> {
+            let fns = self.lib.presenter.as_ref()?;
+            with_started(self.lib, &self.device, &self.lost, false, |st| {
+                (st.start == self.start && st.presenter == Some(self.raw)).then(|| f(fns, self.raw as *mut std::ffi::c_void))
+            })
+            .flatten()
+        }
+
+        /// Reflex in low-latency mode on the presenter's swapchain.
+        pub(crate) fn reflex(&self) -> bool {
+            self.reflex && !self.latency_failed
+        }
+
+        /// The frame's start, before its input is read: its token, with
+        /// `index` as its value, Reflex's sleep, and the PCL markers up to
+        /// the submit's start. The token is the frame's for DLSS too
+        /// ([`Presenter::token`]).
+        pub(crate) fn begin(&mut self, index: u64) {
+            self.token = None;
+            let lib = self.lib;
+            let frame = index as u32;
+            let reflex = self.reflex();
+            // SAFETY: under the lock, after slInit, on this presenter's
+            // start; the token is the library's own, kept by it for some
+            // frames
+            let r = with_started(lib, &self.device, &self.lost, false, |st| unsafe {
+                if st.start != self.start {
+                    return None;
+                }
+                Some((|| {
+                    let mut token: sl::FrameToken = std::ptr::null_mut();
+                    sl::check((lib.new_frame_token)(&mut token, &frame)).map_err(|e| format!("slGetNewFrameToken: {e}"))?;
+                    if reflex {
+                        let f = lib.latency()?;
+                        sl::check((f.reflex_sleep)(token)).map_err(|e| format!("slReflexSleep: {e}"))?;
+                        for marker in [sl::pcl::SIMULATION_START, sl::pcl::SIMULATION_END, sl::pcl::RENDER_SUBMIT_START] {
+                            sl::check((f.pcl_set_marker)(marker, token)).map_err(|e| format!("slPCLSetMarker({marker}): {e}"))?;
+                        }
+                    }
+                    Ok::<_, String>(token as usize)
+                })())
+            })
+            .flatten();
+            match r {
+                Some(Ok(token)) => self.token = Some((token, frame)),
+                Some(Err(e)) => self.latency_error(&e),
+                None => {}
+            }
+        }
+
+        /// This frame's token, for DLSS's evaluate: the one Reflex's
+        /// markers and the presenter's frame name.
+        pub(crate) fn token(&self) -> Option<usize> {
+            self.token.map(|(t, _)| t)
+        }
+
+        fn latency_error(&mut self, e: &str) {
+            if !self.latency_failed {
+                self.latency_failed = true;
+                log::error!("DLSS frame generation: Reflex stops: {e}");
+            }
+        }
+
+        /// A PCL marker for this frame's token.
+        fn mark(&mut self, marker: u32) {
+            let Some((token, _)) = self.token.filter(|_| self.reflex()) else {
+                return;
+            };
+            let lib = self.lib;
+            // SAFETY: as in `begin`
+            let r = with_started(lib, &self.device, &self.lost, false, |st| unsafe {
+                (st.start == self.start).then(|| {
+                    lib.latency().and_then(|f| {
+                        sl::check((f.pcl_set_marker)(marker, token as sl::FrameToken)).map_err(|e| format!("slPCLSetMarker({marker}): {e}"))
+                    })
+                })
+            })
+            .flatten();
+            if let Some(Err(e)) = r {
+                self.latency_error(&e);
+            }
+        }
+
+        /// Waits until the presenter has read the frame handed over with
+        /// `value` (its images may be written again), at most 1 s. False
+        /// past that, or on a lost device.
+        pub(crate) fn wait_released(&self, value: u64) -> bool {
+            let semaphores = [self.released];
+            let values = [value];
+            let info = vk::SemaphoreWaitInfo::default().semaphores(&semaphores).values(&values);
+            // SAFETY: the timeline lives as long as `self`
+            unsafe { self.vk.wait_semaphores(&info, 1_000_000_000) }.is_ok()
+        }
+
+        /// Hands this frame over, once its commands are submitted:
+        /// `generated` (none: the rendered frame alone) and `real`, both
+        /// left by the frame in the transfer source layout. `ready` is
+        /// signalled after everything submitted so far. Ok(Some(value)):
+        /// taken, the images are the presenter's until `released` reaches
+        /// `value` ([`Presenter::wait_released`]); Ok(None): not taken
+        /// (the presenter was paused, or still had a frame waiting after
+        /// `wait`), the images stay the viewer's. Err: the presenter is
+        /// gone or failed, frame generation stops presenting through it.
+        pub(crate) fn hand_over(
+            &mut self,
+            queue: &wgpu::Queue,
+            generated: Option<(&wgpu::Texture, (u32, u32))>,
+            real: (&wgpu::Texture, (u32, u32)),
+            wait: std::time::Duration,
+        ) -> Result<Option<u64>, String> {
+            self.mark(sl::pcl::RENDER_SUBMIT_END);
+            let image = |texture: &wgpu::Texture, (width, height): (u32, u32)| {
+                // SAFETY: only the handle is read, while the texture lives
+                // (the caller keeps it until the frame is released)
+                unsafe { texture.as_hal::<Vulkan>() }.map(|t| sl::present::Image {
+                    image: unsafe { t.raw_handle() },
+                    layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    width,
+                    height,
+                })
+            };
+            let none = sl::present::Image {
+                image: vk::Image::null(),
+                layout: vk::ImageLayout::UNDEFINED,
+                width: 0,
+                height: 0,
+            };
+            let real = image(real.0, real.1).ok_or("not a Vulkan texture")?;
+            let generated = match generated {
+                Some((texture, size)) => image(texture, size).ok_or("not a Vulkan texture")?,
+                None => none,
+            };
+            self.value += 1;
+            let value = self.value;
+            // `ready` signalled by the next submission, which comes after
+            // the frame's: an empty one, made now (another thread's
+            // submission taking it first is later than the frame's too)
+            // SAFETY: the timeline lives as long as `self`, and is waited
+            // for in `Drop` before it goes
+            match unsafe { queue.as_hal::<Vulkan>() } {
+                Some(hal) => hal.add_signal_semaphore(self.ready, Some(value)),
+                None => return Err(String::from("not a Vulkan queue")),
+            }
+            queue.submit(std::iter::empty());
+            let frame = sl::present::Frame {
+                version: sl::present::VERSION,
+                frame: self.token.map_or(0, |(_, f)| f),
+                generated,
+                real,
+                ready: self.ready,
+                ready_value: value,
+                released: self.released,
+                released_value: value,
+            };
+            self.mark(sl::pcl::PRESENT_START);
+            let wait_ns = u64::try_from(wait.as_nanos()).unwrap_or(u64::MAX);
+            // SAFETY: under the lock, the presenter live on its start;
+            // `frame` lives through the call, its images and timelines as
+            // its contract asks (the caller's and `self`'s)
+            let r = self.call(|fns, raw| unsafe { (fns.present)(raw, &frame, wait_ns) });
+            self.mark(sl::pcl::PRESENT_END);
+            self.token = None;
+            match r {
+                Some(vk::Result::SUCCESS) => Ok(Some(value)),
+                Some(vk::Result::TIMEOUT | vk::Result::NOT_READY) => Ok(None),
+                Some(r) => Err(format!("slngxPresent: {r}")),
+                None => Err(String::from("the presenter was ended (Streamline shut down, or the device lost)")),
+            }
+        }
+
+        /// The swapchain's size from the next frame on.
+        pub(crate) fn resize(&self, width: u32, height: u32) {
+            // SAFETY: under the lock, the presenter live on its start
+            self.call(|fns, raw| unsafe { (fns.resize)(raw, width, height) });
+        }
+
+        /// Every frame handed over released, and nothing submitted by the
+        /// presenter until the guard goes: before images handed over are
+        /// let go ([`pause_presenter`] does the same for the device).
+        pub(crate) fn pause(&self) -> PresenterPause {
+            pause_presenter()
+        }
+
+        /// The presenter's numbers, None once it is gone.
+        pub(crate) fn stats(&self) -> Option<sl::present::Stats> {
+            let mut stats = sl::present::Stats {
+                version: sl::present::VERSION,
+                ..Default::default()
+            };
+            // SAFETY: under the lock, the presenter live on its start;
+            // `stats` lives through the call
+            let r = self.call(|fns, raw| unsafe { (fns.get_stats)(raw, &mut stats) })?;
+            (r == vk::Result::SUCCESS).then_some(stats)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for Presenter {
+        fn drop(&mut self) {
+            // the presenter destroyed first (its swapchain, before the
+            // renderer lets the surface go), also on a lost device; then
+            // the timelines, once the viewer's queue is through the last
+            // signal of `ready`
+            if let Some(mut held) = super::lock_within(&STARTED, END_WAIT) {
+                if let Some(st) = held.as_mut().filter(|st| st.start == self.start && st.presenter == Some(self.raw)) {
+                    st.presenter = None;
+                    st.presenter_pauses = 0;
+                    if let Some(fns) = self.lib.presenter.as_ref() {
+                        // SAFETY: under the lock, the presenter live on
+                        // its start, taken out of it above
+                        unsafe { (fns.destroy)(self.raw as *mut std::ffi::c_void) };
+                    }
+                }
+            } else {
+                log::error!("DLSS frame generation: Streamline still busy: the presenter is left to it");
+            }
+            let semaphores = [self.ready];
+            let values = [self.value];
+            let info = vk::SemaphoreWaitInfo::default().semaphores(&semaphores).values(&values);
+            // SAFETY: the timelines are this presenter's own; destroyed
+            // only once no signal of theirs is pending (the presenter is
+            // gone, the viewer's last `ready` reached)
+            unsafe {
+                if self.lost.get() || self.vk.wait_semaphores(&info, END_WAIT.as_nanos() as u64).is_err() {
+                    log::warn!("DLSS frame generation: the presenter's timelines are left (the device did not finish)");
+                    return;
+                }
+                self.vk.destroy_semaphore(self.ready, None);
+                self.vk.destroy_semaphore(self.released, None);
+            }
+            log::info!("DLSS frame generation: sl-ngx's presenter stopped");
+        }
+    }
+
+    /// Linux: sl-ngx's presenter held paused ([`pause_presenter`]),
+    /// resumed when this goes.
+    #[cfg(target_os = "linux")]
+    pub(crate) struct PresenterPause(Option<(u64, usize)>);
+
+    /// Linux: sl-ngx's presenter, if one runs, paused until the guard
+    /// goes: its queue idle and every frame handed over released, nothing
+    /// submitted meanwhile. Around anything that waits for the whole
+    /// device (a wgpu surface configured or let go: vkDeviceWaitIdle,
+    /// which no other queue may be used beside) and before images handed
+    /// over are let go.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn pause_presenter() -> PresenterPause {
+        let Some(lib) = sl::loaded() else {
+            return PresenterPause(None);
+        };
+        let Some(fns) = lib.presenter.as_ref() else {
+            return PresenterPause(None);
+        };
+        let Some(mut held) = super::lock_within(&STARTED, END_WAIT) else {
+            return PresenterPause(None);
+        };
+        let Some(st) = held.as_mut() else {
+            return PresenterPause(None);
+        };
+        let Some(raw) = st.presenter else {
+            return PresenterPause(None);
+        };
+        if st.presenter_pauses == 0 {
+            // SAFETY: under the lock, the presenter live on this start
+            let r = unsafe { (fns.pause)(raw as *mut std::ffi::c_void) };
+            if r != vk::Result::SUCCESS {
+                log::warn!("DLSS frame generation: slngxPresenterPause: {r}");
+            }
+        }
+        st.presenter_pauses += 1;
+        PresenterPause(Some((st.start, raw)))
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for PresenterPause {
+        fn drop(&mut self) {
+            let Some((start, raw)) = self.0 else {
+                return;
+            };
+            let (Some(lib), Some(mut held)) = (sl::loaded(), super::lock_within(&STARTED, END_WAIT)) else {
+                return;
+            };
+            let Some(st) = held.as_mut().filter(|st| st.start == start && st.presenter == Some(raw)) else {
+                return;
+            };
+            st.presenter_pauses = st.presenter_pauses.saturating_sub(1);
+            if st.presenter_pauses == 0
+                && let Some(fns) = lib.presenter.as_ref()
+            {
+                // SAFETY: under the lock, the presenter live on this start
+                unsafe { (fns.resume)(raw as *mut std::ffi::c_void) };
+            }
+        }
     }
 
     /// Frees `viewport`'s feature, when the start that made it is still
@@ -3630,6 +4521,10 @@ mod imp {
         /// Windows' frame generation, made at the present ([`Dlss::fg_begin`])
         #[cfg(windows)]
         fg_win: FgWin,
+        /// Linux: this frame's token from sl-ngx's presenter
+        /// ([`Presenter::begin`]), the one Reflex's markers name
+        #[cfg(target_os = "linux")]
+        frame_token: Option<usize>,
     }
 
     /// Windows' frame generation, for the main window's DLSS: this
@@ -3647,6 +4542,9 @@ mod imp {
         /// status, for the log
         presents: u64,
         status: Option<u32>,
+        /// frames presented per frame drawn, as the last state read said
+        /// (`numFramesActuallyPresented`), for Preferences
+        per_drawn: u32,
         /// frames the GPU can generate per frame drawn
         /// (`numFramesToGenerateMax`) and the smallest side the window
         /// may have (`minWidthOrHeight`), read before the first ask
@@ -4204,6 +5102,8 @@ mod imp {
                 fg_frame: None,
                 #[cfg(windows)]
                 fg_win: FgWin::default(),
+                #[cfg(target_os = "linux")]
+                frame_token: None,
             })
         }
 
@@ -4620,7 +5520,11 @@ mod imp {
                     // which its present markers name ([`Dlss::fg_begin`])
                     #[cfg(windows)]
                     let given = self.fg_win.token;
-                    #[cfg(not(windows))]
+                    // Linux: sl-ngx's presenter's, for the same reason
+                    // ([`Dlss::set_frame_token`])
+                    #[cfg(target_os = "linux")]
+                    let given = self.frame_token;
+                    #[cfg(not(any(windows, target_os = "linux")))]
                     let given: Option<usize> = None;
                     let token = match given {
                         Some(token) => token as sl::FrameToken,
@@ -4641,7 +5545,13 @@ mod imp {
                     // the present: the library would copy them otherwise
                     // once frame generation has read them at a present;
                     // its own are the copies `fg_present` tags after)
-                    let fg_copy = |tag: sl::ResourceTag| if given.is_some() { tag.until_present() } else { tag };
+                    let fg_copy = |tag: sl::ResourceTag| {
+                        if cfg!(windows) && given.is_some() {
+                            tag.until_present()
+                        } else {
+                            tag
+                        }
+                    };
                     let mut tags = vec![
                         sl::ResourceTag::new(&mut color, sl::buffer::SCALING_INPUT_COLOR, extent(render)),
                         fg_copy(sl::ResourceTag::new(&mut depth, sl::buffer::DEPTH, extent(render))),
@@ -4671,6 +5581,13 @@ mod imp {
         /// Windows' frame generation, at the frame's start (renderer.rs,
         /// before the window image is acquired): the frame's token,
         /// Reflex's sleep, and the PCL markers up to the submit's start.
+        /// Linux: this frame's token from sl-ngx's presenter
+        /// ([`Presenter::token`]), for `evaluate`, or None without one.
+        #[cfg(target_os = "linux")]
+        pub fn set_frame_token(&mut self, token: Option<usize>) {
+            self.frame_token = token;
+        }
+
         /// Every frame while Streamline has frame generation loaded
         /// ([`fg_ready`]), on or off: its markers name the frame each
         /// present shows, and `evaluate` uses the token.
@@ -4972,6 +5889,16 @@ mod imp {
             }
         }
 
+        /// Windows' frame generation for Preferences: frames presented per
+        /// frame drawn (0 while it is not asked on), and Streamline's
+        /// status when it turned it off at this window size.
+        #[cfg(windows)]
+        pub fn fg_shown(&self) -> (u32, Option<String>) {
+            let refused = self.fg_win.bad.filter(|b| Some(*b) == self.fg_win.size).and(self.fg_win.status);
+            let per_drawn = if self.fg_win.asked == 0 { 0 } else { self.fg_win.per_drawn };
+            (per_drawn, refused.map(sl::dlssg_status))
+        }
+
         /// Windows' frame generation: the frame's commands are submitted
         /// (its PCL marker).
         #[cfg(windows)]
@@ -5034,6 +5961,7 @@ mod imp {
                 return;
             };
             (self.fg_win.max, self.fg_win.min) = (state.num_frames_to_generate_max, state.min_width_or_height);
+            self.fg_win.per_drawn = state.num_frames_actually_presented;
             let n = self.fg_win.presents;
             if n == 1 || n.is_multiple_of(600) || self.fg_win.status != Some(state.status) {
                 let level = if state.status == 0 { log::Level::Info } else { log::Level::Warn };
@@ -5508,10 +6436,25 @@ pub(crate) use imp::{
     rr_targets_refused, rr_wanted, set_fg_at_start, snapshot_rr_refused, snapshot_rr_refused_here, snapshot_rr_targets_refused, support,
     support_on, wanted,
 };
+#[cfg(all(feature = "dlss", target_os = "linux"))]
+pub(crate) use imp::{Presenter, pause_presenter, update};
 #[cfg(windows)]
 pub(crate) use imp::{forget_instance, xr_entry};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) use imp::{opened_for_xr, opening_device, xr_device_extensions, xr_instance_extensions};
+
+/// The sl-ngx commit this viewer speaks to (Linux): `SL_NGX_COMMIT` in
+/// scripts/dlss-setup.sh, which a test keeps the same. Its library is
+/// `libsl_ngx.<first 12 digits>.so` in the DLSS folder, loaded before the
+/// plain `libsl_ngx.so`, and built at start when missing ([`update`]).
+#[cfg_attr(not(all(feature = "dlss", target_os = "linux")), allow(dead_code, reason = "Linux's DLSS only"))]
+pub(crate) const SL_NGX_COMMIT: &str = "58cef3a222b7f248e7c639a5a196fcdba2abebf7";
+
+/// `libsl_ngx.<commit>.so`: [`SL_NGX_COMMIT`]'s library.
+#[cfg_attr(not(all(feature = "dlss", target_os = "linux")), allow(dead_code, reason = "Linux's DLSS only"))]
+fn versioned_shim() -> String {
+    format!("libsl_ngx.{}.so", &SL_NGX_COMMIT[..12])
+}
 
 /// The world's size under DLSS: the display size divided by the mode's
 /// ratio, rounded up. Streamline's smallest accepted size is the display size over
@@ -5526,7 +6469,15 @@ pub(crate) fn render_size(display: (u32, u32), ratio: f32) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answers, lock_within, refused, render_size};
+    use super::{Answers, SL_NGX_COMMIT, lock_within, refused, render_size};
+
+    #[test]
+    fn the_viewer_and_the_setup_script_name_one_sl_ngx() {
+        // a viewer update brings its sl-ngx along only if the script
+        // builds the commit the viewer loads
+        let script = include_str!("../../../scripts/dlss-setup.sh");
+        assert!(script.contains(&format!("\nSL_NGX_COMMIT={SL_NGX_COMMIT}\n")));
+    }
     use std::sync::{Arc, Mutex, mpsc};
     use std::time::{Duration, Instant};
 

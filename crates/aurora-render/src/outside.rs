@@ -217,7 +217,11 @@ impl Surfaces {
                     }
                 }
                 Change::Close(key) => {
-                    // (the entry's surface, then its window's keep-alive)
+                    // (the entry's surface, then its window's keep-alive;
+                    // sl-ngx's presenter paused while wgpu waits for the
+                    // device to let the swapchain go)
+                    #[cfg(all(feature = "dlss", target_os = "linux"))]
+                    let _paused = crate::dlss::pause_presenter();
                     self.entries.remove(&key);
                     self.events.push(OutsideEvent::Closed(key));
                 }
