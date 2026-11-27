@@ -1459,6 +1459,19 @@ fn reddit_permalink_channel(page: &str, author: Option<&str>) -> String {
 }
 
 #[test]
+fn youku_requires_the_application_id_supplied_by_the_publisher() {
+    let url = "https://player.youku.com/embed/XNjMzNzY4MjYxNg%3D%3D?client_id=example123&extra=1";
+    let clip = Clip::of(url).unwrap();
+    assert!(clip.requires_player_click());
+    assert_eq!(
+        clip.player(),
+        "https://player.youku.com/embed/XNjMzNzY4MjYxNg==?client_id=example123"
+    );
+    assert!(Clip::of(url.split('?').next().unwrap()).is_none());
+    assert!(Clip::of(&url.replace("player.youku.com", "player.youku.com.example.org")).is_none());
+}
+
+#[test]
 fn dailymotion_needs_explicit_player_and_video_ids_for_inline_playback() {
     let embed = "https://geo.dailymotion.com/player/x8lr5.html?video=x84sh87";
     assert!(matches!(target(embed), Some(Target::Clip(clip)) if clip.player() == embed && clip.requires_player_click()));

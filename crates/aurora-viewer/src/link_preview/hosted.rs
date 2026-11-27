@@ -19,6 +19,7 @@ pub(super) enum Hosted {
     Dailymotion { player: String, video: String },
     Arte { language: String, id: String },
     AdultEmbed { domain: &'static str, id: String },
+    Youku { id: String, client: String },
 }
 
 fn id_ok(id: &str, max: usize) -> bool {
@@ -108,7 +109,12 @@ impl Hosted {
     pub(super) fn requires_player_click(&self) -> bool {
         matches!(
             self,
-            Self::InstagramReel(_) | Self::FacebookReel(_) | Self::Dailymotion { .. } | Self::Arte { .. } | Self::AdultEmbed { .. }
+            Self::InstagramReel(_)
+                | Self::FacebookReel(_)
+                | Self::Dailymotion { .. }
+                | Self::Arte { .. }
+                | Self::AdultEmbed { .. }
+                | Self::Youku { .. }
         )
     }
     pub(super) fn adult(&self) -> bool {
@@ -149,6 +155,21 @@ impl Hosted {
                 return Some(Self::AdultEmbed {
                     domain: "xvideos.com",
                     id: (*id).to_owned(),
+                });
+            }
+            ("player.youku.com", ["embed", id]) => {
+                let id = id.replace("%3D", "=").replace("%3d", "=");
+                let core = id.strip_prefix('X')?.trim_end_matches('=');
+                if !id_ok(core, 64) || id.len() - core.len() > 3 {
+                    return None;
+                }
+                let client = url.query_pairs().find(|(key, _)| key == "client_id")?.1;
+                if !id_ok(&client, 80) {
+                    return None;
+                }
+                return Some(Self::Youku {
+                    id,
+                    client: client.into_owned(),
                 });
             }
             ("geo.dailymotion.com", ["player", file]) => {
@@ -257,6 +278,7 @@ impl Hosted {
     pub(super) fn page(&self) -> String {
         match self {
             Self::Dailymotion { .. } | Self::Arte { .. } | Self::AdultEmbed { .. } => self.player(),
+            Self::Youku { id, .. } => format!("https://v.youku.com/v_show/id_{id}.html"),
             Self::InstagramReel(id) => format!("https://www.instagram.com/reel/{id}/"),
             Self::FacebookReel(id) => format!("https://www.facebook.com/reel/{id}/"),
             Self::Framatube(id) => format!("https://framatube.org/w/{id}"),
@@ -284,6 +306,7 @@ impl Hosted {
                 };
                 format!("https://www.{domain}/{path}/{id}")
             }
+            Self::Youku { id, client } => format!("https://player.youku.com/embed/{id}?client_id={client}"),
             Self::InstagramReel(id) => format!("https://www.instagram.com/reel/{id}/embed/"),
             Self::FacebookReel(id) => {
                 format!("https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2Freel%2F{id}%2F&autoplay=false")
@@ -333,7 +356,8 @@ impl Hosted {
             | Self::InstagramReel(_)
             | Self::FacebookReel(_)
             | Self::Arte { .. }
-            | Self::AdultEmbed { .. } => {
+            | Self::AdultEmbed { .. }
+            | Self::Youku { .. } => {
                 return None;
             }
         };
@@ -370,6 +394,7 @@ impl Hosted {
             | Self::FacebookReel(_)
             | Self::Arte { .. }
             | Self::AdultEmbed { .. } => false,
+            Self::Youku { .. } => super::in_domain(host, "ykimg.com"),
         };
         permitted.then_some(url)
     }

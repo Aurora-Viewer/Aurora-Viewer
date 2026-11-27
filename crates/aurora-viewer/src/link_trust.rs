@@ -115,6 +115,8 @@ const TRUSTED: &[&str] = &[
     "snapchat.com",
     "bolt-gcdn.sc-cdn.net",
     "bilibili.com",
+    "v.youku.com",
+    "player.youku.com",
     "framatube.org",
     "arte.tv",
     "dailymotion.com",
