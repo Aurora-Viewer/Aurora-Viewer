@@ -1733,22 +1733,18 @@ ao-empty = Create a set or import a notecard to begin.
 ao-sits = Override sits
 ao-smart = Smart sits
 ao-mouselook = Disable stands in mouselook
-ao-default = Default set
 ao-current = Current state: { $state }
 ao-previous = Previous animation
 ao-next = Next animation
-ao-add = Add animation
 ao-play-tip = Double-click to choose this animation
 ao-up = Move up
 ao-down = Move down
 ao-track = Track
 ao-group = Group
-ao-drop = Add or drop an animation here.
 ao-container-name = Group or track name
 ao-target = Add into: { $name }
 ao-state-root = Main state
 ao-cycle = Cycle
-ao-random = Random
 ao-set-name = AO set name
 ao-remove-confirm = Remove this AO entry? Original animations are preserved. Removed folders go to Trash.
 ao-choose = Choose from inventory
@@ -1798,7 +1794,6 @@ ao-water-shore-exit = Leap onto an obstacle
 ao-swim-slots = Swimming animations for this set
 ao-swim-required = Required swimming animations are missing.
 ao-swim-required-missing = Required to enable swimming: animation missing.
-ao-swim-required-present = Required to enable swimming: animation assigned.
 ao-swim-choose = Choose an animation…
 ao-swim-ready = The required swimming animations are assigned.
 ao-swimming-forward = Swimming at the surface
@@ -13949,25 +13944,8 @@ bridge-request-gone = The bridge's address changed with the region. Reconnecting
 bridge-request-response = The bridge returned an unreadable or incomplete state. Retrying.
 bridge-request-sequence = The bridge response does not match the command sent. Retrying.
 
-ao-design-title = AO layout study
-ao-design-help = Compare the current native AO window with two movement layouts. Existing AO controls use the same window and widgets.
-ao-design-current = Current window
-ao-design-tabs = Animations / Movement tabs
-ao-design-section = Collapsible movement section
-ao-design-avatar = Avatar preview state
-ao-design-animations = Animations
-ao-design-movement = Movement
-ao-design-swim-animations = Choose swimming animations in AO
-ao-design-open = Open AO
-ao-design-reset = Reset movement values
-ao-design-session = Offline prototype. Movement values are temporary; no motor or online account is changed.
-ao-design-movement-help = Each movement aid is independent. AO activation controls animation playback.
-ao-design-animation-help = Swimming animations are selected in the AO swimming states, using its inventory lists.
-ao-design-passage = Preview only: an obstacle-pass request would be sent here.
 
 # Integrated AO movement tab.
-ao-tab-animations = Animations
-ao-tab-movement = Movement (EXPERIMENTAL)
 ao-movement-help = Movement aids are configured independently of the AO’s other animations.
 movement-pass-enable = Obstacle passage
 movement-fly-help = ×1 keeps normal flight. Increase up to ×5 to fly faster.
@@ -14023,7 +14001,6 @@ ao-duplicate-native = { $count ->
 ao-native-already-exists = A native Aurora AO folder already exists. Choose it in the AO window instead of migrating again.
 
 # Guided AO editor
-ao-states = States
 ao-combine = Combine…
 ao-combine-title = Combine animations
 ao-new-group = New group
@@ -14038,35 +14015,12 @@ ao-group-example = A group plays several animations together. For example: a bod
 ao-track-example = A track has its own cycle alongside the main cycle. For example: switch hand gestures while body poses follow their own cycle.
 ao-combine-existing = Move animations here from { $state }
 ao-combine-existing-help = Checked animations will be removed from the main list.
-ao-back-state = ← Back to { $state }
-ao-group-kind = Group · Simultaneous playback
-ao-track-kind = Track · Independent cycle
 ao-group-explanation = All animations in this group play together.
-ao-track-explanation = One animation at a time, alongside the { $state } cycle.
 ao-add-group = Add to group
-ao-add-track = Add to track
-ao-group-cycle-help = This group is one entry in the { $state } alternation.
 ao-dissolve-group = Ungroup animations
 ao-dissolve-track = Dissolve track
 ao-combine-empty = Add animations here.
-ao-parallel-tracks = Parallel tracks
 ao-entry-help = Click to choose or open · Drag to reorder
-ao-track-cycle = Track alternation
-ao-state-cycle = { $state } alternation
-ao-auto-cycle = Switch automatically
-ao-cycle-interval = Interval
-ao-group-summary = { $count ->
-    [one] Group · { $count } animation
-   *[other] Group · { $count } animations together
-    }
-ao-track-summary = { $count ->
-    [one] Track · { $count } animation · Independent cycle
-   *[other] Track · { $count } animations · Independent cycle
-    }
-ao-group-count = { $count ->
-    [one] { $count } animation to play
-   *[other] { $count } animations to play together
-    }
 movement-run-speed = Running speed
 movement-flight-speed = Flight speed
 ao-combine-group-choice = Play several animations together
@@ -16900,3 +16854,148 @@ phototools-director-lens = The Director's lens is shown while its window is open
 phototools-view-angle-viewfinder = The viewfinder owns the view angle: yours comes back when it closes.
 ui-options-dof-show-focus-point = Show focus point
 ui-options-dof-show-focus-point-help = A small crosshair on the point the lens focuses on: yellow when it is free, red when it is locked.
+
+# AO window, one page per group (2026-11-27)
+ao-status-on = AO on
+ao-status-off = AO off
+ao-status-paused = Paused
+ao-turn-on = Turn the AO on
+ao-turn-off = Turn the AO off
+ao-resume = Resume
+ao-no-set = No set yet
+ao-no-set-line = Make one to begin
+ao-set-count = { $count ->
+    [one] { $count } set
+   *[other] { $count } sets
+    }
+ao-animation-count = { $count ->
+    [one] { $count } animation
+   *[other] { $count } animations
+    }
+ao-loads-at-login = Loads at login
+ao-sets-tip = Switch sets, or make a new one
+ao-your-sets = Your sets
+ao-in-use = In use
+ao-set-more = More for this set
+ao-load-at-login = Load at login
+ao-delete-set = Delete…
+ao-delete-set-confirm = Delete “{ $set }”? Its animations stay in your inventory.
+ao-sits-line = Your sits, even on furniture
+ao-smart-line = Furniture with its own pose keeps it
+ao-mouselook-line = Stand still while you aim
+ao-migrate-link = Bring sets from another viewer…
+ao-all-slots = All slots
+ao-essentials = Essentials
+ao-all-slots-hint = Every slot of your AO, { $count } in all.
+ao-essentials-hint = Only the { $count } core animations everyone notices.
+ao-category-general-line = Standing, sitting and typing
+ao-category-ground-line = Walking, running and turning
+ao-category-jumping-line = Jumps and landings
+ao-category-flight-line = Moving in the air
+ao-category-water-line = Only needed if you turn on swimming
+ao-tab-movement-short = Movement
+ao-movement-line = Running, flying, swimming boosts
+ao-movement-intro = Each enhancement is separate. Simulator physics and latency can limit speeds.
+ao-experimental = Experimental
+ao-of-filled = of { $total } filled
+ao-animations-word = { $count ->
+    [one] animation
+   *[other] animations
+    }
+ao-from-creators = { $count ->
+    [one] from { $count } creator
+   *[other] from { $count } creators
+    }
+ao-none-yet = None yet
+ao-still-empty = still empty
+ao-all-filled = Every slot is filled
+ao-go-to = Go to { $slot }
+ao-open-movement = Movement settings
+ao-swimming-switch = Swimming
+ao-page-hint = Drag animations from your inventory onto a slot. Click a slot to edit it.
+ao-slot-default = Default animation
+ao-slot-empty-hint = Second Life's default plays · drop an animation here
+ao-more-count = +{ $count } more
+ao-playing-now = Playing now
+ao-playing = Playing
+ao-together = Together
+ao-main = Main
+ao-new-layer = New layer: plays on top, with its own turns
+ao-layer-line = { $layer } plays on top of the main list.
+ao-remove-layer = Remove this layer
+ao-turns-solo = Add a second animation and they'll take turns.
+ao-turns-manual = You switch them yourself
+ao-turns-every = Switches to the next one every
+ao-turns-auto = Auto: the next one when this one ends
+ao-seconds-suffix = { " s" }
+ao-auto = Auto
+ao-two-minutes = 2 min
+ao-order-in-order = In order
+ao-order-shuffle = Shuffle
+ao-order-manual = Manual
+ao-order-in-order-line = One after the other, from the top
+ao-order-shuffle-line = A random one each time
+ao-order-manual-line = Only when you choose
+ao-up-next = Next: { $name }
+ao-stays-on = Stays on: { $name }
+ao-next-tip = Play the next one now
+ao-preview = Preview
+ao-preview-stage = Your avatar plays the animation here, only on your screen.
+ao-preview-place = { $index } of { $count }
+ao-preview-none = Nothing to preview yet
+ao-preview-play = Play
+ao-preview-pause = Pause the preview
+ao-preview-previous = Previous animation
+ao-preview-next = Next animation
+ao-drop-box = Drop animations here, or click to choose
+ao-combine-tip = Make animations of this slot play together, or as a layer
+ao-line-standing = When you stand still
+ao-line-standing-up = Getting up from a sit
+ao-line-sitting = On chairs and objects
+ao-line-ground-sit = Without an object
+ao-line-typing = While you type in chat
+ao-line-always = Plays under everything else
+ao-line-walking = When you walk
+ao-line-running = When you run
+ao-line-crouching = Holding crouch
+ao-line-crouch-walk = Moving while crouched
+ao-line-turning = Turning in place
+ao-line-pre-jumping = Just before a jump
+ao-line-jumping = While in the air
+ao-line-falling = Dropping down
+ao-line-soft-landing = After a short fall
+ao-line-landing = After a long fall
+ao-line-flying = Flying forward
+ao-line-flying-slow = At low speed
+ao-line-hovering = Staying still in the air
+ao-line-flying-up = Flying up
+ao-line-flying-down = Flying down
+ao-line-floating = Still at the surface
+ao-line-swimming-forward = Moving at the surface
+ao-line-underwater-swimming = Moving underwater
+ao-line-swimming-up = Rising underwater
+ao-line-swimming-down = Diving deeper
+ao-line-underwater-floating = Still underwater
+ao-line-water-entry = Entering the water
+ao-line-water-flight-exit = Out of the water into the air
+ao-line-water-shore-exit = Out of the water onto a ledge
+ao-line-water-dive-jump = Jumping in head first
+ao-line-water-dive-entry = Hitting the water
+ao-line-water-cannonball = Jumping in curled up
+ao-line-swimming-style = Swimming style
+ao-welcome = Welcome to your AO
+ao-welcome-title = Give your avatar its own way of moving
+ao-welcome-body = An AO replaces Second Life's default animations (standing, walking, sitting…) with animations you own. Everyone around you sees them.
+ao-welcome-step-1 = Open a group
+ao-welcome-step-1-line = General, Ground, Jumping… on the left.
+ao-welcome-step-2 = Drag animations onto its slots
+ao-welcome-step-2-line = Straight from your inventory. Watch them in the preview.
+ao-welcome-step-3 = Turn your AO on
+ao-welcome-step-3-line = With the power button at the top of this window.
+ao-welcome-name = Name your first set
+ao-welcome-default-name = My first set
+ao-welcome-create = Create my set
+ao-welcome-migrate = Bring a set from the Legacy Viewer or Alchemy
+ao-welcome-library = No animations yet? Start with the free ones in your Library. Animations you buy on the Marketplace arrive in your inventory.
+ao-layer-earlier = Move this layer earlier
+ao-layer-later = Move this layer later

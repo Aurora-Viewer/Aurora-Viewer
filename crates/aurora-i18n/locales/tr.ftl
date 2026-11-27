@@ -1570,22 +1570,18 @@ ao-empty = Başlamak için bir set oluşturun veya bir not kartı içeri aktarı
 ao-sits = Oturmaları geçersiz kıl
 ao-smart = Akıllı oturma
 ao-mouselook = Mouselook'ta durma animasyonlarını devre dışı bırak
-ao-default = Varsayılan set
 ao-current = Geçerli durum: { $state }
 ao-previous = Önceki animasyon
 ao-next = Sonraki animasyon
-ao-add = Animasyon ekle
 ao-play-tip = Bu animasyonu seçmek için çift tıklayın
 ao-up = Yukarı taşı
 ao-down = Aşağı taşı
 ao-track = Parça
 ao-group = Grup
-ao-drop = Buraya bir animasyon ekleyin veya bırakın.
 ao-container-name = Grup veya parça adı
 ao-target = Şuraya ekle: { $name }
 ao-state-root = Ana durum
 ao-cycle = Döngü
-ao-random = Rastgele
 ao-set-name = AO set adı
 ao-remove-confirm = Bu AO girişi kaldırılsın mı? Özgün animasyonlar korunur. Kaldırılan klasörler Çöp'e gider.
 ao-choose = Envanterden seç
@@ -1635,7 +1631,6 @@ ao-water-shore-exit = Bir engelin üstüne sıçrama
 ao-swim-slots = Bu set için yüzme animasyonları
 ao-swim-required = Gereken yüzme animasyonları eksik.
 ao-swim-required-missing = Yüzmeyi etkinleştirmek için gerekli: animasyon eksik.
-ao-swim-required-present = Yüzmeyi etkinleştirmek için gerekli: animasyon atandı.
 ao-swim-choose = Bir animasyon seçin…
 ao-swim-ready = Gerekli yüzme animasyonları atandı.
 ao-swimming-forward = Yüzeyde yüzme
@@ -13327,23 +13322,6 @@ bridge-request-http = Simülatör köprü isteğini reddetti (HTTP { $status }).
 bridge-request-gone = Köprünün adresi bölgeyle birlikte değişti. Yeniden bağlanılıyor.
 bridge-request-response = Köprü okunamayan veya eksik bir durum döndürdü. Yeniden deneniyor.
 bridge-request-sequence = Köprü yanıtı gönderilen komutla eşleşmiyor. Yeniden deneniyor.
-ao-design-title = AO düzen çalışması
-ao-design-help = Mevcut yerleşik AO penceresini iki hareket düzeniyle karşılaştırın. Mevcut AO denetimleri aynı pencereyi ve bileşenleri kullanır.
-ao-design-current = Mevcut pencere
-ao-design-tabs = Animasyonlar / Hareket sekmeleri
-ao-design-section = Daraltılabilir hareket bölümü
-ao-design-avatar = Avatar önizleme durumu
-ao-design-animations = Animasyonlar
-ao-design-movement = Hareket
-ao-design-swim-animations = AO'da yüzme animasyonlarını seç
-ao-design-open = AO'yu Aç
-ao-design-reset = Hareket değerlerini sıfırla
-ao-design-session = Çevrimdışı prototip. Hareket değerleri geçicidir; hiçbir motor veya çevrimiçi hesap değiştirilmez.
-ao-design-movement-help = Her hareket yardımı bağımsızdır. AO etkinleştirme animasyon oynatmayı kontrol eder.
-ao-design-animation-help = Yüzme animasyonları AO'nun yüzme durumlarında, envanter listeleri kullanılarak seçilir.
-ao-design-passage = Yalnızca önizleme: engel geçiş isteği burada gönderilirdi.
-ao-tab-animations = Animasyonlar
-ao-tab-movement = Hareket (DENEYSEL)
 ao-movement-help = Hareket yardımları AO'nun diğer animasyonlarından bağımsız olarak yapılandırılır.
 movement-pass-enable = Engel geçişi
 movement-fly-help = ×1 normal uçuşu korur. Daha hızlı uçmak için ×5'e kadar artırın.
@@ -13383,7 +13361,6 @@ bridge-object-info-result =
     Mevcut konumunuz: { $observer }
 bridge-query-timeout = Köprü istenen bilgiyi zamanında geri vermedi. Tekrar deneyin.
 bridge-query-interrupted = Bilgi isteği bir bölge veya köprü bağlantısı değişikliği nedeniyle kesildi. Tekrar deneyin.
-ao-states = Durumlar
 ao-combine = Birleştir…
 ao-combine-title = Animasyonları birleştir
 ao-new-group = Yeni grup
@@ -13398,35 +13375,12 @@ ao-group-example = Bir grup birden fazla animasyonu birlikte oynatır. Örneğin
 ao-track-example = Bir parçanın ana döngünün yanında kendi döngüsü vardır. Örneğin: vücut pozları kendi döngüsünü izlerken el hareketlerini değiştirin.
 ao-combine-existing = Animasyonları buraya taşı (kaynak: { $state })
 ao-combine-existing-help = İşaretlenen animasyonlar ana listeden kaldırılacak.
-ao-back-state = ← Geri: { $state }
-ao-group-kind = Grup · Eşzamanlı oynatma
-ao-track-kind = Parça · Bağımsız döngü
 ao-group-explanation = Bu gruptaki tüm animasyonlar birlikte oynatılır.
-ao-track-explanation = Aynı anda tek animasyon, { $state } döngüsüyle birlikte.
 ao-add-group = Gruba Ekle
-ao-add-track = Parçaya Ekle
-ao-group-cycle-help = Bu grup, { $state } sıralı geçişinde tek bir giriştir.
 ao-dissolve-group = Animasyonları gruptan ayır
 ao-dissolve-track = Parçayı dağıt
 ao-combine-empty = Animasyonları buraya ekleyin.
-ao-parallel-tracks = Paralel parçalar
 ao-entry-help = Seçmek veya açmak için tıklayın · Yeniden sıralamak için sürükleyin
-ao-track-cycle = Parça sıralı geçişi
-ao-state-cycle = { $state } sıralı geçişi
-ao-auto-cycle = Otomatik geçiş
-ao-cycle-interval = Aralık
-ao-group-summary = { $count ->
-    [one] Grup · { $count } animasyon
-   *[other] Grup · birlikte { $count } animasyon
-    }
-ao-track-summary = { $count ->
-    [one] Parça · { $count } animasyon · Bağımsız döngü
-   *[other] Parça · { $count } animasyon · Bağımsız döngü
-    }
-ao-group-count = { $count ->
-    [one] Oynatılacak { $count } animasyon
-   *[other] Birlikte oynatılacak { $count } animasyon
-    }
 movement-run-speed = Koşu hızı
 movement-flight-speed = Uçuş hızı
 ao-combine-group-choice = Birden fazla animasyonu birlikte oynat

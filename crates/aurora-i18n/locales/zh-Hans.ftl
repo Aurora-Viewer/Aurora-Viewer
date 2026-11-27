@@ -1568,22 +1568,18 @@ ao-empty = 创建套组或导入记事卡以开始。
 ao-sits = 覆盖坐下
 ao-smart = 智能坐下
 ao-mouselook = 在第一人称视角中禁用站立
-ao-default = 默认套组
 ao-current = 当前状态：{ $state }
 ao-previous = 上一个动画
 ao-next = 下一个动画
-ao-add = 添加动画
 ao-play-tip = 双击以选用此动画
 ao-up = 上移
 ao-down = 下移
 ao-track = 轨道
 ao-group = 分组
-ao-drop = 在此添加或拖入动画。
 ao-container-name = 分组或轨道名称
 ao-target = 添加到：{ $name }
 ao-state-root = 主状态
 ao-cycle = 循环
-ao-random = 随机
 ao-set-name = AO 套组名称
 ao-remove-confirm = 移除此 AO 条目？原始动画会保留。被移除的文件夹会进入垃圾桶。
 ao-choose = 从库存中选择
@@ -1633,7 +1629,6 @@ ao-water-shore-exit = 跳上障碍物
 ao-swim-slots = 此套组的游泳动画
 ao-swim-required = 缺少必需的游泳动画。
 ao-swim-required-missing = 启用游泳所需：缺少动画。
-ao-swim-required-present = 启用游泳所需：已指定动画。
 ao-swim-choose = 选择动画…
 ao-swim-ready = 必需的游泳动画已指定。
 ao-swimming-forward = 水面游泳
@@ -13300,23 +13295,6 @@ bridge-request-http = 模拟主机拒绝了桥接器请求（HTTP { $status }）
 bridge-request-gone = 桥接器地址随区域变更。正在重新连接。
 bridge-request-response = 桥接器返回了无法读取或不完整的状态。正在重试。
 bridge-request-sequence = 桥接器响应与已发送的指令不符。正在重试。
-ao-design-title = AO 布局研究
-ao-design-help = 将当前原生 AO 窗口与两种移动布局进行比较。现有 AO 控件使用相同的窗口和组件。
-ao-design-current = 当前窗口
-ao-design-tabs = 动画 / 移动标签页
-ao-design-section = 可折叠的移动分区
-ao-design-avatar = 化身预览状态
-ao-design-animations = 动画
-ao-design-movement = 移动
-ao-design-swim-animations = 在 AO 中选择游泳动画
-ao-design-open = 打开 AO
-ao-design-reset = 重置移动数值
-ao-design-session = 离线原型。运动数值仅为临时状态；不会修改任何动力引擎或在线账户数据。
-ao-design-movement-help = 每项移动辅助相互独立。AO 启停控制动画播放。
-ao-design-animation-help = 游泳动画需在 AO 游泳状态中进行选择，并直接读取其库存列表。
-ao-design-passage = 仅供预览：障碍穿越请求将在此发送。
-ao-tab-animations = 动画
-ao-tab-movement = 移动（实验性）
 ao-movement-help = 移动辅助的配置独立于 AO 的其他动画。
 movement-pass-enable = 障碍穿越
 movement-fly-help = ×1 保持正常飞行。最多可提高到 ×5 以飞得更快。
@@ -13356,7 +13334,6 @@ bridge-object-info-result =
     您的当前位置：{ $observer }
 bridge-query-timeout = 桥接器未及时返回所请求的信息。请重试。
 bridge-query-interrupted = 信息请求因区域或桥接器连接变更而中断。请重试。
-ao-states = 状态
 ao-combine = 合并…
 ao-combine-title = 合并动画
 ao-new-group = 新建组
@@ -13371,35 +13348,12 @@ ao-group-example = 组会同时播放多个动画。例如：一个身体姿势�
 ao-track-example = 轨道在主循环之外拥有自己的循环。例如：切换手部手势时，身体姿势按自己的循环播放。
 ao-combine-existing = 将动画从 { $state } 移到这里
 ao-combine-existing-help = 勾选的动画将从主列表中移除。
-ao-back-state = ← 返回 { $state }
-ao-group-kind = 组 · 同时播放
-ao-track-kind = 轨道 · 独立循环
 ao-group-explanation = 此组中的所有动画一起播放。
-ao-track-explanation = 一次播放一个动画，与 { $state } 循环并行。
 ao-add-group = 添加到组
-ao-add-track = 添加到轨道
-ao-group-cycle-help = 此组是 { $state } 轮换中的一项。
 ao-dissolve-group = 取消动画分组
 ao-dissolve-track = 解散轨道
 ao-combine-empty = 在此添加动画。
-ao-parallel-tracks = 并行轨道
 ao-entry-help = 点击以选择或打开 · 拖动以重新排序
-ao-track-cycle = 轨道轮换
-ao-state-cycle = { $state } 轮换
-ao-auto-cycle = 自动切换
-ao-cycle-interval = 间隔
-ao-group-summary = { $count ->
-    [one] 组 · { $count } 个动画
-   *[other] 组 · { $count } 个动画同时播放
-    }
-ao-track-summary = { $count ->
-    [one] 轨道 · { $count } 个动画 · 独立循环
-   *[other] 轨道 · { $count } 个动画 · 独立循环
-    }
-ao-group-count = { $count ->
-    [one] 播放 { $count } 个动画
-   *[other] 同时播放 { $count } 个动画
-    }
 movement-run-speed = 跑步速度
 movement-flight-speed = 飞行速度
 ao-combine-group-choice = 同时播放多个动画

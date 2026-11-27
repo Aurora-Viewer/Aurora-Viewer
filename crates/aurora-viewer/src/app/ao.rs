@@ -33,15 +33,6 @@ impl App {
             let ready = !matches!(self.ao_demo.as_deref(), Some("firestorm-wait" | "folder-names-wait")) || self.frame_count >= 720;
             crate::ao::demo::inventory_services(&mut self.world, ready);
         }
-        if self.demo
-            && self.ao_ui.prototype.is_none()
-            && let Some(mode) = self.ao_demo.as_deref().filter(|mode| mode.starts_with("design-"))
-        {
-            self.ao_ui.prototype = Some(crate::ui::ao::prototype::Prototype::new(mode));
-            if mode == "design-swim" {
-                self.ao_ui.state = crate::ao::State::SwimmingForward;
-            }
-        }
         if self.demo && self.frame_count == 360 {
             match self.ao_demo.as_deref() {
                 // the Mini AO window alone, without the manager
@@ -73,7 +64,7 @@ impl App {
                     });
                     self.inventory_ui
                         .open_folders([Some(inv.root), brand, bridge].into_iter().flatten());
-                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(90.0, 80.0), egui::vec2(600.0, 710.0));
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(90.0, 80.0), egui::vec2(760.0, 710.0));
                 }
                 Some(mode @ ("migrate" | "migrate-done" | "migrate-swim" | "migrate-alchemy" | "migrate-alchemy-done")) => {
                     self.panels.ao = true;
@@ -106,7 +97,7 @@ impl App {
                     );
                     self.settings.keybinds.set(KeyAction::Down, 1, None);
                     self.open_movement();
-                    crate::ui::widgets::size_floater(&self.egui_ctx, "ao", egui::vec2(520.0, 760.0));
+                    crate::ui::widgets::size_floater(&self.egui_ctx, "ao", egui::vec2(1240.0, 760.0));
                 }
                 Some(mode) if mode.starts_with("interface") => {
                     self.panels.ao = true;
@@ -124,14 +115,14 @@ impl App {
                     {
                         self.ao_runtime.choose(crate::ao::State::Standing, c.folder, index);
                     }
-                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(220.0, 90.0), egui::vec2(560.0, 760.0));
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(160.0, 90.0), egui::vec2(1240.0, 760.0));
                 }
                 Some("swim") => {
                     self.panels.ao = true;
                     self.ao_ui.state = crate::ao::State::SwimmingForward;
                     // Expand only the owned offline capture; ordinary users
                     // retain the manager's saved size and can scroll/resize it.
-                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(220.0, 120.0), egui::vec2(560.0, 740.0));
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(160.0, 90.0), egui::vec2(1240.0, 760.0));
                 }
                 _ => {}
             }
@@ -161,7 +152,7 @@ impl App {
             if matches!(crate::ao::water_demo::mode(), Some("water-walk-ui" | "swim-ui")) && (720..780).contains(&self.frame_count) {
                 self.open_movement();
                 crate::ui::widgets::open_floater(&self.egui_ctx, "ao", &mut self.panels.ao);
-                crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(60.0, 80.0), egui::vec2(600.0, 740.0));
+                crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(60.0, 80.0), egui::vec2(1240.0, 760.0));
             }
             if self.frame_count == 720 {
                 if let Some(index) = match crate::ao::water_demo::mode() {
@@ -181,7 +172,7 @@ impl App {
                 if crate::ao::water_demo::mode().is_some_and(|m| m.starts_with("slots")) {
                     self.ao_ui.tab = 0;
                     crate::ui::widgets::open_floater(&self.egui_ctx, "ao", &mut self.panels.ao);
-                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(100.0, 80.0), egui::vec2(720.0, 760.0));
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(100.0, 80.0), egui::vec2(1240.0, 760.0));
                     self.ao_ui.state = match crate::ao::water_demo::mode() {
                         Some("slots-surface") => crate::ao::State::SwimmingForward,
                         Some("slots-underwater") => crate::ao::State::UnderwaterSwimming,
@@ -297,12 +288,6 @@ impl App {
             .map_or((false, Uuid::nil()), |a| (a.enabled, a.selected));
         // (with Aurora's movement, the walk or the stop of the keys first)
         let raw = self.world.own_signals();
-        let preview = self
-            .demo
-            .then(|| self.ao_ui.prototype.as_mut().map(|prototype| prototype.signal(now)))
-            .flatten()
-            .map(|signal| [signal]);
-        let raw = preview.as_ref().map_or(raw, |signals| signals.as_slice());
         let anchor_hold = self.native_anchor.standing_since(self.world.agent.ground_sit);
         // Preference/set changes release physics first. Retain the verified
         // set until stand-up is acknowledged, including with the AO disabled.
@@ -328,15 +313,6 @@ impl App {
             swim_input.strafe_left |= swim_input.turn_left;
             swim_input.strafe_right |= swim_input.turn_right;
         }
-        // Offline preview states share stock flight/jump/fall UUIDs. Carry
-        // their explicit context just like the real movement controller does.
-        let preview_swim = preview.as_ref().and_then(|signals| {
-            self.ao_ui
-                .prototype
-                .as_ref()
-                .filter(|p| p.pose.swimming())
-                .map(|p| (p.pose, signals[0]))
-        });
         let frame = runtime::Frame {
             raw,
             run_hold: self
@@ -345,7 +321,7 @@ impl App {
                 .map(|start| crate::world::PlayingAnimation::from_signal(crate::ao::State::Running.motion(), 0, start, None)),
             native_running: self.movement_runtime.native_running,
             enabled,
-            swim_hold: preview_swim.or_else(|| self.movement_runtime.swim_signal(now, &swim_input)),
+            swim_hold: self.movement_runtime.swim_signal(now, &swim_input),
             water_walk_hold: self
                 .movement_runtime
                 .water_walk
@@ -357,11 +333,7 @@ impl App {
             mouselook: self.camera.mouselook(),
             on_object,
             seat_animations: self.world.seat_has_animations(),
-            underwater: if preview.is_some() {
-                self.ao_ui.prototype.as_ref().is_some_and(|prototype| prototype.underwater())
-            } else {
-                self.world.agent.position.z < water
-            },
+            underwater: self.world.agent.position.z < water,
             region: self.world.main_region,
         };
         let anims = &mut self.scene.anims;
@@ -514,7 +486,7 @@ impl App {
                 Ok(change) => self.apply_ao_action(Action::Edit(change, None)),
                 Err(reason) => self.ao_ui.message = reason,
             },
-            Action::ShowRecovery(id) => {
+            Action::ShowInInventory(id) => {
                 self.inventory_ui.show_folder(&self.world.inventory, id);
                 crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }

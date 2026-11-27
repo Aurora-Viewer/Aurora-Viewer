@@ -1572,22 +1572,18 @@ ao-empty = Cree un conjunto o importe una nota para empezar.
 ao-sits = Sustituir animaciones al sentarse
 ao-smart = Sentadas inteligentes
 ao-mouselook = Desactivar las animaciones de pie en vista subjetiva
-ao-default = Conjunto por defecto
 ao-current = Estado actual: { $state }
 ao-previous = Animación anterior
 ao-next = Animación siguiente
-ao-add = Añadir una animación
 ao-play-tip = Haga doble clic para elegir esta animación
 ao-up = Subir
 ao-down = Bajar
 ao-track = Pista
 ao-group = Grupo
-ao-drop = Añada o suelte una animación aquí.
 ao-container-name = Nombre del grupo o de la pista
 ao-target = Añadir en: { $name }
 ao-state-root = Estado principal
 ao-cycle = Ciclo
-ao-random = Aleatorio
 ao-set-name = Nombre del conjunto de AO
 ao-remove-confirm = ¿Quitar esta entrada de AO? Las animaciones originales se conservan. Las carpetas eliminadas van a la Papelera.
 ao-choose = Elegir del inventario
@@ -1637,7 +1633,6 @@ ao-water-shore-exit = Saltar sobre un obstáculo
 ao-swim-slots = Animaciones de natación para este conjunto
 ao-swim-required = Faltan animaciones de natación necesarias.
 ao-swim-required-missing = Necesaria para activar la natación: falta la animación.
-ao-swim-required-present = Necesaria para activar la natación: animación asignada.
 ao-swim-choose = Elija una animación…
 ao-swim-ready = Las animaciones de natación necesarias están asignadas.
 ao-swimming-forward = Nadar en la superficie
@@ -13386,23 +13381,6 @@ bridge-request-http = El simulador rechazó la solicitud del bridge (HTTP { $sta
 bridge-request-gone = La dirección del bridge cambió con la región. Reconectando.
 bridge-request-response = El bridge devolvió un estado ilegible o incompleto. Se vuelve a intentar.
 bridge-request-sequence = La respuesta del bridge no coincide con el comando enviado. Se vuelve a intentar.
-ao-design-title = Estudio de diseño del AO
-ao-design-help = Compare la ventana nativa actual del AO con dos diseños de movimiento. Los controles existentes del AO usan la misma ventana y los mismos widgets.
-ao-design-current = Ventana actual
-ao-design-tabs = Pestañas Animaciones / Movimiento
-ao-design-section = Sección de movimiento plegable
-ao-design-avatar = Estado de vista previa del avatar
-ao-design-animations = Animaciones
-ao-design-movement = Movimiento
-ao-design-swim-animations = Elegir las animaciones de natación en el AO
-ao-design-open = Abrir el AO
-ao-design-reset = Restablecer valores de movimiento
-ao-design-session = Prototipo sin conexión. Los valores de movimiento son temporales; no se cambia ningún motor ni ninguna cuenta en línea.
-ao-design-movement-help = Cada ayuda de movimiento es independiente. La activación del AO controla la reproducción de las animaciones.
-ao-design-animation-help = Las animaciones de natación se seleccionan en los estados de nado del AO, utilizando sus listas de inventario.
-ao-design-passage = Solo vista previa: aquí se enviaría una solicitud de paso de obstáculo.
-ao-tab-animations = Animaciones
-ao-tab-movement = Movimiento (EXPERIMENTAL)
 ao-movement-help = Las ayudas de movimiento se configuran independientemente de las otras animaciones del AO.
 movement-pass-enable = Paso de obstáculos
 movement-fly-help = ×1 mantiene el vuelo normal. Auméntelo hasta ×5 para volar más rápido.
@@ -13442,7 +13420,6 @@ bridge-object-info-result =
     Su posición actual: { $observer }
 bridge-query-timeout = El bridge no devolvió a tiempo la información solicitada. Inténtelo de nuevo.
 bridge-query-interrupted = La solicitud de información se interrumpió por un cambio de región o de conexión del bridge. Inténtelo de nuevo.
-ao-states = Estados
 ao-combine = Combinar…
 ao-combine-title = Combinar animaciones
 ao-new-group = Nuevo grupo
@@ -13457,35 +13434,12 @@ ao-group-example = Un grupo reproduce varias animaciones a la vez. Por ejemplo: 
 ao-track-example = Una pista tiene su propio ciclo junto al ciclo principal. Por ejemplo: alternar gestos de las manos mientras las poses del cuerpo siguen su propio ciclo.
 ao-combine-existing = Mover animaciones aquí desde { $state }
 ao-combine-existing-help = Las animaciones marcadas se eliminarán de la lista principal.
-ao-back-state = ← Volver a { $state }
-ao-group-kind = Grupo · Reproducción simultánea
-ao-track-kind = Pista · Ciclo independiente
 ao-group-explanation = Todas las animaciones de este grupo se reproducen juntas.
-ao-track-explanation = Una animación a la vez, junto al ciclo de { $state }.
 ao-add-group = Añadir al grupo
-ao-add-track = Añadir a la pista
-ao-group-cycle-help = Este grupo es una entrada de la alternancia de { $state }.
 ao-dissolve-group = Desagrupar animaciones
 ao-dissolve-track = Disolver la pista
 ao-combine-empty = Añada animaciones aquí.
-ao-parallel-tracks = Pistas paralelas
 ao-entry-help = Haga clic para elegir o abrir · Arrastre para reordenar
-ao-track-cycle = Alternancia de pistas
-ao-state-cycle = Alternancia de { $state }
-ao-auto-cycle = Cambiar automáticamente
-ao-cycle-interval = Intervalo
-ao-group-summary = { $count ->
-    [one] Grupo · { $count } animación
-   *[other] Grupo · { $count } animaciones juntas
-    }
-ao-track-summary = { $count ->
-    [one] Pista · { $count } animación · Ciclo independiente
-   *[other] Pista · { $count } animaciones · Ciclo independiente
-    }
-ao-group-count = { $count ->
-    [one] { $count } animación para reproducir
-   *[other] { $count } animaciones para reproducir juntas
-    }
 movement-run-speed = Velocidad de carrera
 movement-flight-speed = Velocidad de vuelo
 ao-combine-group-choice = Reproducir varias animaciones juntas

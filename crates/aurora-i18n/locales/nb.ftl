@@ -1569,22 +1569,18 @@ ao-empty = Opprett et sett eller importer et notatkort for å begynne.
 ao-sits = Overstyr sitting
 ao-smart = Smart sitting
 ao-mouselook = Deaktiver stående i førstepersonsvisning
-ao-default = Standardsett
 ao-current = Nåværende tilstand: { $state }
 ao-previous = Forrige animasjon
 ao-next = Neste animasjon
-ao-add = Legg til animasjon
 ao-play-tip = Dobbeltklikk for å velge denne animasjonen
 ao-up = Flytt opp
 ao-down = Flytt ned
 ao-track = Spor
 ao-group = Gruppe
-ao-drop = Legg til eller slipp en animasjon her.
 ao-container-name = Navn på gruppe eller spor
 ao-target = Legg til i: { $name }
 ao-state-root = Hovedtilstand
 ao-cycle = Syklus
-ao-random = Tilfeldig
 ao-set-name = Navn på AO-sett
 ao-remove-confirm = Vil du fjerne denne AO-oppføringen? De opprinnelige animasjonene beholdes. Fjernede mapper flyttes til papirkurven.
 ao-choose = Velg fra beholdningen
@@ -1634,7 +1630,6 @@ ao-water-shore-exit = Sprang opp på et hinder
 ao-swim-slots = Svømmeanimasjoner for dette settet
 ao-swim-required = Nødvendige svømmeanimasjoner mangler.
 ao-swim-required-missing = Nødvendig for å aktivere svømming: animasjon mangler.
-ao-swim-required-present = Nødvendig for å aktivere svømming: animasjon tildelt.
 ao-swim-choose = Velg en animasjon…
 ao-swim-ready = De nødvendige svømmeanimasjonene er tildelt.
 ao-swimming-forward = Svømme i overflaten
@@ -13311,23 +13306,6 @@ bridge-request-http = Simulatoren avviste broforespørselen (HTTP { $status }). 
 bridge-request-gone = Broens adresse ble endret med regionen. Kobler til på nytt.
 bridge-request-response = Broen returnerte en uleselig eller ufullstendig tilstand. Prøver igjen.
 bridge-request-sequence = Svaret fra broen samsvarer ikke med kommandoen som ble sendt. Prøver igjen.
-ao-design-title = Utkast til AO-oppsett
-ao-design-help = Sammenlign det nåværende innebygde AO-vinduet med to oppsett for bevegelse. Eksisterende AO-kontroller bruker det samme vinduet og de samme elementene.
-ao-design-current = Nåværende vindu
-ao-design-tabs = Fanene Animasjoner / Bevegelse
-ao-design-section = Sammenleggbar bevegelsesdel
-ao-design-avatar = Tilstand for avatarforhåndsvisning
-ao-design-animations = Animasjoner
-ao-design-movement = Bevegelse
-ao-design-swim-animations = Velg svømmeanimasjoner i AO
-ao-design-open = Åpne AO
-ao-design-reset = Tilbakestill bevegelsesverdiene
-ao-design-session = Frakoblet prototype. Bevegelsesverdiene er midlertidige; ingen motor eller nettkonto endres.
-ao-design-movement-help = Hvert bevegelseshjelpemiddel er uavhengig. Aktivering av AO styrer avspillingen av animasjoner.
-ao-design-animation-help = Svømmeanimasjoner velges i AO-ens svømmetilstander, med listene fra beholdningen.
-ao-design-passage = Bare forhåndsvisning: en forespørsel om å passere en hindring ville blitt sendt her.
-ao-tab-animations = Animasjoner
-ao-tab-movement = Bevegelse (EKSPERIMENTELT)
 ao-movement-help = Bevegelseshjelpemidlene stilles inn uavhengig av AO-ens andre animasjoner.
 movement-pass-enable = Passering av hindringer
 movement-fly-help = ×1 beholder vanlig flyging. Øk opptil ×5 for å fly raskere.
@@ -13367,7 +13345,6 @@ bridge-object-info-result =
     Din nåværende posisjon: { $observer }
 bridge-query-timeout = Broen returnerte ikke den forespurte informasjonen i tide. Prøv igjen.
 bridge-query-interrupted = Forespørselen om informasjon ble avbrutt av et bytte av region eller brotilkobling. Prøv igjen.
-ao-states = Tilstander
 ao-combine = Kombiner…
 ao-combine-title = Kombiner animasjoner
 ao-new-group = Ny gruppe
@@ -13382,35 +13359,12 @@ ao-group-example = En gruppe spiller av flere animasjoner samtidig. For eksempel
 ao-track-example = Et spor har sin egen syklus ved siden av hovedsyklusen. For eksempel: bytt håndbevegelser mens kroppspositurene følger sin egen syklus.
 ao-combine-existing = Flytt animasjoner hit fra { $state }
 ao-combine-existing-help = Avmerkede animasjoner fjernes fra hovedlisten.
-ao-back-state = ← Tilbake til { $state }
-ao-group-kind = Gruppe · Samtidig avspilling
-ao-track-kind = Spor · Uavhengig syklus
 ao-group-explanation = Alle animasjonene i denne gruppen spilles av samtidig.
-ao-track-explanation = Én animasjon om gangen, ved siden av syklusen for { $state }.
 ao-add-group = Legg til i gruppe
-ao-add-track = Legg til i spor
-ao-group-cycle-help = Denne gruppen er én oppføring i vekslingen for { $state }.
 ao-dissolve-group = Del opp gruppen
 ao-dissolve-track = Oppløs spor
 ao-combine-empty = Legg til animasjoner her.
-ao-parallel-tracks = Parallelle spor
 ao-entry-help = Klikk for å velge eller åpne · Dra for å endre rekkefølgen
-ao-track-cycle = Veksling i sporet
-ao-state-cycle = Veksling for { $state }
-ao-auto-cycle = Bytt automatisk
-ao-cycle-interval = Intervall
-ao-group-summary = { $count ->
-    [one] Gruppe · { $count } animasjon
-   *[other] Gruppe · { $count } animasjoner samtidig
-    }
-ao-track-summary = { $count ->
-    [one] Spor · { $count } animasjon · Uavhengig syklus
-   *[other] Spor · { $count } animasjoner · Uavhengig syklus
-    }
-ao-group-count = { $count ->
-    [one] { $count } animasjon å spille av
-   *[other] { $count } animasjoner å spille av samtidig
-    }
 movement-run-speed = Løpefart
 movement-flight-speed = Flygefart
 ao-combine-group-choice = Spill av flere animasjoner samtidig

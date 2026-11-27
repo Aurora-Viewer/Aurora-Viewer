@@ -15,7 +15,6 @@ impl App {
             if self.frame_count == 600 {
                 self.settings.ao.accounts.entry(self.world.agent_id).or_default().enabled = false;
                 self.settings.bridge.entry(self.world.agent_id).or_default().enabled = false;
-                self.ao_ui.prototype = None;
                 self.release_native_movelock();
             }
             crate::demo::pointing::tick(

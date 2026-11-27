@@ -1736,22 +1736,18 @@ ao-empty = Créez un ensemble ou importez une notecard pour commencer.
 ao-sits = Remplacer l’assise
 ao-smart = Assise intelligente
 ao-mouselook = Désactiver les poses debout en vue subjective
-ao-default = Ensemble par défaut
 ao-current = État actuel : { $state }
 ao-previous = Animation précédente
 ao-next = Animation suivante
-ao-add = Ajouter une animation
 ao-play-tip = Double-cliquer pour choisir cette animation
 ao-up = Monter
 ao-down = Descendre
 ao-track = Piste
 ao-group = Groupe
-ao-drop = Ajoutez ou déposez une animation ici.
 ao-container-name = Nom du groupe ou de la piste
 ao-target = Ajouter dans : { $name }
 ao-state-root = État principal
 ao-cycle = Cycle
-ao-random = Aléatoire
 ao-set-name = Nom de l’ensemble AO
 ao-remove-confirm = Retirer cet élément de l’AO ? Les animations originales sont conservées. Les dossiers retirés vont dans la corbeille.
 ao-choose = Choisir dans l’inventaire
@@ -1801,7 +1797,6 @@ ao-water-shore-exit = Bondir sur un obstacle
 ao-swim-slots = Animations de nage de cet ensemble
 ao-swim-required = Il manque des animations nécessaires à la nage.
 ao-swim-required-missing = Nécessaire pour activer la nage : animation manquante.
-ao-swim-required-present = Nécessaire pour activer la nage : animation renseignée.
 ao-swim-choose = Choisir une animation…
 ao-swim-ready = Les animations nécessaires à la nage sont renseignées.
 ao-swimming-forward = Nage en surface
@@ -13954,25 +13949,8 @@ bridge-request-gone = L’adresse du bridge a changé avec la région. Reconnexi
 bridge-request-response = Le bridge a renvoyé un état illisible ou incomplet. Nouvelle tentative en cours.
 bridge-request-sequence = La réponse du bridge ne correspond pas à la commande envoyée. Nouvelle tentative en cours.
 
-ao-design-title = Maquette de l’AO
-ao-design-help = Comparez la fenêtre native actuelle avec deux dispositions pour les mouvements. Les commandes AO existantes sont identiques.
-ao-design-current = Fenêtre actuelle
-ao-design-tabs = Onglets Animations / Mouvements
-ao-design-section = Section Mouvements repliable
-ao-design-avatar = État de l’avatar en aperçu
-ao-design-animations = Animations
-ao-design-movement = Mouvements
-ao-design-swim-animations = Choisir les animations de nage dans l’AO
-ao-design-open = Ouvrir l’AO
-ao-design-reset = Réinitialiser les mouvements
-ao-design-session = Maquette hors ligne. Les valeurs de mouvement sont temporaires ; aucun moteur ni compte en ligne n’est modifié.
-ao-design-movement-help = Chaque aide au mouvement est indépendante. L’activation de l’AO commande les animations.
-ao-design-animation-help = Les animations de nage se choisissent dans les états de nage de l’AO, avec ses listes d’inventaire.
-ao-design-passage = Aperçu uniquement : une demande de passe-muraille serait envoyée ici.
 
 # Integrated AO movement tab.
-ao-tab-animations = Animations
-ao-tab-movement = Mouvements (EXPERIMENTAL)
 ao-movement-help = Les aides au mouvement se règlent indépendamment des autres animations de l’AO.
 movement-pass-enable = Traverser les obstacles
 movement-fly-help = ×1 conserve le vol normal. Augmentez jusqu’à ×5 pour accélérer le vol.
@@ -14028,7 +14006,6 @@ ao-duplicate-native = { $count ->
 ao-native-already-exists = Un dossier Aurora AO natif existe déjà. Sélectionnez-le dans la fenêtre AO au lieu de le migrer à nouveau.
 
 # Guided AO editor
-ao-states = États
 ao-combine = Combiner…
 ao-combine-title = Combiner des animations
 ao-new-group = Nouveau groupe
@@ -14043,35 +14020,12 @@ ao-group-example = Un groupe joue plusieurs animations ensemble. Exemple : une p
 ao-track-example = Une piste possède son propre cycle, en parallèle du cycle principal. Exemple : alterner des gestes des mains pendant les postures du corps.
 ao-combine-existing = Y déplacer des animations de { $state }
 ao-combine-existing-help = Les animations cochées seront retirées de la liste principale.
-ao-back-state = ← Retour à { $state }
-ao-group-kind = Groupe · Lecture simultanée
-ao-track-kind = Piste · Cycle indépendant
 ao-group-explanation = Toutes les animations du groupe se jouent ensemble.
-ao-track-explanation = Une animation à la fois, en parallèle du cycle de { $state }.
 ao-add-group = Ajouter au groupe
-ao-add-track = Ajouter à la piste
-ao-group-cycle-help = Ce groupe forme une seule entrée dans l’alternance de { $state }.
 ao-dissolve-group = Dissocier le groupe
 ao-dissolve-track = Dissocier la piste
 ao-combine-empty = Ajoutez des animations ici.
-ao-parallel-tracks = Pistes en parallèle
 ao-entry-help = Cliquer pour choisir ou ouvrir · Glisser pour réorganiser
-ao-track-cycle = Alternance de la piste
-ao-state-cycle = Alternance de { $state }
-ao-auto-cycle = Alterner automatiquement
-ao-cycle-interval = Intervalle
-ao-group-summary = { $count ->
-    [one] Groupe · { $count } animation
-   *[other] Groupe · { $count } animations ensemble
-    }
-ao-track-summary = { $count ->
-    [one] Piste · { $count } animation · Cycle indépendant
-   *[other] Piste · { $count } animations · Cycle indépendant
-    }
-ao-group-count = { $count ->
-    [one] { $count } animation à jouer
-   *[other] { $count } animations à jouer ensemble
-    }
 movement-run-speed = Vitesse de course
 movement-flight-speed = Vitesse de vol
 ao-combine-group-choice = Jouer plusieurs animations ensemble
@@ -16906,3 +16860,148 @@ phototools-director-lens = L'objectif du Réalisateur est affiché tant que sa f
 phototools-view-angle-viewfinder = Le viseur gère l'angle de vue : le vôtre revient à sa fermeture.
 ui-options-dof-show-focus-point = Afficher le point de mise au point
 ui-options-dof-show-focus-point-help = Une petite croix sur le point où l'objectif fait la mise au point : jaune quand il est libre, rouge quand il est verrouillé.
+
+# AO window, one page per group (2026-11-27)
+ao-status-on = AO activé
+ao-status-off = AO désactivé
+ao-status-paused = En pause
+ao-turn-on = Activer l’AO
+ao-turn-off = Désactiver l’AO
+ao-resume = Reprendre
+ao-no-set = Aucun ensemble
+ao-no-set-line = Créez-en un pour commencer
+ao-set-count = { $count ->
+    [one] { $count } ensemble
+   *[other] { $count } ensembles
+    }
+ao-animation-count = { $count ->
+    [one] { $count } animation
+   *[other] { $count } animations
+    }
+ao-loads-at-login = Chargé à la connexion
+ao-sets-tip = Changer d’ensemble, ou en créer un
+ao-your-sets = Vos ensembles
+ao-in-use = Utilisé
+ao-set-more = Plus pour cet ensemble
+ao-load-at-login = Charger à la connexion
+ao-delete-set = Supprimer…
+ao-delete-set-confirm = Supprimer « { $set } » ? Ses animations restent dans votre inventaire.
+ao-sits-line = Vos assises, même sur les meubles
+ao-smart-line = Un meuble qui a sa propre pose la garde
+ao-mouselook-line = Rester immobile pendant que vous visez
+ao-migrate-link = Importer des ensembles d’un autre viewer…
+ao-all-slots = Tous les emplacements
+ao-essentials = Essentiels
+ao-all-slots-hint = Tous les emplacements de votre AO, { $count } au total.
+ao-essentials-hint = Seulement les { $count } animations principales que tout le monde remarque.
+ao-category-general-line = Debout, assis et en train d’écrire
+ao-category-ground-line = Marche, course et rotations
+ao-category-jumping-line = Sauts et atterrissages
+ao-category-flight-line = Se déplacer dans les airs
+ao-category-water-line = Utile seulement si vous activez la nage
+ao-tab-movement-short = Mouvements
+ao-movement-line = Accélérations de course, de vol et de nage
+ao-movement-intro = Chaque amélioration est indépendante. La physique du simulateur et la latence peuvent limiter les vitesses.
+ao-experimental = Expérimental
+ao-of-filled = sur { $total } remplis
+ao-animations-word = { $count ->
+    [one] animation
+   *[other] animations
+    }
+ao-from-creators = { $count ->
+    [one] de { $count } créateur
+   *[other] de { $count } créateurs
+    }
+ao-none-yet = Aucune pour l’instant
+ao-still-empty = encore vides
+ao-all-filled = Tous les emplacements sont remplis
+ao-go-to = Aller à { $slot }
+ao-open-movement = Réglages des mouvements
+ao-swimming-switch = Nage
+ao-page-hint = Glissez des animations de votre inventaire sur un emplacement. Cliquez sur un emplacement pour le modifier.
+ao-slot-default = Animation par défaut
+ao-slot-empty-hint = L’animation de Second Life joue · déposez-en une ici
+ao-more-count = +{ $count } autres
+ao-playing-now = En cours
+ao-playing = En cours
+ao-together = Ensemble
+ao-main = Principale
+ao-new-layer = Nouvelle couche : joue par-dessus, avec ses propres tours
+ao-layer-line = { $layer } joue par-dessus la liste principale.
+ao-remove-layer = Retirer cette couche
+ao-turns-solo = Ajoutez une deuxième animation et elles joueront à tour de rôle.
+ao-turns-manual = Vous les changez vous-même
+ao-turns-every = Passe à la suivante toutes les
+ao-turns-auto = Auto : la suivante quand celle-ci se termine
+ao-seconds-suffix = { " s" }
+ao-auto = Auto
+ao-two-minutes = 2 min
+ao-order-in-order = Dans l’ordre
+ao-order-shuffle = Aléatoire
+ao-order-manual = Manuel
+ao-order-in-order-line = L’une après l’autre, depuis le haut
+ao-order-shuffle-line = Une au hasard à chaque fois
+ao-order-manual-line = Seulement quand vous choisissez
+ao-up-next = Suivante : { $name }
+ao-stays-on = Reste sur : { $name }
+ao-next-tip = Jouer la suivante maintenant
+ao-preview = Aperçu
+ao-preview-stage = Votre avatar joue l’animation ici, seulement sur votre écran.
+ao-preview-place = { $index } sur { $count }
+ao-preview-none = Rien à prévisualiser pour l’instant
+ao-preview-play = Lire
+ao-preview-pause = Mettre l’aperçu en pause
+ao-preview-previous = Animation précédente
+ao-preview-next = Animation suivante
+ao-drop-box = Déposez des animations ici, ou cliquez pour choisir
+ao-combine-tip = Faire jouer des animations de cet emplacement ensemble, ou en couche
+ao-line-standing = Quand vous restez immobile
+ao-line-standing-up = En se levant d’une assise
+ao-line-sitting = Sur les chaises et les objets
+ao-line-ground-sit = Sans objet
+ao-line-typing = Pendant que vous écrivez dans le chat
+ao-line-always = Joue sous tout le reste
+ao-line-walking = Quand vous marchez
+ao-line-running = Quand vous courez
+ao-line-crouching = Accroupi
+ao-line-crouch-walk = En se déplaçant accroupi
+ao-line-turning = En tournant sur place
+ao-line-pre-jumping = Juste avant un saut
+ao-line-jumping = En l’air
+ao-line-falling = En tombant
+ao-line-soft-landing = Après une courte chute
+ao-line-landing = Après une longue chute
+ao-line-flying = En volant vers l’avant
+ao-line-flying-slow = À faible vitesse
+ao-line-hovering = Immobile dans les airs
+ao-line-flying-up = En montant
+ao-line-flying-down = En descendant
+ao-line-floating = Immobile à la surface
+ao-line-swimming-forward = En avançant à la surface
+ao-line-underwater-swimming = En avançant sous l’eau
+ao-line-swimming-up = En remontant sous l’eau
+ao-line-swimming-down = En plongeant plus profond
+ao-line-underwater-floating = Immobile sous l’eau
+ao-line-water-entry = En entrant dans l’eau
+ao-line-water-flight-exit = Hors de l’eau, dans les airs
+ao-line-water-shore-exit = Hors de l’eau, sur un rebord
+ao-line-water-dive-jump = En sautant la tête la première
+ao-line-water-dive-entry = En touchant l’eau
+ao-line-water-cannonball = En sautant recroquevillé
+ao-line-swimming-style = Style de nage
+ao-welcome = Bienvenue dans votre AO
+ao-welcome-title = Donnez à votre avatar sa propre façon de bouger
+ao-welcome-body = Un AO remplace les animations par défaut de Second Life (debout, marche, assise…) par des animations qui vous appartiennent. Tout le monde autour de vous les voit.
+ao-welcome-step-1 = Ouvrez un groupe
+ao-welcome-step-1-line = Général, Au sol, Sauts… à gauche.
+ao-welcome-step-2 = Glissez des animations sur ses emplacements
+ao-welcome-step-2-line = Directement depuis votre inventaire. Regardez-les dans l’aperçu.
+ao-welcome-step-3 = Activez votre AO
+ao-welcome-step-3-line = Avec le bouton d’alimentation en haut de cette fenêtre.
+ao-welcome-name = Nommez votre premier ensemble
+ao-welcome-default-name = Mon premier ensemble
+ao-welcome-create = Créer mon ensemble
+ao-welcome-migrate = Importer un ensemble du Legacy Viewer ou d’Alchemy
+ao-welcome-library = Pas encore d’animations ? Commencez par celles, gratuites, de votre Bibliothèque. Les animations achetées sur la Marketplace arrivent dans votre inventaire.
+ao-layer-earlier = Déplacer cette couche avant
+ao-layer-later = Déplacer cette couche après

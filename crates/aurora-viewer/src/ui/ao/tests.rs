@@ -156,15 +156,17 @@ impl Fixture {
     }
 }
 
-#[test]
-fn ao_cycle_footer_is_fully_visible_after_scrolling_with_large_text() {
-    fn collect(shape: &egui::Shape, text: &str, out: &mut Vec<egui::Rect>) {
-        match shape {
-            egui::Shape::Text(t) if t.galley.text() == text => out.push(egui::Rect::from_min_size(t.pos, t.galley.size())),
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, text, out)),
-            _ => {}
-        }
+/// Text shapes' rects, by their exact text.
+fn text_rects(shape: &egui::Shape, text: &str, out: &mut Vec<egui::Rect>) {
+    match shape {
+        egui::Shape::Text(t) if t.galley.text() == text => out.push(egui::Rect::from_min_size(t.pos, t.galley.size())),
+        egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| text_rects(s, text, out)),
+        _ => {}
     }
+}
+
+#[test]
+fn ao_drop_box_is_fully_visible_after_scrolling_with_large_text() {
     let mut f = Fixture::new();
     f.inv = Inventory::default();
     f.account.selected = crate::ao::demo::seed_interface(&mut f.inv, Uuid::from_u128(1), "interface");
@@ -176,15 +178,8 @@ fn ao_cycle_footer_is_fully_visible_after_scrolling_with_large_text() {
     for _ in 0..40 {
         f.draw(Vec::new());
     }
-    let mut headings = Vec::new();
-    for shape in f.draw(Vec::new()).1 {
-        collect(&shape.shape, State::Standing.label(), &mut headings);
-    }
-    let heading = headings
-        .into_iter()
-        .max_by(|a, b| a.left().total_cmp(&b.left()))
-        .expect("detail heading");
-    let at = egui::pos2(heading.left() + 40.0, heading.bottom() + 300.0);
+    let window = f.ctx.memory(|m| m.area_rect(egui::Id::unique("ao"))).expect("AO shown");
+    let at = window.center();
     for _ in 0..30 {
         f.draw(vec![
             egui::Event::PointerMoved(at),
@@ -197,57 +192,75 @@ fn ao_cycle_footer_is_fully_visible_after_scrolling_with_large_text() {
             },
         ]);
     }
+    // The open slot is the first of the page: its drop box can be scrolled
+    // back into view at the top, whole.
+    for _ in 0..30 {
+        f.draw(vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, 1000.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
+                modifiers: Default::default(),
+            },
+        ]);
+    }
     let mut found = false;
     for shape in f.draw(Vec::new()).1 {
         let mut labels = Vec::new();
-        collect(&shape.shape, aurora_i18n::tr!("common-apply"), &mut labels);
+        text_rects(&shape.shape, aurora_i18n::tr!("ao-drop-box"), &mut labels);
         for rect in labels {
             found = true;
             assert!(
                 shape.clip_rect.contains_rect(rect),
-                "the complete Apply label stays inside the scroll viewport: {rect:?} in {:?}",
+                "the drop box label stays inside the page: {rect:?} in {:?}",
                 shape.clip_rect
             );
         }
     }
-    assert!(found, "the cycle footer is visible at the end of the detail pane");
+    assert!(found, "the open slot's drop box is visible");
 }
 
 #[test]
-fn ao_group_and_track_rows_keep_their_summary_line() {
-    fn galley(shape: &egui::Shape, text: &str) -> Option<std::sync::Arc<egui::Galley>> {
-        match shape {
-            egui::Shape::Text(t) if t.galley.text() == text => Some(t.galley.clone()),
-            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| galley(s, text)),
-            _ => None,
-        }
+fn ao_groups_show_their_members_together_and_layers_are_tabs() {
+    let mut f = Fixture::new();
+    f.inv = Inventory::default();
+    f.account.selected = crate::ao::demo::seed_interface(&mut f.inv, Uuid::from_u128(1), "interface-group");
+    f.catalog = Default::default();
+    f.catalog.refresh(&mut f.inv);
+    f.settle();
+    let c = &f.catalog.selected(f.account.selected).expect("set").states[&State::Standing];
+    let group = c.steps.iter().find(|s| s.group).expect("group");
+    let members: Vec<String> = group.members.iter().map(|m| m.name.clone()).collect();
+    assert!(
+        shows_text(&mut f, &aurora_i18n::tr!("ao-together").to_uppercase()),
+        "a group is marked as playing together"
+    );
+    for name in &members {
+        assert!(shows_text(&mut f, name), "the group's member {name} is named in its row");
     }
-    for mode in ["interface-group", "interface-track"] {
-        let mut f = Fixture::new();
-        f.inv = Inventory::default();
-        f.account.selected = crate::ao::demo::seed_interface(&mut f.inv, Uuid::from_u128(1), mode);
-        f.catalog = Default::default();
-        f.catalog.refresh(&mut f.inv);
-        f.settle();
-        let c = &f.catalog.selected(f.account.selected).expect("set").states[&State::Standing];
-        let (name, count) = if mode == "interface-group" {
-            let group = c.steps.iter().find(|s| s.group).expect("group");
-            (group.name.clone(), group.members.len())
-        } else {
-            let track = c.tracks.first().expect("track");
-            (track.name.clone(), track.members.len())
-        };
-        let summary = if mode == "interface-group" {
-            aurora_i18n::tr!("ao-group-summary", count = count)
-        } else {
-            aurora_i18n::tr!("ao-track-summary", count = count)
-        };
-        let text = format!("{name}\n{summary}");
-        let shapes = f.draw(Vec::new()).1;
-        let text = shapes.iter().find_map(|s| galley(&s.shape, &text)).expect("group/track row");
-        assert_eq!(text.rows.len(), 2, "{mode}: name and summary are separate visible rows");
-        assert!(!text.elided, "{mode}: the summary is not elided");
-    }
+
+    let mut f = Fixture::new();
+    f.inv = Inventory::default();
+    f.account.selected = crate::ao::demo::seed_interface(&mut f.inv, Uuid::from_u128(1), "interface-track");
+    f.catalog = Default::default();
+    f.catalog.refresh(&mut f.inv);
+    f.settle();
+    let track = f.catalog.selected(f.account.selected).expect("set").states[&State::Standing]
+        .tracks
+        .first()
+        .expect("track")
+        .clone();
+    assert!(f.click(&track.name).is_empty(), "the layer is a tab of the slot");
+    assert_eq!(f.state.container, Some(track.id));
+    f.click(aurora_i18n::tr!("ao-main"));
+    assert_eq!(f.state.container, None);
+}
+
+/// Opens the entry card of a main-list row by its name.
+fn open_entry(f: &mut Fixture, name: &str) {
+    assert!(f.click(name).is_empty(), "opening an entry sends nothing");
 }
 
 #[test]
@@ -264,7 +277,7 @@ fn ao_manager_at_reduced_ui_scale_keeps_its_size() {
             set.states.get_mut(&State::Standing).expect("standing").steps[0].name = super::super::widgets::elide_tests::LONG.repeat(4);
         }
         f.ctx.set_zoom_factor(zoom);
-        super::super::widgets::place_floater(&f.ctx, "ao", egui::pos2(40.0, 40.0), egui::vec2(560.0, 760.0));
+        super::super::widgets::place_floater(&f.ctx, "ao", egui::pos2(40.0, 40.0), egui::vec2(1240.0, 760.0));
         let mut rects = Vec::new();
         for _ in 0..120 {
             f.draw(Vec::new());
@@ -278,7 +291,7 @@ fn ao_manager_at_reduced_ui_scale_keeps_its_size() {
             rects[119]
         );
         let before = rects[119];
-        super::super::widgets::place_floater(&f.ctx, "ao", before.min, egui::vec2(440.0, 560.0));
+        super::super::widgets::place_floater(&f.ctx, "ao", before.min, egui::vec2(900.0, 600.0));
         rects.clear();
         for _ in 0..30 {
             f.draw(Vec::new());
@@ -289,49 +302,24 @@ fn ao_manager_at_reduced_ui_scale_keeps_its_size() {
             "AO at scale {zoom} grows after resizing"
         );
         assert!(rects[29].width() < before.width() - 40.0, "AO at scale {zoom} can be made narrower");
-        let texture = super::super::icons::global("trash-filled").expect("remove icon").id();
-        let mut icons = Vec::new();
-        fn collect(shape: &egui::Shape, texture: egui::TextureId, icons: &mut Vec<egui::Rect>) {
-            match shape {
-                egui::Shape::Mesh(mesh) if mesh.texture_id == texture => icons.push(mesh.calc_bounds()),
-                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, texture, icons)),
-                _ => {}
-            }
-        }
+        let c = &f.catalog.selected(f.account.selected).expect("set").states[&State::Standing];
+        let (first, name) = (c.steps[1].id, c.steps[1].name.clone());
+        open_entry(&mut f, &name);
+        let mut labels = Vec::new();
         for shape in f.draw(Vec::new()).1 {
-            collect(&shape.shape, texture, &mut icons);
+            text_rects(&shape.shape, aurora_i18n::tr!("common-remove"), &mut labels);
         }
-        assert_eq!(icons.len(), 3, "set and both animation removal buttons");
         assert!(
-            icons.iter().all(|r| rects[29].contains_rect(*r)),
-            "AO at scale {zoom}: removal icons stay in the window"
+            labels.iter().all(|r| rects[29].contains_rect(*r)) && !labels.is_empty(),
+            "AO at scale {zoom}: the entry's Remove stays in the window"
         );
-        let first = f.catalog.selected(f.account.selected).expect("set").states[&State::Standing].steps[0].id;
-        let out = f.click_at(icons[1].center());
+        let out = f.click(aurora_i18n::tr!("common-remove"));
         assert!(
             matches!(&out[..], [Action::Edit(change, None)]
                 if matches!(&change.operations[..], [Operation::Delete { id, folder: false }] if *id == first)),
-            "the first animation's removal button is accessible"
+            "the entry's removal button is accessible"
         );
     }
-}
-
-/// The removal buttons of the AO window, top to bottom: the set's, then one
-/// per row of the list.
-fn trash_icons(f: &mut Fixture) -> Vec<egui::Rect> {
-    fn collect(shape: &egui::Shape, texture: egui::TextureId, icons: &mut Vec<egui::Rect>) {
-        match shape {
-            egui::Shape::Mesh(mesh) if mesh.texture_id == texture => icons.push(mesh.calc_bounds()),
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, texture, icons)),
-            _ => {}
-        }
-    }
-    let texture = super::super::icons::global("trash-filled").expect("remove icon").id();
-    let mut icons = Vec::new();
-    for shape in f.draw(Vec::new()).1 {
-        collect(&shape.shape, texture, &mut icons);
-    }
-    icons
 }
 
 /// #3675: the trash button of an animation asked first, and the reporter never
@@ -340,15 +328,14 @@ fn trash_icons(f: &mut Fixture) -> Vec<egui::Rect> {
 #[test]
 fn an_animation_is_removed_at_once_and_the_next_one_too() {
     let mut f = Fixture::new();
-    let steps: Vec<Uuid> = f.catalog.selected(f.account.selected).expect("set").states[&State::Standing]
+    let steps: Vec<(Uuid, String)> = f.catalog.selected(f.account.selected).expect("set").states[&State::Standing]
         .steps
         .iter()
-        .map(|s| s.id)
+        .map(|s| (s.id, s.name.clone()))
         .collect();
-    let icons = trash_icons(&mut f);
-    assert_eq!(icons.len(), 1 + steps.len(), "the set's button, then one per animation");
-    for (icon, step) in icons[1..].iter().zip(&steps) {
-        let out = f.click_at(icon.center());
+    for (step, name) in &steps {
+        open_entry(&mut f, name);
+        let out = f.click(aurora_i18n::tr!("common-remove"));
         let [Action::Edit(change, None)] = out.as_slice() else {
             panic!("one inventory edit per click")
         };
@@ -358,19 +345,65 @@ fn an_animation_is_removed_at_once_and_the_next_one_too() {
     }
 }
 
-/// #3675: a set and a group are folders, they still ask. The question opens
-/// above the AO window each time, and unfolded when it was left minimized.
+/// #3675: a set and a group are folders, they still ask. A set asks in place,
+/// in "Your sets"; a group's question opens above the AO window each time,
+/// and unfolded when it was left minimized.
 #[test]
-fn removing_a_set_or_a_group_asks_on_top_of_the_ao_window() {
+fn removing_a_set_or_a_group_asks_first() {
     let mut f = Fixture::new();
-    // the AO window over the place where the question opens
-    super::super::widgets::place_floater(&f.ctx, "ao", egui::pos2(200.0, 100.0), egui::vec2(560.0, 760.0));
+    super::super::widgets::place_floater(&f.ctx, "ao", egui::pos2(100.0, 60.0), egui::vec2(1240.0, 760.0));
     f.settle();
+    let set = f.account.selected;
+    let name = f.catalog.selected(set).expect("set").name.clone();
+    f.click(&name);
+    assert!(f.state.sets_open, "the set card opens Your sets");
+    f.click_icon("dots");
+    assert!(
+        f.click(aurora_i18n::tr!("ao-delete-set")).is_empty(),
+        "nothing is sent before the answer"
+    );
+    assert_eq!(f.state.confirm_delete, Some(set));
+    assert!(f.click(aurora_i18n::tr!("common-cancel")).is_empty());
+    assert_eq!(f.state.confirm_delete, None);
+    f.click_icon("dots");
+    f.click(aurora_i18n::tr!("ao-delete-set"));
+    let out = f.click(aurora_i18n::tr!("common-delete"));
+    let expected = inventory::remove(&f.inv, set).expect("set removal plan");
+    assert!(
+        matches!(&out[..], [Action::Edit(change, None)] if change.operations.len() == expected.operations.len()),
+        "the set's folder goes once confirmed, with the same plan as before"
+    );
+    assert_eq!(f.state.confirm_delete, None);
+    f.state.sets_open = false;
+    f.settle();
+
+    // a group of animations is a folder too
     let question = egui::LayerId::new(egui::Order::Middle, egui::Id::unique("ao_remove"));
+    let chosen = std::collections::HashSet::from([steps_of(&f)[0]]);
+    let (change, _) = inventory::editor::combine(
+        &f.inv,
+        f.catalog.selected(f.account.selected).expect("set"),
+        State::Standing,
+        "Together",
+        false,
+        &chosen,
+    )
+    .expect("group");
+    crate::world::inventory::actions::demo_mutate(&mut f.inv, Uuid::from_u128(1), change).expect("server ack");
+    f.catalog.invalidate();
+    f.catalog.refresh(&mut f.inv);
+    f.settle();
+    let steps = steps_of(&f);
+    let group = steps
+        .iter()
+        .copied()
+        .find(|id| f.inv.folders.contains_key(id))
+        .expect("the group is a folder");
+    f.state.open_entry = Some(group);
     for round in 0..2 {
-        let icons = trash_icons(&mut f);
-        assert!(f.click_at(icons[0].center()).is_empty(), "nothing is sent before the answer");
-        assert_eq!(f.state.remove, Some(f.account.selected));
+        f.settle();
+        assert!(f.click(aurora_i18n::tr!("common-remove")).is_empty(), "a group asks first");
+        assert_eq!(f.state.remove, Some(group));
         f.draw(Vec::new());
         let rect = f.ctx.memory(|m| m.area_rect(question.id)).expect("the question is drawn");
         let window = f.ctx.memory(|m| m.area_rect(egui::Id::unique("ao"))).expect("AO shown");
@@ -389,41 +422,11 @@ fn removing_a_set_or_a_group_asks_on_top_of_the_ao_window() {
             .data_mut(|d| d.insert_persisted(egui::Id::unique(("ao_remove", "minimized")), true));
     }
     assert!(super::super::widgets::floater_minimized(&f.ctx, "ao_remove"));
-    let icons = trash_icons(&mut f);
-    f.click_at(icons[0].center());
+    f.click(aurora_i18n::tr!("common-remove"));
     assert!(
         !super::super::widgets::floater_minimized(&f.ctx, "ao_remove"),
         "the question opens unfolded"
     );
-    f.click(aurora_i18n::tr!("common-cancel"));
-
-    // a group of animations is a folder too
-    let chosen = std::collections::HashSet::from([steps_of(&f)[0]]);
-    let (change, _) = inventory::editor::combine(
-        &f.inv,
-        f.catalog.selected(f.account.selected).expect("set"),
-        State::Standing,
-        "Together",
-        false,
-        &chosen,
-    )
-    .expect("group");
-    crate::world::inventory::actions::demo_mutate(&mut f.inv, Uuid::from_u128(1), change).expect("server ack");
-    f.catalog.invalidate();
-    f.catalog.refresh(&mut f.inv);
-    f.settle();
-    let steps = steps_of(&f);
-    let group = steps
-        .iter()
-        .position(|id| f.inv.folders.contains_key(id))
-        .expect("the group is a folder");
-    let icons = trash_icons(&mut f);
-    assert_eq!(icons.len(), 1 + steps.len());
-    assert!(f.click_at(icons[1 + group].center()).is_empty(), "a group asks first");
-    assert_eq!(f.state.remove, Some(steps[group]));
-    f.draw(Vec::new());
-    let rect = f.ctx.memory(|m| m.area_rect(question.id)).expect("the question is drawn");
-    assert_eq!(f.ctx.layer_id_at(rect.center()), Some(question));
 }
 
 fn steps_of(f: &Fixture) -> Vec<Uuid> {
@@ -438,8 +441,8 @@ fn steps_of(f: &Fixture) -> Vec<Uuid> {
 fn ao_manager_keeps_its_size_across_frames() {
     super::super::widgets::steady_tests::assert_window_steady(
         "ao",
-        &[egui::vec2(560.0, 760.0), egui::vec2(440.0, 560.0)],
-        aurora_i18n::tr!("ao-add"),
+        &[egui::vec2(1240.0, 760.0), egui::vec2(900.0, 600.0)],
+        aurora_i18n::tr!("ao-main"),
         Fixture::new,
         |f, ctx, p| {
             show(
@@ -461,15 +464,20 @@ fn ao_manager_keeps_its_size_across_frames() {
 }
 
 #[test]
-fn enable_label_and_pause_change_runtime_without_inventory_writes() {
+fn power_pause_and_stands_change_runtime_without_inventory_writes() {
     let mut f = Fixture::new();
-    let out = f.click(aurora_i18n::tr!("ao-enabled"));
+    let out = f.click_icon("power");
     assert!(f.account.enabled);
     assert!(matches!(&out[..], [Action::Preferences]));
-    assert!(f.click(aurora_i18n::tr!("ao-pause")).is_empty());
+    assert!(f.click_icon("player-pause-filled").is_empty());
     assert!(f.runtime.paused);
+    assert!(f.click_icon("player-play-filled").is_empty());
+    assert!(!f.runtime.paused);
     assert!(f.click(aurora_i18n::tr!("ao-stands")).is_empty());
     assert!(!f.runtime.stands);
+    let out = f.click_icon("power");
+    assert!(!f.account.enabled);
+    assert!(matches!(&out[..], [Action::Preferences]));
 }
 
 #[test]
@@ -482,7 +490,9 @@ fn firestorm_migration_is_explicit_cancellable_and_keeps_native_selection_until_
     let selected = f.account.selected;
     let generation = f.inv.generation;
     assert!(f.state.migration.is_none());
-    assert!(f.click(aurora_i18n::tr!("ao-migrate")).is_empty());
+    f.state.sets_open = true;
+    f.settle();
+    assert!(f.click(aurora_i18n::tr!("ao-migrate-link")).is_empty());
     f.state.migration.as_mut().expect("picker").refresh(&mut f.inv, true);
     f.settle();
     assert!(
@@ -511,7 +521,9 @@ fn alchemy_choice_lists_its_sets_and_migrates_one_without_inventory_writes() {
     f.catalog = Default::default();
     f.catalog.refresh(&mut f.inv);
     let generation = f.inv.generation;
-    assert!(f.click(aurora_i18n::tr!("ao-migrate")).is_empty());
+    f.state.sets_open = true;
+    f.settle();
+    assert!(f.click(aurora_i18n::tr!("ao-migrate-link")).is_empty());
     f.state.migration.as_mut().expect("picker").refresh(&mut f.inv, true);
     f.settle();
     assert!(f.click(aurora_i18n::tr!("ao-migrate-alchemy")).is_empty());
@@ -531,13 +543,21 @@ fn alchemy_choice_lists_its_sets_and_migrates_one_without_inventory_writes() {
 #[test]
 fn rename_updates_existing_folder_and_new_set_creates_a_distinct_set() {
     let mut f = Fixture::new();
+    f.state.sets_open = true;
+    f.state.renaming = Some(f.account.selected);
     f.state.name = "Renamed".into();
-    f.state.new_dialog = Some(SetDialog::Rename);
     f.settle();
-    let out = f.click(aurora_i18n::tr!("common-save"));
+    let enter = egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    };
+    let out = f.draw(vec![enter]).0;
     assert!(matches!(&out[..], [Action::Edit(change, None)] if matches!(&change.operations[..],
         [Operation::Patch { id, folder: true, .. }] if *id == f.account.selected)));
-    assert!(f.state.new_dialog.is_none());
+    assert!(f.state.renaming.is_none());
     f.state.name = "New set".into();
     f.state.new_dialog = Some(SetDialog::New);
     f.settle();
@@ -550,7 +570,7 @@ fn animation_picker_links_into_selected_state_and_import_blocks_edits() {
     let mut f = Fixture::new();
     f.state.state = State::Walking;
     let folder = f.catalog.selected(f.account.selected).expect("set").states[&State::Walking].folder;
-    f.click(aurora_i18n::tr!("ao-add"));
+    f.click(aurora_i18n::tr!("ao-drop-box"));
     assert_eq!(f.state.picker, Some(false));
     f.state.filter = "Type".into();
     f.settle();
@@ -560,7 +580,7 @@ fn animation_picker_links_into_selected_state_and_import_blocks_edits() {
     assert!(f.state.picker.is_none());
     f.state.import_folder = Some(crate::ao::demo::NOTECARD);
     f.settle();
-    assert!(f.click(aurora_i18n::tr!("ao-add")).is_empty());
+    assert!(f.click(aurora_i18n::tr!("ao-drop-box")).is_empty());
     assert!(f.state.picker.is_none(), "busy controls must not dispatch concurrent changes");
 }
 
@@ -601,45 +621,15 @@ fn open_animation_and_notecard_pickers_reorder_when_inventory_sort_changes() {
 }
 
 #[test]
-fn design_movement_switches_are_independent_of_ao_and_never_write_inventory() {
-    let mut f = Fixture::new();
-    f.state.prototype = Some(prototype::Prototype::new("design-movement"));
-    f.settle();
-    assert!(f.click(aurora_i18n::tr!("movement-running")).is_empty());
-    let draft = f.state.prototype.as_ref().expect("design");
-    assert!(draft.movement.running && !draft.movement.fly_assist && !draft.movement.swimming);
-    assert!(!f.account.enabled);
-    assert!(f.click(aurora_i18n::tr!("ao-design-animations")).is_empty());
-    assert!(matches!(&f.click(aurora_i18n::tr!("ao-enabled"))[..], [Action::Preferences]));
-    assert!(f.state.prototype.as_ref().expect("design").movement.running);
-}
-
-#[test]
-fn design_swimming_choice_returns_to_the_actual_ao_state_editor() {
-    let mut f = Fixture::new();
-    f.state.prototype = Some(prototype::Prototype::new("design-movement"));
-    f.settle();
-    assert!(f.click(aurora_i18n::tr!("ao-design-swim-animations")).is_empty());
-    assert_eq!(f.state.state, State::SwimmingForward);
-    let draft = f.state.prototype.as_mut().expect("design");
-    assert_eq!(draft.tab, 0);
-    assert!(draft.underwater());
-    let now = std::time::Instant::now();
-    let first = draft.signal(now);
-    let later = draft.signal(now + std::time::Duration::from_secs(1));
-    assert_eq!(first, later, "a preview must not restart its animation every frame");
-}
-
-#[test]
 fn movement_tab_preserves_independent_preferences_without_enabling_ao() {
     let mut f = Fixture::new();
-    f.click(aurora_i18n::tr!("ao-tab-movement"));
+    f.click(aurora_i18n::tr!("ao-tab-movement-short"));
     assert_eq!(f.state.tab, 1);
     let actions = f.click(aurora_i18n::tr!("movement-running"));
     assert!(f.movement_prefs.running);
     assert!(!f.account.enabled);
     assert!(matches!(actions.as_slice(), [Action::MovementPreferences]));
-    f.click(aurora_i18n::tr!("ao-tab-animations"));
+    f.click(super::category::Category::General.label());
     assert_eq!(f.state.tab, 0);
     assert_eq!(f.state.state, State::Standing);
 }
@@ -784,7 +774,7 @@ fn water_control_hints_follow_rebound_secondary_modified_mouse_and_unassigned_ke
     // same cap the water hints draw.
     let modifier = |binding: &Binding| binding.caps().into_iter().next().expect("modifier cap").label;
     let mut f = Fixture::new();
-    f.click(aurora_i18n::tr!("ao-tab-movement"));
+    f.click(aurora_i18n::tr!("ao-tab-movement-short"));
     f.settle();
     let initial = contents(&mut f);
     let passage = Binding::captured(
@@ -854,7 +844,8 @@ fn both_water_states_use_the_normal_list_and_combination_editor() {
         f.state.combination = None;
         f.state.container = None;
         f.settle();
-        assert!(f.click(aurora_i18n::tr!("ao-combine")).is_empty());
+        // the slot's "+" opens the guided editor for a new layer
+        assert!(f.click_icon("plus").is_empty());
         assert_eq!(f.state.combination.as_ref().expect("ordinary combination editor").state, state);
     }
 }
@@ -901,8 +892,9 @@ fn swimming_rail_marks_only_required_slots_and_clears_the_warning_when_ready() {
         icon_rects(&s.shape, palette.warn, &mut warning_icons);
         icon_rects(&s.shape, palette.success, &mut ready_icons);
     }
+    // The slot's mark comes before its name.
     let beside = |icon: &egui::Rect, row: egui::Rect| {
-        (icon.center().y - row.center().y).abs() < 1.0 && icon.left() > row.right() && icon.left() < row.right() + 150.0
+        (icon.center().y - row.center().y).abs() < 2.0 && icon.right() <= row.left() && icon.right() > row.left() - 40.0
     };
     assert!(warning_icons.iter().any(|icon| beside(icon, row(State::Floating))));
     assert!(ready_icons.iter().any(|icon| beside(icon, row(State::SwimmingForward))));
@@ -1036,7 +1028,9 @@ fn categories_keep_every_state_and_restore_the_previous_selection() {
     f.click(State::Running.label());
     assert_eq!(f.state.state, State::Running);
     f.click(Category::General.label());
-    f.click(State::Always.label());
+    // Always is the last slot of General, below the open one.
+    f.state.select_state(State::Always);
+    f.settle();
     f.click(Category::Ground.label());
     assert_eq!(f.state.state, State::Running, "walking and running share one category");
     f.click(Category::General.label());
