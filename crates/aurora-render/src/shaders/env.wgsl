@@ -1583,15 +1583,19 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var swash_theta=0.0;
     // the sea left here by what stands in the water (piers, walls, decks)
     var shelter=1.0;
+    // the open sea's share of the wind sea here (water_ocean_weights): less
+    // over a short fetch, where the lakes' chop takes over
+    var open=1.0;
     if((water_fx.counts.z&11u)!=0u){
         // where the sea is read: the wave depth (smoothed: no wall of
         // water at a step of the bed or a region's edge), the shelter and
         // the refracted swell
         let at=water_fx_sea_at(flow);
         shelter=at.shelter;
+        open=water_ocean_weights(at.chop).x;
         swash_at=at;
         swash_theta=at.phase-(water_fx.sea.phase[0]+water_fx.sea.omega[0]*(frame.camera_pos.w-water_fx.sea.frame.z))+water_swash_shift(at);
-        swell=water_sea(flow,frame.camera_pos.w,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(flow,footprint,true),footprint);
+        swell=water_sea(flow,frame.camera_pos.w,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(flow,footprint,true,at),footprint);
     }
     let rest=flow;
     let wake=water_wake_at(in.world_pos.xy,in.level,bed.y);
@@ -1623,7 +1627,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         // and its short waves and finest ripples from the GPU's finer
         // maps, jagged, as calm as the sea here (the shelter); the foam
         // their folds leave joins the long chop's
-        fine=water_fx_fine(flow,fine_dx,fine_dy,swell.chop*shelter);
+        fine=water_fx_fine(flow,fine_dx,fine_dy,swell.chop*shelter,open);
         swell.linger=max(swell.linger,fine.foam);
         // (dpdx = g·∂p/∂x and dpdy = g·∂p/∂y, solved for g)
         let fold_x=dpdx(fine.fold);let fold_y=dpdy(fine.fold);
@@ -1802,11 +1806,12 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         if(water_fx_on(4u)){wake_foam=smoothstep(0.018,0.18,wake.w);}
         if(foam>=0.08 || wake_foam>0.0) {
             if(water_foam_textured()) {
-                // the foam texture's lace (water_foam_lace)
-                // (by a pixel's size between its mean and its longest side:
-                // by its longest, across the sea, the lace gave way to its
-                // smooth average close in)
-                let lace=water_foam_lace(rest,sqrt(footprint*detail_footprint));
+                // the foam texture's lace, filtered along the pixel's own
+                // span on the water (water_foam_lace_grad: by one size for
+                // the pixel, its mean or its longest side, it either
+                // stepped from pixel to pixel along the view, or gave way
+                // to its smooth average close in)
+                let lace=water_foam_lace_grad(rest,fine_dx,fine_dy);
                 foam=water_foam_lace_cover(foam,lace)+wake_foam*water_foam_lace_cover(0.7,lace)*0.7;
             } else {
                 let pattern=water_foam_pattern(p,footprint);
@@ -2226,7 +2231,8 @@ fn particle_water_level(p:vec2<f32>,level:f32)->f32 {
     // the swell is the region water's: a prim water volume's level (#2008),
     // away from it, stays flat
     let region=1.0-smoothstep(0.25,0.5,abs(level-bed.y));
-    return level+water_sea(p,water_fx.clock.x,water_fx.counts.w,water_fx.sea,water_fx_sea_at(p),water_fx_ocean(p,0.0,false),0.0).offset.z*region*smoothstep(0.08,2.4,level-bed.x);
+    let at=water_fx_sea_at(p);
+    return level+water_sea(p,water_fx.clock.x,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(p,0.0,false,at),0.0).offset.z*region*smoothstep(0.08,2.4,level-bed.x);
 }
 @vertex
 fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index) instance: u32) -> WaterParticleOut {
@@ -2764,7 +2770,7 @@ fn vs_water_crest_mist(@builtin(vertex_index) vertex: u32, @builtin(instance_ind
     let region=(1.0-smoothstep(0.25,0.5,abs(level-bed.y)))*smoothstep(1.0,3.0,level-bed.x);
     if(region<=0.0){return o;}
     let at=water_fx_sea_at(p);
-    let swell=water_sea(p,time,water_fx.counts.w,sea,at,water_fx_ocean(p,0.0,false),0.0);
+    let swell=water_sea(p,time,water_fx.counts.w,sea,at,water_fx_ocean(p,0.0,false,at),0.0);
     let shown=vec3<f32>(p,level)+swell.offset*region;
     // the whitecaps' test where it is drawn (vs_water's `core`, `gusty`)
     let rough=sea.frame.w;

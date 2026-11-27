@@ -32,7 +32,7 @@ pub const SWASH_REACH: f32 = 1.0;
 /// Wind speed (m/s) at which the sea is as rough as it gets.
 pub const STORM_WIND: f32 = 20.0;
 
-/// What the shaders read (`WaterSea`): 10 × vec4.
+/// What the shaders read (`WaterSea`): 11 × vec4.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Sea {
@@ -60,6 +60,22 @@ pub struct Sea {
     /// same frame); z, w: how far the caustics' ripples have drifted with
     /// the wind (m, `caustic_drift`).
     pub look: [f32; 4],
+    /// The lakes' cascade (water_fft.rs `LAKE`): x its tile (m, 0 without
+    /// a spectrum), y its significant height (m, scaled as `shore[3]`).
+    pub lake: [f32; 4],
+}
+
+/// How much of the open sea's two cascades (x) and of the lakes' (y) the
+/// wind sea takes where the sea grid's exposure gives `chop` (its packed
+/// fetch: water_shelter.rs `exposure`, sqrt(fetch / 800 m) times 0.6 to 1
+/// with the swell that comes in, up to 1). Open water keeps the open sea;
+/// over a short fetch it gives way to the lakes' chop, as high as the
+/// fetch lets it grow (a fetch-limited sea's height grows as its square
+/// root: the lakes' cascade is a sea `LAKE_FETCH` across, which `chop`
+/// 0.6 stands for). Same as `water_ocean_weights`.
+pub fn ocean_weights(chop: f32) -> [f32; 2] {
+    let open = smoothstep(0.55, 0.95, chop);
+    [open, (1.0 - open) * (chop / 0.6).clamp(0.0, 1.5)]
 }
 
 impl Default for Sea {
@@ -131,6 +147,7 @@ impl Sea {
         // (shore[0], the sea grid's crossfade, is the scene's to set; the
         // rest the spectrum's, SeaDriver::advance)
         self.shore[1..].fill(0.0);
+        self.lake = [0.0; 4];
         self.frame[3] = rough;
         // the highest crest the trains can stack (the main swell growing up
         // to twice in the shallows), for the shelter's cap
@@ -139,10 +156,11 @@ impl Sea {
     }
 
     /// The wind chop's amplitude (m) the depth caps: half the spectrum's
-    /// significant height, or the trains'. Same as in `water_sea`.
-    fn chop_height(&self) -> f32 {
+    /// significant height (the open sea's and the lakes' by their shares,
+    /// `weights`: `ocean_weights`), or the trains'. Same as in `water_sea`.
+    fn chop_height(&self, weights: [f32; 2]) -> f32 {
         if self.shore[3] > 0.0 {
-            0.5 * self.shore[3]
+            0.5 * (self.shore[3] * weights[0] + self.lake[1] * weights[1])
         } else {
             self.trains[1..].iter().map(|t| t[3]).sum()
         }
@@ -198,7 +216,9 @@ impl Sea {
         // (a wave a few centimetres high laps; it does not break white, however
         // shallow the water: without this a lake's ripples ringed it with surf)
         let breaking = smoothstep(0.35 + 0.25 * plunge, 1.0, grown / cap.max(1e-3)) * dry * smoothstep(0.03, 0.15, grown);
-        let rest = self.chop_height();
+        // the open sea's chop, or the lakes' over a short fetch
+        let weights = ocean_weights(reach_chop);
+        let rest = self.chop_height(weights);
         let wall = crash * (1.0 - smoothstep(0.5, 6.0, d));
         // shelter (piers, walls) holds the swell back; the wind still
         // ruffles a harbour, so its chop keeps more of itself. Under a deck
@@ -227,15 +247,18 @@ impl Sea {
         // the sand, or ran over it, by tens of centimetres)
         let b = at.bed;
         let swash = beach * smoothstep(-reach - 0.25, -reach, b) * (1.0 - smoothstep(0.3, 0.9, b));
+        // (and it dies out over the last two metres of the real bed: by
+        // the smoothed depth alone, a cliff's foot kept its whole chop,
+        // whose crests and sway climbed the land beside it)
+        let left = (cap / rest.max(0.01)).min(1.0) * dry * shelter.sqrt() * held * smoothstep(0.1, 2.0, at.bed);
         Local {
             // against what stands steep (rocks, a cliff, a wall) the swell is
             // thrown back on itself and stands up the face instead of
             // shoaling out: higher, and less held down by the depth
             main: (grown * (1.0 + 0.7 * wall)).min(cap * (1.0 + 1.5 * wall)) * dry * shelter * held,
-            // (and it dies out over the last two metres of the real bed: by
-            // the smoothed depth alone, a cliff's foot kept its whole chop,
-            // whose crests and sway climbed the land beside it)
-            chop: reach_chop * (cap / rest.max(0.01)).min(1.0) * dry * shelter.sqrt() * held * smoothstep(0.1, 2.0, at.bed),
+            chop: reach_chop * left,
+            weights: [weights[0], weights[0], weights[1]],
+            spectrum: left,
             breaking,
             lean: 0.75 * breaking * (0.4 + 0.6 * plunge),
             swash,
@@ -289,10 +312,11 @@ impl Sea {
         offset += (main.truncate() * (1.0 - local.swash) * local.slide).extend(main.z + (run - main.z).max(0.0) * local.swash);
         if self.shore[3] > 0.0 {
             // the spectrum's wind sea (water_fft.rs); none without its maps
-            let Some(at) = ocean.map(|o| o.sample(p)) else {
+            // (its cascades by the fetch here: the open sea's, or a lake's)
+            let Some(at) = ocean.map(|o| o.sample_weighted(p, local.weights)) else {
                 return offset;
             };
-            let scale = local.chop * self.look[1];
+            let scale = local.spectrum * self.look[1];
             let sway = chop_sway(at.jacobian * scale);
             return offset + (at.offset.truncate() * scale * sway).extend(at.offset.z * scale);
         }
@@ -383,8 +407,14 @@ pub fn swash_rise(theta: f32) -> f32 {
 pub struct Local {
     /// The main swell's amplitude (m).
     pub main: f32,
-    /// The wind chop's share of its amplitude.
+    /// The wind chop's share of its amplitude (the trains', the fetch's
+    /// share in).
     pub chop: f32,
+    /// The spectrum's cascades' shares here (`ocean_weights`: the open
+    /// sea's twice, the lakes'), and what the depth, the shelter and the
+    /// clearance leave of all of them.
+    pub weights: [f32; 3],
+    pub spectrum: f32,
     /// How hard the main swell breaks (0..1).
     pub breaking: f32,
     /// How far its front leans (the profile's skew).
@@ -712,6 +742,8 @@ impl SeaDriver {
             let height = self.maps.height * sea.look[1];
             sea.shore[1] = OCEAN_TILES[0];
             sea.shore[2] = OCEAN_TILES[1];
+            // the lakes' chop (water_fft.rs `LAKE`)
+            sea.lake = [OCEAN_TILES[crate::water_fft::LAKE], self.maps.lake_height * sea.look[1], 0.0, 0.0];
             sea.shore[3] = height.max(1e-4);
             // the highest crest: the swell growing up to twice in the
             // shallows, on the wind sea's highest (about its Hs)
@@ -724,6 +756,30 @@ impl SeaDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Open water keeps the open sea; a lake 800 m across (the exposure's
+    /// 0.6) takes the lakes' chop in full, one of 200 m (0.3) half as
+    /// high, as a fetch-limited sea grows (as the square root of its
+    /// fetch); a bay between them takes some of both.
+    #[test]
+    fn a_short_fetch_gives_the_lakes_chop_as_high_as_it_lets_it_grow() {
+        let [open, lake] = ocean_weights(1.0);
+        assert!((open - 1.0).abs() < 1e-6 && lake.abs() < 1e-6, "{open} {lake}");
+        let [open, lake] = ocean_weights(0.6);
+        assert!(open < 0.05 && lake > 0.95, "{open} {lake}");
+        let [open, lake] = ocean_weights(0.3);
+        assert!(open == 0.0 && (lake - 0.5).abs() < 1e-6, "{open} {lake}");
+        let [open, lake] = ocean_weights(0.8);
+        assert!(open > 0.3 && open < 0.9 && lake > 0.1, "{open} {lake}");
+        // the depth caps a lake's chop by its own height, not the ocean's
+        let mut driver = SeaDriver::default();
+        let sea = driver.advance(1.0, Vec2::new(20.0, 0.0), Vec2::ZERO);
+        let mut lake_sea = sea;
+        lake_sea.shore[3] = 4.0;
+        lake_sea.lake[1] = 0.3;
+        assert!((lake_sea.chop_height([0.0, 1.0]) - 0.15).abs() < 1e-6);
+        assert!((lake_sea.chop_height([1.0, 0.0]) - 2.0).abs() < 1e-6);
+    }
 
     #[test]
     fn the_water_flows_forward_under_a_crest_and_back_in_a_trough() {

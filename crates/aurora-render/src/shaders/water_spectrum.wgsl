@@ -9,8 +9,18 @@ struct WaterSea {
     shore: vec4<f32>,           // x grid crossfade, yz the spectrum's tiles (m), w its Hs (0: none)
     frame: vec4<f32>,           // anchor xy, epoch, roughness
     wind: vec4<f32>,            // toward xy, speed, highest crest
-    look: vec4<f32>,            // x whitecap foam, y the spectrum's chop scale (1 by default), rest reserved
+    look: vec4<f32>,            // x whitecap foam, y the spectrum's chop scale (1 by default), zw the caustics' drift
+    lake: vec4<f32>,            // the lakes' cascade (water_fft.rs LAKE): x its tile (0: none), y its Hs
 };
+// How much of the open sea's two cascades (x) and of the lakes' (y) the
+// wind sea takes where the sea grid's exposure gives `chop` (its packed
+// fetch): open water keeps the open sea; over a short fetch it gives way
+// to the lakes' chop, as high as the fetch lets it grow (water_sea.rs
+// `ocean_weights`).
+fn water_ocean_weights(chop: f32) -> vec2<f32> {
+    let open=smoothstep(0.55,0.95,chop);
+    return vec2<f32>(open,(1.0-open)*clamp(chop/0.6,0.0,1.5));
+}
 // Where the sea is read (water_sea.rs `SeaPoint`): the wave depth and its
 // gradient, the share the shelter leaves, and the main swell there: its
 // spatial phase, local wave vector (refracted to face the shore) and the
@@ -155,7 +165,10 @@ fn water_sea(p: vec2<f32>, time: f32, quality: u32, sea: WaterSea, at: WaterSeaA
     let cap=0.28*max(d,0.0);
     // (a wave a few centimetres high laps, it does not break white)
     let breaking=smoothstep(0.35+0.25*plunge,1.0,grown/max(cap,1e-3))*dry*smoothstep(0.03,0.15,grown);
-    let rest=select(sea.trains[1].w+sea.trains[2].w+sea.trains[3].w,0.5*sea.shore.w,sea.shore.w>0.0);
+    // (the spectrum's: the open sea's or a lake's chop, by the fetch here;
+    // `ocean` is read with the same shares, water_fx_ocean)
+    let weights=water_ocean_weights(at.chop);
+    let rest=select(sea.trains[1].w+sea.trains[2].w+sea.trains[3].w,0.5*(sea.shore.w*weights.x+sea.lake.y*weights.y),sea.shore.w>0.0);
     let reach=water_swash_reach(sea,at);
     // the swash runs up a beach that faces the swell (none over the back
     // of a sandbar or a land bridge), its whole height up to the highest it
@@ -180,7 +193,10 @@ fn water_sea(p: vec2<f32>, time: f32, quality: u32, sea: WaterSea, at: WaterSeaA
     // (and the chop dies out over the last two metres of the real bed, and
     // the swell's sway over the last metre and a half: Sea::local's `chop`
     // and `slide`)
-    let chop=at.chop*min(cap/max(rest,0.01),1.0)*dry*sqrt(shelter)*held*smoothstep(0.1,2.0,b);
+    // (the trains' chop takes the fetch's share in; the spectrum's has it
+    // in its cascades' shares)
+    let left=min(cap/max(rest,0.01),1.0)*dry*sqrt(shelter)*held*smoothstep(0.1,2.0,b);
+    let chop=at.chop*left;
     let slide=smoothstep(-0.2,1.5,b);
     let lean=0.75*breaking*(0.4+0.6*plunge);
     let since=time-sea.frame.z;
@@ -215,7 +231,7 @@ fn water_sea(p: vec2<f32>, time: f32, quality: u32, sea: WaterSea, at: WaterSeaA
     var linger=0.0;
     var scaled=0.0;
     if(sea.shore.w>0.0){
-        scaled=chop*sea.look.y;
+        scaled=left*sea.look.y;
         linger=ocean.foam*scaled;
         offset+=vec3<f32>(ocean.offset.xy*scaled*water_chop_sway(ocean.jacobian*scaled),ocean.offset.z*scaled);
         gradient+=ocean.slope*scaled;

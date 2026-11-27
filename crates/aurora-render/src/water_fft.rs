@@ -23,12 +23,22 @@ use std::f32::consts::{PI, TAU};
 
 /// Texels a side of a cascade's maps.
 pub const OCEAN_N: usize = 128;
-/// The cascades' tile sizes (m): long chop, and short ripples (an uneven
-/// ratio, so their repetitions never line up).
-pub const OCEAN_TILES: [f32; 2] = [192.0, 27.3];
-/// The split between the cascades: waves longer than this (m) are the
-/// first's, the others the second's.
+/// The cascades' tile sizes (m): the open sea's long chop and short
+/// ripples (an uneven ratio, so their repetitions never line up), and the
+/// lakes' chop (`LAKE`).
+pub const OCEAN_TILES: [f32; 3] = [192.0, 27.3, 19.7];
+/// The split between the open sea's cascades: waves longer than this (m)
+/// are the first's, the others the second's.
 const SPLIT: f32 = 10.0;
+/// The lakes' cascade: a sea grown over `LAKE_FETCH` m only, all of it in
+/// one tile. A lake's wind does not raise the open sea's waves smaller (its
+/// long waves cannot grow over a few hundred metres): it raises short,
+/// steep chop, its peak at 2 to 4.5 m from a breeze to a gale (a JONSWAP
+/// sea limited by its fetch, whatever the panel's spectrum). Where the sea
+/// grid finds a short fetch (water_shelter.rs `exposure`), the open sea's
+/// cascades give way to it, scaled by that fetch (`ocean_weights`).
+pub const LAKE: usize = 2;
+pub const LAKE_FETCH: f32 = 800.0;
 const G: f32 = 9.81;
 /// How long the foam a crest leaves lingers (s, its e-folding time).
 const FOAM_LINGER: f32 = 4.5;
@@ -112,6 +122,9 @@ pub struct OceanMaps {
     /// (the height is the scaled one).
     pub height: f32,
     pub scale: f32,
+    /// The lakes' cascade's significant height (m, scaled as `height`):
+    /// the chop of a lake `LAKE_FETCH` across in this wind.
+    pub lake_height: f32,
     /// What the GPU's finer maps take (water_ocean_gpu.rs): their initial
     /// spectrum, and the time (modulo `OCEAN_LOOP`), chop and wind of
     /// these maps.
@@ -168,13 +181,25 @@ impl OceanMaps {
         self.texels.get(row * OCEAN_N + (x % OCEAN_N)).copied().unwrap_or([0.0; 4])
     }
 
-    /// The ocean at world `p`, bilinear and wrapping, as `water_fx_ocean`.
+    /// The open sea at world `p` (its two cascades, no lake), bilinear and
+    /// wrapping.
     pub fn sample(&self, p: Vec2) -> OceanAt {
+        self.sample_weighted(p, [1.0, 1.0, 0.0])
+    }
+
+    /// The wind sea at world `p`, each cascade taken by its `weights` (the
+    /// open sea's two, the lakes': `ocean_weights`), bilinear and
+    /// wrapping, as `water_fx_ocean`.
+    pub fn sample_weighted(&self, p: Vec2, weights: [f32; 3]) -> OceanAt {
         if self.texels.len() != OCEAN_TILES.len() * OCEAN_BLOCKS * OCEAN_N * OCEAN_N {
             return OceanAt::default();
         }
         let mut at = OceanAt::default();
         for (c, tile) in OCEAN_TILES.iter().enumerate() {
+            let w = weights[c];
+            if w <= 0.0 {
+                continue;
+            }
             // (the FFT's texel i is the sea at i·tile/N)
             let pos = (p / tile).fract_gl() * OCEAN_N as f32;
             let base = pos.floor();
@@ -194,10 +219,10 @@ impl OceanMaps {
             };
             let d = mix(0);
             let s = mix(1);
-            at.offset += Vec3::new(d[0], d[1], d[2]);
-            at.slope += Vec2::new(s[0], s[1]);
-            at.jacobian += Vec3::new(s[2], d[3], s[3]);
-            at.foam = at.foam.max(mix(2)[0]);
+            at.offset += Vec3::new(d[0], d[1], d[2]) * w;
+            at.slope += Vec2::new(s[0], s[1]) * w;
+            at.jacobian += Vec3::new(s[2], d[3], s[3]) * w;
+            at.foam = at.foam.max(mix(2)[0] * w);
         }
         at
     }
@@ -308,24 +333,34 @@ impl Ocean {
     }
 
     /// Lay the initial spectrum out for a wind blowing toward `toward`
-    /// (unit) at `speed` over `fetch` m; its significant height.
-    fn lay(&mut self, toward: Vec2, speed: f32, spectrum: Spectrum, fetch: f32) -> f32 {
-        let mut variance = 0.0;
+    /// (unit) at `speed` over `fetch` m; the open sea's significant height
+    /// and the lakes' (`LAKE`).
+    fn lay(&mut self, toward: Vec2, speed: f32, spectrum: Spectrum, fetch: f32) -> (f32, f32) {
+        let (mut variance, mut lake) = (0.0, 0.0);
         for (c, tile) in OCEAN_TILES.iter().enumerate() {
             let dk = TAU / tile;
             for y in 0..OCEAN_N {
                 for x in 0..OCEAN_N {
                     let k = wave(x, y, *tile);
                     let len = k.length();
-                    // each wave length belongs to one cascade only
-                    let mine = if c == 0 { len < TAU / SPLIT } else { len >= TAU / SPLIT };
-                    let i = (c * OCEAN_N + y) * OCEAN_N + x;
-                    let e = if mine {
-                        Self::density(k, toward, speed, spectrum, fetch)
-                    } else {
-                        0.0
+                    // each wave length of the open sea belongs to one of its
+                    // cascades only; the lakes' takes them all
+                    let mine = match c {
+                        0 => len < TAU / SPLIT,
+                        LAKE => true,
+                        _ => len >= TAU / SPLIT,
                     };
-                    variance += e * dk * dk;
+                    let i = (c * OCEAN_N + y) * OCEAN_N + x;
+                    let e = match (mine, c) {
+                        (false, _) => 0.0,
+                        (true, LAKE) => Self::density(k, toward, speed, Spectrum::Jonswap, LAKE_FETCH),
+                        (true, _) => Self::density(k, toward, speed, spectrum, fetch),
+                    };
+                    if c == LAKE {
+                        lake += e * dk * dk;
+                    } else {
+                        variance += e * dk * dk;
+                    }
                     // h(k) gathers h0(k) and conj(h0(-k)): each carries a
                     // quarter of the cell's variance, two Gaussians apiece
                     let amp = (e * dk * dk * 0.25).sqrt();
@@ -338,7 +373,7 @@ impl Ocean {
             }
         }
         self.lay_fine(toward, speed, spectrum, fetch);
-        4.0 * variance.sqrt()
+        (4.0 * variance.sqrt(), 4.0 * lake.sqrt())
     }
 
     /// The GPU's finer spectrum (`FineSpectrum`): the short cascade's own
@@ -404,10 +439,11 @@ impl Ocean {
         let fetch = fetch.clamp(100.0, 100_000.0);
         let scale = if scale.is_finite() { scale.max(0.0) } else { 1.0 };
         // laid out again when the wind has changed enough to see
-        let raw = match self.laid {
-            Some((t, s, k, f)) if k == spectrum && f == fetch && t.dot(toward) > 0.99995 && (s - speed).abs() < 0.01 * s.max(1.0) => {
-                self.maps.height / self.maps.scale.max(1e-6)
-            }
+        let (raw, lake_raw) = match self.laid {
+            Some((t, s, k, f)) if k == spectrum && f == fetch && t.dot(toward) > 0.99995 && (s - speed).abs() < 0.01 * s.max(1.0) => (
+                self.maps.height / self.maps.scale.max(1e-6),
+                self.maps.lake_height / self.maps.scale.max(1e-6),
+            ),
             _ => {
                 self.laid = Some((toward, speed, spectrum, fetch));
                 self.lay(toward, speed, spectrum, fetch)
@@ -444,6 +480,7 @@ impl Ocean {
             texels,
             height,
             scale,
+            lake_height: lake_raw * scale,
             fine: Some(self.fine.clone()),
             fine_time: time.rem_euclid(OCEAN_LOOP),
             chop,
@@ -487,7 +524,9 @@ impl Ocean {
             let k = (FOAM_STREAK * dt / (texel * texel)).min(0.45);
             let foam = &mut self.foam[c * n * n..(c + 1) * n * n];
             let ride = &mut self.ride[c * n * n..(c + 1) * n * n];
-            let shift = toward * ride_speed(c, speed) * dt / texel;
+            // (a lake's chop, 2 to 4.5 m long, runs at under 2.7 m/s)
+            let rides = if c == LAKE { (0.15 * speed).min(2.7) } else { ride_speed(c, speed) };
+            let shift = toward * rides * dt / texel;
             let at = |foam: &[f32], x: f32, y: f32| {
                 let (bx, by) = (x.floor(), y.floor());
                 let (fx, fy) = (x - bx, y - by);
@@ -650,6 +689,37 @@ mod tests {
             sigma * 4.0,
             gale.height
         );
+    }
+
+    /// The lakes' cascade is a fetch-limited sea: in a gale, decimetres of
+    /// short, steep chop (a lake 800 m across: Hs some 0.29 m at 20 m/s by
+    /// the fetch-limited growth, its waves 2 to 4.5 m), shorter than the
+    /// open sea's short cascade; and the open sea's sampler leaves it out.
+    #[test]
+    fn a_lake_s_chop_is_short_and_steep_and_apart_from_the_open_sea() {
+        let mut ocean = Ocean::new();
+        let gale = ocean.update(10.0, Vec2::X, 20.0, Spectrum::Jonswap, 1.0, FETCH, 1.0);
+        assert!(gale.lake_height > 0.15 && gale.lake_height < 0.6, "{}", gale.lake_height);
+        assert!(gale.lake_height < 0.2 * gale.height, "{} vs {}", gale.lake_height, gale.height);
+        // a wave's length as its heights' RMS over its slopes' (2π / k)
+        let length = |weights: [f32; 3]| {
+            let (mut h, mut s) = (0.0, 0.0);
+            for i in 0..2000 {
+                let at = gale.sample_weighted(Vec2::new(i as f32 * 0.37, i as f32 * 0.91), weights);
+                h += at.offset.z * at.offset.z;
+                s += at.slope.length_squared();
+            }
+            TAU * (h / s.max(1e-9)).sqrt()
+        };
+        let lake = length([0.0, 0.0, 1.0]);
+        let short = length([0.0, 1.0, 0.0]);
+        assert!(lake < 6.0 && lake < short, "lake {lake} m, the open sea's short cascade {short} m");
+        // the open sea's sampler is the two cascades alone
+        let p = Vec2::new(12.3, -4.5);
+        assert_eq!(gale.sample(p), gale.sample_weighted(p, [1.0, 1.0, 0.0]));
+        // a lighter wind, lower chop
+        let breeze = ocean.update(10.0, Vec2::X, 8.0, Spectrum::Jonswap, 1.0, FETCH, 1.0);
+        assert!(breeze.lake_height < 0.5 * gale.lake_height, "{}", breeze.lake_height);
     }
 
     #[test]
