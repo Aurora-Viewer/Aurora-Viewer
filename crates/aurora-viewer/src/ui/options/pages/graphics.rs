@@ -1240,6 +1240,44 @@ fn image(cx: &mut Cx) {
     });
     world_look(cx);
     depth_of_field(cx);
+    motion_blur(cx);
+}
+
+/// Motion blur (`crate::motion_blur`): Aurora's own, off by default (the
+/// Legacy Viewer draws none).
+fn motion_blur(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-motion-blur"), |cx| {
+        cx.keywords("motion blur shutter cinematic").toggle(
+            tr!("ui-options-motion-blur-enable"),
+            tr!("ui-options-motion-blur-enable-help"),
+            &field!(motion_blur.enabled),
+        );
+        let off = !cx.s.motion_blur.enabled;
+        cx.subs(off, |cx| {
+            cx.row(
+                tr!("ui-options-motion-blur-strength"),
+                tr!("ui-options-motion-blur-strength-help"),
+                &field!(motion_blur.strength),
+                |ui, s| {
+                    let mut pct = s.motion_blur.strength * 100.0;
+                    let changed = ui
+                        .add(
+                            egui::Slider::new(&mut pct, 0.0..=100.0)
+                                .suffix(" %")
+                                .fixed_decimals(0)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .trailing_fill(true),
+                        )
+                        .changed();
+                    if changed {
+                        s.motion_blur.strength = (pct / 100.0).clamp(0.0, 1.0);
+                    }
+                    changed
+                },
+            );
+        });
+    });
 }
 
 /// The world's own filters (`snapshot::looks::WorldLook`): switched on here,

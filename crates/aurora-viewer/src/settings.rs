@@ -696,6 +696,8 @@ pub struct Settings {
     pub world_look: crate::snapshot::looks::WorldLook,
     /// Depth of field (Preferences › Graphics).
     pub dof: crate::dof::Settings,
+    /// Motion blur (Preferences › Graphics), Aurora's own.
+    pub motion_blur: crate::motion_blur::Settings,
     pub shape_show_hints: bool,
     pub shape_height_feet: bool,
     /// AppearanceCameraMovement (llpaneleditwearable.cpp): frame the edited
@@ -2658,6 +2660,7 @@ impl Default for Settings {
             snapshot: Default::default(),
             world_look: Default::default(),
             dof: Default::default(),
+            motion_blur: Default::default(),
             loading_backdrop: true,
             mouse_sensitivity: 1.0,
             window_width: 1600,
@@ -3838,6 +3841,7 @@ impl Settings {
         // switch the world filters on with no edit
         crate::snapshot::looks::sanitize(&mut self.world_look.looks);
         self.dof.sanitize();
+        self.motion_blur.sanitize();
         self.game_control.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
         self.screen_indirect_intensity = if self.screen_indirect_intensity.is_finite() {

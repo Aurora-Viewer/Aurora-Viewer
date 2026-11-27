@@ -13735,6 +13735,7 @@ What the inventory must show with these scenarios:
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
+| `AURORA_MOTION_BLUR=<0-100>` | Motion blur at that strength (%) for this launch, whatever the setting says (`0`: none) |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_CLOUDS=aurora` or `legacy` | Volumetric clouds or the Legacy Viewer's flat layer for this launch, over the setting (and over `AURORA_DEMO_CLOUDS`) |
@@ -14400,6 +14401,18 @@ What the inventory must show with these scenarios:
   captures off differ by the demo's run-to-run noise only). `g_bloom` of
   `perf summary` is its GPU time (demo, 2560 × 1369, RTX 4090: about
   0.07 ms on the plaza, 0.09 ms in a crowd of 40).
+- **`AURORA_MOTION_BLUR=<0-100>`**: Aurora's motion blur (Preferences ›
+  Graphics › Motion blur, off by default) at that strength for this launch,
+  without changing the saved setting; `0` draws none. 50 is the default
+  strength: a 180° shutter at 60 frames a second, the same streaks at any
+  frame rate. The Director's own shutter (its Look tab) replaces it while
+  the Director's window is open. To look at: `AURORA_DEMO_DIRECTOR=play`
+  (the camera flies round the avatar) with `AURORA_MOTION_BLUR=100`: the
+  background streaks along the camera's path while the avatar it follows
+  stays sharp; the plaza's walking avatars streak along their steps with
+  the camera still. Not drawn on photos, offline Director renders,
+  cut-out frames, nor the first frame after a teleport. Off, nothing of it
+  is made and the frame is drawn as before.
 - **`AURORA_AUTO_EXPOSURE=0|1|alt`**: the automatic exposure of skies that
   are not classic (reflection probe ambiance above 0), like the Legacy
   Viewer's dynamic exposure, for this launch: `0` off (exposure 1 on every

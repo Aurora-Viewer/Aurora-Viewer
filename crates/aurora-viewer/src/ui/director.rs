@@ -737,6 +737,26 @@ fn picture_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, locked: boo
             });
         }
     }
+    // the Director's own shutter: its motion blur, at the film's rate
+    let mut blur = d.motion_blur.is_some();
+    if widgets::checkbox(ui, p, &mut blur, aurora_i18n::tr!("director-motion-blur"))
+        .on_hover_text(aurora_i18n::tr!("director-motion-blur-tip"))
+        .changed()
+    {
+        d.motion_blur = blur.then_some(director::DEFAULT_SHUTTER);
+    }
+    if let Some(shutter) = &mut d.motion_blur {
+        row(ui, p, aurora_i18n::tr!("director-shutter"), |ui| {
+            ui.spacing_mut().slider_width = SLIDER_W;
+            ui.add(
+                egui::Slider::new(shutter, director::SHUTTER_RANGE)
+                    .custom_parser(aurora_i18n::parse_number)
+                    .fixed_decimals(0)
+                    .suffix("°"),
+            )
+            .on_hover_text(aurora_i18n::tr!("director-shutter-tip"));
+        });
+    }
 }
 
 pub(super) fn film_format(format: recorder::Format) -> &'static str {
