@@ -351,6 +351,9 @@ pub fn update(
         } else if mode.contains("sea-reef") {
             // down onto the reef: calm along its wall, not over its box
             (Vec3::new(4.0, 115.0, 31.0), Vec3::new(4.0, 134.0, 19.8))
+        } else if mode.contains("sea-kelp") {
+            // under the water, along the kelp bed of `sea-kelp`
+            (Vec3::new(30.5, 113.0, 18.4), Vec3::new(38.0, 115.5, 17.2))
         } else if mode.contains("sea-roof") {
             // off the four walls of `sea-roof`, from the open sea
             (Vec3::new(1.0, 112.0, 24.5), Vec3::new(16.0, 112.0, 20.6))
@@ -545,6 +548,48 @@ pub fn update(
             },
             "",
         ));
+        // `sea-kelp`: a bed of kelp, flexible blades on the lagoon's floor
+        // some 4.7 m down, swaying with the swell's surge under the water
+        // (scene/flexible.rs `FlexiWater`); half of them with the wind
+        // sensitivity at 0, the Legacy Viewer's default
+        if mode.contains("sea-kelp") {
+            let blade = super::shape(
+                aurora_prim::params::LL_PCODE_PATH_FLEXIBLE,
+                aurora_prim::params::LL_PCODE_PROFILE_CIRCLE,
+                100,
+                0,
+                0,
+            );
+            for n in 0..25u32 {
+                let (col, row) = ((n % 5) as f32, (n / 5) as f32);
+                // (a fixed scatter, so the bed does not look planted in rows)
+                let jitter = Vec3::new((n as f32 * 2.3).sin(), (n as f32 * 3.7).cos(), 0.0) * 0.45;
+                let at = Vec3::new(34.0 + col * 1.5, 112.0 + row * 1.5, 0.0) + jitter;
+                let bed = super::height(at.x, at.y);
+                let length = (20.0 - bed - 0.5).clamp(1.0, 4.2) * (0.8 + 0.2 * (n as f32 * 1.3).sin().abs());
+                let flex = aurora_prim::extra::FlexibleParams {
+                    softness: 3,
+                    tension: 1.0,
+                    air_friction: 2.0,
+                    gravity: 1.0,
+                    wind_sensitivity: if n % 2 == 0 { 0.0 } else { 2.0 },
+                    user_force: Vec3::ZERO,
+                };
+                objects.push(super::prim(
+                    99660 + n,
+                    Vec3::new(at.x, at.y, bed + length * 0.5),
+                    Quat::from_rotation_z(n as f32 * 0.9),
+                    Vec3::new(0.1, 0.3, length),
+                    blade,
+                    super::te([0.32, 0.38, 0.12, 1.0], 0, false, 0.0),
+                    aurora_prim::ExtraParams {
+                        flexible: Some(flex),
+                        ..Default::default()
+                    },
+                    "",
+                ));
+            }
+        }
         // floating, physical: they ride the waves (scene/water_ride.rs) -
         // a boat with a cabin linked to its hull, and three buoys
         let physical = |mut o: aurora_net::objects::ObjectUpdate| {

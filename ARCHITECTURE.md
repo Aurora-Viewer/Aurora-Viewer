@@ -4179,7 +4179,10 @@ The scene (`scene/flexible.rs`) computes in parallel the forces, the deformed
 path, the normals, the bounds and the selection triangles; it rewrites
 only the vertices in their existing GPU allocations. The wind of each
 region is received through `LayerData` (two DCT patches), interpolated like
-`LLWind`.
+`LLWind`. With enhanced water's waves, the sections under the water take the
+water's motion and buoyancy instead (`FlexiWater`, `WaterDrive`: the sea's
+flow sampled once a frame where the prim is anchored, faded by each
+section's depth).
 Flexible prims are in the set of active objects, even without network
 movement; origin changes shift their simulation with the world.
 The outline of the selected flexibles is prepared on the same worker from

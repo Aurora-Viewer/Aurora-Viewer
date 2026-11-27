@@ -901,6 +901,9 @@ pub struct Scene {
     /// The plane (point, normal) of the mirror the last frame drew, for the
     /// flexible prims only it shows (flexible.rs).
     pub mirror_plane: Option<(Vec3, Vec3)>,
+    /// The enhanced water's settings and clock this frame, for the flexible
+    /// prims the water moves (flexible.rs `FlexiWater`).
+    pub flexi_water: Option<(aurora_render::WaterEffects, f32)>,
     /// Grass tufts drawn, and the terrain they were placed on (plants.rs).
     grass: HashMap<usize, plants::GrassBuilt>,
     pub textures: TextureStreamer,
@@ -1757,6 +1760,7 @@ impl Scene {
             geoms: Default::default(),
             flexibles: Default::default(),
             mirror_plane: None,
+            flexi_water: None,
             grass: HashMap::new(),
             textures: TextureStreamer::new(cache_dir.clone()),
             meshes: MeshStreamer::new(cache_dir.clone()),

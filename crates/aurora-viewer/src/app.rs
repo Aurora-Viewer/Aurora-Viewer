@@ -12883,6 +12883,8 @@ impl App {
             self.scene.avatar_wet.settings = Some(self.settings.water_effects.render());
             self.scene.avatar_wet.clock = world_clock();
             self.scene.avatar_wet.eye = self.camera.position;
+            // and the flexible prims under it sway with it (scene/flexible.rs)
+            self.scene.flexi_water = Some((self.settings.water_effects.render(), world_clock()));
             // floating objects ride the same sea (scene/water_ride.rs)
             let held = self.held_for_water();
             crate::scene::water_ride::update(
