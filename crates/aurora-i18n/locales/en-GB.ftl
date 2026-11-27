@@ -791,6 +791,12 @@ import-folders-enable = Organise upload folders
 
 ui-weather-northern-lights-colours = Colours
 
+ui-weather-fog-follow-sky = Colour of the sky’s light
+
+ui-weather-fog-follow-sky-tip = The fog takes the colour of the sky’s light, as the haze does; off, it takes its own colour
+
+ui-weather-fog-colour-tip = The fog’s own colour
+
 wearable-favorites-all = All Favourites
 
 wearable-favorites-new-folder-tip = Create new favourites folder

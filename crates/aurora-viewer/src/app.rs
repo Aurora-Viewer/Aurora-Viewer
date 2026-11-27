@@ -846,6 +846,8 @@ pub struct App {
     weather_saved: crate::weather::WeatherSettings,
     /// The weather's wind, in gusts.
     weather_wind: crate::weather::Wind,
+    /// How far the wind has carried the weather's fog (weather/fog.rs).
+    fog_drift: crate::weather::FogDrift,
     /// The weather in effect this frame: the settings (`update_weather_now`;
     /// the demo's snow spin may change it after).
     weather_now: crate::weather::WeatherSettings,
@@ -2209,6 +2211,7 @@ impl App {
             rain_last: None,
             weather_saved: Default::default(),
             weather_wind: Default::default(),
+            fog_drift: Default::default(),
             weather_now: Default::default(),
             thunder: Default::default(),
             thunder_demo_done: false,
@@ -7129,6 +7132,14 @@ impl App {
         self.weather_wind
             .advance(std::time::Instant::now(), range, heading, region_wind.truncate());
         let weather_wind = range.1 > 0.0;
+        // the fog drifts with the weather's wind, or the region's without it
+        let fog_wind = if weather_wind {
+            self.weather_wind.now
+        } else {
+            region_wind.truncate()
+        };
+        self.fog_drift
+            .advance(std::time::Instant::now(), fog_wind, self.weather_now.fog_drift);
         if weather_wind {
             let open = self.scene.sound_reverb.sky.map_or(1.0, |s| s.exposure.clamp(0.0, 1.0));
             region_wind = self.weather_wind.now.extend(0.0) * (0.15 + 0.85 * open);
@@ -13498,6 +13509,14 @@ impl App {
             curvature: self.settings.planet_radius(),
             look: None,
             look_thumbs: None,
+            fog: self.weather_now.fog_look(
+                self.fog_drift.at,
+                crate::weather::fog::utc_clock(),
+                self.world
+                    .main_region
+                    .map_or([0.0; 2], |h| [(h >> 32) as f64, (h & 0xffff_ffff) as f64]),
+                self.weather_now.quality_index(),
+            ),
             clouds: crate::world::env::clouds_frame(
                 self.settings.volumetric_clouds,
                 self.world.main_region,
@@ -14456,6 +14475,8 @@ impl App {
         }
         let raining = self.rain_last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1500));
         self.scene.update_rain_ground(&self.world, fp.camera_pos, raining);
+        self.scene
+            .update_fog_ground(&self.world, fp.camera_pos, fp.water_height, fp.fog.is_some());
         let lists = if self.in_world() && !self.scene_paused() {
             &self.scene.lists
         } else {
@@ -15160,6 +15181,9 @@ impl App {
                 self.world.apply(event);
             }
             for event in crate::demo::sky::events(self.frame_count) {
+                self.world.apply(event);
+            }
+            for event in crate::demo::fog::events(self.frame_count) {
                 self.world.apply(event);
             }
             for event in crate::demo::clouds::events(self.frame_count) {
@@ -23125,7 +23149,8 @@ impl ApplicationHandler for App {
                 self.settings.sync_night_sky();
             }
             // AURORA_DEMO_CLOUDS: the region's fixed sky, not a time of day
-            if crate::demo::clouds::scenario().is_some() {
+            // (the clouds' and the fog's scenarios show the region's sky)
+            if crate::demo::clouds::scenario().is_some() || crate::demo::fog::scenario().is_some() {
                 self.panels.time_of_day = 0;
             }
             // AURORA_DEMO_NIGHT_SKY_CLOCK: the real time at this longitude

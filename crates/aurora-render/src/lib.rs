@@ -36,6 +36,7 @@ mod exposure;
 mod film_readback;
 mod fit_clip;
 pub use fit_clip::FitClipParams;
+mod fog;
 pub mod frame_priority;
 mod fsr;
 pub mod gi;
