@@ -10055,7 +10055,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   show it: capture consecutive frames across a departure
   (`AURORA_FPS_LIMIT=60`, `AURORA_CAPTURE_FRAMES` listing every frame from
   about 23 s to 31 s after the arrival) and compare the lines' bottom frame
-  by frame.
+  by frame. The lines follow the chat bar: with
+  `AURORA_DEMO_TOOLBAR=chat-top`, `chat-left` or `chat-right` they hang
+  under the chat field, from its left, or ending on its right at the right
+  of the screen; in a short window (`AURORA_WINDOW_SIZE=1100,520`) the
+  oldest are cut under the top bar instead of leaving the screen.
 
 - **`AURORA_DEMO_MUTED_CHAT=aurora|compact|bubbles|legacy|lines[:hidden|collapsed|greyed]`**:
   the demo's blocked resident, Violet Wolf (on the demo block list), talks
