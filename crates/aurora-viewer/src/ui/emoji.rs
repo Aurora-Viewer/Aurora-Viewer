@@ -131,6 +131,24 @@ pub fn text_rows<R>(ui: &mut egui::Ui, size: f32, add: impl FnOnce(&mut egui::Ui
     text_rows_in(ui, size, false, add)
 }
 
+thread_local! {
+    /// The row `text_rows_continued` is filling, while it does.
+    static CONTINUED: std::cell::Cell<Option<egui::Id>> = const { std::cell::Cell::new(None) };
+}
+
+/// `text_rows`, in which a text drawn after other widgets (a compact chat
+/// row's name and tags, #3137) goes on after them on the same row: its wrapped
+/// rows start at the row's left edge, not under the last widget. Only a
+/// left-to-right text continues; a right-to-left one keeps its own rows.
+pub fn text_rows_continued<R>(ui: &mut egui::Ui, size: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    text_rows(ui, size, |ui| {
+        let outer = CONTINUED.replace(Some(ui.scope_id()));
+        let out = add(ui);
+        CONTINUED.set(outer);
+        out
+    })
+}
+
 /// `text_rows` for a text that reads from right to left (`rtl`): its pieces
 /// (runs of text, links, pictures) are placed from the right edge, so that
 /// they come in reading order.
@@ -142,7 +160,15 @@ pub fn text_rows_in<R>(ui: &mut egui::Ui, size: f32, rtl: bool, add: impl FnOnce
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
         add(ui)
     };
-    let out = if rtl {
+    let out = if !rtl && CONTINUED.get() == Some(ui.scope_id()) {
+        // the rows of `text_rows_continued`: the text goes on after the
+        // widgets before it, and its next rows start at the row's left edge
+        // (a nested row would wrap at the cursor, under the last widget)
+        let spacing = ui.spacing().item_spacing;
+        let out = rows(ui);
+        ui.spacing_mut().item_spacing = spacing;
+        out
+    } else if rtl {
         // (Ui::horizontal_wrapped's own size, the other way)
         let size = egui::vec2(ui.available_size_before_wrap().x, row);
         let layout = egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true);

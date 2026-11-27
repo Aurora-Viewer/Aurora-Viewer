@@ -11486,6 +11486,10 @@ impl App {
             if let Some(e) = crate::demo::chat_range::tick(self.world.agent.position).and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
             }
+            // AURORA_DEMO_COMPACT_WRAP: long lines from long names and tags
+            if let Some(e) = crate::demo::compact_wrap::tick(self.world.agent.position).and_then(|ev| self.world.apply(ev)) {
+                self.on_app_event(e);
+            }
         }
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         self.send_animation_stops();
@@ -23876,6 +23880,17 @@ impl ApplicationHandler for App {
                     self.chat_ui.demo_style = Some(style);
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
                 }
+            }
+            // AURORA_DEMO_COMPACT_WRAP=<style>: the same, for the long lines
+            // of the Compact style's wrapping (#3137), in a narrower window
+            if let Some(style) = crate::demo::compact_wrap::scene() {
+                self.panels.people = false;
+                self.panels.inventory = false;
+                self.panels.perf = false;
+                self.panels.chat = true;
+                self.chat_ui.selected = None;
+                self.chat_ui.demo_style = Some(style);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(560.0, 560.0));
             }
             // AURORA_DEMO_EMOTES=<style>[:on]: the nearby chat in the
             // Conversations window of that workspace style

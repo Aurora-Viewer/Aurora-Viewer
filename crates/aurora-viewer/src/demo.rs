@@ -99,6 +99,10 @@ pub mod clouds;
 /// Bumps, pushes and hits, and their window (AURORA_DEMO_COLLISIONS).
 #[path = "demo_collisions.rs"]
 pub mod collisions;
+/// Long nearby chat lines to see how the Compact style wraps them (#3137,
+/// AURORA_DEMO_COMPACT_WRAP).
+#[path = "demo_compact_wrap.rs"]
+pub mod compact_wrap;
 /// Conference invitations from a stranger and a friend in turn
 /// (AURORA_DEMO_CONFERENCE).
 #[path = "demo_conference.rs"]
