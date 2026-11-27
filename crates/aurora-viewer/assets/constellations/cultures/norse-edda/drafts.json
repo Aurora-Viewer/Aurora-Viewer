@@ -1,0 +1,221 @@
+{
+ "note": "Our own draft translations (not from a source), made from the English name and the star group's characters on 2026-11-25; 'reused' = a sourced name of the same star group in another set, written instead of the draft; 'uncertain' = the translator was unsure; as_is = decided to stay as shown (the same word in that language, or a proper name).",
+ "made": "2026-11-25",
+ "names": {
+  "fr": {
+   "edHeim": "draft",
+   "edThV": "draft",
+   "edFrV": "draft",
+   "edThi": "draft",
+   "edUlf": "draft",
+   "edFis": "draft",
+   "edOxH": "draft",
+   "edSer": "draft",
+   "edFrS": "draft",
+   "edVan": "draft",
+   "edUrd": "draft",
+   "edMim": "draft",
+   "edWell": "draft",
+   "edHra": "draft",
+   "edToe": "draft"
+  },
+  "it": {
+   "edHeim": "draft",
+   "edThV": "draft",
+   "edFrV": "draft",
+   "edThi": "draft",
+   "edUlf": "draft",
+   "edFis": "draft",
+   "edOxH": "draft",
+   "edSer": "draft",
+   "edFrS": "draft",
+   "edVan": "draft",
+   "edUrd": "draft",
+   "edMim": "draft",
+   "edWell": "draft",
+   "edHra": "draft",
+   "edToe": "draft"
+  },
+  "ja": {
+   "edBif": "draft",
+   "edHeim": "draft",
+   "edRat": "draft",
+   "edThV": "draft",
+   "edFrV": "draft",
+   "edThi": "draft",
+   "edUlf": "draft",
+   "edFis": "draft",
+   "edOxH": "draft",
+   "edSer": "draft",
+   "edThor": "draft",
+   "edFrS": "draft",
+   "edVan": "draft",
+   "edUrd": "draft",
+   "edMim": "draft",
+   "edWell": "draft",
+   "edHra": "draft",
+   "edToe": "draft"
+  },
+  "nb": {
+   "edBif": "draft",
+   "edHeim": "draft",
+   "edThV": "draft",
+   "edFrV": "draft",
+   "edThi": "draft",
+   "edUlf": "draft",
+   "edFis": "draft",
+   "edOxH": "draft",
+   "edSer": "draft",
+   "edThor": "draft",
+   "edFrS": "draft",
+   "edVan": "draft",
+   "edUrd": "draft",
+   "edMim": "draft",
+   "edWell": "draft",
+   "edHra": "draft",
+   "edToe": "draft"
+  },
+  "pl": {
+   "edHeim": "draft",
+   "edThV": "draft",
+   "edFrV": "draft",
+   "edThi": "draft",
+   "edUlf": "draft",
+   "edFis": "draft",
+   "edOxH": "draft",
+   "edSer": "draft",
+   "edFrS": "draft",
+   "edVan": "draft",
+   "edUrd": "draft",
+   "edMim": "draft",
+   "edWell": "draft",
+   "edHra": "draft",
+   "edToe": "draft"
+  },
+  "pt": {
+   "edHeim": "draft",
+   "edThV": "draft",
+   "edFrV": "draft",
+   "edThi": "draft",
+   "edUlf": "draft",
+   "edFis": "draft",
+   "edOxH": "draft",
+   "edSer": "draft",
+   "edFrS": "draft",
+   "edVan": "draft",
+   "edUrd": "draft",
+   "edMim": "draft",
+   "edWell": "draft",
+   "edHra": "draft",
+   "edToe": "draft"
+  },
+  "tr": {
+   "edHeim": "draft",
+   "edThV": "draft",
+   "edFrV": "draft",
+   "edThi": "draft",
+   "edUlf": "draft",
+   "edFis": "draft",
+   "edOxH": "draft",
+   "edSer": "draft",
+   "edFrS": "draft",
+   "edVan": "draft",
+   "edUrd": "draft",
+   "edMim": "draft",
+   "edWell": "draft",
+   "edHra": "draft",
+   "edToe": "draft"
+  },
+  "zh-Hant": {
+   "edBif": "draft",
+   "edHeim": "draft",
+   "edRat": "draft",
+   "edThV": "draft",
+   "edFrV": "draft",
+   "edThi": "draft",
+   "edUlf": "draft",
+   "edFis": "draft",
+   "edOxH": "draft",
+   "edSer": "draft",
+   "edThor": "draft",
+   "edFrS": "draft",
+   "edVan": "draft",
+   "edUrd": "draft",
+   "edMim": "draft",
+   "edWell": "draft",
+   "edHra": "draft",
+   "edToe": "draft"
+  }
+ },
+ "as_is": {
+  "de": [
+   "edBif",
+   "edRat",
+   "edThor"
+  ],
+  "es": [
+   "edBif",
+   "edThor"
+  ],
+  "fr": [
+   "edBif",
+   "edRat",
+   "edThor"
+  ],
+  "it": [
+   "edBif",
+   "edRat",
+   "edThor"
+  ],
+  "nb": [
+   "edRat"
+  ],
+  "pl": [
+   "edBif",
+   "edRat",
+   "edThor"
+  ],
+  "pt": [
+   "edBif",
+   "edRat",
+   "edThor"
+  ],
+  "tr": [
+   "edBif",
+   "edRat",
+   "edThor"
+  ]
+ },
+ "culture_name": [
+  "fr",
+  "it",
+  "ja",
+  "nb",
+  "pl",
+  "pt",
+  "tr",
+  "zh-Hant"
+ ],
+ "culture_name_as_is": [],
+ "readings_added": {
+  "ja": {
+   "derived": [
+    "edAsr",
+    "edHeim",
+    "edThV",
+    "edFrV",
+    "edThi",
+    "edOxH",
+    "edFrS",
+    "edUrd",
+    "edMim",
+    "edWell",
+    "edHra",
+    "edToe"
+   ],
+   "guess": [
+    "edVan"
+   ]
+  }
+ }
+}

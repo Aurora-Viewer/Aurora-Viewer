@@ -1,0 +1,541 @@
+{
+ "about": "Origin marks of this unit's data. sourced: taken from the credited source, only its format or coordinates converted; derived: made from sourced data by a fixed rule; adapted: source content changed by judgement (pixels erased or filled, plates joined, a sourced name replaced); made: no source content (new drawings, drafts, stroke timing, name boxes); unknown: not recorded. A figure field resolves as figures[id][field], then default[field], then unknown; a field a figure does not have (no drawing, no name box) is not listed. names and readings list every entry; \"*\" is the file's own default name.",
+ "culture_name": {
+  "*": "sourced",
+  "de": "sourced",
+  "es": "sourced",
+  "fr": "made",
+  "it": "made",
+  "ja": "made",
+  "nb": "made",
+  "pl": "made",
+  "pt": "made",
+  "pt-BR": "sourced",
+  "ru": "sourced",
+  "tr": "made",
+  "uk": "sourced",
+  "zh-Hans": "sourced",
+  "zh-Hant": "made"
+ },
+ "default": {},
+ "figures": {
+  "edAsr": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edBif": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edFis": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edFrS": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edFrV": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edHeim": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edHra": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edMim": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edOxH": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edRat": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edSer": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edThV": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edThi": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edThor": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edToe": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edUlf": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edUrd": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edVan": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "edWell": {
+   "label": "derived",
+   "lines": "derived",
+   "timing": "made"
+  }
+ },
+ "format": 1,
+ "names": {
+  "*": {
+   "edAsr": "sourced",
+   "edBif": "sourced",
+   "edFis": "sourced",
+   "edFrS": "sourced",
+   "edFrV": "sourced",
+   "edHeim": "sourced",
+   "edHra": "sourced",
+   "edMim": "sourced",
+   "edOxH": "sourced",
+   "edRat": "sourced",
+   "edSer": "sourced",
+   "edThV": "sourced",
+   "edThi": "sourced",
+   "edThor": "sourced",
+   "edToe": "sourced",
+   "edUlf": "sourced",
+   "edUrd": "sourced",
+   "edVan": "sourced",
+   "edWell": "sourced"
+  },
+  "de": {
+   "edAsr": "sourced",
+   "edBif": "sourced",
+   "edFis": "sourced",
+   "edFrS": "sourced",
+   "edFrV": "sourced",
+   "edHeim": "sourced",
+   "edHra": "sourced",
+   "edMim": "sourced",
+   "edOxH": "sourced",
+   "edRat": "sourced",
+   "edSer": "sourced",
+   "edThV": "sourced",
+   "edThi": "sourced",
+   "edThor": "sourced",
+   "edToe": "sourced",
+   "edUlf": "sourced",
+   "edUrd": "sourced",
+   "edVan": "sourced",
+   "edWell": "sourced"
+  },
+  "en": {
+   "edAsr": "sourced",
+   "edBif": "sourced",
+   "edFis": "sourced",
+   "edFrS": "sourced",
+   "edFrV": "sourced",
+   "edHeim": "sourced",
+   "edHra": "sourced",
+   "edMim": "sourced",
+   "edOxH": "sourced",
+   "edRat": "sourced",
+   "edSer": "sourced",
+   "edThV": "sourced",
+   "edThi": "sourced",
+   "edThor": "sourced",
+   "edToe": "sourced",
+   "edUlf": "sourced",
+   "edUrd": "sourced",
+   "edVan": "sourced",
+   "edWell": "sourced"
+  },
+  "es": {
+   "edAsr": "sourced",
+   "edBif": "sourced",
+   "edFis": "sourced",
+   "edFrS": "sourced",
+   "edFrV": "sourced",
+   "edHeim": "sourced",
+   "edHra": "sourced",
+   "edMim": "sourced",
+   "edOxH": "sourced",
+   "edRat": "sourced",
+   "edSer": "sourced",
+   "edThV": "sourced",
+   "edThi": "sourced",
+   "edThor": "sourced",
+   "edToe": "sourced",
+   "edUlf": "sourced",
+   "edUrd": "sourced",
+   "edVan": "sourced",
+   "edWell": "sourced"
+  },
+  "fr": {
+   "edAsr": "sourced",
+   "edFis": "made",
+   "edFrS": "made",
+   "edFrV": "made",
+   "edHeim": "made",
+   "edHra": "made",
+   "edMim": "made",
+   "edOxH": "made",
+   "edSer": "made",
+   "edThV": "made",
+   "edThi": "made",
+   "edToe": "made",
+   "edUlf": "made",
+   "edUrd": "made",
+   "edVan": "made",
+   "edWell": "made"
+  },
+  "it": {
+   "edAsr": "sourced",
+   "edFis": "made",
+   "edFrS": "made",
+   "edFrV": "made",
+   "edHeim": "made",
+   "edHra": "made",
+   "edMim": "made",
+   "edOxH": "made",
+   "edSer": "made",
+   "edThV": "made",
+   "edThi": "made",
+   "edToe": "made",
+   "edUlf": "made",
+   "edUrd": "made",
+   "edVan": "made",
+   "edWell": "made"
+  },
+  "ja": {
+   "edAsr": "sourced",
+   "edBif": "made",
+   "edFis": "made",
+   "edFrS": "made",
+   "edFrV": "made",
+   "edHeim": "made",
+   "edHra": "made",
+   "edMim": "made",
+   "edOxH": "made",
+   "edRat": "made",
+   "edSer": "made",
+   "edThV": "made",
+   "edThi": "made",
+   "edThor": "made",
+   "edToe": "made",
+   "edUlf": "made",
+   "edUrd": "made",
+   "edVan": "made",
+   "edWell": "made"
+  },
+  "nb": {
+   "edAsr": "sourced",
+   "edBif": "made",
+   "edFis": "made",
+   "edFrS": "made",
+   "edFrV": "made",
+   "edHeim": "made",
+   "edHra": "made",
+   "edMim": "made",
+   "edOxH": "made",
+   "edSer": "made",
+   "edThV": "made",
+   "edThi": "made",
+   "edThor": "made",
+   "edToe": "made",
+   "edUlf": "made",
+   "edUrd": "made",
+   "edVan": "made",
+   "edWell": "made"
+  },
+  "non": {
+   "edAsr": "sourced",
+   "edBif": "sourced",
+   "edFis": "sourced",
+   "edFrS": "sourced",
+   "edFrV": "sourced",
+   "edHeim": "sourced",
+   "edHra": "sourced",
+   "edMim": "sourced",
+   "edOxH": "sourced",
+   "edRat": "sourced",
+   "edSer": "sourced",
+   "edThV": "sourced",
+   "edThi": "sourced",
+   "edThor": "sourced",
+   "edToe": "sourced",
+   "edUlf": "sourced",
+   "edUrd": "sourced",
+   "edVan": "sourced",
+   "edWell": "sourced"
+  },
+  "pl": {
+   "edAsr": "sourced",
+   "edFis": "made",
+   "edFrS": "made",
+   "edFrV": "made",
+   "edHeim": "made",
+   "edHra": "made",
+   "edMim": "made",
+   "edOxH": "made",
+   "edSer": "made",
+   "edThV": "made",
+   "edThi": "made",
+   "edToe": "made",
+   "edUlf": "made",
+   "edUrd": "made",
+   "edVan": "made",
+   "edWell": "made"
+  },
+  "pt": {
+   "edAsr": "sourced",
+   "edFis": "made",
+   "edFrS": "made",
+   "edFrV": "made",
+   "edHeim": "made",
+   "edHra": "made",
+   "edMim": "made",
+   "edOxH": "made",
+   "edSer": "made",
+   "edThV": "made",
+   "edThi": "made",
+   "edToe": "made",
+   "edUlf": "made",
+   "edUrd": "made",
+   "edVan": "made",
+   "edWell": "made"
+  },
+  "pt-BR": {
+   "edAsr": "sourced",
+   "edBif": "sourced",
+   "edFis": "sourced",
+   "edFrS": "sourced",
+   "edFrV": "sourced",
+   "edHeim": "sourced",
+   "edHra": "sourced",
+   "edMim": "sourced",
+   "edOxH": "sourced",
+   "edRat": "sourced",
+   "edSer": "sourced",
+   "edThV": "sourced",
+   "edThi": "sourced",
+   "edThor": "sourced",
+   "edToe": "sourced",
+   "edUlf": "sourced",
+   "edUrd": "sourced",
+   "edVan": "sourced",
+   "edWell": "sourced"
+  },
+  "ru": {
+   "edAsr": "sourced",
+   "edBif": "sourced",
+   "edFis": "sourced",
+   "edFrS": "sourced",
+   "edFrV": "sourced",
+   "edHeim": "sourced",
+   "edHra": "sourced",
+   "edMim": "sourced",
+   "edOxH": "sourced",
+   "edRat": "sourced",
+   "edSer": "sourced",
+   "edThV": "sourced",
+   "edThi": "sourced",
+   "edThor": "sourced",
+   "edToe": "sourced",
+   "edUlf": "sourced",
+   "edUrd": "sourced",
+   "edVan": "sourced",
+   "edWell": "sourced"
+  },
+  "tr": {
+   "edAsr": "sourced",
+   "edFis": "made",
+   "edFrS": "made",
+   "edFrV": "made",
+   "edHeim": "made",
+   "edHra": "made",
+   "edMim": "made",
+   "edOxH": "made",
+   "edSer": "made",
+   "edThV": "made",
+   "edThi": "made",
+   "edToe": "made",
+   "edUlf": "made",
+   "edUrd": "made",
+   "edVan": "made",
+   "edWell": "made"
+  },
+  "uk": {
+   "edAsr": "sourced",
+   "edBif": "sourced",
+   "edFis": "sourced",
+   "edFrS": "sourced",
+   "edFrV": "sourced",
+   "edHeim": "sourced",
+   "edHra": "sourced",
+   "edMim": "sourced",
+   "edOxH": "sourced",
+   "edRat": "sourced",
+   "edSer": "sourced",
+   "edThV": "sourced",
+   "edThi": "sourced",
+   "edThor": "sourced",
+   "edToe": "sourced",
+   "edUlf": "sourced",
+   "edUrd": "sourced",
+   "edVan": "sourced",
+   "edWell": "sourced"
+  },
+  "zh-Hans": {
+   "edAsr": "sourced",
+   "edBif": "sourced",
+   "edFis": "sourced",
+   "edFrS": "sourced",
+   "edFrV": "sourced",
+   "edHeim": "sourced",
+   "edHra": "sourced",
+   "edMim": "sourced",
+   "edOxH": "sourced",
+   "edRat": "sourced",
+   "edSer": "sourced",
+   "edThV": "sourced",
+   "edThi": "sourced",
+   "edThor": "sourced",
+   "edToe": "sourced",
+   "edUlf": "sourced",
+   "edUrd": "sourced",
+   "edVan": "sourced",
+   "edWell": "sourced"
+  },
+  "zh-Hant": {
+   "edAsr": "sourced",
+   "edBif": "made",
+   "edFis": "made",
+   "edFrS": "made",
+   "edFrV": "made",
+   "edHeim": "made",
+   "edHra": "made",
+   "edMim": "made",
+   "edOxH": "made",
+   "edRat": "made",
+   "edSer": "made",
+   "edThV": "made",
+   "edThi": "made",
+   "edThor": "made",
+   "edToe": "made",
+   "edUlf": "made",
+   "edUrd": "made",
+   "edVan": "made",
+   "edWell": "made"
+  }
+ },
+ "notes": {
+  "edAsr": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edBif": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edFis": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edFrS": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edFrV": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edHeim": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edHra": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edMim": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edOxH": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edRat": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edSer": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edThV": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edThi": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edThor": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edToe": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edUlf": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edUrd": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edVan": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edWell": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "4 zero-length segment(s) dropped (nothing visible lost)"
+  }
+ },
+ "readings": {
+  "ja": {
+   "edAsr": "derived",
+   "edFrS": "derived",
+   "edFrV": "derived",
+   "edHeim": "derived",
+   "edHra": "derived",
+   "edMim": "derived",
+   "edOxH": "derived",
+   "edThV": "derived",
+   "edThi": "derived",
+   "edToe": "derived",
+   "edUlf": "made",
+   "edUrd": "derived",
+   "edVan": "made",
+   "edWell": "derived"
+  }
+ },
+ "unit": "culture norse-edda"
+}

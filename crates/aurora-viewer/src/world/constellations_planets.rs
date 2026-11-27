@@ -4,7 +4,7 @@
 //! size (env.wgsl `constellation_planet_names`, a pass of its own: the
 //! figures may be off, or the folder hold none).
 //!
-//! The text is data: `planets.json` in the constellation data folder, per
+//! The text is data: `planets.json` of the constellation data, per
 //! planet id (`mercury`…`uranus`) the form of a culture's name
 //! (`{"name": …, "names": {"fr": …, "ja": …}}`). A missing file or planet
 //! is its built-in name (the catalogue's `planet-*`, in the interface's
@@ -22,7 +22,6 @@ use super::{ConstellationSettings, Constellations, Input, NAME_REACH, NAME_TEXEL
 use crate::world::planets::{builtin_name, ephemeris::Body};
 use aurora_render::constellations::{FrameState, HEAD_PLANET_NAMES, Item, Overlay, PLANET_NAMES, Upload, pack_place};
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Arc;
 
 /// Between two names stacked under planets in conjunction (radians,
@@ -37,17 +36,15 @@ pub const FILE: &str = "planets.json";
 /// built-in one).
 pub type Texts = [Option<catalogue::Names>; PLANET_NAMES];
 
-/// Reads `planets.json` of `dir`. Missing: every name built in, nothing
-/// said; unreadable, or an entry that does not read: said in `problems`
-/// (logged once), those names built in.
-pub fn read(dir: &Path, problems: &mut Vec<String>) -> Texts {
-    let path = dir.join(FILE);
-    if !path.is_file() {
-        return Texts::default();
-    }
-    match catalogue::read_capped(&path, catalogue::MAX_SET_FILE) {
-        Ok(bytes) => parse(&bytes, problems),
-        Err(e) => {
+/// Reads the data's `planets.json` (the user's when their folder has one,
+/// else the built-in one). Missing: every name built in, nothing said;
+/// unreadable, or an entry that does not read: said in `problems` (logged
+/// once), those names built in.
+pub fn read(data: &super::builtin::Data, problems: &mut Vec<String>) -> Texts {
+    match data.read(FILE, catalogue::MAX_SET_FILE) {
+        None => Texts::default(),
+        Some(Ok(bytes)) => parse(&bytes, problems),
+        Some(Err(e)) => {
             problems.push(format!("{FILE}: {e}"));
             Texts::default()
         }
@@ -290,7 +287,7 @@ mod tests {
     fn a_missing_or_broken_file_leaves_every_name_built_in() {
         let mut problems = Vec::new();
         let dir = std::env::temp_dir().join("aurora-planet-names-none");
-        let t = read(&dir, &mut problems);
+        let t = read(&super::super::builtin::Data::folder(&dir), &mut problems);
         assert!(problems.is_empty());
         let english: Vec<String> = (0..PLANET_NAMES).map(|k| text(&t, k, "en")).collect();
         assert_eq!(english, ["Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus"]);

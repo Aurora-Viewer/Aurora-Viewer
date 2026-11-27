@@ -1,0 +1,124 @@
+{
+ "credits": [
+  {
+   "holder": "Olaf Frohn (d3-celestial)",
+   "work": "Constellation stick lines and Latin names of the 88",
+   "licence": "BSD 3-Clause",
+   "url": "https://github.com/ofrohn/d3-celestial",
+   "imported": "2026-11-24",
+   "note": "Copyright (c) 2015, Olaf Frohn. The line patterns follow the IAU and Sky & Telescope constellation charts; no licence text for those charts could be read. Every line end point was moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg). Its name positions are not used: the names of the 88 were placed for this viewer."
+  },
+  {
+   "holder": "E. M. Standish and J. G. Williams; published by NASA/JPL Solar System Dynamics",
+   "work": "Keplerian elements for approximate positions of the major planets, Table 1 (1800 AD to 2050 AD), and its method",
+   "licence": "Public domain (SSD FAQ: the data on the site are considered public domain)",
+   "url": "https://ssd.jpl.nasa.gov/planets/approx_pos.html",
+   "imported": "2026-11-25",
+   "note": "Numbers and formulas only. Licence read at https://ssd.jpl.nasa.gov/faq.html."
+  },
+  {
+   "holder": "A. Mallama and J. L. Hilton",
+   "work": "Computing Apparent Planetary Magnitudes for The Astronomical Almanac, Astronomy and Computing 25 (2018), Eqs. 2 to 14",
+   "licence": "arXiv non-exclusive distribution licence for the preprint; only the published coefficients and equation forms are used, no text or code",
+   "url": "https://arxiv.org/abs/1808.01973",
+   "imported": "2026-11-25",
+   "note": "The Mars rotation and season corrections are left out. Uranus' flattening taken as 0.02293 (the fact sheet's value)."
+  },
+  {
+   "holder": "D. G. Simpson, NASA Goddard Space Flight Center",
+   "work": "An Alternative Lunar Ephemeris Model for On-Board Flight Software Use (1998), its review of the Astronomical Almanac's low-precision lunar formulae, Eqs. 1 to 13",
+   "licence": "NTRS record: distribution public, government public use permitted",
+   "url": "https://ntrs.nasa.gov/api/citations/19990040527",
+   "imported": "2026-11-25",
+   "note": "The almanac's low-precision series, not the paper's own Fourier model."
+  },
+  {
+   "holder": "NASA Goddard Space Flight Center, NSSDCA planetary fact sheets",
+   "work": "Saturn's and Uranus' north poles of rotation; Uranus' flattening",
+   "licence": "Not stated on the pages; a U.S. Government work, normally public domain (unverified)",
+   "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/saturnfact.html",
+   "imported": "2026-11-25",
+   "note": "Also https://nssdc.gsfc.nasa.gov/planetary/factsheet/uranusfact.html."
+  },
+  {
+   "holder": "NASA/JPL Solar System Dynamics, Horizons system",
+   "work": "Reference positions, distances, phase angles and magnitudes for the tests (ephemeris DE441), twelve moments 1990 to 2040",
+   "licence": "Public domain (SSD FAQ)",
+   "url": "https://ssd.jpl.nasa.gov/api/horizons.api",
+   "imported": "2026-11-25",
+   "note": "Test data only; nothing of it is drawn."
+  },
+  {
+   "holder": "Wikidata contributors",
+   "work": "Labels of the planet items Q308 (Mercury), Q313 (Venus), Q111 (Mars), Q319 (Jupiter), Q193 (Saturn), Q324 (Uranus) in de, es, it, nb, pl, pt, pt-br, ru, tr, uk, zh-hans, zh-hant; Turkish Venus from the item's tr aliases",
+   "licence": "CC0 1.0",
+   "url": "https://www.wikidata.org/wiki/Special:EntityData/Q313.json",
+   "imported": "2026-11-25",
+   "note": "Wikidata:Licensing: 'All structured data (i.e. the main, Property, Lexeme, and EntitySchema namespaces) is released into the public domain under Creative Commons Zero.' Licence quoted from https://www.wikidata.org/wiki/Wikidata:Licensing as read on 2026-11-25 for the constellation names; labels fetched the same day through the wbgetentities API. Wikidata has no version: the date read is the version."
+  },
+  {
+   "holder": "The Stellarium project and its translators",
+   "work": "Turkish 'Venüs' for Venus (stellarium-sky/tr.po, msgctxt 'major planet'), used to choose between Wikidata's Turkish label and alias",
+   "licence": "GPL-2.0-or-later",
+   "url": "https://github.com/Stellarium/stellarium/blob/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-sky/tr.po",
+   "imported": "2026-11-25",
+   "note": "Repository licence: COPYING (GNU GPL version 2) at the pinned commit; codemeta.json: '\"license\": \"https://spdx.org/licenses/GPL-2.0-or-later\"'. The .po files carry no licence header of their own. Translators are listed in each .po file's 'Translators' header (Transifex team)."
+  },
+  {
+   "holder": "The Stellarium project and its translators",
+   "work": "Names of the 88 IAU constellations in de, es, it, nb, pl, pt, pt-BR, ru, tr, zh-Hans, zh-Hant (names.json): po/stellarium-skycultures/{de,es,it,nb,pl,pt,pt_BR,ru,tr,zh_CN,zh_TW}.po, msgctxt 'IAU constellation name'; European Portuguese 'Latin (Portuguese)' forms reduced to the Portuguese part, a bracket holding only the Latin name dropped",
+   "licence": "GPL-2.0-or-later",
+   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-skycultures",
+   "imported": "2026-11-25",
+   "note": "Repository licence: COPYING (GNU GPL version 2) at the pinned commit; codemeta.json: '\"license\": \"https://spdx.org/licenses/GPL-2.0-or-later\"'. The .po files carry no licence header of their own. Matched by the Latin name in the .pot comment 'Modern constellation, native: <Latin>' (msgid = that culture's English name; Corona Austrina = Corona Australis)."
+  },
+  {
+   "holder": "Wikidata contributors",
+   "work": "In names.json: the Ukrainian names of the 88 (preferred over Stellarium's), the obsolete figures in de, es, it, nb, pl, pt, ru, uk: labels of the constellation items, read 2026-11-25",
+   "licence": "CC0 1.0",
+   "url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
+   "imported": "2026-11-25",
+   "note": "Wikidata:Licensing: 'All structured data (i.e. the main, Property, Lexeme, and EntitySchema namespaces) is released into the public domain under Creative Commons Zero.' Its Chinese labels were not used (made with a character table)."
+  },
+  {
+   "holder": "Wikipedia contributors (Italian, Russian, Ukrainian and Chinese Wikipedia)",
+   "work": "Names of obsolete western figures in names.json from the titles of their Wikipedia articles (Wikidata sitelinks of the figures' items, trailing disambiguation in brackets removed): it, ru, uk for Gloria Frederici (Q2450212); zh-Hans and zh-Hant for 15 figures, as Chinese Wikipedia itself renders each title for zh-cn and zh-tw (API varianttitles)",
+   "licence": "CC BY-SA 4.0",
+   "url": "https://www.wikidata.org/wiki/Q2450212",
+   "imported": "2026-11-25",
+   "note": "Site licence (siteinfo rightsinfo): 'Creative Commons Attribution-Share Alike 4.0'. Article titles are as read on 2026-11-25. These entries sit beside entries under other licences in the same file; each keeps its own licence."
+  },
+  {
+   "holder": "Made for this viewer",
+   "work": "Draft figure names (names.json), not from a source: de 7, es 11, fr 16, it 2, ja 89, nb 15, pl 8, pt 14, tr 15, uk 1, zh-Hans 1, zh-Hant 1; ja: 16 old figures, kanji of 73 of the 88",
+   "licence": "Own work; may be replaced by a sourced name",
+   "url": "",
+   "imported": "2026-11-25",
+   "note": "Made from the English name on 2026-11-25, some checked against public reference pages; listed in drafts.json; not proofread by native speakers. The kanji writings of the 88 are our choice among forms given in encyclopedia articles."
+  },
+  {
+   "holder": "Made for this viewer",
+   "work": "Kana readings over the Japanese names (names.json, planets.json)",
+   "licence": "Own work",
+   "url": "",
+   "imported": "2026-11-26",
+   "note": "82 readings of names.json written with its kanji names: 74 from the viewer's own kana names, 8 chosen by us for drafted names. 4 more and the six planets' readings built from the dictionary readings of the same characters. Marked in drafts.json (readings_added) and provenance.json."
+  },
+  {
+   "holder": "Made for this viewer",
+   "work": "French and Japanese names of the planets, and their English default names (planets.json)",
+   "licence": "Own work",
+   "url": "",
+   "imported": "2026-11-26",
+   "note": "Written for this viewer, not taken from a source. The other languages are the Wikidata labels and the Stellarium Turkish name credited above."
+  },
+  {
+   "holder": "Made for this viewer",
+   "work": "Name positions of the 88, and the order and timing of the stick lines' strokes",
+   "licence": "Own work",
+   "url": "",
+   "imported": "2026-11-26",
+   "note": "Placed or computed for this viewer from the star positions; none of it comes from a source. provenance.json in each folder marks which data is sourced, derived, adapted or made."
+  }
+ ]
+}

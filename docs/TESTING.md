@@ -196,6 +196,7 @@ Actual grid login and teleporting are performed by the human.
 | `AURORA_NORMAL_PRECISION=auto\|standard\|high` | Overrides "Reflection precision" (Graphics › Reflections) |
 | `AURORA_CONSTELLATIONS=0\|1` | Turns the constellations over the real sky off or on for a launch |
 | `AURORA_CONSTELLATION_DIR=<folder>` | Reads the constellation data from that folder instead of the profile's |
+| `AURORA_CONSTELLATION_BUILTIN=0` | Leaves the constellation data built into the viewer out for a launch |
 | `AURORA_GRAPHICS_PRESET=potato\|low\|medium\|high\|deluxe` | Applies a graphics level before the overrides above |
 
 `AURORA_DEMO_AVATAR_RENDER_SETTINGS=1` opens World > Avatar render settings
@@ -5550,9 +5551,10 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_DEMO_CONSTELLATIONS_WINDOW=1` shows these in the window as well
   (in memory, never saved). `AURORA_DEMO_CONSTELLATION_CREDITS=<pixels>`
   opens "Licences and attribution" with its list scrolled that far: the
-  entries are the data folder's `credits.json` files (its root,
-  `cultures/<id>/`, `sets/<id>/`; `world/constellations_credits.rs`); a
-  folder without them shows the empty line. `zenith=<figure id>` turns the real sky
+  entries are the data's `credits.json` files (its root, built in and the
+  user's, then `cultures/<id>/`, `sets/<id>/`;
+  `world/constellations_credits.rs`); data without them shows the empty
+  line. `zenith=<figure id>` turns the real sky
   (its place and real time, like `AURORA_DEMO_NIGHT_SKY_CLOCK`) so that
   this figure's label point is overhead, whatever its declination: with
   `AURORA_DEMO_NIGHT_SKY=real:0,89`, `zenith=Oct` puts the southern
@@ -5562,15 +5564,24 @@ both open states and the selection count. Capture at frame 620.
   night's hour, or `AURORA_DEMO_NIGHT_SKY_CLOCK=2.35,2026-01-15T23:00`.
   The southern figures drawn with lines only: `AURORA_DEMO_NIGHT_SKY_PLACE=-33.87`
   and `real:180,45`. No figure may show in the water's or a mirror's
-  reflection, nor in a reflection probe. The data is the user's, read
-  from `constellations` in the configuration folder (the demo's own
-  `demo/constellations`): point `AURORA_CONSTELLATION_DIR=<folder>` at a
-  test copy (`lines.json`, `sets/<set>/set.json`, the figures' JSON and
-  WebP files; `world/constellations_catalogue.rs`). A missing folder
-  draws nothing and the Constellations window says where it looked; a folder with
-  `lines.json` alone draws lines and names; a damaged picture leaves its
-  figure's lines and name, said once in the log. The log says
-  `constellations: read <folder>: ...` with the time the small files took,
+  reflection, nor in a reflection probe. The lines and names of the
+  western culture and six sky cultures are built in
+  (`crates/aurora-viewer/assets/constellations/`, its README;
+  `world/constellations_builtin.rs`), no picture. The user's folder,
+  `constellations` in the configuration folder (the demo's own
+  `demo/constellations`), adds drawing sets and replaces a built-in unit
+  whole (a culture's folder, the root `lines.json`/`names.json` pair,
+  `planets.json`): point `AURORA_CONSTELLATION_DIR=<folder>` at a test
+  copy (`lines.json`, `sets/<set>/set.json`, the figures' JSON and WebP
+  files; `world/constellations_catalogue.rs`).
+  `AURORA_CONSTELLATION_BUILTIN=0` (or `off`, `false`) leaves the built-in
+  data out for the launch: a missing folder then draws nothing and the
+  Constellations window says where it looked; a folder with `lines.json`
+  alone draws lines and names; a damaged picture leaves its figure's
+  lines and name, said once in the log. The log says
+  `constellations: read <source>: ...` (`the built-in data`, with the
+  user's folder and the units it gives, or the folder alone) with the time
+  the small files took,
   `<figure> (<set>) ready <ms> ms after it was asked` for each picture
   read on demand, and `constellations: <n> shown, <k> pictures in the
   atlas (<l> layer(s), <MiB>)` when something starts or stops showing or
@@ -5641,7 +5652,7 @@ both open states and the selection count. Capture at frame 620.
   in the night sky: `real:65,14`, `2.35,2026-06-21T05:00` and
   `AURORA_DEMO_SKY_DISCS=real` (the light, the haze's glow and the
   constellations' darkness stay the region's). The names come from
-  `planets.json` in the constellation data folder (`AURORA_CONSTELLATION_DIR`),
+  `planets.json` of the constellation data (built in, or the user's folder's),
   `{"venus": {"name": "Venus", "names": {"fr": "Vénus", "ja": "金星"}}, ...}`
   by `mercury`, `venus`, `mars`, `jupiter`, `saturn`, `uranus`; a body
   or file it lacks shows the built-in name (the catalogue's, in the

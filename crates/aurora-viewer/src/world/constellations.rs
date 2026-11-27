@@ -5,10 +5,12 @@
 //! name; figures no longer counted have a switch of their own, off by
 //! default. Aurora's own: the Legacy Viewer draws no constellations.
 //!
-//! The data is the user's, installed in their profile
-//! (`constellations/` in the configuration folder, constellations_catalogue.rs)
-//! and read at run time, on demand: nothing of it is built into the viewer,
-//! nothing is read from the network or written to the grid. The sky shader
+//! The data is built into the viewer (constellations_builtin.rs: the
+//! stick lines and names, no picture), and the user's own folder in their
+//! profile (`constellations/` in the configuration folder) replaces any
+//! culture or set of it, whole, and adds art sets (constellations_catalogue.rs).
+//! It is read at run time, on demand: nothing is read from the network or
+//! written to the grid. The sky shader
 //! draws them next to the stars (aurora-render constellations.rs, env.wgsl
 //! `constellation_overlay`), so they fade with the stars at twilight and
 //! towards the horizon, hide behind clouds, the sun and the moon, and show
@@ -31,12 +33,15 @@
 //!
 //! Test variables: `AURORA_CONSTELLATIONS=0|1` turns the overlay off or on
 //! for a launch (an A/B with the same settings);
-//! `AURORA_CONSTELLATION_DIR=<folder>` reads the data from that folder;
+//! `AURORA_CONSTELLATION_DIR=<folder>` reads the user's data from that
+//! folder; `AURORA_CONSTELLATION_BUILTIN=0` leaves the built-in data out;
 //! `AURORA_DEMO_CONSTELLATIONS` (demo only) sets it up and can hold it at
 //! a stage of its drawing or fading (docs/TESTING.md).
 
 #[path = "constellations_atlas.rs"]
 mod atlas;
+#[path = "constellations_builtin.rs"]
+pub mod builtin;
 #[path = "constellations_catalogue.rs"]
 pub mod catalogue;
 #[path = "constellations_credits.rs"]
@@ -174,7 +179,7 @@ pub struct ConstellationSettings {
 impl Default for ConstellationSettings {
     fn default() -> Self {
         ConstellationSettings {
-            enabled: true,
+            enabled: false,
             drawing_opacity: 1.0,
             cultures: None,
             lines: true,
@@ -638,10 +643,11 @@ pub fn data_dir() -> PathBuf {
     }
 }
 
-/// The data as last read: the folder and the overlay's catalogue (`None`:
-/// nothing usable in the folder).
+/// The data as last read: the user's folder, the layers' files and the
+/// overlay's catalogue (`None`: nothing usable in the data).
 pub struct Scanned {
     pub dir: PathBuf,
+    pub data: Arc<builtin::Data>,
     pub loaded: Option<Arc<Loaded>>,
     pub planet_names: Arc<planet_names::Texts>,
 }
@@ -717,28 +723,31 @@ mod library {
                 }
             }
             let mut problems = Vec::new();
-            let c = catalogue::scan(&dir, &mut problems);
-            let planet_names = Arc::new(super::planet_names::read(&dir, &mut problems));
+            // the built-in layer under the user's folder
+            let data = Arc::new(super::builtin::Data::of(&dir));
+            let c = catalogue::scan_data(&data, &mut problems);
+            let planet_names = Arc::new(super::planet_names::read(&data, &mut problems));
             for p in problems {
-                say_once(format!("constellations: {}: {p}", dir.display()));
+                say_once(format!("constellations: {}: {p}", data.origin_of(&p)));
             }
             let millis = t.elapsed().as_secs_f64() * 1000.0;
+            let from = data.describe();
             let loaded = if c.is_empty() {
-                log::info!("constellations: no data in {} ({millis:.1} ms)", dir.display());
+                log::info!("constellations: no data in {from} ({millis:.1} ms)");
                 None
             } else {
-                log::info!(
-                    "constellations: {} in {}: {} ({millis:.1} ms)",
-                    "read",
-                    dir.display(),
-                    catalogue::summary(&c)
-                );
+                log::info!("constellations: read {from}: {} ({millis:.1} ms)", catalogue::summary(&c));
                 // (the tables are made per choice of cultures: `View`)
                 Some(Arc::new(super::load(c)))
             };
             let mut st = lock();
             st.signature = Some((dir.clone(), signature));
-            st.latest = Some(Arc::new(Scanned { dir, loaded, planet_names }));
+            st.latest = Some(Arc::new(Scanned {
+                dir,
+                data,
+                loaded,
+                planet_names,
+            }));
             GENERATION.fetch_add(1, Ordering::AcqRel);
         });
         if let Err(e) = spawned {
@@ -755,8 +764,9 @@ pub fn rescan() {
     library::rescan();
 }
 
-/// The credits window's view of the data folder's `credits.json` files
-/// (constellations_credits.rs): read on a thread of its own the first time
+/// The credits window's view of the data's `credits.json` files, built in
+/// and in the user's folder (constellations_credits.rs): read on a thread of
+/// its own the first time
 /// it asks, after a new reading of the folder and after a Rescan; their
 /// groups take the catalogue's cultures and sets, by their shown names.
 pub fn credits_view() -> credits::View {
@@ -766,7 +776,9 @@ pub fn credits_view() -> credits::View {
     }
     let language = aurora_i18n::language();
     credits::view(generation, move || {
-        let dir = latest.as_ref().map_or_else(data_dir, |s| s.dir.clone());
+        let data = latest
+            .as_ref()
+            .map_or_else(|| Arc::new(builtin::Data::of(&data_dir())), |s| s.data.clone());
         let (cultures, sets): (Vec<(String, String)>, Vec<(String, String)>) = latest
             .as_ref()
             .and_then(|s| s.loaded.as_ref())
@@ -786,9 +798,9 @@ pub fn credits_view() -> credits::View {
             })
             .unwrap_or_default();
         let mut problems = Vec::new();
-        let groups = credits::read(&dir, &cultures, &sets, &mut problems);
+        let groups = credits::read(&data, &cultures, &sets, &mut problems);
         for p in problems {
-            library::say_once(format!("constellations: {}: {p}", dir.display()));
+            library::say_once(format!("constellations: {}: {p}", data.origin_of(&p)));
         }
         groups
     })
@@ -925,7 +937,7 @@ pub fn demo_settings(s: &ConstellationSettings) -> ConstellationSettings {
 pub fn demo_zenith(unix_days: f64) -> Option<(f32, f32)> {
     let v = std::env::var("AURORA_DEMO_CONSTELLATIONS").ok()?;
     let id = parse_overrides(None, Some(&v)).zenith?;
-    let catalogue = catalogue::scan(&data_dir(), &mut Vec::new());
+    let catalogue = catalogue::scan_data(&builtin::Data::of(&data_dir()), &mut Vec::new());
     let f = catalogue.figures.iter().find(|f| f.id.eq_ignore_ascii_case(&id))?;
     let [ra, dec] = f.geom.label;
     Some(zenith_place(ra, dec, unix_days))
@@ -2180,9 +2192,11 @@ mod tests {
         let o = parse_overrides(None, Some("sets=second+first, nolines, zenith=Oct"));
         assert_eq!((o.lines, o.zenith.as_deref()), (Some(false), Some("Oct")));
         let s = o.apply(&ConstellationSettings::default());
+        // (a scenario turns the overlay on: it is off by default)
         assert_eq!(
             s,
             ConstellationSettings {
+                enabled: true,
                 lines: false,
                 ..ConstellationSettings::default()
             }
@@ -2457,7 +2471,8 @@ mod tests {
     #[test]
     fn settings_keep_their_defaults_and_ranges() {
         let d = ConstellationSettings::default();
-        assert!(d.enabled && d.drawing_opacity == 1.0 && d.lines && d.names && !d.obsolete);
+        // off until the user turns them on: the sky looks as before
+        assert!(!d.enabled && d.drawing_opacity == 1.0 && d.lines && d.names && !d.obsolete);
         assert!(d.cultures.is_none(), "the western culture only");
         assert!(d.highlight && d.line_width == 1.0 && d.draw_brightness == 1.0);
         assert_eq!(
@@ -2744,10 +2759,10 @@ mod tests {
 
     #[test]
     fn the_status_line_gives_the_first_reason_nothing_shows() {
-        let on = ConstellationSettings::default();
-        let off = ConstellationSettings {
-            enabled: false,
-            ..on.clone()
+        let off = ConstellationSettings::default();
+        let on = ConstellationSettings {
+            enabled: true,
+            ..off.clone()
         };
         let dir = std::path::Path::new("/profile/constellations");
         assert_eq!(status(&off, true, true, Some((true, dir))), Status::Off);

@@ -1,0 +1,78 @@
+{
+ "note": "Our own draft translations (not from a source), made from the English name and the star group's characters on 2026-11-25; 'reused' = a sourced name of the same star group in another set, written instead of the draft; 'uncertain' = the translator was unsure; as_is = decided to stay as shown (the same word in that language, or a proper name).",
+ "made": "2026-11-25",
+ "names": {
+  "fr": {
+   "iu011": "draft",
+   "iu012": "draft"
+  },
+  "it": {
+   "iu011": "draft",
+   "iu012": "draft"
+  },
+  "ja": {
+   "iu011": "draft",
+   "iu012": "draft",
+   "iu013": "draft",
+   "iu010": "draft"
+  },
+  "nb": {
+   "iu011": "draft",
+   "iu012": "draft"
+  },
+  "pl": {
+   "iu011": "draft",
+   "iu012": "draft"
+  },
+  "pt": {
+   "iu011": "draft",
+   "iu012": "draft"
+  },
+  "tr": {
+   "iu011": "draft",
+   "iu012": "draft"
+  },
+  "uk": {
+   "iu011": "draft"
+  }
+ },
+ "as_is": {
+  "fr": [
+   "iu006"
+  ]
+ },
+ "culture_name": [
+  "fr",
+  "pl",
+  "ru",
+  "tr",
+  "uk",
+  "zh-Hant"
+ ],
+ "culture_name_as_is": [
+  "de",
+  "es",
+  "it"
+ ],
+ "readings_added": {
+  "ja": {
+   "derived": [
+    "iu001",
+    "iu003",
+    "iu004",
+    "iu005",
+    "iu008",
+    "iu009",
+    "iu014",
+    "iu011",
+    "iu012"
+   ]
+  }
+ },
+ "replaced_source": {
+  "ja": [
+   "iu013",
+   "iu010"
+  ]
+ }
+}

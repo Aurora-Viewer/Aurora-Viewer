@@ -2,9 +2,11 @@
 //! from it, under which licence, its site and when it was brought in, for
 //! the window "Licences and attribution" (ui/constellations_window.rs).
 //!
-//! They come from the data folder only, never from the viewer: a
-//! `credits.json` beside the general data (the folder's root), in a
-//! culture's folder (`cultures/<id>/`) and in a set's (`sets/<id>/`):
+//! They come from the data, never from the code: a `credits.json` beside
+//! the general data (the data's root), in a culture's folder
+//! (`cultures/<id>/`) and in a set's (`sets/<id>/`), each taken with its
+//! unit from the built-in data or the user's folder; the root's of both
+//! are read, the built-in one first (constellations_builtin.rs):
 //!
 //! ```json
 //! {"credits": [{"holder": "…", "work": "…", "licence": "…",
@@ -25,7 +27,6 @@
 //! Rescan or a new reading of the folder; nothing while it is closed.
 
 use serde::Deserialize;
-use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 /// The file's name at each of its places.
@@ -157,15 +158,12 @@ pub fn parse(bytes: &[u8], problems: &mut Vec<String>) -> Result<Vec<Credit>, St
     Ok(out)
 }
 
-/// One place's file: none when it is not there; what does not read is said
-/// in `problems` with the file's place (`label`).
-fn read_one(path: &Path, label: &str, problems: &mut Vec<String>) -> Vec<Credit> {
-    match std::fs::metadata(path) {
-        Ok(m) if m.is_file() => {}
-        _ => return Vec::new(),
-    }
+/// One place's file (its bytes, `None`: not there); what does not read is
+/// said in `problems` with the file's place (`label`).
+fn read_one(bytes: Option<Result<Vec<u8>, String>>, label: &str, problems: &mut Vec<String>) -> Vec<Credit> {
+    let Some(bytes) = bytes else { return Vec::new() };
     let mut found = Vec::new();
-    let credits = super::catalogue::read_capped(path, MAX_FILE).and_then(|b| parse(&b, &mut found));
+    let credits = bytes.and_then(|b| parse(&b, &mut found));
     problems.extend(found.into_iter().map(|p| format!("{label}: {p}")));
     credits.unwrap_or_else(|e| {
         problems.push(format!("{label}: {e}"));
@@ -173,31 +171,35 @@ fn read_one(path: &Path, label: &str, problems: &mut Vec<String>) -> Vec<Credit>
     })
 }
 
-/// Every credit of the folder `root`, grouped: the general data's, then
-/// each culture's and each set's in the catalogue's order (`cultures`,
-/// `sets`: their ids, safe as folder names, and their shown names). A place
-/// without a file has no group.
-pub fn read(root: &Path, cultures: &[(String, String)], sets: &[(String, String)], problems: &mut Vec<String>) -> Vec<Group> {
+/// Every credit of the data, grouped: the general data's (the built-in
+/// root's, then the user's), then each culture's and each set's in the
+/// catalogue's order (`cultures`, `sets`: their ids, safe as folder names,
+/// and their shown names). A place without a file has no group.
+pub fn read(
+    data: &super::builtin::Data,
+    cultures: &[(String, String)],
+    sets: &[(String, String)],
+    problems: &mut Vec<String>,
+) -> Vec<Group> {
     let mut out = Vec::new();
     let mut push = |source: Source, credits: Vec<Credit>| {
         if !credits.is_empty() {
             out.push(Group { source, credits });
         }
     };
-    push(Source::General, read_one(&root.join(FILE), FILE, problems));
+    for root in data.root_credits(MAX_FILE) {
+        push(Source::General, read_one(Some(root), FILE, problems));
+    }
     for (id, name) in cultures {
         let label = format!("cultures/{id}/{FILE}");
         push(
             Source::Culture(name.clone()),
-            read_one(&root.join("cultures").join(id).join(FILE), &label, problems),
+            read_one(data.read(&label, MAX_FILE), &label, problems),
         );
     }
     for (id, name) in sets {
         let label = format!("sets/{id}/{FILE}");
-        push(
-            Source::Set(name.clone()),
-            read_one(&root.join("sets").join(id).join(FILE), &label, problems),
-        );
+        push(Source::Set(name.clone()), read_one(data.read(&label, MAX_FILE), &label, problems));
     }
     out
 }
@@ -343,7 +345,7 @@ mod tests {
         let root = folder("credits-big");
         write(&root, FILE, &vec![b' '; MAX_FILE as usize + 10]);
         let mut problems = Vec::new();
-        assert!(read(&root, &[], &[], &mut problems).is_empty());
+        assert!(read(&super::super::builtin::Data::folder(&root), &[], &[], &mut problems).is_empty());
         assert_eq!(problems.len(), 1, "{problems:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -395,7 +397,7 @@ mod tests {
         assert_eq!(with.figures.len(), 1);
         let sets: Vec<(String, String)> = with.sets.iter().map(|s| (s.id.clone(), s.display_name("en").to_owned())).collect();
         let cultures: Vec<(String, String)> = with.cultures.iter().map(|c| (c.id.clone(), c.id.clone())).collect();
-        let groups = read(&root, &cultures, &sets, &mut problems);
+        let groups = read(&super::super::builtin::Data::folder(&root), &cultures, &sets, &mut problems);
         assert!(problems.is_empty(), "{problems:?}");
         let holders: Vec<(&Source, &str)> = groups.iter().map(|g| (&g.source, g.credits[0].holder.as_str())).collect();
         assert_eq!(
@@ -422,7 +424,7 @@ mod tests {
             (with.figures.len(), with.sets.len(), with.cultures.len())
         );
         // none: no group
-        assert!(read(&root, &cultures, &sets, &mut problems).is_empty());
+        assert!(read(&super::super::builtin::Data::folder(&root), &cultures, &sets, &mut problems).is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

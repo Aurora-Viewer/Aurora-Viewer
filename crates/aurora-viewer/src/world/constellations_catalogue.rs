@@ -1,7 +1,9 @@
-//! The constellation data the user installs in their profile
-//! (`constellations/` in the configuration folder, beside `photo-luts`;
-//! `AURORA_CONSTELLATION_DIR` for a launch), read at run time. Nothing of
-//! it is built into the viewer, and nothing is read from the network.
+//! The constellation data: built into the viewer, under the user's own
+//! folder in their profile (`constellations/` in the configuration folder,
+//! beside `photo-luts`; `AURORA_CONSTELLATION_DIR` for a launch), each
+//! culture, set or root file taken whole from one of the two
+//! (constellations_builtin.rs `Data`), read at run time. Nothing is read
+//! from the network.
 //!
 //! ```text
 //! constellations/cultures/<culture>/lines.json   a culture's stick lines, names, label points
@@ -14,7 +16,7 @@
 //! constellations/sets/<set>/<figure>.webp        its drawing (lossless, LA: ink, reveal time)
 //! ```
 //!
-//! [`scan`] reads the small files only (the JSON); a drawing's WebP is read
+//! [`scan_data`] reads the small files only (the JSON); a drawing's WebP is read
 //! when the figure first shows (constellations.rs). The sets are the
 //! folders that hold a `set.json`, each of one culture (`"culture"`,
 //! `western` by default); a figure is known by its culture and its id (ids
@@ -22,12 +24,14 @@
 //! there are, and which figures a set draws, is the data's business: no
 //! list of them here.
 //!
-//! The files are the user's, so they are read as untrusted input: each has
+//! The files may be the user's, so all are read as untrusted input (the
+//! built-in ones too, through the same code): each has
 //! a size limit, ids keep to a safe set of characters (a file's name comes
 //! from its id, never from a path inside a JSON), counts are bounded, and a
 //! file that does not read is left out with a problem the caller logs
 //! once. Nothing here panics on bad data.
 
+use super::builtin::Data;
 use aurora_render::constellations::{ATLAS_H, ATLAS_W, FigureGeom, Line, Picture};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -517,23 +521,22 @@ pub fn parse_names(bytes: &[u8], problems: &mut Vec<String>) -> FigureNames {
     out
 }
 
-/// The `names.json` at `path`, its problems said under `prefix` (its
-/// folder, `cultures/<culture>/`, or none at the root); no file, no names.
-fn read_names(path: &Path, prefix: &str, problems: &mut Vec<String>) -> FigureNames {
-    match std::fs::metadata(path) {
-        Ok(m) if m.is_file() => match read_capped(path, MAX_NAMES_FILE) {
-            Ok(bytes) => {
-                let mut found = Vec::new();
-                let names = parse_names(&bytes, &mut found);
-                problems.extend(found.into_iter().map(|p| format!("{prefix}{p}")));
-                names
-            }
-            Err(e) => {
-                problems.push(format!("{prefix}names.json: {e}"));
-                FigureNames::new()
-            }
-        },
-        _ => FigureNames::new(),
+/// The `names.json` at `rel` in the data, its problems said under
+/// `prefix` (its folder, `cultures/<culture>/`, or none at the root); no
+/// file, no names.
+fn read_names(data: &Data, rel: &str, prefix: &str, problems: &mut Vec<String>) -> FigureNames {
+    match data.read(rel, MAX_NAMES_FILE) {
+        Some(Ok(bytes)) => {
+            let mut found = Vec::new();
+            let names = parse_names(&bytes, &mut found);
+            problems.extend(found.into_iter().map(|p| format!("{prefix}{p}")));
+            names
+        }
+        Some(Err(e)) => {
+            problems.push(format!("{prefix}names.json: {e}"));
+            FigureNames::new()
+        }
+        None => FigureNames::new(),
     }
 }
 
@@ -622,7 +625,7 @@ pub fn parse_figure(stem: &str, bytes: &[u8]) -> Result<Option<FigureMeta>, Stri
 }
 
 /// The folder's files, by name, sorted (only regular files and folders).
-fn entries(dir: &Path) -> Vec<(String, std::fs::Metadata)> {
+pub(super) fn entries(dir: &Path) -> Vec<(String, std::fs::Metadata)> {
     let mut out: Vec<(String, std::fs::Metadata)> = std::fs::read_dir(dir)
         .map(|rd| {
             rd.filter_map(Result::ok)
@@ -669,42 +672,42 @@ pub fn signature(root: &Path) -> Signature {
 /// A culture's shared figures: per id, its name, label point and lines.
 type Shared = BTreeMap<String, (String, Option<[f32; 2]>, Vec<Line>)>;
 
-/// Reads the folder `root`: each culture's `lines.json` (and
-/// `culture.json`), every `sets/*/set.json` and the figures' JSON files
-/// (not their pictures). What does not read is left out and said in
-/// `problems` (one line a file or entry, the caller logs each once). A
-/// missing folder is an empty catalogue.
+/// `scan_data` of the folder `root` alone (no built-in layer).
+#[cfg(test)]
+pub fn scan(root: &Path, problems: &mut Vec<String>) -> Catalogue {
+    scan_data(&Data::folder(root), problems)
+}
+
+/// Reads the data (the built-in files under the user's folder): each
+/// culture's `lines.json` (and `culture.json`), every `sets/*/set.json`
+/// and the figures' JSON files (not their pictures). What does not read is
+/// left out and said in `problems` (one line a file or entry, the caller
+/// logs each once). No data is an empty catalogue.
 ///
 /// Within a culture, a figure's shared data (lines, label point, name)
 /// comes from the culture's `lines.json` when it has the figure, else from
 /// the first of the culture's sets, in the sets' order, that has the
 /// figure's file; its kind and centre from that file. That file marking it
 /// `"hidden": true` leaves it out whole.
-pub fn scan(root: &Path, problems: &mut Vec<String>) -> Catalogue {
-    let read_lines = |path: &Path, label: &str, problems: &mut Vec<String>| -> Option<Shared> {
-        match std::fs::metadata(path) {
-            Ok(m) if m.is_file() => match read_capped(path, MAX_LINES_FILE) {
-                Ok(bytes) => {
-                    let mut found = Vec::new();
-                    let shared = parse_lines(&bytes, &mut found);
-                    problems.extend(found.into_iter().map(|p| format!("{label}{}", p.trim_start_matches("lines.json"))));
-                    Some(shared)
-                }
-                Err(e) => {
-                    problems.push(format!("{label}: {e}"));
-                    None
-                }
-            },
-            _ => None,
+pub fn scan_data(data: &Data, problems: &mut Vec<String>) -> Catalogue {
+    let read_lines = |rel: &str, label: &str, problems: &mut Vec<String>| -> Option<Shared> {
+        match data.read(rel, MAX_LINES_FILE)? {
+            Ok(bytes) => {
+                let mut found = Vec::new();
+                let shared = parse_lines(&bytes, &mut found);
+                problems.extend(found.into_iter().map(|p| format!("{label}{}", p.trim_start_matches("lines.json"))));
+                Some(shared)
+            }
+            Err(e) => {
+                problems.push(format!("{label}: {e}"));
+                None
+            }
         }
     };
     // the cultures: their folders, and the western one's old place
     // (each with its figures' names, `names.json`)
     let mut cultures: BTreeMap<String, (Option<Names>, Shared, FigureNames)> = BTreeMap::new();
-    for (name, m) in entries(&root.join("cultures")) {
-        if !m.is_dir() {
-            continue;
-        }
+    for name in data.subdirs("cultures") {
         if !set_id_ok(&name) {
             problems.push(format!(
                 "cultures/{name}: a culture's folder name is lowercase letters, digits and dashes"
@@ -715,39 +718,39 @@ pub fn scan(root: &Path, problems: &mut Vec<String>) -> Catalogue {
             problems.push(format!("more than {MAX_SETS} cultures; the rest left out"));
             break;
         }
-        let dir = root.join("cultures").join(&name);
-        let names = match std::fs::metadata(dir.join("culture.json")) {
-            Ok(_) => match read_capped(&dir.join("culture.json"), MAX_SET_FILE).and_then(|b| parse_culture(&b)) {
+        let dir = format!("cultures/{name}");
+        let names = match data.read(&format!("{dir}/culture.json"), MAX_SET_FILE) {
+            Some(read) => match read.and_then(|b| parse_culture(&b)) {
                 Ok(n) => Some(n),
                 Err(e) => {
                     problems.push(format!("cultures/{name}/culture.json: {e}"));
                     None
                 }
             },
-            Err(_) => None,
+            None => None,
         };
-        let shared = read_lines(&dir.join("lines.json"), &format!("cultures/{name}/lines.json"), problems).unwrap_or_default();
-        let figure_names = read_names(&dir.join("names.json"), &format!("cultures/{name}/"), problems);
+        let shared = read_lines(&format!("{dir}/lines.json"), &format!("{dir}/lines.json"), problems).unwrap_or_default();
+        let figure_names = read_names(data, &format!("{dir}/names.json"), &format!("{dir}/"), problems);
         cultures.insert(name, (names, shared, figure_names));
     }
     let western_folder = cultures.contains_key(WESTERN);
     if !cultures.contains_key(WESTERN)
-        && let Some(shared) = read_lines(&root.join("lines.json"), "lines.json", problems)
+        && let Some(shared) = read_lines("lines.json", "lines.json", problems)
     {
         cultures.insert(WESTERN.to_owned(), (None, shared, FigureNames::new()));
     }
     // the sets, then their figures' files
-    let mut sets: Vec<(SetInfo, PathBuf, BTreeMap<String, FigureMeta>)> = Vec::new();
-    for (name, m) in entries(&root.join("sets")) {
-        if !m.is_dir() {
-            continue;
-        }
-        let dir = root.join("sets").join(&name);
+    let mut sets: Vec<(SetInfo, String, BTreeMap<String, FigureMeta>)> = Vec::new();
+    for name in data.subdirs("sets") {
+        let dir = format!("sets/{name}");
         if !set_id_ok(&name) {
             problems.push(format!("sets/{name}: a set's folder name is lowercase letters, digits and dashes"));
             continue;
         }
-        let info = match read_capped(&dir.join("set.json"), MAX_SET_FILE).and_then(|b| parse_set(&name, &b)) {
+        let set_file = data
+            .read(&format!("{dir}/set.json"), MAX_SET_FILE)
+            .unwrap_or_else(|| Err("missing".to_owned()));
+        let info = match set_file.and_then(|b| parse_set(&name, &b)) {
             Ok(info) => info,
             Err(e) => {
                 problems.push(format!("sets/{name}/set.json: {e}"));
@@ -766,9 +769,10 @@ pub fn scan(root: &Path, problems: &mut Vec<String>) -> Catalogue {
             cultures.insert(info.culture_id.clone(), (None, Shared::new(), FigureNames::new()));
         }
         let mut figures = BTreeMap::new();
-        for (file, fm) in entries(&dir) {
+        for file in data.files_in(&dir) {
             let Some(stem) = file.strip_suffix(".json") else { continue };
-            if stem == "set" || !fm.is_file() {
+            // (`provenance.json`: the set's origin record, for people)
+            if stem == "set" || stem == "provenance" {
                 continue;
             }
             if !figure_id_ok(stem) {
@@ -779,7 +783,10 @@ pub fn scan(root: &Path, problems: &mut Vec<String>) -> Catalogue {
                 problems.push(format!("sets/{name}: more than {MAX_SET_FIGURES} figures; the rest left out"));
                 break;
             }
-            match read_capped(&dir.join(&file), MAX_FIGURE_FILE).and_then(|b| parse_figure(stem, &b)) {
+            let read = data
+                .read(&format!("{dir}/{file}"), MAX_FIGURE_FILE)
+                .unwrap_or_else(|| Err("missing".to_owned()));
+            match read.and_then(|b| parse_figure(stem, &b)) {
                 Ok(Some(meta)) => {
                     figures.insert(stem.to_owned(), meta);
                 }
@@ -791,7 +798,7 @@ pub fn scan(root: &Path, problems: &mut Vec<String>) -> Catalogue {
     }
     // the western culture with no folder: its names beside its old place
     if !western_folder && let Some(w) = cultures.get_mut(WESTERN) {
-        w.2 = read_names(&root.join("names.json"), "", problems);
+        w.2 = read_names(data, "names.json", "", problems);
     }
     // the western culture first, then by id; the sets by their order, then id
     let mut order: Vec<String> = cultures.keys().cloned().collect();
@@ -804,7 +811,7 @@ pub fn scan(root: &Path, problems: &mut Vec<String>) -> Catalogue {
     let mut figures = Vec::new();
     'cultures: for (k, culture) in order.iter().enumerate() {
         let (_, shared, figure_names) = &cultures[culture];
-        let mine: Vec<(usize, &(SetInfo, PathBuf, BTreeMap<String, FigureMeta>))> =
+        let mine: Vec<(usize, &(SetInfo, String, BTreeMap<String, FigureMeta>))> =
             sets.iter().enumerate().filter(|(_, s)| s.0.culture == k).collect();
         let ids: BTreeSet<&String> = shared.keys().chain(mine.iter().flat_map(|(_, s)| s.2.keys())).collect();
         for id in ids {
@@ -832,17 +839,20 @@ pub fn scan(root: &Path, problems: &mut Vec<String>) -> Catalogue {
                 let (Some(picture), Some(centre)) = (meta.picture, meta.centre) else {
                     continue;
                 };
-                let image = dir.join(format!("{id}.webp"));
-                match std::fs::metadata(&image) {
-                    Ok(m) if m.is_file() && m.len() <= MAX_WEBP => drawings.push(Drawing {
+                // (pictures come from the user's folder only: none is built in)
+                let image = data.path(&format!("{dir}/{id}.webp"));
+                match image.map(|path| (path, std::fs::metadata(path))) {
+                    Some((path, Ok(m))) if m.is_file() && m.len() <= MAX_WEBP => drawings.push(Drawing {
                         set: *index,
                         centre,
                         picture,
                         label: meta.label_set,
                         label_placed: meta.label_placed,
-                        image,
+                        image: path.to_path_buf(),
                     }),
-                    Ok(m) if m.is_file() => problems.push(format!("sets/{}/{id}.webp: larger than {} MiB", info.id, MAX_WEBP >> 20)),
+                    Some((_, Ok(m))) if m.is_file() => {
+                        problems.push(format!("sets/{}/{id}.webp: larger than {} MiB", info.id, MAX_WEBP >> 20))
+                    }
                     _ => problems.push(format!("sets/{}/{id}.webp: missing (the drawing is left out)", info.id)),
                 }
             }

@@ -1,0 +1,426 @@
+{
+ "about": "Origin marks of this unit's data. sourced: taken from the credited source, only its format or coordinates converted; derived: made from sourced data by a fixed rule; adapted: source content changed by judgement (pixels erased or filled, plates joined, a sourced name replaced); made: no source content (new drawings, drafts, stroke timing, name boxes); unknown: not recorded. A figure field resolves as figures[id][field], then default[field], then unknown; a field a figure does not have (no drawing, no name box) is not listed. names and readings list every entry; \"*\" is the file's own default name.",
+ "culture_name": {
+  "*": "sourced",
+  "fr": "made",
+  "ja": "sourced",
+  "nb": "sourced",
+  "pl": "made",
+  "pt": "sourced",
+  "pt-BR": "sourced",
+  "ru": "made",
+  "tr": "made",
+  "uk": "made",
+  "zh-Hans": "sourced",
+  "zh-Hant": "made"
+ },
+ "default": {},
+ "figures": {
+  "iu001": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "iu002": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "iu003": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "iu004": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "iu005": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "iu006": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "iu007": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "iu008": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "iu009": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "iu010": {
+   "label": "derived",
+   "lines": "sourced",
+   "timing": "made"
+  },
+  "iu011": {
+   "label": "derived",
+   "lines": "derived",
+   "timing": "made"
+  },
+  "iu012": {
+   "label": "derived",
+   "lines": "derived",
+   "timing": "made"
+  },
+  "iu013": {
+   "label": "derived",
+   "lines": "derived",
+   "timing": "made"
+  },
+  "iu014": {
+   "label": "derived",
+   "lines": "derived",
+   "timing": "made"
+  }
+ },
+ "format": 1,
+ "names": {
+  "*": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "sourced",
+   "iu012": "sourced",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "de": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "sourced",
+   "iu012": "sourced",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "en": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "sourced",
+   "iu012": "sourced",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "es": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "sourced",
+   "iu012": "sourced",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "fr": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "made",
+   "iu012": "made",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "it": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "made",
+   "iu012": "made",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "iu-Latn": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "sourced",
+   "iu012": "sourced",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "ja": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "adapted",
+   "iu011": "made",
+   "iu012": "made",
+   "iu013": "adapted",
+   "iu014": "sourced"
+  },
+  "nb": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "made",
+   "iu012": "made",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "pl": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "made",
+   "iu012": "made",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "pt": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "made",
+   "iu012": "made",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "pt-BR": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "sourced",
+   "iu012": "sourced",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "ru": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "sourced",
+   "iu012": "sourced",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "tr": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "made",
+   "iu012": "made",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "uk": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "made",
+   "iu012": "sourced",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "zh-Hans": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "sourced",
+   "iu012": "sourced",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  },
+  "zh-Hant": {
+   "iu001": "sourced",
+   "iu002": "sourced",
+   "iu003": "sourced",
+   "iu004": "sourced",
+   "iu005": "sourced",
+   "iu006": "sourced",
+   "iu007": "sourced",
+   "iu008": "sourced",
+   "iu009": "sourced",
+   "iu010": "sourced",
+   "iu011": "derived",
+   "iu012": "derived",
+   "iu013": "sourced",
+   "iu014": "sourced"
+  }
+ },
+ "notes": {
+  "iu001": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu002": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu003": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu004": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu005": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu006": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu007": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu008": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu009": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu010": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu011": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "iu012": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "iu013": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "iu014": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  }
+ },
+ "readings": {
+  "ja": {
+   "iu001": "derived",
+   "iu003": "derived",
+   "iu004": "derived",
+   "iu005": "derived",
+   "iu008": "derived",
+   "iu009": "derived",
+   "iu011": "derived",
+   "iu012": "derived",
+   "iu014": "derived"
+  }
+ },
+ "unit": "culture inuit"
+}

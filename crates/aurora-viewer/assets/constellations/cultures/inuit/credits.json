@@ -1,0 +1,60 @@
+{
+ "credits": [
+  {
+   "holder": "Karrie Berglund (Digitalis Education Solutions, Inc.), after John MacDonald",
+   "work": "Stellarium sky culture 'Inuit', based primarily on John MacDonald, The Arctic Sky: Inuit Astronomy, Star Lore and Legend",
+   "licence": "GNU GPL v2.0",
+   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/inuit",
+   "imported": "2026-11-25",
+   "note": "Licence line of the culture's description: 'Text and data: GNU GPL v2.0'. Only text and data are used here; the illustrations (Johan Meuris, 'Free Art License') are not part of this import. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Made for this viewer'."
+  },
+  {
+   "holder": "Olaf Frohn (d3-celestial)",
+   "work": "d3-celestial star and deep-sky positions (stars.6.json, stars.8.json, dsos.6.json)",
+   "licence": "BSD-3-Clause",
+   "url": "https://github.com/ofrohn/d3-celestial",
+   "imported": "2026-11-25",
+   "note": "Used only to turn Hipparcos numbers and DSO names into positions; stars.8.json (magnitude 8 and brighter, same project, same BSD-3-Clause licence) supplies the numbers that stars.6.json lacks (identical positions on all 5044 shared stars). Licence file quoted: 'Copyright (c) 2015, Olaf Frohn. All rights reserved.' Star data of that project derive from the Hipparcos catalogue; positions only are used here. The dsos files were read from the master branch on the import date (not a pinned commit)."
+  },
+  {
+   "holder": "The Stellarium project and its translators",
+   "work": "Translations of the 'Inuit' figure names (and the culture's name, where given): po/stellarium-skycultures/{de,es,fr,it,ja,nb,pl,pt,pt_BR,ru,tr,uk,zh_CN,zh_TW}.po and po/stellarium-skycultures-descriptions/, written as de, es, fr, it, ja, nb, pl, pt, pt-BR, ru, tr, uk, zh-Hans, zh-Hant",
+   "licence": "GPL-2.0-or-later",
+   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-skycultures",
+   "imported": "2026-11-25",
+   "note": "Repository licence: COPYING (GNU GPL version 2) at the pinned commit; codemeta.json: '\"license\": \"https://spdx.org/licenses/GPL-2.0-or-later\"'. The .po files carry no licence header of their own. The translated English names are the culture's own (see the entries above for their licence). Matched by msgid = the English name, checked against the .pot comment 'Inuit constellation/asterism'; fuzzy, empty, equal-to-English and over-64-character entries not used; no key in the culture's own language."
+  },
+  {
+   "holder": "The OpenCC project (BYVoid/OpenCC)",
+   "work": "zh-Hant of 2 figures converted from their zh-Hans (Stellarium) names. Simplified-to-Traditional (Taiwan standard) conversion of zh-Hans names into zh-Hant: dictionaries STPhrases, STCharacters, TWVariantsPhrases, TWVariants (the s2tw chain), applied for this viewer; TSCharacters, TSPhrases and JPShinjitaiCharacters used only to compare characters",
+   "licence": "Apache-2.0",
+   "url": "https://github.com/BYVoid/OpenCC/tree/fae2a0a911c30764e669a7d8b0591cd8e852934a/data/dictionary",
+   "imported": "2026-11-25",
+   "note": "LICENSE: 'Apache License Version 2.0, January 2004'; each dictionary file: '# License: Apache-2.0 (see LICENSE)'. The generated STPhrases_GeneratedFromRegionalPhrases dictionary is not in the repository and was not used."
+  },
+  {
+   "holder": "Made for this viewer",
+   "work": "Draft translations of figure names, not from a source: fr 2, it 2, ja 4, nb 2, pl 2, pt 2, tr 2, uk 1; the culture's name in 6 languages",
+   "licence": "Own work; may be replaced by a sourced name",
+   "url": "",
+   "imported": "2026-11-25",
+   "note": "Made from the English name and the star group's characters on 2026-11-25, some checked against public reference pages; listed in drafts.json; not proofread by native speakers. 2 of the drafts replace a sourced name (drafts.json replaced_source)."
+  },
+  {
+   "holder": "Made for this viewer",
+   "work": "Changes to the imported stick lines and label points",
+   "licence": "Own work",
+   "url": "",
+   "imported": "2026-11-26",
+   "note": "4 one-star figures (the source writes the star twice) kept as one zero-length line. Label points: the centre of the segment ends. Stroke order, direction and timing (t0/t1) made for this viewer; no end point moved."
+  },
+  {
+   "holder": "Made for this viewer",
+   "work": "Kana readings over the Japanese names (ja)",
+   "licence": "Own work",
+   "url": "",
+   "imported": "2026-11-26",
+   "note": "9 copied or built from the Japanese set's readings of the same characters (or the dictionary reading of an everyday word), 0 chosen by us. Not the source's readings; marked in drafts.json (readings_added) and provenance.json."
+  }
+ ]
+}
