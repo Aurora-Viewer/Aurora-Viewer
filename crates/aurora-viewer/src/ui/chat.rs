@@ -5180,11 +5180,10 @@ impl Held {
             clip.with_min_y(clip.top().max(ceiling))
                 .with_max_y(clip.bottom() + ui.ctx().content_rect().height()),
         );
-        let layer = ui.layer_id();
         Self {
             room: ui.ctx().content_rect().bottom(),
             lift,
-            start: ui.ctx().graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0)),
+            start: painted(ui),
         }
     }
 
@@ -5242,11 +5241,7 @@ impl Hung {
             egui::pos2(clip.left(), top),
             egui::pos2(clip.right(), lower),
         ));
-        let layer = ui.layer_id();
-        Self {
-            limit,
-            start: ui.ctx().graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0)),
-        }
+        Self { limit, start: painted(ui) }
     }
 
     /// After the lines: moves what they painted up by what passes `limit`,
@@ -5588,7 +5583,7 @@ pub fn toasts(
                         bubble_sender(painter, p, pics, wanted_pics, r, &who, line, shown);
                     }
                     // the islands' pills: the sender's name acts like the
-                    // conversations' (Firestorm's toast links it)
+                    // conversations' (the Legacy Viewer's toast links it)
                     if pills
                         && let Some(range) = name
                         && let Some(r) = visual.range_rects(rect.min, range).first().copied()
