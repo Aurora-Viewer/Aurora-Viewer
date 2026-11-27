@@ -89,6 +89,19 @@ pub enum ChatThumbnails {
     TopRight,
 }
 
+/// Which way the nearby chat lines over the world stand from the chat bar
+/// they follow (Preferences › Chat, `ui::chat::LinesPlace`). Aurora's own:
+/// the Legacy Viewer's console stays at the bottom left, its chat bar too.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ChatLinesDirection {
+    /// Above the bar, or under it when there is more room there (a bar
+    /// moved to the top of the screen).
+    #[default]
+    Auto,
+    Up,
+    Down,
+}
+
 /// The nearby chat bar (Preferences › Chat, #2696): at the bottom always,
 /// only while it is used (the Legacy Viewer's `AutohideChatBar`, #1009), or
 /// never, the Nearby tab of the Conversations window taking its place
@@ -1230,6 +1243,8 @@ pub struct Settings {
     pub chat_toast_seconds: f32,
     /// Wrapped text rows above the chat bar (ConsoleMaxLines, 40; 0 hides them).
     pub chat_console_max_lines: u32,
+    /// Which way those rows stand from the chat bar they follow.
+    pub chat_lines_direction: ChatLinesDirection,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
     /// The same notices as a line of nearby chat (OnlineOfflinetoNearbyChat;
@@ -2756,6 +2771,7 @@ impl Default for Settings {
             system_notifications_when_active: false,
             chat_toast_seconds: 20.0,
             chat_console_max_lines: 40,
+            chat_lines_direction: ChatLinesDirection::Auto,
             toast_friends_online: true,
             friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,

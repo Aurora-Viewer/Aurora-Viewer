@@ -5171,15 +5171,19 @@ impl Held {
     /// vertical offset of the area's anchor. The clip reaches a screen
     /// lower: in the frame a line arrives, the lines are laid out below the
     /// bar before they are moved up, and egui paints nothing of a card or a
-    /// label laid out wholly outside the clip.
-    fn new(ui: &mut egui::Ui, lift: f32) -> Self {
+    /// label laid out wholly outside the clip. It starts at `ceiling`: the
+    /// oldest lines of a stack higher than its room are cut there, and
+    /// never leave the screen nor go under the top bar.
+    fn new(ui: &mut egui::Ui, lift: f32, ceiling: f32) -> Self {
         let clip = ui.clip_rect();
-        ui.set_clip_rect(clip.with_max_y(clip.bottom() + ui.ctx().content_rect().height()));
-        let layer = ui.layer_id();
+        ui.set_clip_rect(
+            clip.with_min_y(clip.top().max(ceiling))
+                .with_max_y(clip.bottom() + ui.ctx().content_rect().height()),
+        );
         Self {
             room: ui.ctx().content_rect().bottom(),
             lift,
-            start: ui.ctx().graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0)),
+            start: painted(ui),
         }
     }
 
@@ -5194,19 +5198,9 @@ impl Held {
             .round_to_pixels(ui.pixels_per_point())
             .round_ui();
         let shift = egui::vec2(0.0, top - ui.max_rect().top());
-        if shift.y != 0.0 {
-            let moved = egui::emath::TSTransform::from_translation(shift);
-            let layer = ui.layer_id();
-            ui.ctx().graphics_mut(|g| {
-                let list = g.entry(layer);
-                for i in self.start..list.next_idx().0 {
-                    // the shapes alone: the clip stays the area's, the
-                    // screen's (moved too, it could cut off a line that just
-                    // arrived)
-                    list.mutate_shape(egui::layers::ShapeIdx(i), |s| s.shape.transform(moved));
-                }
-            });
-        }
+        // the shapes alone: the clip stays the area's, the screen's (moved
+        // too, it could cut off a line that just arrived)
+        move_painted(ui, self.start, shift);
         shift
     }
 
@@ -5226,6 +5220,236 @@ impl Held {
     }
 }
 
+/// The lines hung under the chat bar: their top stays under it, and when
+/// they reach `limit` (the bottom bar) the oldest go under the chat bar's
+/// edge, cut there, so that the newest stay in sight. No frame to make up
+/// for as `Held` does: an area placed by its top lays its lines out from
+/// there in the frame it draws them.
+struct Hung {
+    limit: f32,
+    start: usize,
+}
+
+impl Hung {
+    /// Before the lines; `top` is where they start. The clip starts there
+    /// and reaches lower than the screen: the lines over `limit` are laid
+    /// out there before they are moved up.
+    fn new(ui: &mut egui::Ui, top: f32, limit: f32) -> Self {
+        let clip = ui.clip_rect();
+        let lower = clip.bottom() + ui.ctx().content_rect().height() * 2.0;
+        ui.set_clip_rect(egui::Rect::from_min_max(
+            egui::pos2(clip.left(), top),
+            egui::pos2(clip.right(), lower),
+        ));
+        Self { limit, start: painted(ui) }
+    }
+
+    /// After the lines: moves what they painted up by what passes `limit`,
+    /// and returns the move, for the click areas laid over them.
+    fn settle(self, ui: &egui::Ui) -> egui::Vec2 {
+        use egui::emath::GuiRounding as _;
+        let over = (ui.min_rect().bottom() - self.limit)
+            .max(0.0)
+            .round_to_pixels(ui.pixels_per_point());
+        let shift = egui::vec2(0.0, -over);
+        move_painted(ui, self.start, shift);
+        shift
+    }
+}
+
+/// Where the nearby chat lines stand over the world: by the chat bar,
+/// wherever the interface's edit mode put it, above it or hung under it.
+/// Aurora's own: the Legacy Viewer's console stays at the bottom left
+/// (`LLConsole`), where its chat bar is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LinesPlace {
+    /// Their left edge; None, the screen's with the usual 8 px.
+    left: Option<f32>,
+    /// The edge they end on instead, each line aligned on it, when there
+    /// is no room from their left edge (a block at the right end of its
+    /// bar, or of a bar of the right side).
+    right: Option<f32>,
+    /// Their bottom, or their top when they hang `down`.
+    edge: f32,
+    down: bool,
+    /// How low lines hung down may go.
+    limit: f32,
+    /// How high lines going up may go.
+    ceiling: f32,
+}
+
+impl LinesPlace {
+    /// The room between the lines and what they stand by.
+    const GAP: f32 = 6.0;
+    /// Less room than this is no room for a line: a direction asked for
+    /// that has less gives way to the other.
+    const ROOM: f32 = 64.0;
+
+    /// At the bottom left, over `bottom` (the top of the bottom bar): where
+    /// they stand when no bar draws the chat block.
+    pub fn above(bottom: f32) -> Self {
+        Self {
+            left: None,
+            right: None,
+            edge: bottom - Self::GAP,
+            down: false,
+            limit: bottom - Self::GAP,
+            ceiling: f32::NEG_INFINITY,
+        }
+    }
+
+    /// By the chat `block`, on `screen`; `room` is the top and the bottom
+    /// of what the bars leave (`layout::bars_room`).
+    ///
+    /// - The lines are above the block or under it, on a side bar too,
+    ///   never beside it (the human's choice, 2026-11-27). They start at
+    ///   its left, or end on its right when there is no room from its left
+    ///   (`column`).
+    /// - Automatic: where there is more room, so under a bar moved to the
+    ///   upper half of the screen. A direction asked for is kept unless it
+    ///   has no room for a line and the other has more.
+    pub fn by(
+        block: crate::ui::bars::chrome::ChatPlace,
+        direction: crate::settings::ChatLinesDirection,
+        screen: egui::Rect,
+        room: (f32, f32),
+    ) -> Self {
+        use crate::settings::ChatLinesDirection as Direction;
+        use crate::ui::bars::islands::{MARGIN, PAD};
+        use crate::ui::toolbar::Bar;
+        let surface = block.rect.expand(PAD);
+        let docked = !block.floating;
+        let limit = room.1 - Self::GAP;
+        let up = if docked && block.bar == Bar::Bottom {
+            // what the bottom bar keeps free, its other rows included
+            limit
+        } else {
+            surface.top() - MARGIN - Self::GAP
+        };
+        let under = surface.bottom() + MARGIN;
+        let down = if docked && block.bar == Bar::Top {
+            under.max(room.0)
+        } else {
+            under
+        } + Self::GAP;
+        // going up, the lines stop under the top bar; those of a block
+        // that stands over it, at the top of the screen
+        let ceiling = if up > room.0 { room.0 } else { screen.top() };
+        let (above, below) = (up - ceiling, limit - down);
+        let down_wanted = match direction {
+            Direction::Auto => below > above,
+            Direction::Up => above < Self::ROOM && below > above,
+            Direction::Down => !(below < Self::ROOM && above > below),
+        };
+        Self {
+            left: Some(surface.left()),
+            right: Some(surface.right()),
+            edge: if down_wanted { down } else { up },
+            down: down_wanted,
+            limit,
+            ceiling,
+        }
+    }
+
+    /// The left of a column `width` wide for the lines, kept on the
+    /// screen, and whether they are aligned on its right.
+    fn column(&self, screen: egui::Rect, width: f32) -> (f32, bool) {
+        let least = screen.left() + 8.0;
+        let most = (screen.right() - 8.0 - width).max(least);
+        match (self.left, self.right) {
+            (Some(left), _) if left <= most => (left.max(least), false),
+            (_, Some(right)) => ((right - width).clamp(least, most), true),
+            (Some(_), None) => (most, false),
+            (None, None) => (least, false),
+        }
+    }
+}
+
+/// How many shapes `ui`'s layer holds: what is painted next starts there.
+fn painted(ui: &egui::Ui) -> usize {
+    let layer = ui.layer_id();
+    ui.ctx().graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0))
+}
+
+/// Moves what was painted on `ui`'s layer since `start` (`painted`). The
+/// shapes alone: their clip stays the area's.
+fn move_painted(ui: &egui::Ui, start: usize, by: egui::Vec2) {
+    if by == egui::Vec2::ZERO {
+        return;
+    }
+    let moved = egui::emath::TSTransform::from_translation(by);
+    let layer = ui.layer_id();
+    ui.ctx().graphics_mut(|g| {
+        let list = g.entry(layer);
+        for i in start..list.next_idx().0 {
+            list.mutate_shape(egui::layers::ShapeIdx(i), |s| s.shape.transform(moved));
+        }
+    });
+}
+
+/// A card or a line just laid out at `rect`, in lines aligned on `right`
+/// (`LinesPlace::column`; None, on their left as laid out): moves what it
+/// painted since `start` and the click areas it added, and returns where it
+/// stands. A layout aligned on the right would align the content of the
+/// card too.
+fn align_line(
+    ui: &egui::Ui,
+    right: Option<f32>,
+    start: usize,
+    rect: egui::Rect,
+    links: &mut [(egui::Rect, Link, Color32)],
+    names: &mut [(egui::Rect, &crate::world::ChatLine)],
+) -> egui::Rect {
+    use egui::emath::GuiRounding as _;
+    let Some(right) = right else {
+        return rect;
+    };
+    let by = egui::vec2((right - rect.right()).round_to_pixels(ui.pixels_per_point()), 0.0);
+    move_painted(ui, start, by);
+    for (r, ..) in links.iter_mut() {
+        *r = r.translate(by);
+    }
+    for (r, _) in names.iter_mut() {
+        *r = r.translate(by);
+    }
+    rect.translate(by)
+}
+
+/// The area of the nearby chat lines at `place`, at most `width` wide:
+/// `lines` draws them in it, and aligns each on the edge it is given
+/// (`align_line`). Returns what they were moved by after their layout, for
+/// the click areas laid over them.
+fn lines_area(ctx: &egui::Context, place: LinesPlace, width: f32, lines: impl FnOnce(&mut egui::Ui, Option<f32>)) -> egui::Vec2 {
+    let screen = ctx.content_rect();
+    let (left, aligned) = place.column(screen, width);
+    let right = aligned.then_some(left + width);
+    let mut shift = egui::Vec2::ZERO;
+    let area = egui::Area::new(egui::Id::unique("chat_toasts"))
+        .interactable(false)
+        .order(egui::Order::Background);
+    if place.down {
+        area.fixed_pos(egui::pos2(left, place.edge)).constrain(false).show(ctx, |ui| {
+            let hung = Hung::new(ui, place.edge, place.limit);
+            ui.set_max_width(width);
+            lines(ui, right);
+            shift = hung.settle(ui);
+        });
+    } else {
+        let lift = place.edge - screen.bottom();
+        area.anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(left - screen.left(), lift))
+            .show(ctx, |ui| {
+                // a line that leaves or arrives moves the others in this
+                // frame only (#2544)
+                let held = Held::new(ui, lift, place.ceiling);
+                ui.set_max_width(width);
+                lines(ui, right);
+                shift = held.settle(ui);
+            });
+    }
+    Held::publish(ctx, shift);
+    shift
+}
+
 /// Recent chat lines floating above the chat bar (fade out after 20 s);
 /// names of linked avatars and pictures of the senders are asked through
 /// `want_names` / `wanted_pics`. `cards`: Aurora's cards grouped by sender
@@ -5240,7 +5464,7 @@ pub fn toasts(
     pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
     want_names: &mut HashSet<uuid::Uuid>,
     wanted_pics: &mut HashSet<uuid::Uuid>,
-    bottom: f32,
+    place: LinesPlace,
     seconds: f32,
     max_lines: u32,
     times: bool,
@@ -5258,7 +5482,7 @@ pub fn toasts(
             pics,
             want_names,
             wanted_pics,
-            bottom,
+            place,
             seconds,
             max_lines,
             times,
@@ -5292,106 +5516,93 @@ pub fn toasts(
     }
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &crate::world::ChatLine)> = Vec::new();
-    let mut shift = egui::Vec2::ZERO;
-    let lift = -(ctx.content_rect().bottom() - bottom) - 6.0;
-    egui::Area::new(egui::Id::unique("chat_toasts"))
-        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, lift))
-        .interactable(false)
-        .order(egui::Order::Background)
-        .show(ctx, |ui| {
-            // a line that leaves or arrives moves the others in this frame
-            // only (#2544)
-            let held = Held::new(ui, lift);
-            ui.set_max_width(560.0);
-            // the islands' pills: the mockup's 12 px text, 9 × 4 margins and
-            // 4 px between two lines
-            let (size, margin, gap) = if pills {
-                (super::fonts::chat_size(ui.ctx(), 12.0), egui::Margin::symmetric(9, 4), 4.0)
-            } else {
-                (super::fonts::chat_size(ui.ctx(), 13.0), egui::Margin::symmetric(6, 2), 2.0)
-            };
-            let family = pills.then(|| super::fonts::semibold(ui.ctx()));
-            if pills {
-                ui.spacing_mut().item_spacing.y = 0.0;
-            }
-            for line in recent {
-                let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
-                let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
-                // the line's own, dimmed from beyond the say range: its
-                // text and picture, never its glass
-                let shown = alpha * super::colors::beyond_range_alpha(line);
-                let (console_tint, console_blur) =
-                    crate::ui::surface_opacity::relative(crate::ui::surface_opacity::console(), crate::ui::surface_opacity::CONSOLE);
-                let tint =
-                    Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * console_tint * alpha).min(255.0) as u8);
-                let radius = ui.visuals().window_corner_radius;
-                let glass = p.panel_alpha < 255;
-                let mut slot = None;
-                let bubble = egui::Frame::new()
-                    .fill(if glass { Color32::TRANSPARENT } else { tint })
-                    .corner_radius(radius)
-                    .inner_margin(margin)
-                    .show(ui, |ui| {
-                        slot = Some(ui.painter().add(egui::Shape::Noop));
-                        let BubbleJob {
-                            mut job,
-                            links: line_links,
-                            badges,
-                            sender,
-                            name,
-                        } = line_job(
-                            ui.ctx(),
-                            line,
-                            p,
-                            world,
-                            want_names,
-                            540.0,
-                            size,
-                            times,
-                            family.as_ref().map_or(JobLook::Line, JobLook::Pill),
-                        );
-                        for s in job.sections.iter_mut() {
-                            s.format.color = s.format.color.gamma_multiply(shown);
-                        }
-                        let base = bidi_base(&name, &line.from);
-                        let visual = ui.ctx().fonts_mut(|f| super::bidi::layout(f, job, base));
-                        let galley = visual.galley.clone();
-                        let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-                        let painter = ui.painter();
-                        emoji.paint_galley(painter, rect.min, galley.clone(), size, p.ink, shown);
-                        // the sender's picture (or the object cube) in the room
-                        // left before its name
-                        if let Some((at, who)) = sender {
-                            let side = pic_side(size);
-                            // at the left of the name, whatever its direction
-                            let c = visual.left_edge(name.clone().unwrap_or(at..at)).translate(rect.min.to_vec2());
-                            let r =
-                                egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
-                            bubble_sender(painter, p, pics, wanted_pics, r, &who, line, shown);
-                        }
-                        // the islands' pills: the sender's name acts like the
-                        // conversations' (Firestorm's toast links it)
-                        if pills
-                            && let Some(range) = name
-                            && let Some(r) = visual.range_rects(rect.min, range).first().copied()
-                        {
-                            names.push((r, line));
-                        }
-                        let col = color_for(line.kind, p).gamma_multiply(shown);
-                        line_extras(ui, p, world, &visual, rect.min, size, shown, badges, line_links, col, &mut links);
-                    });
-                if glass && let Some(slot) = slot {
-                    let rect = bubble.response.rect;
-                    ui.painter().set(
-                        slot,
-                        aurora_render::glass_panel_faded(rect, f32::from(radius.nw), tint, alpha * console_blur),
+    let shift = lines_area(ctx, place, 560.0, |ui, right| {
+        // the islands' pills: the mockup's 12 px text, 9 × 4 margins and
+        // 4 px between two lines
+        let (size, margin, gap) = if pills {
+            (super::fonts::chat_size(ui.ctx(), 12.0), egui::Margin::symmetric(9, 4), 4.0)
+        } else {
+            (super::fonts::chat_size(ui.ctx(), 13.0), egui::Margin::symmetric(6, 2), 2.0)
+        };
+        let family = pills.then(|| super::fonts::semibold(ui.ctx()));
+        if pills {
+            ui.spacing_mut().item_spacing.y = 0.0;
+        }
+        for line in recent {
+            let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
+            let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
+            // the line's own, dimmed from beyond the say range: its
+            // text and picture, never its glass
+            let shown = alpha * super::colors::beyond_range_alpha(line);
+            let (console_tint, console_blur) =
+                crate::ui::surface_opacity::relative(crate::ui::surface_opacity::console(), crate::ui::surface_opacity::CONSOLE);
+            let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * console_tint * alpha).min(255.0) as u8);
+            let radius = ui.visuals().window_corner_radius;
+            let glass = p.panel_alpha < 255;
+            let mut slot = None;
+            let (start, link0, name0) = (painted(ui), links.len(), names.len());
+            let bubble = egui::Frame::new()
+                .fill(if glass { Color32::TRANSPARENT } else { tint })
+                .corner_radius(radius)
+                .inner_margin(margin)
+                .show(ui, |ui| {
+                    slot = Some(ui.painter().add(egui::Shape::Noop));
+                    let BubbleJob {
+                        mut job,
+                        links: line_links,
+                        badges,
+                        sender,
+                        name,
+                    } = line_job(
+                        ui.ctx(),
+                        line,
+                        p,
+                        world,
+                        want_names,
+                        540.0,
+                        size,
+                        times,
+                        family.as_ref().map_or(JobLook::Line, JobLook::Pill),
                     );
-                }
-                ui.add_space(gap);
+                    for s in job.sections.iter_mut() {
+                        s.format.color = s.format.color.gamma_multiply(shown);
+                    }
+                    let base = bidi_base(&name, &line.from);
+                    let visual = ui.ctx().fonts_mut(|f| super::bidi::layout(f, job, base));
+                    let galley = visual.galley.clone();
+                    let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+                    let painter = ui.painter();
+                    emoji.paint_galley(painter, rect.min, galley.clone(), size, p.ink, shown);
+                    // the sender's picture (or the object cube) in the room
+                    // left before its name
+                    if let Some((at, who)) = sender {
+                        let side = pic_side(size);
+                        // at the left of the name, whatever its direction
+                        let c = visual.left_edge(name.clone().unwrap_or(at..at)).translate(rect.min.to_vec2());
+                        let r = egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
+                        bubble_sender(painter, p, pics, wanted_pics, r, &who, line, shown);
+                    }
+                    // the islands' pills: the sender's name acts like the
+                    // conversations' (the Legacy Viewer's toast links it)
+                    if pills
+                        && let Some(range) = name
+                        && let Some(r) = visual.range_rects(rect.min, range).first().copied()
+                    {
+                        names.push((r, line));
+                    }
+                    let col = color_for(line.kind, p).gamma_multiply(shown);
+                    line_extras(ui, p, world, &visual, rect.min, size, shown, badges, line_links, col, &mut links);
+                });
+            let rect = align_line(ui, right, start, bubble.response.rect, &mut links[link0..], &mut names[name0..]);
+            if glass && let Some(slot) = slot {
+                ui.painter().set(
+                    slot,
+                    aurora_render::glass_panel_faded(rect, f32::from(radius.nw), tint, alpha * console_blur),
+                );
             }
-            shift = held.settle(ui);
-        });
-    Held::publish(ctx, shift);
+            ui.add_space(gap);
+        }
+    });
     for (k, (rect, link, col)) in links.iter().enumerate() {
         bubble_link(ctx, p, world, k, rect.translate(shift), link, *col);
     }
@@ -7250,7 +7461,7 @@ mod tests {
                         &HashMap::new(),
                         &mut HashSet::new(),
                         &mut HashSet::new(),
-                        800.0,
+                        crate::ui::chat::LinesPlace::above(800.0),
                         20.0,
                         40,
                         false,

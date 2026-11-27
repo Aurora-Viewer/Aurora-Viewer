@@ -20480,6 +20480,16 @@ impl App {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
                     // in their bubbles
                     let residents = !(self.chat_bubbles() && self.settings.chat_bubbles_hide_console);
+                    // by the chat bar, wherever it was moved to; at the
+                    // bottom left when no bar draws it
+                    let lines_place = match ui::bars::chrome::chat_place(&ctx) {
+                        Some(block) => {
+                            let screen = ctx.content_rect();
+                            let top = self.interface.last_room.map_or(screen.top(), |(room, _)| room.top());
+                            ui::chat::LinesPlace::by(block, self.settings.chat_lines_direction, screen, (top, bottom_top))
+                        }
+                        None => ui::chat::LinesPlace::above(bottom_top),
+                    };
                     ui::chat::toasts(
                         &ctx,
                         &p,
@@ -20488,7 +20498,7 @@ impl App {
                         &self.avatar_pics,
                         &mut self.chat_ui.wanted_names,
                         &mut self.chat_ui.wanted_pics,
-                        bottom_top,
+                        lines_place,
                         if crate::demo::chat_volume_comparison() {
                             3600.0
                         } else {

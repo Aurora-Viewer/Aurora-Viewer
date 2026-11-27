@@ -40,6 +40,43 @@ struct Slot {
     style: Style,
     locked: bool,
     placeholder: bool,
+    floating: bool,
+}
+
+/// Where the chat block was drawn in this frame, for what stands by it
+/// (the nearby chat lines over the world, `ui::chat::LinesPlace`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChatPlace {
+    /// The block, its raised part included (`lift_chat`).
+    pub rect: Rect,
+    pub bar: Bar,
+    /// In a floating block, not on a bar.
+    pub floating: bool,
+    frame: u64,
+}
+
+impl ChatPlace {
+    #[cfg(test)]
+    pub fn at(rect: Rect, bar: Bar, floating: bool) -> Self {
+        Self {
+            rect,
+            bar,
+            floating,
+            frame: 0,
+        }
+    }
+}
+
+fn chat_place_id() -> Id {
+    Id::unique("toolbar_chat_place")
+}
+
+/// The chat block of this frame, when a bar drew it (`show_chat`, earlier
+/// in the frame): none while the interface is hidden or edited.
+pub fn chat_place(ctx: &egui::Context) -> Option<ChatPlace> {
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    ctx.data(|data| data.get_temp::<ChatPlace>(chat_place_id()))
+        .filter(|place| place.frame == frame)
 }
 
 fn metrics_id() -> Id {
@@ -230,6 +267,7 @@ pub(super) fn register_at(ui: &egui::Ui, button: &ToolButton, row: &super::Row, 
         style: crate::ui::toolbar::blocks::style(ui.ctx(), &button.command, row.style),
         locked: row.locked,
         placeholder,
+        floating: row.floating,
     };
     ui.ctx()
         .data_mut(|data| data.get_temp_mut_or_default::<Vec<Slot>>(slots_id()).push(slot));
@@ -306,9 +344,17 @@ pub fn show_chat(
         .filter(|slot| slot.button.command == "bar_chat" && !slot.placeholder)
     {
         let _context = crate::ui::toolbar::native_context::Scope::new(ui.ctx(), "bar_chat");
-        if slot.bar == Bar::Bottom
-            && let Some(lift) = chat_lift(ui.ctx())
-        {
+        let lift = if slot.bar == Bar::Bottom { chat_lift(ui.ctx()) } else { None };
+        let mut drawn = slot.rect;
+        drawn.min.y -= lift.unwrap_or(0.0);
+        let place = ChatPlace {
+            rect: drawn,
+            bar: slot.bar,
+            floating: slot.floating,
+            frame: ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT),
+        };
+        ui.ctx().data_mut(|data| data.insert_temp(chat_place_id(), place));
+        if let Some(lift) = lift {
             out = show_lifted_chat(
                 ui.ctx(),
                 p,
