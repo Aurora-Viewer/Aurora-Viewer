@@ -218,8 +218,16 @@ fn section(
     if count == 0 && !open && t == 0.0 {
         widgets::dashed_outline(ui.painter(), rect, p.muted.gamma_multiply(0.45));
     }
+    // folded, the whole card unfolds it: under its title too (the chips)
+    let below = if !open && t == 0.0 {
+        let under = egui::Rect::from_min_max(egui::pos2(rect.left(), inner.rect.bottom()), rect.max);
+        ui.interact(under, ui.scope_id().with(("ao_slot_card", item.name())), egui::Sense::click())
+            .clicked()
+    } else {
+        false
+    };
     // a click on the title unfolds the slot, and folds it again
-    if inner.clicked() {
+    if inner.clicked() || below {
         if open {
             state.open_slots[Category::of(item).index()] = None;
         } else {

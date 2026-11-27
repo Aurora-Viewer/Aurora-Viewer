@@ -550,7 +550,7 @@ impl App {
                 {
                     self.ao_runtime.choose(target.state, config.folder, index);
                 }
-                self.ao_ui.message = aurora_i18n::tr!("ao-saved").into();
+                self.ao_ui.note_saved();
                 self.ao_ui.reset_cycle();
             }
             Err(reason) => {

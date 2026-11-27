@@ -173,6 +173,39 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, set: Option<&Set>, runtime: &
     state.stage.show_bar(ui, p, rect);
 }
 
+/// How long "Set saved" stays, and how long it takes to come and go.
+const SAVED_FOR: f32 = 2.4;
+const SAVED_FADE: f32 = 0.35;
+
+/// "Set saved" for a moment after an edit is saved, right-aligned at
+/// `right` on the entry name's line; the room it takes from that line.
+fn saved_notice(ui: &egui::Ui, p: &Palette, state: &mut AoUi, right: egui::Pos2) -> f32 {
+    let Some(at) = state.saved_at else { return 0.0 };
+    let age = at.elapsed().as_secs_f32();
+    if age >= SAVED_FOR {
+        state.saved_at = None;
+        return 0.0;
+    }
+    ui.ctx().request_repaint();
+    let alpha = (age / SAVED_FADE).min((SAVED_FOR - age) / SAVED_FADE).clamp(0.0, 1.0);
+    let ink = p.success.gamma_multiply(alpha);
+    let galley = ui.painter().layout_no_wrap(
+        aurora_i18n::tr!("ao-saved").to_owned(),
+        egui::FontId::new(12.0, super::super::fonts::semibold(ui.ctx())),
+        ink,
+    );
+    let text_w = galley.size().x;
+    widgets::paint_row_text(ui.painter(), galley, right.x - text_w, right.y, ink);
+    widgets::paint_glyph(
+        ui.painter(),
+        "circle-check-filled",
+        egui::pos2(right.x - text_w - 10.0, right.y),
+        14.0,
+        ink,
+    );
+    text_w + 28.0
+}
+
 /// A fade from nothing at the top of `rect` to the stage's ground at its
 /// bottom, under the caption.
 fn fade(ui: &egui::Ui, rect: egui::Rect, ground: egui::Color32) {
@@ -227,6 +260,7 @@ fn caption_text(
         muted,
     );
     y += (EYEBROW + HERO) / 2.0;
+    let notice = saved_notice(ui, p, state, egui::pos2(area.right(), y));
     let hero = names
         .get(state.preview.index)
         .cloned()
@@ -235,7 +269,7 @@ fn caption_text(
         ui,
         &hero,
         egui::pos2(area.left(), y),
-        area.width(),
+        area.width() - notice,
         egui::FontId::new(20.0, super::super::fonts::semibold(ui.ctx())),
         ink,
     );

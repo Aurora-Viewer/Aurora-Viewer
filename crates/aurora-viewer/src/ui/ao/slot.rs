@@ -25,6 +25,10 @@ pub(super) const STOPS: [f32; 6] = [0.0, 10.0, 20.0, 30.0, 60.0, 120.0];
 /// Height of an entry's row, and the room between two.
 const ROW: f32 = 34.0;
 const ROW_GAP: f32 = 5.0;
+/// The tabs over a slot's lists: their height, inner padding and gap.
+const TAB_H: f32 = 30.0;
+const TAB_PAD: f32 = 10.0;
+const TAB_GAP: f32 = 2.0;
 
 /// How the entries of a list take turns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,31 +252,90 @@ impl Editor<'_> {
         self.drop_box(ui, track.map(|t| t.id));
     }
 
-    /// Main and each layer, with their counts, then "+" for a new layer.
+    /// Main and each layer as tabs sized to their names, the open one
+    /// underlined in the accent, then "+ Layer" as one more tab.
     fn tabs(&mut self, ui: &mut egui::Ui, c: &StateConfig, track: Option<Uuid>) {
+        let p = self.p;
         let mut tabs: Vec<(&str, usize)> = vec![(aurora_i18n::tr!("ao-main"), c.steps.len())];
         tabs.extend(c.tracks.iter().map(|t| (t.name.as_str(), t.members.len())));
-        let mut selected = track.and_then(|id| c.tracks.iter().position(|t| t.id == id)).map_or(0, |i| i + 1);
-        ui.horizontal(|ui| {
-            let room = ui.available_width() - 30.0 - ui.spacing().item_spacing.x;
-            let salt = format!("ao_slot_tabs_{}", self.state.state.name());
-            let changed = ui
-                .allocate_ui(Vec2::new(room, 30.0), |ui| {
-                    widgets::count_tabs(ui, self.p, &salt, &mut selected, &tabs)
-                })
-                .inner;
-            if changed {
-                self.state.container = selected.checked_sub(1).and_then(|i| c.tracks.get(i)).map(|t| t.id);
+        let selected = track.and_then(|id| c.tracks.iter().position(|t| t.id == id)).map_or(0, |i| i + 1);
+        let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), TAB_H), egui::Sense::hover());
+        let radius = ui.visuals().widgets.inactive.corner_radius;
+        let salt = ui.scope_id().with(("ao_slot_tab", self.state.state.name()));
+        let semibold = super::super::fonts::semibold(ui.ctx());
+        let add = aurora_i18n::tr!("ao-layer-tab");
+        let add_w = 16.0
+            + ui.painter()
+                .layout_no_wrap(add.to_owned(), egui::FontId::proportional(12.5), p.muted)
+                .size()
+                .x
+            + 2.0 * TAB_PAD;
+        // each tab as wide as its name, all narrowed alike when they overflow
+        let widest = ((row.width() - add_w) / tabs.len() as f32 - TAB_GAP).max(48.0);
+        let mut x = row.left();
+        for (i, (label, count)) in tabs.iter().enumerate() {
+            let on = i == selected;
+            let font = egui::FontId::new(12.5, if on { semibold.clone() } else { egui::FontFamily::Proportional });
+            let num = ui
+                .painter()
+                .layout_no_wrap(count.to_string(), egui::FontId::proportional(11.0), p.muted);
+            let name_room = widest - 2.0 * TAB_PAD - num.size().x - 5.0;
+            let name = widgets::elided_galley(ui, RichText::new(*label).font(font), name_room);
+            let width = 2.0 * TAB_PAD + name.size().x + 5.0 + num.size().x;
+            let r = egui::Rect::from_min_size(egui::pos2(x, row.top()), Vec2::new(width, TAB_H));
+            let response = ui.interact(r, salt.with(i), egui::Sense::click());
+            if response.hovered() && !on {
+                ui.painter()
+                    .rect_filled(r.shrink2(Vec2::new(0.0, 3.0)), radius, p.raised.gamma_multiply(0.5));
+            }
+            let ink = if on || response.hovered() { p.ink } else { p.muted };
+            let y = r.center().y - 1.0;
+            let name_w = name.size().x;
+            widgets::paint_row_text(ui.painter(), name, r.left() + TAB_PAD, y, ink);
+            let count_ink = if on { p.violet_pale } else { p.muted };
+            widgets::paint_row_text(ui.painter(), num, r.left() + TAB_PAD + name_w + 5.0, y, count_ink);
+            if on {
+                let bar = egui::Rect::from_min_max(
+                    egui::pos2(r.left() + TAB_PAD - 2.0, r.bottom() - 2.0),
+                    egui::pos2(r.right() - TAB_PAD + 2.0, r.bottom()),
+                );
+                ui.painter().rect_filled(bar, radius, p.violet_light);
+            }
+            response.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, *label));
+            if response.clicked() && !on {
+                self.state.container = i.checked_sub(1).and_then(|i| c.tracks.get(i)).map(|t| t.id);
                 self.state.cycle_edit = None;
             }
-            if widgets::icon_button(ui, self.p, "plus", aurora_i18n::tr!("ao-new-layer"), !self.busy()) {
-                let mut dialog = super::combinations::Dialog::new(self.set.id, self.state.state);
-                dialog.track = true;
-                dialog.name = aurora_i18n::tr!("ao-new-layer-name").into();
-                self.state.picker = None;
-                self.state.combination = Some(dialog);
-            }
-        });
+            x += width + TAB_GAP;
+        }
+        // "+ Layer", the last tab
+        let enabled = !self.busy();
+        let r = egui::Rect::from_min_size(egui::pos2(x, row.top()), Vec2::new(add_w, TAB_H));
+        let response = ui.interact(r, salt.with("add"), egui::Sense::click());
+        let hot = response.hovered() && enabled;
+        if hot {
+            ui.painter()
+                .rect_filled(r.shrink2(Vec2::new(0.0, 3.0)), radius, p.raised.gamma_multiply(0.5));
+        }
+        let ink = if hot {
+            p.violet_light
+        } else if enabled {
+            p.violet_pale
+        } else {
+            p.muted_dim
+        };
+        let y = r.center().y - 1.0;
+        widgets::paint_glyph(ui.painter(), "plus", egui::pos2(r.left() + TAB_PAD + 6.0, y), 13.0, ink);
+        let galley = ui.painter().layout_no_wrap(add.to_owned(), egui::FontId::proportional(12.5), ink);
+        widgets::paint_row_text(ui.painter(), galley, r.left() + TAB_PAD + 16.0, y, ink);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, add));
+        if response.on_hover_text(aurora_i18n::tr!("ao-new-layer")).clicked() && enabled {
+            let mut dialog = super::combinations::Dialog::new(self.set.id, self.state.state);
+            dialog.track = true;
+            dialog.name = aurora_i18n::tr!("ao-new-layer-name").into();
+            self.state.picker = None;
+            self.state.combination = Some(dialog);
+        }
     }
 
     /// A layer's name and what can be done with it.

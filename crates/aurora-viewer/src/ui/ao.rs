@@ -75,6 +75,9 @@ pub struct AoUi {
     pub import_folder: Option<Uuid>,
     pub migration: Option<crate::ao::migration::Migration>,
     pub message: String,
+    /// When the last edit was saved: "Set saved" shows over the preview a
+    /// moment (`preview::saved_notice`).
+    saved_at: Option<std::time::Instant>,
     pub warnings: Vec<String>,
     pub startup_loading: bool,
     /// The slot open on its page.
@@ -181,6 +184,13 @@ impl AoUi {
         self.cycle_edit = None;
     }
 
+    /// An edit was saved: said a moment over the preview, in place of a
+    /// line above the page.
+    pub fn note_saved(&mut self) {
+        self.message.clear();
+        self.saved_at = Some(std::time::Instant::now());
+    }
+
     /// Opens a slot on its group's page, unfolded, its main list shown.
     fn select_state(&mut self, item: State) {
         self.point_at(item);
@@ -272,12 +282,16 @@ const PREVIEW: f32 = 340.0;
 /// The narrowest the preview gets as the window narrows: it never folds
 /// away.
 const PREVIEW_LEAST: f32 = 230.0;
+/// The least the page keeps between the sidebar and the preview.
+const PAGE_LEAST: f32 = 400.0;
+/// How wide the grip on the preview's left edge is.
+const HANDLE: f32 = 8.0;
 /// A saved window narrower than this is the old one-column AO window's.
 const OLD_WIDTH: f32 = 1000.0;
 /// The window's first size, and the least it can be made.
 const SIZE: Vec2 = Vec2::new(1240.0, 760.0);
 /// (the sidebar, a middle column of 400 and the narrowest preview)
-const MIN_SIZE: Vec2 = Vec2::new(SIDEBAR + 400.0 + PREVIEW_LEAST, 520.0);
+const MIN_SIZE: Vec2 = Vec2::new(SIDEBAR + PAGE_LEAST + PREVIEW_LEAST, 520.0);
 
 /// A window saved at the size of the old one-column AO window (560 wide)
 /// opens once at the size of the three columns; a size chosen after that
@@ -336,8 +350,7 @@ pub fn show(
     floater.flush_body().show(ctx, p, open, |ui| {
         let full = ui.available_rect_before_wrap();
         ui.allocate_rect(full, egui::Sense::hover());
-        // the preview narrows with the window, never folding away
-        let preview_w = (full.width() - SIDEBAR - 400.0).clamp(PREVIEW_LEAST, PREVIEW);
+        let preview_w = preview_width(ui, full);
         let side = egui::Rect::from_min_size(full.min, Vec2::new(SIDEBAR, full.height()));
         let right = egui::Rect::from_min_max(egui::pos2(full.right() - preview_w, full.top()), full.max);
         let middle = egui::Rect::from_min_max(egui::pos2(side.right(), full.top()), egui::pos2(right.left(), full.bottom()));
@@ -364,6 +377,7 @@ pub fn show(
                 preview::show(ui, p, selected, runtime, state);
             });
         }
+        preview_edge(ui, p, full, preview_w);
     });
     if on != account.enabled {
         account.enabled = on;
@@ -379,6 +393,42 @@ pub fn show(
         combinations::show(ctx, p, inv, catalog, state, &mut out);
     }
     out
+}
+
+const PREVIEW_WIDTH: &str = "ao_preview_width";
+
+/// The preview column's width: the one dragged at its left edge (kept with
+/// the window's layout), narrowed with the window but never folded away,
+/// the page keeping its least.
+fn preview_width(ui: &egui::Ui, full: egui::Rect) -> f32 {
+    let most = (full.width() - SIDEBAR - PAGE_LEAST).max(PREVIEW_LEAST);
+    let saved = ui.data_mut(|d| d.get_persisted::<f32>(egui::Id::unique(PREVIEW_WIDTH)));
+    saved.unwrap_or(PREVIEW).clamp(PREVIEW_LEAST, most)
+}
+
+/// The grip on the preview's left edge, over the columns: a drag widens or
+/// narrows the preview (from the next frame), a double-click goes back to
+/// the default width.
+fn preview_edge(ui: &mut egui::Ui, p: &Palette, full: egui::Rect, width: f32) {
+    let id = egui::Id::unique(PREVIEW_WIDTH);
+    let most = (full.width() - SIDEBAR - PAGE_LEAST).max(PREVIEW_LEAST);
+    let x = full.right() - width;
+    let edge = egui::Rect::from_center_size(egui::pos2(x, full.center().y), Vec2::new(HANDLE, full.height()));
+    let response = ui
+        .interact(edge, id, egui::Sense::click_and_drag())
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+    if response.double_clicked() {
+        ui.data_mut(|d| d.remove::<f32>(id));
+    } else if response.dragged() && response.drag_delta().x != 0.0 {
+        // (dragged left, the preview widens)
+        let width = (width - response.drag_delta().x).clamp(PREVIEW_LEAST, most);
+        ui.data_mut(|d| d.insert_persisted(id, width));
+        ui.ctx().request_repaint();
+    }
+    if response.hovered() || response.dragged() {
+        ui.painter()
+            .vline(x, full.y_range(), widgets::border_stroke(p, egui::Stroke::new(1.0, p.violet_light)));
+    }
 }
 
 /// One column of the window, laid out in its own rect and cut at its edges,

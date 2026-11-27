@@ -1656,3 +1656,79 @@ fn slots_start_folded_and_stay_unfolded_across_groups() {
     f.click(State::Standing.label());
     assert_eq!(f.state.open_slots[Category::General.index()], None, "its title folds it again");
 }
+
+/// A folded slot unfolds from a click anywhere on its card, its chips too.
+#[test]
+fn a_folded_slot_unfolds_from_anywhere_on_its_card() {
+    let mut f = Fixture::new();
+    f.state.open_slots = Default::default();
+    f.settle();
+    let mut chips = Vec::new();
+    for shape in f.draw(Vec::new()).1 {
+        text_rects(&shape.shape, "Aurora Sit", &mut chips);
+    }
+    let chip = chips.iter().min_by(|a, b| a.top().total_cmp(&b.top())).expect("Sitting's chip");
+    // beside the chip, under the title: no widget of its own there
+    f.click_at(chip.right_center() + egui::vec2(60.0, 0.0));
+    assert_eq!(f.state.open_slots[0], Some(State::Sitting));
+}
+
+/// The preview's left edge drags it narrower and wider again (kept), the
+/// page keeping its least.
+#[test]
+fn the_preview_resizes_from_its_left_edge() {
+    let mut f = Fixture::new();
+    let title = |f: &mut Fixture| {
+        let mut rects = Vec::new();
+        for shape in f.draw(Vec::new()).1 {
+            text_rects(&shape.shape, aurora_i18n::tr!("ao-preview"), &mut rects);
+        }
+        // (the previewed row says "Preview" too: the title is the one right)
+        rects.iter().map(|r| r.left()).fold(f32::MIN, f32::max)
+    };
+    let press = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    // the column's edge is left of its title (the eye icon, then the title)
+    let drag = |f: &mut Fixture, dx: f32| {
+        let edge = egui::pos2(title(f) - 36.0, 400.0);
+        f.draw(vec![egui::Event::PointerMoved(edge), press(edge, true)]);
+        for step in [0.25, 0.5, 1.0] {
+            f.draw(vec![egui::Event::PointerMoved(edge + egui::vec2(dx * step, 0.0))]);
+        }
+        let end = edge + egui::vec2(dx, 0.0);
+        f.draw(vec![egui::Event::PointerMoved(end), press(end, false)]);
+        f.settle();
+    };
+    let before = title(&mut f);
+    drag(&mut f, 60.0);
+    let narrower = title(&mut f);
+    assert!(
+        (narrower - before - 60.0).abs() < 2.0,
+        "dragged right, narrower: {before} -> {narrower}"
+    );
+    drag(&mut f, -40.0);
+    let wider = title(&mut f);
+    assert!((narrower - wider - 40.0).abs() < 2.0, "dragged left, wider: {narrower} -> {wider}");
+    // never past the page's least
+    drag(&mut f, -600.0);
+    // (the window's body starts at x 160: the sidebar, then the page)
+    let page = title(&mut f) - 36.0 - 160.0 - super::SIDEBAR;
+    assert!((page - super::PAGE_LEAST).abs() < 3.0, "the page keeps its least: {page}");
+}
+
+/// A saved edit says so over the preview a moment, not above the page.
+#[test]
+fn a_saved_edit_shows_a_moment_over_the_preview() {
+    let mut f = Fixture::new();
+    f.state.message = "an older line".into();
+    f.state.note_saved();
+    assert!(f.state.message.is_empty());
+    assert!(shows_text(&mut f, aurora_i18n::tr!("ao-saved")));
+    f.state.saved_at = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(3));
+    f.settle();
+    assert!(!shows_text(&mut f, aurora_i18n::tr!("ao-saved")), "gone after its moment");
+}
