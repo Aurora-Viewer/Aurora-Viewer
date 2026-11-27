@@ -5735,6 +5735,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_GPU_OOM_START=<seconds>` | Video memory full while the renderer is made, that long after the start |
 | `AURORA_GPU_OOM_UI=1` | Video memory too full even for the interface's buffers at the start |
 | `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, photo look, RLVa, TAA history), that long |
+| `AURORA_GPU_OOM_STILL=1` | Video memory full for the constants of a photo's later traced rounds |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
@@ -6177,6 +6178,14 @@ both open states and the selection count. Capture at frame 620.
   once the time is over. A refused RLVa target never shows the world it
   hides: the frame that found it fails as a whole. Without the check, the
   world stayed frozen or black until the window size changed.
+- **`AURORA_GPU_OOM_STILL=1`** (demo or grid): the small buffer that
+  carries a traced pass's constants into a photo's later rounds
+  (`rt_shadows::put`) counts as refused, as on a card full while a photo
+  is taken (#4845). Take a photo with ray tracing on
+  (`AURORA_DEMO_SNAPSHOT=save:1920x1080`): it is still saved, the log says
+  `photo round: constants not updated, buffer refused (AURORA_GPU_OOM_STILL)`
+  once, then a count every 10 s, and no crash window follows. Before,
+  wgpu's `create_buffer_init` panicked on the refused buffer.
 - **`AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]`** (demo or grid): every
   allocation of `mb` megabytes or more made through
   `aurora-render/src/gpu_alloc.rs` fails as if video memory were full
