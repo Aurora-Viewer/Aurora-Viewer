@@ -30,6 +30,7 @@ $pages = @(
     @{ Section = 'For testers'; Page = 'Installing-on-Linux'; Title = 'Installing on Linux'; Source = 'docs/LINUX.md' }
     @{ Section = 'For testers'; Page = 'VR'; Title = 'Experimental VR scene viewing'; Source = 'docs/VR.md' }
     @{ Section = 'For testers'; Page = 'Windows-VR'; Title = 'Experimental Windows VR'; Source = 'docs/VR_WINDOWS.md' }
+    @{ Section = 'For testers'; Page = 'DLSS'; Title = 'NVIDIA DLSS (optional build feature)'; Source = 'docs/DLSS.md' }
     @{ Section = 'For testers'; Page = 'Installing-on-macOS'; Title = 'Installing on macOS'; Source = 'docs/MACOS.md' }
     @{ Section = 'For testers'; Page = 'Updates'; Title = 'Updates'; Source = 'docs/UPDATES.md' }
     @{ Section = 'For testers'; Page = 'Asset-imports'; Title = 'Asset imports'; Source = 'docs/IMPORTS.md' }

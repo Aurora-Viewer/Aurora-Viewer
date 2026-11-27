@@ -13097,6 +13097,14 @@ impl App {
             env.sun_dir = sun;
         }
         self.options_ui.sky_tone_mapped = !env.sky.no_post;
+        // DLSS that Streamline refused after the device opened for it: FSR draws,
+        // and Preferences says so (the other states are fixed at the start)
+        if matches!(
+            self.options_ui.dlss,
+            aurora_render::DlssSupport::Ready | aurora_render::DlssSupport::Failed
+        ) {
+            self.options_ui.dlss = aurora_render::dlss_support();
+        }
         if in_world {
             // what the sky source is: region, day cycle, altitude track, preset
             let key = {
@@ -18770,6 +18778,11 @@ impl App {
         if res.clear_cache {
             self.disk_cache.clear();
             self.net.send(NetCommand::ClearObjectCache);
+        }
+        #[cfg(any(windows, target_os = "linux"))]
+        if res.restart_for_dlss {
+            crate::dlss_install::request_restart();
+            self.confirm_exit(ui::exit::Action::Quit);
         }
         if res.open_chat_logs
             && let Some(dir) = self.world.chat_log.dir()
@@ -27070,21 +27083,10 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
 /// of this instance is kept (title, frame cap, language, grid), not the
 /// one-time login or start place.
 pub fn restart_with_vr(mode: crate::camera::VrView) {
-    let cli = crate::cli::get();
-    let Ok(exe) = std::env::current_exe() else {
+    let Some(mut command) = restart_command() else {
         log::warn!("restart into VR: the viewer's path is unknown");
         return;
     };
-    let mut command = std::process::Command::new(exe);
-    if let Some(title) = &cli.title {
-        command.arg("--title").arg(title);
-    }
-    if let Some(fps) = cli.fps_limit {
-        command.arg("--fps-limit").arg(fps.to_string());
-    }
-    if let Some(language) = &cli.language {
-        command.arg("--language").arg(language);
-    }
     let mode = match mode {
         crate::camera::VrView::FirstPerson => "first-person",
         crate::camera::VrView::Avatar => "avatar",
@@ -27095,6 +27097,35 @@ pub fn restart_with_vr(mode: crate::camera::VrView) {
         Ok(_) => log::info!("restarting into VR"),
         Err(e) => log::warn!("restart into VR failed: {e}"),
     }
+}
+
+/// Start this viewer again as the process ends (a restart asked from the
+/// DLSS installation, dlss_install): the same identity as `restart_with_vr`.
+pub fn restart_plain() {
+    let Some(mut command) = restart_command() else {
+        log::warn!("restart: the viewer's path is unknown");
+        return;
+    };
+    match command.spawn() {
+        Ok(_) => log::info!("restarting"),
+        Err(e) => log::warn!("restart failed: {e}"),
+    }
+}
+
+fn restart_command() -> Option<std::process::Command> {
+    let cli = crate::cli::get();
+    let exe = std::env::current_exe().ok()?;
+    let mut command = std::process::Command::new(exe);
+    if let Some(title) = &cli.title {
+        command.arg("--title").arg(title);
+    }
+    if let Some(fps) = cli.fps_limit {
+        command.arg("--fps-limit").arg(fps.to_string());
+    }
+    if let Some(language) = &cli.language {
+        command.arg("--language").arg(language);
+    }
+    Some(command)
 }
 
 #[cfg(test)]

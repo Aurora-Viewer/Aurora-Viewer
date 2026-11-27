@@ -13,6 +13,9 @@ pub(crate) struct Graphics {
     vk_entry: ash::Entry,
     raw_instance: ash::Instance,
     physical: vk::PhysicalDevice,
+    /// The instance carries the DLSS extensions (a build with DLSS whose
+    /// files are set up, dlss.rs): the device is then asked for DLSS's too.
+    with_dlss: bool,
 }
 /// The OpenXR loader: built in on Windows (the `static` feature), the
 /// distribution's on Linux, which its runtimes install.
@@ -99,26 +102,58 @@ impl Graphics {
         if requirements.min_api_version_supported > xr::Version::new(1, 3, 0) {
             return Err("Runtime requires newer Vulkan than this experiment".into());
         }
-        // SAFETY: ash loads the system Vulkan loader; all handles below belong to it.
-        let vk_entry = unsafe { ash::Entry::load()? };
+        // Windows, with DLSS set up: Streamline's interposer as the loader,
+        // so that it sees the instance and device made (dlss.rs)
+        #[cfg(windows)]
+        let interposer = crate::dlss::xr_entry();
+        #[cfg(not(windows))]
+        let interposer: Option<ash::Entry> = None;
+        let vk_entry = match interposer {
+            Some(entry) => entry,
+            // SAFETY: ash loads the system Vulkan loader; all handles below belong to it.
+            None => unsafe { ash::Entry::load()? },
+        };
         let instance_extensions = hal::vulkan::Instance::desired_extensions(&vk_entry, api, flags)?;
-        let pointers: Vec<_> = instance_extensions.iter().map(|s| s.as_ptr()).collect();
-        let app = vk::ApplicationInfo::default().api_version(api);
-        let create = vk::InstanceCreateInfo::default()
-            .application_info(&app)
-            .enabled_extension_names(&pointers);
-        // SAFETY: Proc address types have the same Vulkan ABI. Create-info and its pointees
-        // remain valid during the synchronous OpenXR call. OpenXR adds its required extensions.
-        let raw = unsafe {
-            xr.create_vulkan_instance(
-                system,
-                std::mem::transmute::<vk::PFN_vkGetInstanceProcAddr, xr::sys::platform::VkGetInstanceProcAddr>(
-                    vk_entry.static_fn().get_instance_proc_addr,
-                ),
-                &create as *const _ as *const _,
-            )
-        }?
-        .map_err(vk::Result::from_raw)?;
+        // Streamline's too, when DLSS is set up, so that DLSS draws in the headset
+        // as on the desktop (dlss.rs); wgpu-hal is told only of its own
+        let dlss_extensions = crate::dlss::xr_instance_extensions(&vk_entry);
+        let with_dlss = dlss_extensions.is_some();
+        let mut enabled = instance_extensions.clone();
+        for name in dlss_extensions.into_iter().flatten() {
+            if !enabled.contains(&name) {
+                enabled.push(name);
+            }
+        }
+        let create_instance = |names: &[&std::ffi::CStr]| -> Result<_> {
+            let pointers: Vec<_> = names.iter().map(|s| s.as_ptr()).collect();
+            let app = vk::ApplicationInfo::default().api_version(api);
+            let create = vk::InstanceCreateInfo::default()
+                .application_info(&app)
+                .enabled_extension_names(&pointers);
+            // SAFETY: Proc address types have the same Vulkan ABI. Create-info and its pointees
+            // remain valid during the synchronous OpenXR call. OpenXR adds its required extensions.
+            let raw = unsafe {
+                xr.create_vulkan_instance(
+                    system,
+                    std::mem::transmute::<vk::PFN_vkGetInstanceProcAddr, xr::sys::platform::VkGetInstanceProcAddr>(
+                        vk_entry.static_fn().get_instance_proc_addr,
+                    ),
+                    &create as *const _ as *const _,
+                )
+            }?
+            .map_err(vk::Result::from_raw)?;
+            Ok(raw)
+        };
+        // a runtime that refuses the DLSS extensions still gets its headset:
+        // the instance is made as before and DLSS is not offered in VR
+        let (raw, with_dlss) = match create_instance(&enabled) {
+            Ok(raw) => (raw, with_dlss),
+            Err(e) if with_dlss => {
+                log::error!("DLSS: the VR runtime refused the instance with the DLSS extensions ({e}): made without them, FSR draws");
+                (create_instance(&instance_extensions)?, false)
+            }
+            Err(e) => return Err(e),
+        };
         // SAFETY: The runtime returned a valid instance from this loader.
         let raw_instance = unsafe { ash::Instance::load(vk_entry.static_fn(), vk::Instance::from_raw(raw as _)) };
         let physical = vk::PhysicalDevice::from_raw(unsafe {
@@ -149,6 +184,7 @@ impl Graphics {
             vk_entry,
             raw_instance,
             physical,
+            with_dlss,
         })
     }
     pub fn open(&self, adapter: &wgpu::Adapter, descriptor: &wgpu::DeviceDescriptor<'_>) -> Result<(wgpu::Device, wgpu::Queue)> {
@@ -158,8 +194,13 @@ impl Graphics {
             vk_entry,
             raw_instance,
             physical,
+            with_dlss,
             ..
         } = self;
+        // the device opened for DLSS before is forgotten, whatever happens
+        // below (dlss.rs); false: Streamline is still busy on a lost device, and
+        // this one opens without it
+        let dlss_free = crate::dlss::opening_device(true);
         let system = *system;
         let physical = *physical;
         let features = descriptor.required_features;
@@ -171,33 +212,61 @@ impl Graphics {
         // SAFETY: Backend is Vulkan, adapter remains alive throughout bootstrap.
         let ha = unsafe { adapter.as_hal::<hal::api::Vulkan>() }.ok_or("Not Vulkan")?;
         let device_extensions = ha.required_device_extensions(features);
-        let names: Vec<_> = device_extensions.iter().map(|s| s.as_ptr()).collect();
-        let mut enabled_features = ha.physical_device_features(&device_extensions, features);
+        // the DLSS device extensions beside wgpu's (wgpu-hal is told only of
+        // its own, as when dlss.rs opens a device); None, the device opens
+        // as before and DLSS is not offered in VR
+        let dlss_extensions = if *with_dlss && dlss_free {
+            crate::dlss::xr_device_extensions(&ha)
+        } else {
+            None
+        };
+        let with_dlss = dlss_extensions.is_some();
+        let mut enabled = device_extensions.clone();
+        for name in dlss_extensions.into_iter().flatten() {
+            if !enabled.contains(&name) {
+                enabled.push(name);
+            }
+        }
         // SAFETY: physical belongs to raw_instance and is valid until wgpu is dropped.
         let family = unsafe { raw_instance.get_physical_device_queue_family_properties(physical) }
             .iter()
             .position(|q| q.queue_flags.contains(vk::QueueFlags::GRAPHICS))
             .ok_or("No graphics queue")? as u32;
-        let queues = [vk::DeviceQueueCreateInfo::default()
-            .queue_family_index(family)
-            .queue_priorities(&[1.0])];
-        let create = enabled_features.add_to_device_create(
-            vk::DeviceCreateInfo::default()
-                .queue_create_infos(&queues)
-                .enabled_extension_names(&names),
-        );
-        // SAFETY: All create-info feature/extension storage lives through the synchronous call.
-        let raw = unsafe {
-            xr.create_vulkan_device(
-                system,
-                std::mem::transmute::<vk::PFN_vkGetInstanceProcAddr, xr::sys::platform::VkGetInstanceProcAddr>(
-                    vk_entry.static_fn().get_instance_proc_addr,
-                ),
-                physical.as_raw() as _,
-                &create as *const _ as *const _,
-            )
-        }?
-        .map_err(vk::Result::from_raw)?;
+        let create_device = |names: &[&std::ffi::CStr]| -> Result<_> {
+            let names: Vec<_> = names.iter().map(|s| s.as_ptr()).collect();
+            let mut enabled_features = ha.physical_device_features(&device_extensions, features);
+            let queues = [vk::DeviceQueueCreateInfo::default()
+                .queue_family_index(family)
+                .queue_priorities(&[1.0])];
+            let create = enabled_features.add_to_device_create(
+                vk::DeviceCreateInfo::default()
+                    .queue_create_infos(&queues)
+                    .enabled_extension_names(&names),
+            );
+            // SAFETY: All create-info feature/extension storage lives through the synchronous call.
+            let raw = unsafe {
+                xr.create_vulkan_device(
+                    system,
+                    std::mem::transmute::<vk::PFN_vkGetInstanceProcAddr, xr::sys::platform::VkGetInstanceProcAddr>(
+                        vk_entry.static_fn().get_instance_proc_addr,
+                    ),
+                    physical.as_raw() as _,
+                    &create as *const _ as *const _,
+                )
+            }?
+            .map_err(vk::Result::from_raw)?;
+            Ok(raw)
+        };
+        // refused with the DLSS extensions: opened as before, and DLSS is not
+        // offered in VR (Preferences says why)
+        let (raw, with_dlss) = match create_device(&enabled) {
+            Ok(raw) => (raw, with_dlss),
+            Err(e) if with_dlss => {
+                log::error!("DLSS: the VR runtime refused the device with the DLSS extensions ({e}): opened without them, FSR draws");
+                (create_device(&device_extensions)?, false)
+            }
+            Err(e) => return Err(e),
+        };
         log::info!("OpenXR runtime created Vulkan device");
         // SAFETY: Runtime-created device belongs to the selected adapter and includes HAL features.
         let raw_device = unsafe { ash::Device::load(raw_instance.fp_v1_0(), vk::Device::from_raw(raw as _)) };
@@ -214,6 +283,7 @@ impl Graphics {
             )?
         };
         let result = unsafe { adapter.create_device_from_hal::<hal::api::Vulkan>(hd, descriptor)? };
+        crate::dlss::opened_for_xr(adapter, &result.0, with_dlss);
         Ok(result)
     }
 }

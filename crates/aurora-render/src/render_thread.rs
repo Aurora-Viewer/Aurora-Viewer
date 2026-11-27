@@ -435,6 +435,13 @@ impl Drop for Host {
                     // the window stays with it (its keep-alive); the thread
                     // drops the backend itself if the driver lets it go
                     log::error!("render thread still in the GPU after {LEAVE_WAIT:?}: left behind");
+                    // its DLSS may still submit once the call returns:
+                    // Streamline, started on a device that works, is not ended
+                    // under it by the next device, which opens without
+                    // DLSS (dlss.rs). If the thread returns at last, its
+                    // result (the backend) is dropped as it ends, and the
+                    // backend's drop shuts Streamline down there (dlss::closing)
+                    crate::dlss::left_behind();
                     return;
                 }
                 match t.join() {

@@ -13,6 +13,8 @@ mod autoreplace;
 mod avatar_align;
 mod avatar_studio;
 mod blender_live;
+#[cfg(any(windows, target_os = "linux"))]
+mod dlss_install;
 // Bug report form, disabled for now: "Report a bug" (login screen, top bar,
 // crash window) opens GitHub's issue chooser in the browser instead
 // (`links::NEW_ISSUE`). Its code stays in the tree, out of the build
@@ -394,6 +396,18 @@ fn run_viewer() -> anyhow::Result<()> {
     result?;
     if let Some(mode) = restart_vr {
         app::restart_with_vr(mode);
+    } else if cfg!(any(windows, target_os = "linux")) && restart_after_dlss_install() {
+        app::restart_plain();
     }
     Ok(())
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn restart_after_dlss_install() -> bool {
+    dlss_install::restart_requested()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn restart_after_dlss_install() -> bool {
+    false
 }

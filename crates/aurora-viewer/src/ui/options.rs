@@ -544,6 +544,13 @@ pub struct OptionsUi {
     pub gpu_notice: Option<aurora_render::adapter_choice::Notice>,
     /// Whether the GPU device ray-traces; set by the app with the GPUs.
     pub ray_tracing: aurora_render::RayTracingSupport,
+    /// Whether DLSS can draw, and the folder it looks in for the user's
+    /// files; set by the app with the GPUs.
+    pub dlss: aurora_render::DlssSupport,
+    pub dlss_folder: Option<String>,
+    /// NVIDIA DLSS installed from Preferences (dlss_install).
+    #[cfg(any(windows, target_os = "linux"))]
+    pub dlss_install: crate::dlss_install::Installer,
     /// The sky in use is tone mapped (not classic); set by the app each
     /// frame: the tone mapper choice is greyed otherwise.
     pub sky_tone_mapped: bool,
@@ -641,6 +648,9 @@ impl OptionsUi {
             self.gpus.clone_from(&from.gpus);
         }
         self.gpu_notice = from.gpu_notice;
+        // Phototools borrows the anti-aliasing rows: DLSS as Preferences has it
+        self.dlss = from.dlss;
+        self.dlss_folder.clone_from(&from.dlss_folder);
     }
 
     pub fn joystick_capturing(&self) -> bool {
@@ -776,6 +786,8 @@ impl OptionsUi {
 
 #[derive(Default)]
 pub struct OptionsResult {
+    /// "Restart now" after DLSS was installed.
+    pub restart_for_dlss: bool,
     pub setting_unavailable: bool,
     pub toggle_flycam: bool,
     pub reset_anti_spam: bool,
@@ -1618,6 +1630,8 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     legacy_lists::modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
     saved_graphics::confirm(ctx, p, s, st, &mut r, *open);
+    #[cfg(any(windows, target_os = "linux"))]
+    pages::graphics::dlss_install_modal(ctx, p, s, st, &mut r);
     st.defaults = Some(d);
     r
 }
