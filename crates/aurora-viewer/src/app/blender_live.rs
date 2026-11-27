@@ -107,6 +107,7 @@ impl App {
         for asset in self.blender_live.assets.drain(..) {
             self.scene.retire_preview_mesh(asset);
         }
+        self.scene.release_preview_images();
         self.blender_live.triangles = 0;
         self.blender_live.revision = None;
         self.scene.reset_skeleton(self.world.agent_id, false);
@@ -297,6 +298,8 @@ impl App {
                 crate::blender_live::demo_sleeves_fixture(&self.world.avatar_lib.rig)
             } else if mode == "warnings" {
                 crate::blender_live::demo_warnings_fixture(&self.world.avatar_lib.rig)
+            } else if mode == "static-repaint" {
+                crate::blender_live::demo_repaint_fixture(&self.world.avatar_lib.rig, false)
             } else if mode.starts_with("static") {
                 crate::blender_live::demo_static_fixture(&self.world.avatar_lib.rig, mode.starts_with("static-linked"))
             } else {
@@ -332,6 +335,9 @@ impl App {
             }
         }
         if let Some(snapshot) = self.blender_live.take_latest() {
+            if self.demo {
+                self.blender_live.arrival = Some((snapshot.revision, Instant::now(), self.frame_count));
+            }
             if let Some(old) = self.blender_live.receive(snapshot) {
                 self.scene.jobs.discard(old);
             }
@@ -364,6 +370,18 @@ impl App {
             }
             if let Some(old) = self.blender_live.receive(snapshot) {
                 self.scene.jobs.discard(old);
+            }
+        }
+        // `static-repaint`: Blender repaints the object's texture, nothing
+        // else, so its card's thumbnail and time follow the new pixels
+        if self.demo && self.frame_count == 600 && std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "static-repaint") {
+            match crate::blender_live::demo_repaint_fixture(&self.world.avatar_lib.rig, true) {
+                Ok(snapshot) => {
+                    if let Some(old) = self.blender_live.receive(snapshot) {
+                        self.scene.jobs.discard(old);
+                    }
+                }
+                Err(error) => self.blender_live.error = Some(error),
             }
         }
         // `static-derez-closed`: the window closes, then the world's menu
@@ -415,7 +433,7 @@ impl App {
             };
             if matches!(
                 mode.as_str(),
-                "static" | "static-linked" | "static-linked-child" | "static-linked-menu" | "static-derez-closed"
+                "static" | "static-linked" | "static-linked-child" | "static-linked-menu" | "static-derez-closed" | "static-repaint"
             ) && let Some(placement) = self.blender_live.placements.get(&source)
             {
                 let position = if let Some(parent) = placement.parent.and_then(|id| self.blender_live.placements.get(&id)) {
@@ -496,6 +514,28 @@ impl App {
         {
             self.install_blender_snapshot(snapshot, renderer);
         }
+        // demo: how long a revision from the add-on takes to be drawn, its
+        // geometry and textures uploaded (docs/TESTING.md, LiveMesh)
+        if let Some((revision, at, frame)) = self.blender_live.arrival
+            && self.blender_live.revision == Some(revision)
+            && self.blender_live.objects.iter().all(|id| {
+                self.world
+                    .objects
+                    .index_of_uuid(id)
+                    .and_then(|idx| self.scene.gpu.get(idx))
+                    .is_some_and(|gpu| {
+                        !gpu.faces.is_empty()
+                            && matches!(gpu.geom, Some(crate::scene::GeomKey::Mesh { id, .. }) if self.blender_live.assets.contains(&id))
+                    })
+            })
+        {
+            self.blender_live.arrival = None;
+            log::info!(
+                "demo Blender live: revision {revision} drawn {:.1} ms, {} frames after it arrived",
+                at.elapsed().as_secs_f64() * 1000.0,
+                self.frame_count - frame
+            );
+        }
         if self.demo && self.blender_live.demo_started && self.frame_count.is_multiple_of(120) {
             let (appearances, images) = self.scene.preview_appearance_counts();
             let ready = self
@@ -563,12 +603,20 @@ impl App {
                 placement.position.z = floor + offset;
             }
         }
+        // every image of the snapshot, hidden objects' too: on the GPU, they
+        // need their staged copies no more
+        if !self.scene.install_preview_images(&snapshot.images, renderer) {
+            let scene = &self.scene;
+            self.blender_live
+                .restage_missing(renderer.staging_pool(), |id| scene.has_preview_image(id));
+            return;
+        }
+        let scene = &self.scene;
+        self.blender_live.release_staged(|id| scene.has_preview_image(id));
+        drop(snapshot);
         let Some(snapshot) = self.blender_live.visible_snapshot() else {
             return;
         };
-        if !self.scene.install_preview_images(&snapshot.images, renderer) {
-            return;
-        }
         let Some(parent) = self
             .world
             .objects

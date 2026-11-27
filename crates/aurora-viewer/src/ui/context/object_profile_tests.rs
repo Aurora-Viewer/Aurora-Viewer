@@ -291,3 +291,19 @@ fn object_profile_keeps_its_live_properties_subscription_without_holding_other_s
     });
     assert!(h.profile.retain_selection(&h.world, &mut command));
 }
+
+/// #4864: the Object profile keeps the size it is given, at its default,
+/// its minimum and enlarged, at every interface and text scale: its rows
+/// measured a little wider than the room they were given, and the window
+/// grew by that at every frame of a resize until it filled the screen.
+#[test]
+fn object_profile_keeps_its_size() {
+    crate::ui::widgets::steady_tests::assert_window_steady_at_scales(
+        "object_profile",
+        &[egui::vec2(490.0, 760.0), egui::vec2(380.0, 420.0), egui::vec2(900.0, 700.0)],
+        &[(1.0, 1.0), (1.25, 1.0), (1.5, 1.0), (1.0, 1.4), (1.0, 2.0)],
+        Harness::new,
+        |h, ctx, p| h.profile.show(ctx, p, &mut h.world, &h.facts),
+        |_, _, _, _, _| {},
+    );
+}

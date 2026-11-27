@@ -93,6 +93,31 @@ pub(crate) fn scene_source(source: String, features: wgpu::Features) -> String {
     }
 }
 
+/// The functions of object.wgsl that file and compose the fragments of a
+/// pixel, without those that read the world's materials: for the previews
+/// (preview_blend.rs), whose see-through faces are sorted the same way.
+pub(crate) fn order_source() -> String {
+    let source = include_str!("shaders/object.wgsl");
+    let part = |from: &str, to: &str| {
+        let start = source.find(from)?;
+        let end = start + source[start..].find(to)?;
+        Some(&source[start..end])
+    };
+    let parts = [
+        // the fronts, their slots and pages, the packing of what they hold
+        part("struct BlendOrderInfo {", "// Where a fragment lies, in 24 bits"),
+        part("// A light in one word:", "// `sample_tex` with the derivatives"),
+        // the composition of a pixel
+        part(
+            "// What a layer that stops `stops` in all",
+            "// The pass over the screen: the light",
+        ),
+    ];
+    debug_assert!(parts.iter().all(Option::is_some), "object.wgsl keeps its parts (a test)");
+    let parts: Vec<&str> = parts.into_iter().flatten().collect();
+    format!("const HDR_MAX: f32 = 65504.0;\n{}", parts.join("\n"))
+}
+
 /// The blend of the one draw over the screen: its first output over what
 /// is drawn, scaled by its second, colour and alpha alike.
 pub(crate) fn both_blend() -> wgpu::BlendState {
@@ -593,6 +618,24 @@ mod tests {
         assert!(two.contains("fn fs_blend_both("));
         assert_eq!(scene_source(source.to_string(), EARLY_TEST), source);
         assert!(!source.contains("@blend_src"), "other shaders take object.wgsl as it is");
+    }
+
+    #[test]
+    fn the_previews_take_the_order_of_the_world() {
+        let source = order_source();
+        for function in [
+            "blend_page(",
+            "blend_pack(",
+            "blend_unpack(",
+            "blend_stops(",
+            "blend_walk(",
+            "blend_compose(",
+        ] {
+            assert_eq!(source.matches(&format!("fn {function}")).count(), 1, "{function}");
+        }
+        assert!(!source.contains("@fragment") && !source.contains("records["));
+        let common = include_str!("shaders/common.wgsl");
+        assert!(common.contains("const HDR_MAX: f32 = 65504.0;"));
     }
 
     #[test]
