@@ -475,6 +475,29 @@ mod tests {
         assert!(held.sit[1].bottom() <= held.rooms[1].bottom(), "{held:?}");
     }
 
+    /// Two islands raised in one frame (the chat island of its own and the
+    /// dock's chat block): a side bar's room goes down by the higher one,
+    /// what the windows' room lost, and the place to keep clear of holds
+    /// both. The second said used to replace the first.
+    #[test]
+    fn two_raised_chat_islands_count_as_the_higher_one() {
+        let ctx = egui::Context::default();
+        let room = Rect::from_min_max(egui::pos2(0.0, 50.0), egui::pos2(1536.0, 760.0));
+        assert_eq!(chrome::side_room(&ctx, room), (room, None), "nothing raised");
+        chrome::raise_chat(&ctx, egui::Rangef::new(8.0, 388.0), 53.0);
+        chrome::raise_chat(&ctx, egui::Rangef::new(400.0, 790.0), 26.0);
+        chrome::raise_chat(&ctx, egui::Rangef::new(900.0, 950.0), 0.0);
+        let (own, raised) = chrome::side_room(&ctx, room);
+        assert_eq!(own, Rect::from_min_max(room.min, egui::pos2(1536.0, 813.0)));
+        assert_eq!(
+            raised,
+            Some(Rect::from_min_max(
+                egui::pos2(8.0 - islands::MARGIN, 760.0),
+                egui::pos2(790.0 + islands::MARGIN, 813.0)
+            ))
+        );
+    }
+
     /// The windows' room and the buttons of a left (Sit) and a right (Fly)
     /// bar, the recent emojis' row hidden then shown, with the chat block at
     /// the left of the dock and the left bar aligned by `left`.

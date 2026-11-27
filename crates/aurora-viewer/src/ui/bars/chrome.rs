@@ -302,10 +302,17 @@ pub fn prepare_chat(ctx: &egui::Context, chat: &crate::ui::chat::ChatUi, width: 
 }
 
 /// The bottom dock's chat island stands `by` over the dock's row this
-/// frame, between the sides `columns`.
+/// frame, between the sides `columns`. The island of its own and the dock's
+/// chat block can both be raised: the room lost is the higher one's, and
+/// the columns hold both.
 pub(super) fn raise_chat(ctx: &egui::Context, columns: egui::Rangef, by: f32) {
     if by > 0.0 {
-        ctx.data_mut(|data| data.get_temp_mut_or_default::<Metrics>(metrics_id()).chat_raised = Some((columns, by)));
+        ctx.data_mut(|data| {
+            let raised = &mut data.get_temp_mut_or_default::<Metrics>(metrics_id()).chat_raised;
+            *raised = Some(raised.map_or((columns, by), |(was, lift)| {
+                (egui::Rangef::new(was.min.min(columns.min), was.max.max(columns.max)), lift.max(by))
+            }));
+        });
     }
 }
 
