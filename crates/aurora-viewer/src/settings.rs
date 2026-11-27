@@ -1791,6 +1791,15 @@ pub struct Settings {
     pub fsr_quality: u8,
     /// With FSR, its sharpening (RCAS) in percent; 0 turns it off.
     pub fsr_sharpness: u32,
+    /// With FSR, NVIDIA DLSS draws in its place, from files the user adds
+    /// (a build with the `dlss` feature; docs/DLSS.md).
+    /// Preferences shows it as its own anti-aliasing choice; the file keeps
+    /// FSR so a build without DLSS reads FSR. A choice of this computer's,
+    /// not a graphics preset's.
+    pub dlss: bool,
+    /// The model DLSS draws with: 0 NVIDIA's choice per mode, 1 K, 2 L,
+    /// 3 M (`aurora_render::DlssModel`). Like `dlss`, this computer's.
+    pub dlss_model: u8,
     /// World resolution as a percentage of the window; HUDs and UI stay native.
     pub render_scale_percent: u32,
     /// "Match the display": the world follows the display's logical
@@ -2950,6 +2959,8 @@ impl Default for Settings {
             blend_order: crate::graphics_presets::BLEND_ORDER_FULL,
             fsr_quality: 1,
             fsr_sharpness: 80,
+            dlss: false,
+            dlss_model: 0,
             render_scale_percent: 100,
             render_scale_auto: cfg!(target_os = "macos"),
             specular_aa: true,
@@ -3968,6 +3979,9 @@ impl Settings {
         }
         self.fsr_quality = self.fsr_quality.min(4);
         self.fsr_sharpness = self.fsr_sharpness.min(100);
+        if self.dlss_model > 3 {
+            self.dlss_model = 0;
+        }
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
         self.reflection_probes = self.reflection_probes.min(3);
         self.probe_count = self.probe_count.clamp(8, 256);
@@ -4324,6 +4338,13 @@ impl Settings {
                 _ => AntiAliasing::Smaa,
             },
             fsr_sharpness: (self.fsr_sharpness > 0).then(|| self.fsr_sharpness.min(100) as f32 / 100.0),
+            dlss: self.dlss,
+            dlss_model: match self.dlss_model {
+                1 => aurora_render::DlssModel::K,
+                2 => aurora_render::DlssModel::L,
+                3 => aurora_render::DlssModel::M,
+                _ => aurora_render::DlssModel::Default,
+            },
             tonemapper: if self.tonemapper == 1 {
                 Tonemapper::Aces
             } else {

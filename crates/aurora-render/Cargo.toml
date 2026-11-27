@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
+# the viewer's number from its Git tag, told to Streamline (dlss.rs) with `dlss`
+aurora-version = { version = "0.1.0", path = "../aurora-version", optional = true }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 # the cloud noise file's zlib and checksum (clouds_noise.rs) and the Milky Way map's zlib (stars.rs), already built for aurora-assets
 flate2 = "1.1.10"
@@ -44,8 +46,9 @@ objc2-metal = { version = "0.3.2", default-features = false, features = ["std", 
 openxr = "0.22"
 
 [target.'cfg(windows)'.dependencies]
-# CPU time of a thread, for the profile (thread_cpu.rs)
-windows-sys = { version = "0.61.2", features = ["Win32_System_Threading", "Win32_System_WindowsProgramming"] }
+# CPU time of a thread, for the profile (thread_cpu.rs); with `dlss`, the
+# library loader opens the user's sl.interposer.dll (dlss.rs)
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # CPU time of a thread, for the profile (thread_cpu.rs); already in the tree
@@ -60,6 +63,12 @@ openxr = "0.22"
 
 [features]
 xr-static-loader = ["openxr/static"]
+# NVIDIA DLSS in FSR's place in the renderer (dlss.rs), through Streamline's
+# interface, loaded at run time from files the user downloads or builds and
+# puts in their own folder: nothing of NVIDIA's is linked or shipped. Linux
+# and Windows x86-64; off by default (docs/DLSS.md). The viewer's version is
+# what Streamline is told it runs.
+dlss = ["dep:aurora-version"]
 
 [dev-dependencies]
 # (`hlsl-out` and `msl-out` serve the tests that check the other writers of

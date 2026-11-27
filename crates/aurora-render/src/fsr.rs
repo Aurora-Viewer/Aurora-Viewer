@@ -765,6 +765,48 @@ impl Fsr {
         &self.output
     }
 
+    /// Only the depth at the display size, for a frame another upscaler
+    /// draws (dlss.rs); FSR's history is left as it was, so the next
+    /// [`Self::encode`] takes a reset.
+    pub(crate) fn encode_depth(&mut self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder) {
+        let Some(depth) = &self.display_depth else { return };
+        let size = [self.size.0 as i32, self.size.1 as i32];
+        let display = [self.display.0 as i32, self.display.1 as i32];
+        // (the pass reads the sizes and the scale only)
+        let u = FsrU {
+            render_size: size,
+            prev_render_size: size,
+            upscale_size: display,
+            prev_upscale_size: display,
+            max_render_size: size,
+            max_upscale_size: display,
+            downscale: [
+                self.size.0 as f32 / self.display.0 as f32,
+                self.size.1 as f32 / self.display.1 as f32,
+            ],
+            ..bytemuck::Zeroable::zeroed()
+        };
+        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&u));
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("fsr display depth"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.pipelines.display_depth);
+        pass.set_bind_group(0, &self.groups[self.parity].prepare, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
     /// Records FSR's passes for this frame.
     pub(crate) fn encode(&mut self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, f: &FrameInputs) {
         let w = self.parity;

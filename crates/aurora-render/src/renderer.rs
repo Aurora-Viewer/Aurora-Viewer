@@ -61,6 +61,10 @@ fn demo_vr_closed() -> Option<u64> {
 /// (`xr_frame::runtime_leaving`), one call to an in-process queue each time.
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+/// How long a snapshot's DLSS set aside waits for the next film frame
+/// once the window's targets are back (`Backend::dlss_aside`): a film
+/// export asks for it again within a frame or two.
+const DLSS_ASIDE: std::time::Duration = std::time::Duration::from_secs(2);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The G-buffer at the Standard precision: 8 bits per channel.
 const GBUF_STANDARD: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -882,6 +886,10 @@ struct Taa {
     /// FSR 3.1 in the place of the TAA pass (`AURORA_FSR=1`, fsr.rs), with
     /// the post bind group reading its image.
     fsr: Option<(crate::fsr::Fsr, wgpu::BindGroup)>,
+    /// DLSS in FSR's place (`AURORA_DLSS=1`, dlss.rs), with the post bind
+    /// group reading its image; FSR stays beside it for the display depth
+    /// and for the day DLSS fails.
+    dlss: Option<(crate::dlss::Dlss, wgpu::BindGroup)>,
     parity: usize,
     reset: bool,
 }
@@ -2055,6 +2063,13 @@ pub(crate) struct Backend {
     surface: std::mem::ManuallyDrop<Arc<wgpu::Surface<'static>>>,
     config: wgpu::SurfaceConfiguration,
     external: bool,
+    /// Whether this renderer's drop shuts Streamline down on its device (DLSS,
+    /// dlss.rs): the main renderer's, which goes with its device at exit or
+    /// a switch to or from VR. Not an external one (it shares the main
+    /// one's device), and not one `remake_refused` replaces or a try it
+    /// refused: the device lives on, and Streamline on it holds the new
+    /// renderer's feature.
+    closes_ngx: bool,
     /// What the second camera's renderer is made from (second_view.rs):
     /// the window's start, kept (`seed` is let go once the start is over);
     /// None for an external renderer, or once one could not be made.
@@ -2356,6 +2371,34 @@ pub(crate) struct Backend {
     present_modes: Vec<wgpu::PresentMode>,
     settings: RenderSettings,
     taa: Option<Taa>,
+    /// The TAA history (and DLSS's feature with it) is wanted but left to
+    /// the render targets' remake, which makes it once at the new size:
+    /// made before it, DLSS would make a feature for the old size first.
+    taa_pending: bool,
+    /// The last ask to try DLSS again this renderer acted on
+    /// (`crate::dlss::retry_asked`, Preferences' button).
+    dlss_retry: u64,
+    /// The display size of this renderer's last DLSS that was not a
+    /// snapshot's: a resize waits for its size to hold before DLSS is
+    /// made (`crate::dlss::resizing`), each renderer its own.
+    dlss_last: std::cell::Cell<Option<(u32, u32)>>,
+    /// When the size a resize left has held long enough for DLSS to be
+    /// made at it (`dlss_after_resize`): FSR draws until then, and no
+    /// remake of the targets follows a resize that stopped.
+    dlss_due: std::cell::Cell<Option<Instant>>,
+    /// DLSS drew the last frame that reached the upscale, and in which
+    /// mode (None: FSR or another anti-aliasing): what each frame's stats
+    /// report, a skipped frame's too, so that a crash note written while
+    /// the window is minimized names DLSS, not the setting's FSR.
+    dlss_drew: Option<crate::DlssDrawing>,
+    /// A DLSS set aside by a remake of the targets, with when: the
+    /// window's while a snapshot draws, the snapshot's once it is over.
+    /// A film's export swaps the window's targets and a frame's at every
+    /// frame: each keeps its feature for the next swap (`make_taa`)
+    /// instead of making both again (~35 ms each). A snapshot's left
+    /// unused goes after `DLSS_ASIDE`, and any goes when the targets are
+    /// refused.
+    dlss_aside: Option<(crate::dlss::Dlss, Instant)>,
     /// This frame's TAA jitter in pixels, y down: where it moved the image.
     taa_jitter: glam::Vec2,
     prev_view_proj: Option<Mat4>,
@@ -2398,6 +2441,8 @@ impl Drop for Backend {
     /// to the process, which releases it with the driver's objects.
     fn drop(&mut self) {
         if self.lost.get() {
+            // (DLSS's features stay with the lost device: the flag says so
+            // to dlss.rs, which never calls Streamline on it again)
             log::warn!("GPU device lost: the window surface is left to the process");
             self.outside.leak();
             return;
@@ -2406,6 +2451,12 @@ impl Drop for Backend {
         // SAFETY: dropped once, here, and never used again: the backend is
         // being dropped.
         unsafe { std::mem::ManuallyDrop::drop(&mut self.surface) };
+        // the main renderer goes with its device (the viewer's exit, a
+        // switch to or from VR): Streamline is shut down on it, bounded, and lets
+        // go of it (an external renderer shares the main one's device)
+        if self.closes_ngx {
+            crate::dlss::closing(&self.device);
+        }
     }
 }
 
@@ -5038,6 +5089,7 @@ impl Backend {
             surface: std::mem::ManuallyDrop::new(surface),
             config,
             external,
+            closes_ngx: !external,
             second_seed,
             second: None,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -5198,6 +5250,17 @@ impl Backend {
             present_modes,
             settings,
             taa: None,
+            taa_pending: false,
+            // (asks made before this renderer are no news to it)
+            dlss_retry: {
+                let mut seen = 0;
+                crate::dlss::retry_asked(&mut seen);
+                seen
+            },
+            dlss_last: std::cell::Cell::new(None),
+            dlss_due: std::cell::Cell::new(None),
+            dlss_drew: None,
+            dlss_aside: None,
             taa_jitter: glam::Vec2::ZERO,
             prev_view_proj: None,
             prev_motion_view: None,
@@ -7657,7 +7720,7 @@ impl Backend {
             };
             (mk(&self.dummies.white), mk(raw))
         });
-        if self.taa.is_some() {
+        if self.taa.is_some() || std::mem::take(&mut self.taa_pending) {
             self.remake_taa();
         }
     }
@@ -7677,12 +7740,115 @@ impl Backend {
         (live.texture_memory.read() + live.buffer_memory.read()).max(0) as u64
     }
 
-    /// The TAA history at the current size, measured (`taa_bytes`).
+    /// The TAA history at the current size, measured (`taa_bytes`). A
+    /// DLSS that fits the new targets is kept (`Dlss::fits`): its bytes
+    /// were not made again, so they are counted apart.
+    /// The post pass's bind group reading `v`, the TAA pass's, FSR's or
+    /// DLSS's output.
+    fn post_taa_group(&self, v: &wgpu::TextureView) -> wgpu::BindGroup {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("post taa"),
+            layout: &self.post_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(v),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.post_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.post_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.glow.views[1]),
+                },
+            ],
+        })
+    }
+
+    /// The size the TAA pass, FSR or DLSS draws at: the window's when FSR
+    /// upscales (the 1x1 set that frees a refused one shrinks FSR's display
+    /// size part too, rebuild_targets), else the scene's.
+    fn taa_display(&self) -> (u32, u32) {
+        if self.fsr_upscale().is_some() && !self.targets_shrunk {
+            (self.config.width, self.config.height)
+        } else {
+            self.scene_size()
+        }
+    }
+
+    /// DLSS made once the size a resize left has held (`dlss_due`, set by
+    /// `make_taa` while the size moved): no remake of the targets follows
+    /// a resize that stopped, so the feature is added to the TAA set as it
+    /// stands, FSR kept for the frames DLSS fails.
+    fn dlss_after_resize(&mut self) {
+        if self.dlss_due.get().is_none_or(|due| Instant::now() < due) {
+            return;
+        }
+        self.dlss_due.set(None);
+        if self.snapshot_window.is_some()
+            || self.targets_shrunk
+            || !self.dlss_wanted()
+            || crate::dlss::refused_here()
+            || self.taa.as_ref().is_none_or(|t| t.fsr.is_none() || t.dlss.is_some())
+        {
+            return;
+        }
+        let display = self.taa_display();
+        // one out-of-memory scope over all of it, as `make_taa` has
+        // through its callers: Dlss::new checks its textures, not its
+        // pipeline, buffer and bind groups, nor the post pass's group
+        let device = self.device.clone();
+        let (made, refused) = crate::gpu_alloc::scoped(&device, || {
+            let taa = self.taa.as_ref()?;
+            let motion = self.targets.gtao.as_ref().map(|g| &g.normals).or(taa.motion.as_ref())?;
+            let inputs = crate::dlss::Inputs {
+                color: &self.targets.color,
+                depth: self.targets.ao_depth.as_ref().map_or(&self.targets.depth_ss, |(_, view)| view),
+                motion,
+            };
+            let dlss = crate::dlss::Dlss::new(
+                &self.device,
+                &self.queue,
+                &self.lost,
+                self.scene_size(),
+                display,
+                self.settings.dlss_model,
+                &inputs,
+                false,
+                !self.external,
+            )?;
+            let group = self.post_taa_group(dlss.output());
+            Some((dlss, group))
+        });
+        // refused: FSR keeps drawing, the DLSS made is let go (its
+        // feature released once its frames are done, Dlss::retire); the
+        // next remake of the targets tries again
+        if refused {
+            crate::dlss::refused_memory("after the resize", !self.external);
+            return;
+        }
+        let Some((dlss, group)) = made else {
+            return;
+        };
+        self.taa_bytes += dlss.bytes();
+        if let Some(taa) = self.taa.as_mut() {
+            taa.dlss = Some((dlss, group));
+        }
+    }
+
     fn remake_taa(&mut self) {
         let before = self.live_bytes();
-        let taa = self.make_taa();
-        self.taa_bytes = self.live_bytes().saturating_sub(before);
+        let old = self.taa.as_mut().and_then(|t| t.dlss.take()).map(|(dlss, _)| dlss);
+        let aside = self.dlss_aside.take().map(|(dlss, _)| dlss);
+        let (taa, kept, aside) = self.make_taa(old, aside);
+        self.taa_bytes = self.live_bytes().saturating_sub(before) + kept;
         self.taa = Some(taa);
+        self.dlss_aside = aside.map(|dlss| (dlss, Instant::now()));
     }
 
     fn scene_size(&self) -> (u32, u32) {
@@ -7724,6 +7890,9 @@ impl Backend {
         }
         let (_, refused) = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, None));
         if self.memory_refused(refused) || refuse {
+            // (the DLSS set aside goes first: its textures and the targets
+            // it read are room for the next try)
+            self.dlss_aside = None;
             if self.oom.targets_failed(Instant::now()) {
                 log::warn!("render targets: out of video memory, the interface alone until they can be made");
             }
@@ -7816,6 +7985,13 @@ impl Backend {
         let window = (self.config.width, self.config.height);
         let forced = size.is_some();
         let size = size.unwrap_or_else(|| match self.fsr_upscale() {
+            // (DLSS takes Streamline's own size for the mode, else rounds up to its smallest, dlss.rs)
+            Some(ratio) if crate::dlss::wanted(self.settings.dlss) => {
+                // (a start Streamline refuses here is the device's, shown in
+                // Preferences whichever view met it, dlss.rs `refused_here`)
+                crate::dlss::optimal_size(&self.device, &self.lost, window, ratio)
+                    .unwrap_or_else(|| crate::dlss::render_size(window, ratio))
+            }
             Some(ratio) => crate::fsr::render_size(window, ratio),
             None => crate::rlva::resolution::render_size(window, self.rlva_resolution_divisor, scale),
         });
@@ -8119,6 +8295,7 @@ impl Backend {
         let mut targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
             || fsr_ratio(s.aa) != fsr_ratio(self.settings.aa)
+            || s.dlss != self.settings.dlss
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
             || s.ssao.min(1) != self.settings.ssao.min(1)
             || s.ao_method != self.settings.ao_method
@@ -8178,28 +8355,53 @@ impl Backend {
             );
             self.shadow_merge.atlas_changed(&self.device, &self.shadow_view, res, SHADOW_FORMAT);
         }
+        // (the model alone makes only the DLSS feature again, below: the
+        // sizes and the targets do not change with it)
+        let model_changed = s.dlss_model != self.settings.dlss_model;
         self.settings = s;
         self.previews.set_anti_aliasing(self.settings.aa);
         self.follow_ray_tracing();
         if matches!(s.aa, AntiAliasing::Taa | AntiAliasing::Fsr(_)) {
             // FSR in the place of the TAA pass, or the TAA pass again
             if !taa_was || fsr_ratio(s.aa).is_some() != self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
-                let device = self.device.clone();
-                let (_, refused) = crate::gpu_alloc::scoped(&device, || self.remake_taa());
-                // (refused, the next try makes every target again, the TAA
-                // history with them)
-                first_use(&mut self.oom, "TAA history", true, refused && !self.lost.get());
+                if targets_dirty {
+                    // (made once by the targets' remake below, at their
+                    // new size: `taa_pending`)
+                    self.taa = None;
+                    self.taa_bytes = 0;
+                    self.taa_pending = true;
+                } else {
+                    let device = self.device.clone();
+                    let (_, refused) = crate::gpu_alloc::scoped(&device, || self.remake_taa());
+                    // (refused, the next try makes every target again, the TAA
+                    // history with them)
+                    first_use(&mut self.oom, "TAA history", true, refused && !self.lost.get());
+                }
             }
         } else {
             self.taa = None;
             self.taa_bytes = 0;
+            self.taa_pending = false;
             self.prev_view_proj = None;
+            // (a DLSS set aside is let go with the rest: its expiry runs
+            // only in the frames that draw FSR, which none does now)
+            self.dlss_aside = None;
         }
         if targets_dirty {
             self.rebuild_targets();
         } else if shadows_dirty || probes_dirty {
             self.rebuild_bind_groups_checked("TAA history after a shadow or probe change");
         }
+        if model_changed && !targets_dirty && !self.taa_pending {
+            self.remodel_dlss();
+        }
+    }
+
+    /// DLSS would be made with the targets: FSR's anti-aliasing, as
+    /// `make_taa` asks it (an RLVa resolution limit included), and DLSS
+    /// wanted.
+    fn dlss_wanted(&self) -> bool {
+        matches!(self.settings.aa, AntiAliasing::Fsr(_)) && crate::dlss::wanted(self.settings.dlss)
     }
 
     /// The ray tracer follows the settings: made when they turn ray
@@ -8289,7 +8491,52 @@ impl Backend {
         }
     }
 
-    fn make_taa(&self) -> Taa {
+    /// The DLSS model changed: the feature is made again with it, keeping
+    /// DLSS's textures and every target (the model is read when the
+    /// feature is made, nothing else depends on it). Without a DLSS to
+    /// remake (one given up is let go), the targets are made again with
+    /// one, unless Streamline refused to start on this device: only Preferences'
+    /// button asks that again ([`crate::dlss::retry`]).
+    fn remodel_dlss(&mut self) {
+        let model = self.settings.dlss_model;
+        if let Some(taa) = self.taa.as_mut()
+            && let Some((dlss, _)) = taa.dlss.as_mut()
+        {
+            dlss.remodel(model);
+            if dlss.failed() {
+                // FSR takes the next frame from nothing: its history is of
+                // the frames before DLSS
+                taa.dlss = None;
+                taa.reset = true;
+            }
+        } else if self.dlss_wanted() && !crate::dlss::refused_here() {
+            self.rebuild_targets();
+        }
+    }
+
+    /// Preferences asked to try DLSS again ([`crate::dlss_retry`]): the
+    /// targets are made again, and DLSS with them, from Streamline's start (its
+    /// render size may differ from the fallback FSR drew at). The ask waits
+    /// (not taken) while DLSS would not be made: another anti-aliasing,
+    /// or a snapshot's targets in place.
+    fn retry_dlss_if_asked(&mut self) {
+        if !self.dlss_wanted() || self.snapshot_window.is_some() {
+            return;
+        }
+        if crate::dlss::retry_asked(&mut self.dlss_retry) {
+            // (a DLSS kept by the remake would be a failed one: `fits` is
+            // false for those, so a new one is made)
+            self.rebuild_targets();
+        }
+    }
+
+    /// `old`: the DLSS of the TAA this one replaces, and `aside` the one
+    /// set aside (`dlss_aside`); the one that fits the new targets is
+    /// kept. Also returns the bytes of the DLSS kept (0 when none), and
+    /// the DLSS to set aside now: the window's while a snapshot draws, a
+    /// snapshot's once back at the window (the next film frame's); any
+    /// other is let go.
+    fn make_taa(&self, old: Option<crate::dlss::Dlss>, aside: Option<crate::dlss::Dlss>) -> (Taa, u64, Option<crate::dlss::Dlss>) {
         let device = &self.device;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("taa"),
@@ -8414,39 +8661,13 @@ impl Backend {
             })
         };
         let bind_groups = [bg(&history[1]), bg(&history[0])];
-        let post_bg = |v: &wgpu::TextureView| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("post taa"),
-                layout: &self.post_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(v),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.post_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.post_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(&self.glow.views[1]),
-                    },
-                ],
-            })
-        };
+        let post_bg = |v: &wgpu::TextureView| self.post_taa_group(v);
         let post_bgs = [post_bg(&history[0]), post_bg(&history[1])];
+        let display = self.taa_display();
+        // FSR first: it is what draws when DLSS cannot, so with video
+        // memory for one of the two it is FSR's, and a DLSS refused its
+        // textures (Dlss::new's own error scope) leaves FSR drawing
         let fsr = with_fsr.then(|| {
-            // (the 1x1 set that frees a refused one shrinks FSR's display
-            // size part too, rebuild_targets)
-            let display = if self.fsr_upscale().is_some() && !self.targets_shrunk {
-                (self.config.width, self.config.height)
-            } else {
-                self.scene_size()
-            };
             let fsr = crate::fsr::Fsr::new(
                 device,
                 self.scene_size(),
@@ -8464,7 +8685,90 @@ impl Backend {
             let bg = post_bg(fsr.output());
             (fsr, bg)
         });
-        Taa {
+        let mut kept = 0;
+        let mut set_aside = None;
+        // (not asked again on a device where Streamline refused to start: the
+        // textures DLSS would make and drop at every remake, each frame of
+        // a window's resize, and an error line each time; Preferences'
+        // button asks again, `retry_dlss_if_asked`)
+        let dlss = (with_fsr && !self.targets_shrunk && crate::dlss::wanted(self.settings.dlss) && !crate::dlss::refused_here())
+            .then(|| {
+                let inputs = crate::dlss::Inputs {
+                    color: &self.targets.color,
+                    depth: self.targets.ao_depth.as_ref().map_or(&self.targets.depth_ss, |(_, view)| view),
+                    motion: motion_read,
+                };
+                let snapshot = self.snapshot_window.is_some();
+                let mut pool: Vec<crate::dlss::Dlss> = old.into_iter().chain(aside).collect();
+                let fitting = pool
+                    .iter()
+                    .position(|dlss| dlss.fits(device, self.scene_size(), display, self.settings.dlss_model));
+                let fitting = fitting.map(|at| pool.swap_remove(at));
+                // the window's kept through a snapshot, the snapshot's
+                // through the window's frames between two of a film
+                set_aside = pool.into_iter().find(|dlss| dlss.snapshot() != snapshot);
+                match fitting {
+                    // the targets made again at the same size: the
+                    // feature stays, only what reads the targets is new
+                    Some(mut dlss) => {
+                        dlss.rebind(&inputs);
+                        // (one made for a snapshot's targets reports for
+                        // the window again, and the reverse)
+                        dlss.serving(snapshot, !self.external);
+                        kept = dlss.bytes();
+                        let bg = post_bg(dlss.output());
+                        Some((dlss, bg))
+                    }
+                    // a resize in progress: nothing of DLSS until the size
+                    // holds (`dlss_after_resize`)
+                    None if !snapshot && let Some(due) = crate::dlss::resizing(display, &self.dlss_last) => {
+                        self.dlss_due.set(Some(due));
+                        None
+                    }
+                    None => {
+                        if !snapshot {
+                            self.dlss_due.set(None);
+                        }
+                        // an out-of-memory scope of its own, as in
+                        // `dlss_after_resize`: Dlss::new checks its
+                        // textures, not its pipeline, buffer and bind
+                        // groups, nor the post pass's group, and a refusal
+                        // there under the callers' scope would refuse the
+                        // whole set of targets, not only DLSS (FSR draws)
+                        let (made, refused) = crate::gpu_alloc::scoped(device, || {
+                            let dlss = crate::dlss::Dlss::new(
+                                device,
+                                &self.queue,
+                                &self.lost,
+                                self.scene_size(),
+                                display,
+                                self.settings.dlss_model,
+                                &inputs,
+                                snapshot,
+                                // (what Preferences says of DLSS is the window's:
+                                // an external renderer, the second camera's or an
+                                // eye of VR, falls back to FSR alone)
+                                !self.external,
+                            )?;
+                            let bg = post_bg(dlss.output());
+                            Some((dlss, bg))
+                        });
+                        // (the DLSS made is let go: its feature released
+                        // once its frames are done, Dlss::retire; the next
+                        // remake of the targets tries again)
+                        if refused {
+                            // (a snapshot's targets report nothing, as Dlss::new
+                            // and `serving` have it: the window's DLSS stays)
+                            crate::dlss::refused_memory("for the new targets", !self.external && !snapshot);
+                            None
+                        } else {
+                            made
+                        }
+                    }
+                }
+            })
+            .flatten();
+        let taa = Taa {
             pipeline,
             layout,
             buffer,
@@ -8473,9 +8777,11 @@ impl Backend {
             post_bgs,
             motion,
             fsr,
+            dlss,
             parity: 0,
             reset: true,
-        }
+        };
+        (taa, kept, set_aside)
     }
 
     fn set_vsync(&mut self, vsync: bool) {
@@ -9477,11 +9783,14 @@ impl Backend {
                 // (a set still compiling is the new one's to wait for: the
                 // old one's drop would hold this frame for it)
                 fresh.adopt_pipeline_workers(self);
+                // (the device stays: its Streamline is the new one's)
+                self.closes_ngx = false;
                 *self = fresh;
             }
             Ok(mut refused) => {
                 log::info!("renderer: try refused ({took} ms)");
                 self.adopt_pipeline_workers(&mut refused);
+                refused.closes_ngx = false;
                 self.oom.targets_failed(Instant::now());
             }
             // (a lost device, which ends the viewer: egui's renderer stays
@@ -9619,6 +9928,8 @@ impl Backend {
         if self.rt_build.is_some() {
             self.follow_ray_tracing();
         }
+        self.retry_dlss_if_asked();
+        self.dlss_after_resize();
         // the start is over: made, and its settings applied, with nothing
         // refused
         if !self.remake {
@@ -9627,6 +9938,8 @@ impl Backend {
         // (none while their pipelines compile: `Renderer::settings_applied`)
         stats.settings = self.pipeline_build.is_none().then_some(self.settings);
         stats.snow_lying = self.rain_wet.snow > RAIN_WET_DRY;
+        // (the last upscale's: set here, so that a skipped frame says it too)
+        stats.dlss_drawing = self.dlss_drew;
         // the tiled photo is done: its context goes with the targets that
         // bind it
         if params.photo_context == crate::types::PhotoContext::None && self.gtao.drop_context() {
@@ -10685,10 +10998,13 @@ impl Backend {
         // skies without a probe ambiance, as no_post below)
         let hdr = self.settings.hdr;
         // FSR sharpens with its own RCAS: CAS on top of it turns FSR's
-        // faint sub-pixel pattern into a visible checkerboard
-        let cas = hdr && !matches!(self.settings.aa, AntiAliasing::Fsr(_));
-        let (post_sharpen, upscale_sharpen) = crate::rlva::resolution::sharpening(f.sharpen, cas, spatial_upscale);
-        let post = PostU {
+        // faint sub-pixel pattern into a visible checkerboard. DLSS has no
+        // sharpening of its own any more (NVIDIA's guide 3.11 has the
+        // viewer sharpen after it, with a setting): CAS does, as after TAA.
+        let dlss_on = self.taa.as_ref().and_then(|t| t.dlss.as_ref()).is_some_and(|(d, _)| d.on());
+        let cas = hdr && (dlss_on || !matches!(self.settings.aa, AntiAliasing::Fsr(_)));
+        let (post_sharpen, mut upscale_sharpen) = crate::rlva::resolution::sharpening(f.sharpen, cas, spatial_upscale);
+        let mut post = PostU {
             exposure: if hdr { f.exposure } else { 1.0 },
             // SMAA works on a gamma-encoded 8-bit image
             output_srgb: if self.surface_srgb && self.smaa_targets.is_none() {
@@ -13035,6 +13351,9 @@ impl Backend {
             // sorted order)
             let history = match self.settings.aa {
                 AntiAliasing::Taa => crate::oit_stochastic::SceneHistory::Taa,
+                AntiAliasing::Fsr(_) if self.taa.as_ref().and_then(|t| t.dlss.as_ref()).is_some_and(|(d, _)| d.on()) => {
+                    crate::oit_stochastic::SceneHistory::Dlss
+                }
                 AntiAliasing::Fsr(_) => crate::oit_stochastic::SceneHistory::Fsr,
                 _ => crate::oit_stochastic::SceneHistory::None,
             };
@@ -13588,21 +13907,92 @@ impl Backend {
         // the history the TAA pass wrote; read below, once the passes are
         // recorded, through a shared borrow
         let mut taa_written = None;
+        // DLSS's frame: the encoder its inputs were drawn in and its own
+        // commands, submitted in that order with nothing between (dlss.rs)
+        let mut dlss_cmds = None;
+        // (what this frame's upscale picks: its stats say it, a skipped
+        // frame's the last one's, set at the frame's start)
+        self.dlss_drew = None;
+        stats.dlss_drawing = None;
         if let Some(taa) = &mut self.taa {
             if let Some((fsr, _)) = &mut taa.fsr {
-                // FSR 3.1 instead of the TAA pass, from the same inputs
-                fsr.encode(
-                    &self.queue,
-                    &mut encoder,
-                    &crate::fsr::FrameInputs {
-                        motion_reproj: main.motion_reproj,
-                        proj: f.proj,
-                        jitter: self.taa_jitter,
-                        reset: taa.reset || self.prev_view_proj.is_none(),
-                        motion_on: taa_motion_now(),
-                        sharpness: self.settings.fsr_sharpness,
-                    },
-                );
+                let reset = taa.reset || self.prev_view_proj.is_none();
+                let was_on = taa.dlss.as_ref().is_some_and(|(dlss, _)| dlss.on());
+                let drawn = taa.dlss.as_mut().filter(|(dlss, _)| dlss.on()).and_then(|(dlss, _)| {
+                    fsr.encode_depth(&self.queue, &mut encoder);
+                    dlss.encode(
+                        &self.queue,
+                        &mut encoder,
+                        &crate::dlss::Frame {
+                            motion_reproj: main.motion_reproj,
+                            jitter: self.taa_jitter,
+                            // a teleport or a region move: nothing of the old place is kept
+                            reset: reset || self.motion_cut,
+                            motion_on: taa_motion_now(),
+                            proj: f.proj,
+                            view: f.view,
+                            camera_pos: f.camera_pos,
+                            near: f.near,
+                            far: f.far,
+                            fov_y: f.fov_y,
+                        },
+                    )
+                });
+                // a snapshot's DLSS set aside and not asked for again:
+                // no film frame follows, and it holds its feature and
+                // textures at the photo's size
+                if self.snapshot_window.is_none() && self.dlss_aside.as_ref().is_some_and(|(_, at)| at.elapsed() > DLSS_ASIDE) {
+                    self.dlss_aside = None;
+                }
+                // a DLSS given up for this size lets go of its feature and
+                // its textures at the display size (once its frames are
+                // done, Dlss::retire): FSR draws until the targets are made
+                // again
+                if taa.dlss.as_ref().is_some_and(|(dlss, _)| dlss.failed()) {
+                    taa.dlss = None;
+                }
+                if let Some(commands) = drawn {
+                    let inputs = std::mem::replace(
+                        &mut encoder,
+                        self.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame post") }),
+                    );
+                    dlss_cmds = Some((inputs, commands));
+                    // the scene's alpha over DLSS's, after its commands
+                    if let Some((dlss, _)) = &taa.dlss {
+                        dlss.encode_alpha(&mut encoder);
+                        self.dlss_drew = Some(if dlss.dlaa() {
+                            crate::DlssDrawing::Dlaa
+                        } else {
+                            crate::DlssDrawing::Dlss
+                        });
+                        stats.dlss_drawing = self.dlss_drew;
+                    }
+                } else {
+                    // DLSS chosen at the frame's start but not drawn (its
+                    // evaluate failed, or it was given up): FSR's RCAS
+                    // sharpens this frame, so CAS chosen for DLSS above is
+                    // taken back, before the post pass is submitted
+                    if was_on && matches!(self.settings.aa, AntiAliasing::Fsr(_)) && (post.sharpen != 0.0 || upscale_sharpen != 0.0) {
+                        post.sharpen = 0.0;
+                        upscale_sharpen = 0.0;
+                        self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
+                    }
+                    // FSR 3.1 instead of the TAA pass, from the same inputs
+                    // (from nothing on the frame DLSS gave up)
+                    fsr.encode(
+                        &self.queue,
+                        &mut encoder,
+                        &crate::fsr::FrameInputs {
+                            motion_reproj: main.motion_reproj,
+                            proj: f.proj,
+                            jitter: self.taa_jitter,
+                            reset: reset || was_on,
+                            motion_on: taa_motion_now(),
+                            sharpness: self.settings.fsr_sharpness,
+                        },
+                    );
+                }
                 taa.reset = false;
             } else {
                 let w = taa.parity;
@@ -13648,8 +14038,16 @@ impl Backend {
         }
         if let Some(taa) = &self.taa {
             if let Some((fsr, fsr_post)) = &taa.fsr {
-                post_bg = fsr_post;
-                post_src = fsr.output();
+                match &taa.dlss {
+                    Some((dlss, dlss_post)) if dlss_cmds.is_some() => {
+                        post_bg = dlss_post;
+                        post_src = dlss.output();
+                    }
+                    _ => {
+                        post_bg = fsr_post;
+                        post_src = fsr.output();
+                    }
+                }
                 if let Some(depth) = fsr.display_depth() {
                     post_depth = depth;
                 }
@@ -14525,7 +14923,13 @@ impl Backend {
         // frame of a second)
         let (pre, post, scene) = self.finishers.pair(enc_pre, encoder, move || enc_scene.finish());
         match (pre, post) {
-            (Some(pre), Some(post)) => extra_cmds.extend([pre, scene, post]),
+            (Some(pre), Some(post)) => {
+                extra_cmds.extend([pre, scene]);
+                if let Some((inputs, commands)) = dlss_cmds {
+                    extra_cmds.extend([inputs.finish(), commands]);
+                }
+                extra_cmds.push(post);
+            }
             _ => {
                 log::error!("render: a command encoder thread panicked");
                 let spent = Spent { writes, lists: draw_lists };
