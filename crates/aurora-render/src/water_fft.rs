@@ -39,6 +39,16 @@ const SPLIT: f32 = 10.0;
 /// cascades give way to it, scaled by that fetch (`ocean_weights`).
 pub const LAKE: usize = 2;
 pub const LAKE_FETCH: f32 = 800.0;
+
+/// The angular frequency (rad/s) at the peak of a sea the wind raises at
+/// `speed` m/s over `fetch` m (JONSWAP, Hasselmann et al. 1973: `22 (g² /
+/// (U F))^(1/3)`). Past about 2.2·10⁴ U²/g of fetch the sea is fully
+/// developed (Pierson-Moskowitz) and grows no more.
+pub fn jonswap_peak(speed: f32, fetch: f32) -> f32 {
+    let speed = speed.max(0.05);
+    let fetch = fetch.min(2.2e4 * speed * speed / G).max(1.0);
+    22.0 * (G * G / (speed * fetch)).powf(1.0 / 3.0)
+}
 const G: f32 = 9.81;
 /// How long the foam a crest leaves lingers (s, its e-folding time).
 const FOAM_LINGER: f32 = 4.5;
@@ -313,10 +323,8 @@ impl Ocean {
         match spectrum {
             Spectrum::Jonswap => {
                 let omega = (G * len).sqrt();
-                // past about 2.2·10⁴ U²/g of fetch, the sea is fully
-                // developed (Pierson-Moskowitz) and grows no more
                 let fetch = fetch.min(2.2e4 * speed * speed / G);
-                let peak = 22.0 * (G * G / (speed * fetch)).powf(1.0 / 3.0);
+                let peak = jonswap_peak(speed, fetch);
                 let alpha = 0.076 * (speed * speed / (fetch * G)).powf(0.22);
                 let sigma = if omega <= peak { 0.07 } else { 0.09 };
                 let r = (-(omega - peak).powi(2) / (2.0 * sigma * sigma * peak * peak)).exp();

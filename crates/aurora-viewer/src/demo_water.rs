@@ -336,6 +336,11 @@ pub fn update(
         } else if mode.contains("sea-floor") {
             // low over the floor laid at the water
             (Vec3::new(58.0, 106.0, 21.6), Vec3::new(48.0, 116.0, 19.9))
+        } else if mode.contains("sea-lakeshore") {
+            // over the inland lake, onto its downwind (east) shore with the
+            // default west wind: the lake's own waves breaking and running
+            // up it
+            (Vec3::new(172.0, 77.0, 22.6), Vec3::new(181.5, 81.0, 19.9))
         } else if mode.contains("sea-lake") {
             // the inland lake, from its shore
             (Vec3::new(178.0, 64.0, 26.0), Vec3::new(146.0, 84.0, 19.5))

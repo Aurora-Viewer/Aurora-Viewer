@@ -10,7 +10,7 @@ struct WaterSea {
     frame: vec4<f32>,           // anchor xy, epoch, roughness
     wind: vec4<f32>,            // toward xy, speed, highest crest
     look: vec4<f32>,            // x whitecap foam, y the spectrum's chop scale (1 by default), zw the caustics' drift
-    lake: vec4<f32>,            // the lakes' cascade (water_fft.rs LAKE): x its tile (0: none), y its Hs
+    lake: vec4<f32>,            // the lakes' cascade (water_fft.rs LAKE): x its tile (0: none), y its Hs; z the wind sea's own wave's wavenumber, w its phase at frame.z (Sea::lake_wave)
 };
 // How much of the open sea's two cascades (x) and of the lakes' (y) the
 // wind sea takes where the sea grid's exposure gives `chop` (its packed
@@ -32,9 +32,12 @@ fn water_ocean_weights(chop: f32) -> vec2<f32> {
 // `bed`: the depth of the real bed under the still water (the
 // bathymetry's, not smoothed; below 0 on land): where the swash runs up
 // and drains back, which must meet the real sand.
-struct WaterSeaAt { depth: f32, slope: vec2<f32>, shelter: f32, cap: f32, phase: f32, wave: vec2<f32>, shadow: f32, chop: f32, bed: f32 };
+// `lake`: how much of the main wave is the wind sea's own where the swell
+// does not reach (water_lake_share); past a half, `phase` and `wave` are
+// that wave's (water_lake_wave), not the swell's.
+struct WaterSeaAt { depth: f32, slope: vec2<f32>, shelter: f32, cap: f32, phase: f32, wave: vec2<f32>, shadow: f32, chop: f32, bed: f32, lake: f32 };
 // `breaking` and `crest`: the main swell's as it breaks; `surf`: the
-// beach's surf similarity (water_sea_surf: spilling, plunging, crashing).
+// beach's surf similarity (water_surf_similarity: spilling, plunging, crashing).
 // The spectrum's wind sea at a point (water_fft.rs `OceanAt`, read by
 // water_fx_ocean): displacement, slope, and the displacement's derivatives
 // (xx, xy, yy), and the crests' folding now or lately (`foam`: the
@@ -62,13 +65,66 @@ fn water_chop_sway(j:vec3<f32>)->f32 {
     let low=0.5*(a+c)-sqrt(0.25*(a-c)*(a-c)+j.y*j.y);
     return min(1.0,0.8/max(1.0-low,1e-3));
 }
-// The beach's surf similarity (Sea::surf): its slope over the square root
-// of the deep-water steepness of the waves reaching it. Under ~0.5 they
-// spill, up to ~3 they plunge, past it they crash on what stands steep.
-fn water_sea_surf(sea: WaterSea, slope: f32) -> f32 {
-    let height=max(2.0*sea.trains[0].w,0.02);
-    let wavelength=6.2831853/max(sea.trains[0].z,1e-4);
-    return slope/sqrt(height/wavelength);
+// The beach's surf similarity (water_sea.rs `surf_similarity`): its slope
+// over the square root of the deep-water steepness of the waves reaching
+// it, `height` m high and `wavelength` m long. Under ~0.5 they spill, up to
+// ~3 they plunge, past it they crash on what stands steep.
+fn water_surf_similarity(slope: f32, height: f32, wavelength: f32) -> f32 {
+    return slope/sqrt(max(height,0.02)/max(wavelength,0.1));
+}
+// How much of the main wave is the wind sea's own rather than the open
+// sea's swell, where `shadow` of the swell reaches: all of it where none
+// does (a lake, a closed cove), none where it comes in; never both, the
+// swell fading out to the middle of the way, then the lake's wave in (each
+// with its own phase, a mix would beat). Water_sea.rs `lake_share`.
+fn water_lake_share(shadow: f32) -> f32 {
+    return 1.0-smoothstep(0.02,0.2,shadow);
+}
+// The wind sea's own wave where the swell does not reach (Sea::lake_wave):
+// the peak of the chop over a lake, running downwind. Its way (xy, unit)
+// and wavenumber (z, rad/m).
+fn water_lake_wave(sea: WaterSea) -> vec3<f32> {
+    let w=sea.wind.xy;
+    let dir=select(vec2<f32>(1.0,0.0),w/max(length(w),1e-6),dot(w,w)>1e-12);
+    return vec3<f32>(dir,max(sea.lake.z,1e-3));
+}
+// The main wave where the sea is read as `at` (Sea::main): the open sea's
+// swell, dimmed behind land; or where it does not reach, the wind sea's own
+// peak wave, which the chop's spectrum draws in deep water, but whose
+// crests line up into one train as the water shoals under half its length:
+// it grows in while the chop gives way to it (`take`), and shoals, breaks
+// and runs up the downwind shores as the swell does on the sea's. Its
+// amplitude (m, before it shoals), deep-water height and length (m, for the
+// surf similarity), the chop's share it takes over, and its clock: phase
+// at the sea's epoch and angular frequency.
+struct WaterMain { amp: f32, height: f32, wavelength: f32, take: f32, phase: f32, omega: f32 };
+fn water_sea_main(sea: WaterSea, at: WaterSeaAt) -> WaterMain {
+    let lake=clamp(at.lake,0.0,1.0);
+    let a0=sea.trains[0].w;
+    var m:WaterMain;
+    if(lake>0.5){
+        let weights=water_ocean_weights(at.chop);
+        let rest=select(sea.trains[1].w+sea.trains[2].w+sea.trains[3].w,0.5*(sea.shore.w*weights.x+sea.lake.y*weights.y),sea.shore.w>0.0);
+        // (the trains' chop takes the fetch's share in, the spectrum's has
+        // it in its cascades' shares)
+        let base=select(rest*at.chop,rest,sea.shore.w>0.0);
+        let k=water_lake_wave(sea).z;
+        let wavelength=6.2831853/k;
+        let own=2.0*lake-1.0;
+        let shoal=1.0-smoothstep(0.25*wavelength,0.5*wavelength,at.depth);
+        m.amp=base*shoal*own;m.height=2.0*base;m.wavelength=wavelength;m.take=0.5*shoal*own; // (its peak: about half the chop's energy, water_sea.rs LAKE_TAKE)
+        m.phase=sea.lake.w;m.omega=sqrt(9.81*k);
+    } else {
+        m.amp=a0*at.shadow*(1.0-2.0*lake);m.height=2.0*a0;m.wavelength=6.2831853/max(sea.trains[0].z,1e-4);m.take=0.0;
+        m.phase=sea.phase[0];m.omega=sea.omega[0];
+    }
+    return m;
+}
+// The main wave's phase at `at` at `time` (the frame clock): its spatial
+// phase there less its clock (water_sea_main).
+fn water_main_theta(sea: WaterSea, at: WaterSeaAt, time: f32) -> f32 {
+    let m=water_sea_main(sea,at);
+    return at.phase-(m.phase+m.omega*(time-sea.frame.z));
 }
 // The swash's rise (x, 0..1) at the swell's phase and its rate along the
 // phase (y): up the beach in a third of the period, back over the rest
@@ -83,9 +139,10 @@ fn water_swash_rise(theta: f32) -> vec2<f32> {
 // sea is read as `at` (Sea::local's `reach`): higher for the bigger swell,
 // for plunging waves, lower where they crash on what stands steep.
 fn water_swash_reach(sea: WaterSea, at: WaterSeaAt) -> f32 {
-    let surf=water_sea_surf(sea,length(at.slope));
+    let m=water_sea_main(sea,at);
+    let surf=water_surf_similarity(length(at.slope),m.height,m.wavelength);
     let plunge=smoothstep(0.4,1.2,surf);let crash=smoothstep(2.5,4.0,surf);
-    return min(sea.trains[0].w*at.shadow*(0.6+0.6*plunge)*(1.0-0.7*crash),1.0)*clamp(at.shelter,0.0,1.0)*clamp(at.cap,0.0,1.0);
+    return min(m.amp*(0.6+0.6*plunge)*(1.0-0.7*crash),1.0)*clamp(at.shelter,0.0,1.0)*clamp(at.cap,0.0,1.0);
 }
 // How much of a beach the swash runs up where the sea is read as `at`
 // (Sea::local's `beach`): a slope gentle enough to run up (a cliff or a
@@ -159,11 +216,12 @@ fn water_sea_cap(sea: WaterSea, clearance: f32) -> f32 {
 // aliased into stripes).
 fn water_sea(p: vec2<f32>, time: f32, quality: u32, sea: WaterSea, at: WaterSeaAt, ocean: WaterOceanAt, footprint: f32) -> WaterSwell {
     let d=at.depth;let slope=length(at.slope);
-    let surf=water_sea_surf(sea,slope);
+    // the swell, or the wind sea's own wave where it does not reach
+    let m=water_sea_main(sea,at);
+    let surf=water_surf_similarity(slope,m.height,m.wavelength);
     let plunge=smoothstep(0.4,1.2,surf);let crash=smoothstep(2.5,4.0,surf);
     let dry=smoothstep(0.08,0.3,d);
-    let a0=sea.trains[0].w;
-    let grown=a0*clamp(pow(20.0/max(d,0.05),0.25),1.0,2.0)*at.shadow;
+    let grown=m.amp*clamp(pow(20.0/max(d,0.05),0.25),1.0,2.0);
     let cap=0.28*max(d,0.0);
     // (a wave a few centimetres high laps, it does not break white)
     let breaking=smoothstep(0.35+0.25*plunge,1.0,grown/max(cap,1e-3))*dry*smoothstep(0.03,0.15,grown);
@@ -197,14 +255,16 @@ fn water_sea(p: vec2<f32>, time: f32, quality: u32, sea: WaterSea, at: WaterSeaA
     // and `slide`)
     // (the trains' chop takes the fetch's share in; the spectrum's has it
     // in its cascades' shares)
-    let left=min(cap/max(rest,0.01),1.0)*dry*sqrt(shelter)*held*smoothstep(0.1,2.0,b);
+    // (and gives way to the wind sea's own wave as it lines up in the
+    // shallows, `take`)
+    let left=min(cap/max(rest,0.01),1.0)*dry*sqrt(shelter)*held*smoothstep(0.1,2.0,b)*(1.0-m.take);
     let chop=at.chop*left;
     let slide=smoothstep(-0.2,1.5,b);
     let lean=0.75*breaking*(0.4+0.6*plunge);
     let since=time-sea.frame.z;
-    // the main swell
+    // the main wave
     let k=max(length(at.wave),1e-4);let dir=at.wave/k;
-    let theta=at.phase-(sea.phase[0]+sea.omega[0]*since);
+    let theta=at.phase-(m.phase+m.omega*since);
     let x=theta-lean*sin(theta);
     let hz=main*sin(x);
     let rise=water_swash_rise(theta+water_swash_shift(at));

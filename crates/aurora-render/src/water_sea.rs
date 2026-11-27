@@ -78,6 +78,22 @@ pub fn ocean_weights(chop: f32) -> [f32; 2] {
     [open, (1.0 - open) * (chop / 0.6).clamp(0.0, 1.5)]
 }
 
+/// How much of the main wave is the wind sea's own (`Sea::lake_wave`)
+/// rather than the open sea's swell, where `shadow` of the swell reaches
+/// (`SwellPoint::shadow`): all of it where none does (a lake, a closed
+/// cove), none where it comes in. The two are never drawn together: the
+/// swell fades out to the middle of the way, then the lake's wave in (each
+/// with its own phase, a mix would beat). Same as `water_lake_share`.
+pub fn lake_share(shadow: f32) -> f32 {
+    1.0 - smoothstep(0.02, 0.2, shadow)
+}
+
+/// How much of the chop the wind sea's own wave takes over as it lines up
+/// in the shallows (`Sea::main`): its peak, about half of the chop's
+/// energy; the shorter waves go on riding it. (Taking all of it left the
+/// water before a lake's shore glassy.) Same as in `water_sea_main`.
+const LAKE_TAKE: f32 = 0.5;
+
 impl Default for Sea {
     /// A light breeze, as the sea looked before the wind drove it.
     fn default() -> Self {
@@ -147,7 +163,10 @@ impl Sea {
         // (shore[0], the sea grid's crossfade, is the scene's to set; the
         // rest the spectrum's, SeaDriver::advance)
         self.shore[1..].fill(0.0);
-        self.lake = [0.0; 4];
+        // the lake's wave: the peak of the chop over the lakes' fetch,
+        // keeping its phase
+        let peak = crate::water_fft::jonswap_peak(speed.max(1.0), crate::water_fft::LAKE_FETCH);
+        self.lake = [0.0, 0.0, peak * peak / G, self.lake[3]];
         self.frame[3] = rough;
         // the highest crest the trains can stack (the main swell growing up
         // to twice in the shallows), for the shelter's cap
@@ -178,6 +197,60 @@ impl Sea {
         Vec2::new(self.frame[0], self.frame[1])
     }
 
+    /// The wind sea's own wave, where the open sea's swell does not reach
+    /// (`lake_share`): the peak of the chop a wind raises over a lake
+    /// (`water_fft::LAKE_FETCH`; 1 to 4.5 m long from a light air to a
+    /// gale), running downwind. Its way (unit), wavenumber (rad/m) and
+    /// angular frequency (rad/s). Same as `water_lake_wave`.
+    pub fn lake_wave(&self) -> (Vec2, f32, f32) {
+        let dir = Vec2::new(self.wind[0], self.wind[1]).normalize_or(Vec2::X);
+        let k = self.lake[2].max(1e-3);
+        (dir, k, (G * k).sqrt())
+    }
+
+    /// The main wave where the sea is read as `at`, with `shadow` of the
+    /// open sea's swell, `rest` the wind chop's amplitude (`chop_height`)
+    /// and `reach_chop` its share there (`SwellPoint::chop`). Same as
+    /// `water_sea_main`.
+    ///
+    /// The open sea's swell, dimmed by `shadow`; or where it does not reach,
+    /// the wind sea's own peak wave (`lake_wave`): in deep water the chop's
+    /// spectrum draws it, but as the water shoals under half its length its
+    /// crests line up into one train, which grows in while the chop gives
+    /// way to it (`take`), and shoals, breaks and runs up the downwind
+    /// shores as the swell does on the sea's.
+    fn main(&self, at: &SeaPoint, shadow: f32, rest: f32, reach_chop: f32) -> Main {
+        let lake = at.swell.map_or(0.0, |s| s.lake).clamp(0.0, 1.0);
+        let a0 = self.trains[0][3];
+        let ocean = (1.0 - 2.0 * lake).max(0.0);
+        let own = (2.0 * lake - 1.0).max(0.0);
+        let (_, k, omega) = self.lake_wave();
+        let length = TAU / k;
+        let shoal = 1.0 - smoothstep(0.25 * length, 0.5 * length, at.depth);
+        // (the trains' chop takes the fetch's share in, the spectrum's has
+        // it in its cascades' shares)
+        let base = if self.shore[3] > 0.0 { rest } else { rest * reach_chop };
+        if own > 0.0 {
+            Main {
+                amp: base * shoal * own,
+                height: 2.0 * base,
+                length,
+                take: LAKE_TAKE * shoal * own,
+                phase: self.lake[3],
+                omega,
+            }
+        } else {
+            Main {
+                amp: a0 * shadow * ocean,
+                height: 2.0 * a0,
+                length: TAU / self.trains[0][2].max(1e-4),
+                take: 0.0,
+                phase: self.phase[0],
+                omega: self.omega[0],
+            }
+        }
+    }
+
     /// The main swell where the sea is read as `at`, at `xy`: its spatial
     /// phase there, its local wave vector and the island shadow on it. The
     /// refracted swell of the sea grid (`SwellPoint`), or out of it the
@@ -191,6 +264,7 @@ impl Sea {
                 wave: d * k,
                 shadow: 1.0,
                 chop: 1.0,
+                lake: 0.0,
             }
         })
     }
@@ -206,26 +280,27 @@ impl Sea {
     pub fn local(&self, at: &SeaPoint, shadow: f32, reach_chop: f32) -> Local {
         let d = at.depth;
         let slope = at.slope.length();
-        let surf = self.surf(slope);
+        // the open sea's chop, or the lakes' over a short fetch
+        let weights = ocean_weights(reach_chop);
+        let rest = self.chop_height(weights);
+        // the swell, or the wind sea's own wave where it does not reach
+        let wave_now = self.main(at, shadow, rest, reach_chop);
+        let surf = surf_similarity(slope, wave_now.height, wave_now.length);
         let plunge = smoothstep(0.4, 1.2, surf);
         let crash = smoothstep(2.5, 4.0, surf);
         let dry = smoothstep(0.08, 0.3, d);
-        let a0 = self.trains[0][3];
-        let grown = a0 * (OPEN_DEPTH / d.max(0.05)).powf(0.25).clamp(1.0, 2.0) * shadow;
+        let grown = wave_now.amp * (OPEN_DEPTH / d.max(0.05)).powf(0.25).clamp(1.0, 2.0);
         let cap = 0.28 * d.max(0.0);
         // (a wave a few centimetres high laps; it does not break white, however
         // shallow the water: without this a lake's ripples ringed it with surf)
         let breaking = smoothstep(0.35 + 0.25 * plunge, 1.0, grown / cap.max(1e-3)) * dry * smoothstep(0.03, 0.15, grown);
-        // the open sea's chop, or the lakes' over a short fetch
-        let weights = ocean_weights(reach_chop);
-        let rest = self.chop_height(weights);
         let wall = crash * (1.0 - smoothstep(0.5, 6.0, d));
         // shelter (piers, walls) holds the swell back; the wind still
         // ruffles a harbour, so its chop keeps more of itself. Under a deck
         // or a floor the clearance caps all of it.
         let shelter = at.shelter.clamp(0.0, 1.0);
         let held = at.cap.clamp(0.0, 1.0);
-        let reach = (a0 * shadow * (0.6 + 0.6 * plunge) * (1.0 - 0.7 * crash)).min(SWASH_REACH) * shelter * held;
+        let reach = (wave_now.amp * (0.6 + 0.6 * plunge) * (1.0 - 0.7 * crash)).min(SWASH_REACH) * shelter * held;
         // the swash runs up a beach that faces the swell (none over the
         // back of a sandbar or a land bridge), its whole height up to the
         // highest it reaches, then no further: the water seen at the top
@@ -250,8 +325,12 @@ impl Sea {
         // (and it dies out over the last two metres of the real bed: by
         // the smoothed depth alone, a cliff's foot kept its whole chop,
         // whose crests and sway climbed the land beside it)
-        let left = (cap / rest.max(0.01)).min(1.0) * dry * shelter.sqrt() * held * smoothstep(0.1, 2.0, at.bed);
+        // (and gives way to the wind sea's own wave as it lines up in the
+        // shallows, `Main::take`)
+        let left = (cap / rest.max(0.01)).min(1.0) * dry * shelter.sqrt() * held * smoothstep(0.1, 2.0, at.bed) * (1.0 - wave_now.take);
         Local {
+            phase: wave_now.phase,
+            omega: wave_now.omega,
             // against what stands steep (rocks, a cliff, a wall) the swell is
             // thrown back on itself and stands up the face instead of
             // shoaling out: higher, and less held down by the depth
@@ -283,7 +362,13 @@ impl Sea {
     /// what happens as a crest arrives (water_crash.rs).
     pub fn crest_phase(&self, xy: Vec2, time: f32, at: &SeaPoint) -> f32 {
         let swell = self.swell_at(xy, at);
-        swell.phase - (self.phase[0] + self.omega[0] * (time - self.frame[2]))
+        // (the wind sea's own wave where the swell does not reach, `main`)
+        let (phase, omega) = if swell.lake > 0.5 {
+            (self.lake[3], self.lake_wave().2)
+        } else {
+            (self.phase[0], self.omega[0])
+        };
+        swell.phase - (phase + omega * (time - self.frame[2]))
     }
 
     /// The trains' Gerstner offset (xyz) at `p` near `xy`, where the sea is
@@ -304,7 +389,7 @@ impl Sea {
         let since = time - self.frame[2];
         let mut offset = glam::Vec3::ZERO;
         let k = swell.wave.length().max(1e-4);
-        let theta = swell.phase + swell.wave.dot(p - xy) - (self.phase[0] + self.omega[0] * since);
+        let theta = swell.phase + swell.wave.dot(p - xy) - (local.phase + local.omega * since);
         let x = theta - local.lean * theta.sin();
         let dir = swell.wave / k;
         let main = (dir * theta.cos() * local.main * 0.85).extend(local.main * x.sin());
@@ -337,9 +422,7 @@ impl Sea {
     /// slides up the sand); up to ~3 they plunge; past that they crash on
     /// what stands steep (rocks, a wall). Same as `water_sea_surf`.
     pub fn surf(&self, slope: f32) -> f32 {
-        let height = (2.0 * self.trains[0][3]).max(0.02);
-        let length = TAU / self.trains[0][2].max(1e-4);
-        slope / (height / length).sqrt()
+        surf_similarity(slope, 2.0 * self.trains[0][3], TAU / self.trains[0][2].max(1e-4))
     }
 
     /// Height of the displayed macro surface over a still `level`, at
@@ -390,6 +473,27 @@ pub fn chop_sway(j: glam::Vec3) -> f32 {
     (0.8 / (1.0 - low).max(1e-3)).min(1.0)
 }
 
+/// The surf similarity (Iribarren number, `Sea::surf`) of a beach sloping by
+/// `slope` for waves `height` m high and `length` m long in deep water.
+/// Same as `water_surf_similarity`.
+pub fn surf_similarity(slope: f32, height: f32, length: f32) -> f32 {
+    slope / (height.max(0.02) / length.max(0.1)).sqrt()
+}
+
+/// The main wave where the sea is read (`Sea::main`): its amplitude (m,
+/// before it shoals), its deep-water height and length (m, for the surf
+/// similarity), how much of the chop it takes over (0..1), and its clock:
+/// its phase at the sea's epoch and angular frequency (rad, rad/s).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Main {
+    amp: f32,
+    height: f32,
+    length: f32,
+    take: f32,
+    phase: f32,
+    omega: f32,
+}
+
 /// The swash's rise (0..1) at the swell's phase `theta`: the broken wave
 /// runs up the beach in a third of its period and slides back over the
 /// rest (same as `water_swash_rise`).
@@ -405,6 +509,11 @@ pub fn swash_rise(theta: f32) -> f32 {
 /// How the sea meets the bed at a point (`Sea::local`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Local {
+    /// The main wave's clock (`Sea::main`): the open sea's swell's, or the
+    /// wind sea's own wave's where the swell does not reach. Its phase at
+    /// the sea's epoch (rad) and angular frequency (rad/s).
+    pub phase: f32,
+    pub omega: f32,
     /// The main swell's amplitude (m).
     pub main: f32,
     /// The wind chop's share of its amplitude (the trains', the fetch's
@@ -437,13 +546,16 @@ pub struct Local {
 /// its spatial phase (rad), local wave vector (rad/m, the way it travels),
 /// how much of the open sea's swell reaches it (`shadow`: 1 open, less
 /// downwave of land, none in a lake) and how much wind chop it builds
-/// (`chop`: less with a short fetch).
+/// (`chop`: less with a short fetch). `lake`: how much of the main wave is
+/// the wind sea's own (`lake_share`); past a half, `phase` and `wave` are
+/// that wave's (`Sea::lake_wave`), not the swell's.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SwellPoint {
     pub phase: f32,
     pub wave: Vec2,
     pub shadow: f32,
     pub chop: f32,
+    pub lake: f32,
 }
 
 /// Where the sea is read (`WaterGround::sea_point`): the wave depth, its
@@ -655,6 +767,9 @@ impl SeaDriver {
         for i in 0..SEA_TRAINS {
             sea.phase[i] = (sea.phase[i] + sea.omega[i] * (time - sea.frame[2])).rem_euclid(TAU);
         }
+        // (and the lakes' wave, `Sea::lake_wave`)
+        let (lake_dir, lake_k, lake_omega) = sea.lake_wave();
+        sea.lake[3] = (sea.lake[3] + lake_omega * (time - sea.frame[2])).rem_euclid(TAU);
         sea.frame[2] = time;
         // re-anchored on the camera, the phases taking the move
         let anchor = if anchor.is_finite() { anchor } else { Vec2::ZERO };
@@ -663,6 +778,7 @@ impl SeaDriver {
             let [dx, dy, k, _] = sea.trains[i];
             sea.phase[i] = (sea.phase[i] - k * moved.dot(Vec2::new(dx, dy))).rem_euclid(TAU);
         }
+        sea.lake[3] = (sea.lake[3] - lake_k * moved.dot(lake_dir)).rem_euclid(TAU);
         sea.frame[0] = anchor.x;
         sea.frame[1] = anchor.y;
         sea.shape_crossed(self.swell, self.heading, self.speed, self.swell_speed);
@@ -743,7 +859,12 @@ impl SeaDriver {
             sea.shore[1] = OCEAN_TILES[0];
             sea.shore[2] = OCEAN_TILES[1];
             // the lakes' chop (water_fft.rs `LAKE`)
-            sea.lake = [OCEAN_TILES[crate::water_fft::LAKE], self.maps.lake_height * sea.look[1], 0.0, 0.0];
+            sea.lake = [
+                OCEAN_TILES[crate::water_fft::LAKE],
+                self.maps.lake_height * sea.look[1],
+                sea.lake[2],
+                sea.lake[3],
+            ];
             sea.shore[3] = height.max(1e-4);
             // the highest crest: the swell growing up to twice in the
             // shallows, on the wind sea's highest (about its Hs)
@@ -996,6 +1117,111 @@ mod tests {
     }
 
     #[test]
+    fn a_lake_s_own_waves_line_up_in_the_shallows_and_lap_its_downwind_shores() {
+        let mut sea = Sea::default();
+        sea.shape(Vec2::X, 14.0);
+        let (dir, k, _) = sea.lake_wave();
+        assert_eq!(dir, Vec2::X, "it runs downwind");
+        let length = TAU / k;
+        assert!((2.5..3.5).contains(&length), "a lake's chop is some 3 m long in a gale: {length}");
+        // a lake: no swell, a short fetch; a beach rising downwind
+        let lake = |depth: f32, slope: Vec2| SeaPoint {
+            depth,
+            slope,
+            swell: Some(SwellPoint {
+                phase: 0.0,
+                wave: dir * k,
+                shadow: 0.0,
+                chop: 0.4,
+                lake: lake_share(0.0),
+            }),
+            ..SeaPoint::open(depth)
+        };
+        let up = -Vec2::X * 0.06;
+        let deep = sea.local(&lake(10.0, Vec2::ZERO), 0.0, 0.4);
+        assert_eq!(deep.main, 0.0, "the chop's spectrum draws it in deep water");
+        assert!(deep.chop > 0.39, "{deep:?}");
+        // as the water shoals under half its length it lines up and breaks,
+        // the chop giving way to it
+        let shoal = sea.local(&lake(0.4, up), 0.0, 0.4);
+        assert!(shoal.main > 0.02 && shoal.breaking > 0.0, "{shoal:?}");
+        // (against the same water with the swell's main wave: the depth
+        // caps both alike, the lake's wave takes half of what is left)
+        let swell_there = sea.local(
+            &SeaPoint {
+                depth: 0.4,
+                slope: up,
+                ..SeaPoint::open(0.4)
+            },
+            1.0,
+            0.4,
+        );
+        assert!(
+            (shoal.chop / swell_there.chop - LAKE_TAKE).abs() < 1e-3,
+            "it keeps its shorter waves: {shoal:?} against {swell_there:?}"
+        );
+        // and runs up the downwind beach as swash, timed by its own clock
+        let beach = sea.local(&lake(-0.05, up), 0.0, 0.4);
+        assert!(beach.swash > 0.5 && beach.reach > 0.03, "{beach:?}");
+        assert_eq!((beach.phase, beach.omega), (sea.lake[3], (G * k).sqrt()));
+        // none up the upwind shore, nor on a calm lake
+        assert_eq!(sea.local(&lake(-0.05, -up), 0.0, 0.4).swash, 0.0, "the upwind shore");
+        let mut calm = Sea::default();
+        calm.shape(Vec2::X, 0.0);
+        assert!(calm.local(&lake(0.4, up), 0.0, 0.4).main < 0.01);
+        // the open sea's shores keep the swell, the swell's clock
+        let open = SeaPoint {
+            depth: 0.4,
+            slope: up,
+            ..SeaPoint::open(0.4)
+        };
+        let sea_shore = sea.local(&open, 1.0, 1.0);
+        assert_eq!((sea_shore.phase, sea_shore.omega), (sea.phase[0], sea.omega[0]));
+        // never both: the swell fades out, then the lake's wave in
+        assert_eq!(lake_share(1.0), 0.0);
+        assert_eq!(lake_share(0.0), 1.0);
+        let mid = SeaPoint {
+            swell: Some(SwellPoint {
+                shadow: 0.1,
+                lake: 0.5,
+                ..lake(0.4, up).swell.expect("a lake's swell point")
+            }),
+            ..lake(0.4, up)
+        };
+        assert_eq!(sea.local(&mid, 0.1, 0.4).main, 0.0, "half way");
+    }
+
+    #[test]
+    fn the_lake_s_wave_keeps_its_place_as_the_sea_re_anchors() {
+        let mut driver = SeaDriver::default();
+        driver.advance(10.0, Vec2::new(12.0, 3.0), Vec2::ZERO);
+        driver.speed = driver.sea().wind[2];
+        let before = driver.sea();
+        let p = Vec2::new(31.0, -12.0);
+        let (dir, k, _) = before.lake_wave();
+        let at = |sea: &Sea| SeaPoint {
+            swell: Some(SwellPoint {
+                phase: k * (p - sea.anchor()).dot(dir),
+                wave: dir * k,
+                shadow: 0.0,
+                chop: 0.4,
+                lake: 1.0,
+            }),
+            slope: -dir * 0.06,
+            ..SeaPoint::open(0.4)
+        };
+        let h0 = before.surface(p, 10.4, 4, 0.0, &at(&before));
+        let after = driver.advance(
+            10.2,
+            Vec2::new(before.wind[0], before.wind[1]) * before.wind[2],
+            Vec2::new(40.0, 25.0),
+        );
+        let h1 = after.surface(p, 10.4, 4, 0.0, &at(&after));
+        assert!(h0.abs() > 1e-3, "a wave there: {h0}");
+        assert!((h0 - h1).abs() < 5e-3, "{h0} vs {h1}");
+    }
+
+    #[test]
     fn the_swell_grows_breaks_runs_up_and_dims_behind_land() {
         let mut sea = Sea::default();
         sea.shape(Vec2::X, 12.0);
@@ -1042,6 +1268,7 @@ mod tests {
             wave: Vec2::new(dx, dy) * k,
             shadow: 1.0,
             chop: 1.0,
+            lake: 0.0,
         };
         let a = sea.surface(xy, 3.0, 4, 20.0, &SeaPoint::open(OPEN_DEPTH));
         let b = sea.surface(

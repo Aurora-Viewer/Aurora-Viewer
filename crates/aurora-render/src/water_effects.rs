@@ -353,16 +353,26 @@ impl WaterGround {
             d0
         } * k0;
         let anchor = Vec2::new(sea.frame[0], sea.frame[1]);
+        // where the swell does not reach, the wind sea's own wave, running
+        // downwind (`Sea::main`)
+        let lake = crate::water_sea::lake_share(reach);
+        let (phase, wave) = if lake > 0.5 {
+            let (dir, k, _) = sea.lake_wave();
+            (k * (xy - anchor).dot(dir), dir * k)
+        } else {
+            (k0 * (travel + (Vec2::from_array(self.sea_origin) - anchor).dot(d0)), wave)
+        };
         SeaPoint {
             depth: d,
             slope,
             shelter: calm.clamp(0.0, 1.0),
             cap: sea.clearance_cap(clearance),
             swell: Some(SwellPoint {
-                phase: k0 * (travel + (Vec2::from_array(self.sea_origin) - anchor).dot(d0)),
+                phase,
                 wave,
                 shadow: reach,
                 chop,
+                lake,
             }),
             ocean,
             bed: depth,
@@ -1397,7 +1407,9 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
     // a refracted swell: its phase at xy, wave vector and shadow
     at.phase=f32(query)*0.77;
     at.wave=array<vec2<f32>,3>(vec2<f32>(0.07,0.02),vec2<f32>(-0.05,0.11),vec2<f32>(0.2,-0.03))[query%3u];
-    at.shadow=array<f32,2>(1.0,0.5)[query%2u];
+    // (where the swell does not reach, a lake: the wind sea's own wave)
+    at.shadow=array<f32,4>(1.0,0.5,0.0,0.05)[query%4u];
+    at.lake=water_lake_share(at.shadow);
     at.chop=array<f32,3>(1.0,0.6,0.3)[query%3u];
     var here=at;
     var p=xy;
@@ -1470,8 +1482,9 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
                 swell: Some(SwellPoint {
                     phase: query as f32 * 0.77,
                     wave: [Vec2::new(0.07, 0.02), Vec2::new(-0.05, 0.11), Vec2::new(0.2, -0.03)][query % 3],
-                    shadow: [1.0, 0.5][query % 2],
+                    shadow: [1.0, 0.5, 0.0, 0.05][query % 4],
                     chop: [1.0, 0.6, 0.3][query % 3],
+                    lake: crate::water_sea::lake_share([1.0, 0.5, 0.0, 0.05][query % 4]),
                 }),
                 ocean: None,
                 bed: 20.0 - ground,

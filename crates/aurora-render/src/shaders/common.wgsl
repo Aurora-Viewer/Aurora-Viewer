@@ -3380,6 +3380,14 @@ fn water_fx_sea_at(p: vec2<f32>) -> WaterSeaAt {
     at.phase=k0*(c.travel+dot(water_fx.sea_area.xy-water_fx.sea.frame.xy,d0));
     at.shadow=c.shadow;
     at.chop=c.chop;
+    // where the swell does not reach, the wind sea's own wave, running
+    // downwind (water_sea_main)
+    at.lake=water_lake_share(c.shadow);
+    if(at.lake>0.5){
+        let lw=water_lake_wave(water_fx.sea);
+        at.wave=lw.xy*lw.z;
+        at.phase=lw.z*dot(p-water_fx.sea.frame.xy,lw.xy);
+    }
     // the real bed under the fine bathymetry round the camera, the sea
     // grid's depth past it (faded over its last 12 %: the swash once
     // switched on and off at a shore as the camera moved)

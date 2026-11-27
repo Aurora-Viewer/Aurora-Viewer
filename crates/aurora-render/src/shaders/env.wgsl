@@ -954,7 +954,7 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
             let at=water_fx_sea_at(in.world_pos.xy);
             let reach=water_swash_reach(water_fx.sea,at);
             if(reach>0.03) {
-                let theta=at.phase-(water_fx.sea.phase[0]+water_fx.sea.omega[0]*(frame.camera_pos.w-water_fx.sea.frame.z))+water_swash_shift(at);
+                let theta=water_main_theta(water_fx.sea,at,frame.camera_pos.w)+water_swash_shift(at);
                 wet=max(wet,water_swash_wet(theta,reach,e)*water_swash_beach(at));
                 let back=water_sand_backwash(in.world_pos.xy,at,theta,reach,e);
                 sheet=back.x;
@@ -1570,7 +1570,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         shelter=at.shelter;
         open=water_ocean_weights(at.chop).x;
         swash_at=at;
-        swash_theta=at.phase-(water_fx.sea.phase[0]+water_fx.sea.omega[0]*(frame.camera_pos.w-water_fx.sea.frame.z))+water_swash_shift(at);
+        swash_theta=water_main_theta(water_fx.sea,at,frame.camera_pos.w)+water_swash_shift(at);
         swell=water_sea(flow,frame.camera_pos.w,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(flow,footprint,true,at),footprint);
     }
     let rest=flow;
