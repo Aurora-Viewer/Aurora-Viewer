@@ -772,6 +772,9 @@ pub struct Floater<'a> {
     /// A state at the right end of the title bar, before its buttons: a
     /// dot of its colour and its text in muted.
     pub title_state: Option<(Color32, String)>,
+    /// A switch at the right end of the title bar, before its buttons, with
+    /// its label (the AO window's AO on / off).
+    pub title_switch: Option<(&'a str, &'a mut bool)>,
     pub default_pos: egui::Pos2,
     pub default_size: Vec2,
     pub min_size: Vec2,
@@ -845,6 +848,7 @@ impl<'a> Floater<'a> {
             title_note: None,
             title_note_tooltip: None,
             title_state: None,
+            title_switch: None,
             default_pos: pos,
             default_size: size,
             min_size: Vec2::new(220.0, 120.0),
@@ -912,6 +916,12 @@ impl<'a> Floater<'a> {
     /// Details shown when hovering the muted text after the title.
     pub fn title_note_tooltip(mut self, tooltip: impl Into<String>) -> Self {
         self.title_note_tooltip = Some(tooltip.into());
+        self
+    }
+
+    /// A switch with its label before the title buttons (see `title_switch`).
+    pub fn title_switch(mut self, label: &'a str, on: &'a mut bool) -> Self {
+        self.title_switch = Some((label, on));
         self
     }
 
@@ -1475,6 +1485,11 @@ impl<'a> Floater<'a> {
                                 reset_one = true;
                             }
                         }
+                        if let Some((label, on)) = &mut self.title_switch {
+                            ui.add_space(4.0);
+                            switch(ui, p, on).on_hover_text(*label);
+                            ui.label(RichText::new(*label).size(12.0).color(p.ink));
+                        }
                         if let Some((dot, text)) = &self.title_state {
                             ui.add_space(4.0);
                             ui.label(RichText::new(text).size(12.0).color(p.muted));
@@ -1946,6 +1961,11 @@ impl<'a> Floater<'a> {
                             .clicked()
                         {
                             reset_one = true;
+                        }
+                        if let Some((label, on)) = &mut self.title_switch {
+                            ui.add_space(4.0);
+                            switch(ui, p, on).on_hover_text(*label);
+                            ui.label(RichText::new(*label).size(12.0).color(p.ink));
                         }
                         if let Some((dot, text)) = &self.title_state {
                             ui.add_space(4.0);

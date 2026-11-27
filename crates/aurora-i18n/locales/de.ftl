@@ -1561,7 +1561,6 @@ inventory-move-connection-unavailable = Verschieben nicht möglich: Die Regionsv
 inventory-move-invalid-target = Das Objekt oder der Zielordner konnte nicht gefunden werden. Laden Sie das Inventar neu.
 ao-title = AO · Avatar-Animationen
 ao-enabled = AO aktivieren
-ao-pause = Pause
 ao-stands = Stehen und Drehen
 ao-set = Set
 ao-reload = Sets aus dem Inventar neu laden

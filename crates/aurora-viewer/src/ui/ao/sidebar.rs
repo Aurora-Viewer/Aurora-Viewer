@@ -158,9 +158,9 @@ fn group_row(ui: &mut egui::Ui, p: &Palette, name: &str, line: &str, count: &str
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), GROUP_ROW), egui::Sense::click());
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if on {
-        ui.painter().rect_filled(rect, radius, p.raised);
+        ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.75));
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.5));
+        ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.4));
     }
     let inner = rect.shrink2(Vec2::new(10.0, 0.0));
     let count_galley = ui
@@ -311,9 +311,9 @@ fn set_row(
                 let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), egui::Sense::click());
                 let radius = ui.visuals().widgets.inactive.corner_radius;
                 if active {
-                    ui.painter().rect_filled(rect, radius, p.raised);
+                    ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.75));
                 } else if response.hovered() {
-                    ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.5));
+                    ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.4));
                 }
                 let inner = rect.shrink2(Vec2::new(8.0, 0.0));
                 let title = egui::FontId::new(13.0, super::super::fonts::semibold(ui.ctx()));

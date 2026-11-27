@@ -508,18 +508,27 @@ fn ao_manager_keeps_its_size_across_frames() {
 }
 
 #[test]
-fn power_pause_and_stands_change_runtime_without_inventory_writes() {
+fn the_title_switch_and_stands_change_runtime_without_inventory_writes() {
     let mut f = Fixture::new();
-    let out = f.click_icon("power");
+    f.runtime.paused = true;
+    let switch = |f: &mut Fixture| {
+        let mut texts = Vec::new();
+        for shape in f.draw(Vec::new()).1 {
+            text_rects(&shape.shape, aurora_i18n::tr!("ao-switch"), &mut texts);
+        }
+        // the switch, right of its label in the title bar
+        let label = *texts.first().expect("the title's AO switch");
+        label.right_center() + egui::vec2(18.0, 0.0)
+    };
+    let at = switch(&mut f);
+    let out = f.click_at(at);
     assert!(f.account.enabled);
     assert!(matches!(&out[..], [Action::Preferences]));
-    assert!(f.click_icon("player-pause-filled").is_empty());
-    assert!(f.runtime.paused);
-    assert!(f.click_icon("player-play-filled").is_empty());
-    assert!(!f.runtime.paused);
+    assert!(!f.runtime.paused, "turned on, the AO plays again");
     assert!(f.click(aurora_i18n::tr!("ao-stands")).is_empty());
     assert!(!f.runtime.stands);
-    let out = f.click_icon("power");
+    let at = switch(&mut f);
+    let out = f.click_at(at);
     assert!(!f.account.enabled);
     assert!(matches!(&out[..], [Action::Preferences]));
 }

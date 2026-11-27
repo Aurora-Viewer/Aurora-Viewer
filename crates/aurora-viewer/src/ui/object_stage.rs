@@ -77,6 +77,9 @@ pub struct StageUi {
     /// The view's bottom band blurred more and more toward its bottom edge
     /// (the AO window's preview, under its caption).
     pub veil: Option<aurora_render::preview::Veil>,
+    /// The bar ends on its play / pause button and its hint; off, on its
+    /// last tool (the AO window's preview plays what the window previews).
+    pub player: bool,
     /// The animation plays; None: it was not chosen (it does, unless motion is
     /// reduced).
     playing: Option<bool>,
@@ -129,6 +132,7 @@ impl Default for StageUi {
             picking: true,
             bar_face: true,
             veil: None,
+            player: true,
             playing: None,
             live: None,
             joints: None,
@@ -632,6 +636,9 @@ impl StageUi {
         };
         if tool_lit(ui, p, "bulb-filled", tip, self.light) {
             self.light = !self.light;
+        }
+        if !self.player {
+            return;
         }
         if self.animated() {
             self.player(ui, p, rect);

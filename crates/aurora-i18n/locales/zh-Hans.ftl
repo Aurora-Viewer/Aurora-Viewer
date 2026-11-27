@@ -1543,7 +1543,6 @@ inventory-move-connection-unavailable = 无法移动：区域连接不可用。
 inventory-move-invalid-target = 找不到该项目或目标文件夹。请重新加载库存。
 ao-title = AO · 化身动画
 ao-enabled = 启用 AO
-ao-pause = 暂停
 ao-stands = 站立与转身
 ao-set = 套组
 ao-reload = 从库存重新加载套组

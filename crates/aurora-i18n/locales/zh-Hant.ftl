@@ -1542,7 +1542,6 @@ inventory-move-connection-unavailable = 無法移動：區域連線不可用。
 inventory-move-invalid-target = 找不到該項目或目標資料夾。請重新載入庫存。
 ao-title = AO · 化身動畫
 ao-enabled = 啟用 AO
-ao-pause = 暫停
 ao-stands = 站立與轉身
 ao-set = 套組
 ao-reload = 從庫存重新載入套組

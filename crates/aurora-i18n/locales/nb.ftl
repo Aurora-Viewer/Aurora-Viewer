@@ -1544,7 +1544,6 @@ inventory-move-connection-unavailable = Kan ikke flytte: forbindelsen til region
 inventory-move-invalid-target = Gjenstanden eller målmappen ble ikke funnet. Last inn beholdningen på nytt.
 ao-title = AO · Avataranimasjoner
 ao-enabled = Aktiver AO
-ao-pause = Pause
 ao-stands = Stå og snu
 ao-set = Sett
 ao-reload = Last inn sett på nytt fra beholdningen

@@ -1580,7 +1580,6 @@ inventory-move-connection-unavailable = Nie można przenieść: połączenie z r
 inventory-move-invalid-target = Nie można znaleźć przedmiotu lub folderu docelowego. Wczytaj szafę ponownie.
 ao-title = AO · Animacje awatara
 ao-enabled = Włącz AO
-ao-pause = Wstrzymaj
 ao-stands = Stanie i obroty
 ao-set = Zestaw
 ao-reload = Wczytaj zestawy z szafy ponownie

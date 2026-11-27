@@ -278,30 +278,12 @@ pub fn show(
         state.preview = Default::default();
     }
     let title = aurora_i18n::tr!("ao-title");
-    let (dot, status) = if !account.enabled {
-        (p.muted, aurora_i18n::tr!("ao-status-off"))
-    } else if runtime.paused {
-        (p.amber, aurora_i18n::tr!("ao-status-paused"))
-    } else {
-        (p.success, aurora_i18n::tr!("ao-status-on"))
-    };
-    let (mut power, mut pause) = (false, false);
-    let power_tip = aurora_i18n::text(if account.enabled { "ao-turn-off" } else { "ao-turn-on" });
-    let (pause_icon, pause_tip) = if runtime.paused {
-        ("player-play-filled", aurora_i18n::tr!("ao-resume"))
-    } else {
-        ("player-pause-filled", aurora_i18n::tr!("ao-pause"))
-    };
     if *open {
         widen_once(ctx);
     }
-    let mut floater = Floater::new("ao", title, egui::pos2(160.0, 90.0), SIZE)
-        .help(aurora_i18n::tr!("ao-help-pages"))
-        .title_state(dot, status)
-        .action("power", power_tip, &mut power);
-    if account.enabled {
-        floater = floater.action(pause_icon, pause_tip, &mut pause);
-    }
+    // the AO on or off, in the title bar (FloaterAO's "Enable AO")
+    let mut on = account.enabled;
+    let mut floater = Floater::new("ao", title, egui::pos2(160.0, 90.0), SIZE).title_switch(aurora_i18n::tr!("ao-switch"), &mut on);
     floater.min_size = MIN_SIZE;
     floater.flush_body().show(ctx, p, open, |ui| {
         let full = ui.available_rect_before_wrap();
@@ -310,7 +292,8 @@ pub fn show(
         let side = egui::Rect::from_min_size(full.min, Vec2::new(SIDEBAR, full.height()));
         let right = egui::Rect::from_min_max(egui::pos2(full.right() - preview_w, full.top()), full.max);
         let middle = egui::Rect::from_min_max(egui::pos2(side.right(), full.top()), egui::pos2(right.left(), full.bottom()));
-        ui.painter().rect_filled(side, egui::CornerRadius::ZERO, p.bar);
+        // light materials over the window's glass, not opaque panels
+        ui.painter().rect_filled(side, egui::CornerRadius::ZERO, p.bar.gamma_multiply(0.35));
         column(ui, "ao_sidebar", side, egui::Margin::symmetric(10, 12), |ui| {
             sidebar::show(ui, p, inv, catalog, runtime, account, state, &mut out);
         });
@@ -326,22 +309,18 @@ pub fn show(
             }
         });
         if preview_w > 0.0 {
-            ui.painter().rect_filled(right, egui::CornerRadius::ZERO, p.panel);
             column(ui, "ao_preview", right, egui::Margin::ZERO, |ui| {
                 preview::show(ui, p, selected, runtime, state);
             });
         }
     });
-    if power {
-        account.enabled = !account.enabled;
-        if account.enabled {
+    if on != account.enabled {
+        account.enabled = on;
+        if on {
             runtime.stands = true;
             runtime.paused = false;
         }
         out.push(Action::Preferences);
-    }
-    if pause && account.enabled {
-        runtime.paused = !runtime.paused;
     }
     if *open {
         dialogs(ctx, p, inv, catalog, state, &mut out);

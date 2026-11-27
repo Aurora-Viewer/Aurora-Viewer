@@ -1580,7 +1580,6 @@ inventory-move-connection-unavailable = Неможливо перемістит�
 inventory-move-invalid-target = Не вдалося знайти предмет або папку призначення. Перезавантажте інвентар.
 ao-title = AO · Анімації аватара
 ao-enabled = Увімкнути AO
-ao-pause = Пауза
 ao-stands = Стійки й повороти
 ao-set = Набір
 ao-reload = Перезавантажити набори з інвентаря

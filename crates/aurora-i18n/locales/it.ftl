@@ -1544,7 +1544,6 @@ inventory-move-connection-unavailable = Impossibile spostare: la connessione all
 inventory-move-invalid-target = Non è stato possibile trovare l'oggetto o la cartella di destinazione. Ricaricare l'inventario.
 ao-title = AO · Animazioni dell'avatar
 ao-enabled = Attiva l'AO
-ao-pause = Pausa
 ao-stands = In piedi e rotazioni
 ao-set = Set
 ao-reload = Ricarica i set dall'inventario

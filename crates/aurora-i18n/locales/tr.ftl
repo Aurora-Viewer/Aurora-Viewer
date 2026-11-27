@@ -1545,7 +1545,6 @@ inventory-move-connection-unavailable = Taşınamıyor: bölge bağlantısı kul
 inventory-move-invalid-target = Öğe veya hedef klasör bulunamadı. Envanteri yeniden yükleyin.
 ao-title = AO · Avatar animasyonları
 ao-enabled = AO'yu etkinleştir
-ao-pause = Duraklat
 ao-stands = Durma ve dönme
 ao-set = Set
 ao-reload = Envanterdeki setleri yeniden yükle

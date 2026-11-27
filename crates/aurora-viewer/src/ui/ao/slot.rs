@@ -337,18 +337,19 @@ impl Editor<'_> {
         let p = self.p;
         let (next, now) = self.next_name(c, track);
         egui::Frame::new()
-            .fill(p.raised.gamma_multiply(0.45))
+            .fill(p.raised.gamma_multiply(0.32))
             .corner_radius(ui.visuals().widgets.inactive.corner_radius)
             .inner_margin(egui::Margin::symmetric(12, 8))
             .show(ui, |ui| {
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.horizontal(|ui| {
-                        let (ring, _) = ui.allocate_exact_size(Vec2::splat(38.0), egui::Sense::hover());
+                        // (as tall as the card's two lines: centred against them)
+                        let (ring, _) = ui.allocate_exact_size(Vec2::new(38.0, 58.0), egui::Sense::hover());
                         let tint = if order == Order::Manual { p.muted } else { p.violet_light };
                         ui.painter()
                             .circle_stroke(ring.center(), 15.0, egui::Stroke::new(2.5, tint.gamma_multiply(0.85)));
                         widgets::paint_glyph(ui.painter(), order.icon(), ring.center(), 15.0, tint);
-                        let right = 150.0;
+                        let right = 128.0;
                         let middle = (ui.available_width() - right - ui.spacing().item_spacing.x).max(120.0);
                         ui.vertical(|ui| {
                             ui.set_width(middle);
@@ -393,8 +394,9 @@ impl Editor<'_> {
                         ui.vertical(|ui| {
                             ui.set_width(right);
                             ui.spacing_mut().item_spacing.y = 2.0;
-                            let face = egui::Button::new(format!("{}  ▾", order.label())).min_size(Vec2::new(right, 28.0));
-                            super::super::menu::button(ui, p, face, |ui| {
+                            let face = widgets::action_menu_button(ui, p, order.icon(), order.label(), false, 28.0)
+                                .on_hover_text(aurora_i18n::tr!("ao-order-tip"));
+                            super::super::menu::dropdown(&face, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                                 for choice in [Order::Sequence, Order::Shuffle, Order::Manual] {
                                     if super::super::menu::item_detail(ui, p, choice.icon(), choice.label(), choice.line())
                                         && choice != order

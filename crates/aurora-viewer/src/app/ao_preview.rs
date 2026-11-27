@@ -78,6 +78,7 @@ impl App {
         stage.single = false;
         stage.picking = false;
         stage.bar_face = false;
+        stage.player = false;
         // the stage's ground, light or dark, shared with Inspect's: a change
         // made in the window is kept, as Inspect keeps it (app/inspect.rs)
         if self.ao_preview_light.is_some_and(|given| given != stage.light) {

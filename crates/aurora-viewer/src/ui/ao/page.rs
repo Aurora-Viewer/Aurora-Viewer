@@ -151,7 +151,7 @@ fn summary(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, set: &Set, category:
     let height = 64.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), egui::Sense::hover());
     let radius = ui.visuals().window_corner_radius;
-    ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.45));
+    ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.3));
     let inner = rect.shrink2(Vec2::new(12.0, 8.0));
     let tiles_w = (inner.width() * 0.6).min(420.0);
     let text_room = inner.width() - tiles_w - 14.0;
@@ -187,7 +187,7 @@ fn summary(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, set: &Set, category:
     let tile_radius = ui.visuals().widgets.inactive.corner_radius;
     // Filled, with one mark per slot.
     let r = tile(0);
-    ui.painter().rect_filled(r, tile_radius, p.raised);
+    ui.painter().rect_filled(r, tile_radius, p.raised.gamma_multiply(0.55));
     figure(
         ui,
         p,
@@ -205,7 +205,7 @@ fn summary(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, set: &Set, category:
     }
     // Animations and their creators.
     let r = tile(1);
-    ui.painter().rect_filled(r, tile_radius, p.raised);
+    ui.painter().rect_filled(r, tile_radius, p.raised.gamma_multiply(0.55));
     figure(ui, p, r, &anims.to_string(), &aurora_i18n::tr!("ao-animations-word", count = anims));
     let makers = creators(inv, set, states);
     let line = if makers > 0 {
@@ -228,9 +228,9 @@ fn summary(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, set: &Set, category:
             .interact(r, ui.scope_id().with("ao_first_empty"), egui::Sense::click())
             .on_hover_text(aurora_i18n::tr!("ao-go-to", slot = first.label()));
         let fill = if response.hovered() {
-            p.raised.gamma_multiply(1.3)
+            p.raised.gamma_multiply(0.85)
         } else {
-            p.raised
+            p.raised.gamma_multiply(0.55)
         };
         ui.painter().rect_filled(r, tile_radius, fill);
         figure(ui, p, r, &empty.len().to_string(), aurora_i18n::tr!("ao-still-empty"));
@@ -247,7 +247,7 @@ fn summary(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, set: &Set, category:
             state.select_state(first);
         }
     } else {
-        ui.painter().rect_filled(r, tile_radius, p.raised);
+        ui.painter().rect_filled(r, tile_radius, p.raised.gamma_multiply(0.55));
         widgets::paint_glyph(
             ui.painter(),
             "circle-check-filled",
@@ -370,14 +370,14 @@ fn section(
         egui::Shape::Rect(egui::epaint::RectShape::new(
             rect,
             radius,
-            p.bar,
-            widgets::border_stroke(p, egui::Stroke::new(1.0, p.muted.gamma_multiply(0.45))),
+            p.raised.gamma_multiply(0.42),
+            widgets::border_stroke(p, egui::Stroke::new(1.0, p.muted.gamma_multiply(0.3))),
             egui::StrokeKind::Inside,
         ))
     } else if count == 0 {
         egui::Shape::Noop
     } else {
-        egui::Shape::Rect(egui::epaint::RectShape::filled(rect, radius, p.raised.gamma_multiply(0.45)))
+        egui::Shape::Rect(egui::epaint::RectShape::filled(rect, radius, p.raised.gamma_multiply(0.28)))
     };
     ui.painter().set(background, shape);
     if count == 0 && !open {

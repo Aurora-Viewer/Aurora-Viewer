@@ -1547,7 +1547,6 @@ inventory-move-connection-unavailable = No se puede mover: la conexión con la r
 inventory-move-invalid-target = No se encontró el ítem o la carpeta de destino. Vuelva a cargar el inventario.
 ao-title = AO · Animaciones del avatar
 ao-enabled = Activar el AO
-ao-pause = Pausa
 ao-stands = De pie y giros
 ao-set = Conjunto
 ao-reload = Recargar conjuntos desde el inventario
