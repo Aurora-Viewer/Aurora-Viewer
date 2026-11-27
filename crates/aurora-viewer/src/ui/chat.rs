@@ -4898,7 +4898,11 @@ fn classic_pane(
                         st.recent_emojis.toggle_favorite(c);
                     }
                     if let Some(c) = picked.chosen {
-                        draft.push(c);
+                        // at the caret, which follows it, as a recent
+                        // emoji's click: pushed at the end with the caret
+                        // left where it was, what was typed next went
+                        // before the emoji
+                        super::emoji::recent::place(ui.ctx(), conv_input, &mut draft, c);
                         close = !ui.input(|i| i.modifiers.shift);
                     }
                     close |= picked.escape;

@@ -321,6 +321,14 @@ fn spliced(text: &str, from: usize, to: usize, emoji: &str) -> String {
 /// `c` at the caret of the field `id`, over its selection, the caret after
 /// it and the keyboard back in the field.
 pub fn insert(ctx: &egui::Context, id: egui::Id, text: &mut String, c: char) {
+    place(ctx, id, text, c);
+    ctx.memory_mut(|m| m.request_focus(id));
+}
+
+/// `c` at the caret of the field `id`, over its selection, and the caret
+/// after it: what is typed next follows the emoji. The keyboard stays where
+/// it is (a picker kept open with Shift).
+pub fn place(ctx: &egui::Context, id: egui::Id, text: &mut String, c: char) {
     let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
     let count = text.chars().count();
     let (from, to) = state.cursor.char_range().map_or((count, count), |r| {
@@ -332,7 +340,6 @@ pub fn insert(ctx: &egui::Context, id: egui::Id, text: &mut String, c: char) {
     let after = egui::text::CCursor::new(from + emoji.chars().count());
     state.cursor.set_char_range(Some(egui::text::CCursorRange::one(after)));
     egui::TextEdit::store_state(ctx, id, state);
-    ctx.memory_mut(|m| m.request_focus(id));
 }
 
 #[cfg(test)]
@@ -463,6 +470,41 @@ mod tests {
         let mut text = "ab".to_owned();
         insert(&ctx, other, &mut text, '😂');
         assert_eq!(text, "ab😂");
+    }
+
+    /// A pick of the emoji picker: the caret follows the emoji, so what is
+    /// typed next comes after it (it stayed before the emoji, which went to
+    /// the end of the text whatever the caret). The keyboard is left where
+    /// it is: Shift keeps the picker open.
+    #[test]
+    fn a_placed_emoji_takes_the_caret_after_it_and_leaves_the_keyboard() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::unique("field");
+        let caret = |ctx: &egui::Context| {
+            egui::TextEdit::load_state(ctx, id)
+                .and_then(|state| state.cursor.char_range())
+                .map(|range| (range.primary.index.0, range.secondary.index.0))
+        };
+        let at = |index| Some(egui::text::CCursorRange::one(egui::text::CCursor::new(index)));
+        // typed to the end, the caret is there
+        let mut state = egui::TextEdit::load_state(&ctx, id).unwrap_or_default();
+        state.cursor.set_char_range(at(5));
+        egui::TextEdit::store_state(&ctx, id, state);
+        let mut text = "hello".to_owned();
+        place(&ctx, id, &mut text, '😂');
+        assert_eq!(text, "hello😂");
+        assert_eq!(caret(&ctx), Some((6, 6)), "the caret is after the emoji");
+        place(&ctx, id, &mut text, '👍');
+        assert_eq!(text, "hello😂👍");
+        assert_eq!(caret(&ctx), Some((7, 7)));
+        // in the middle of the text, the emoji goes at the caret
+        let mut state = egui::TextEdit::load_state(&ctx, id).unwrap_or_default();
+        state.cursor.set_char_range(at(2));
+        egui::TextEdit::store_state(&ctx, id, state);
+        place(&ctx, id, &mut text, '🔥');
+        assert_eq!(text, "he🔥llo😂👍");
+        assert_eq!(caret(&ctx), Some((3, 3)));
+        assert!(!ctx.memory(|m| m.has_focus(id)), "the keyboard is not taken");
     }
 
     #[test]
