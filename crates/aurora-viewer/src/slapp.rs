@@ -60,9 +60,10 @@ fn preferences_search_query(query: &str) -> String {
         let c = match c {
             // a line break or a tab inside the field's single line
             c if c.is_control() => ' ',
-            // zero width and direction marks, embeddings, overrides and
-            // isolates: they would reorder or hide the label's text
-            '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}' => continue,
+            // zero width space and direction marks, embeddings, overrides
+            // and isolates: they would reorder or hide the label's text (the
+            // joiners U+200C and U+200D stay: words and emoji need them)
+            '\u{200B}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}' => continue,
             c => c,
         };
         if out.len() + c.len_utf8() > PREFERENCES_SEARCH_MAX {
@@ -604,6 +605,9 @@ mod tests {
             "\"quoted\" and 'single'",
             "v1.",
             "~tilde",
+            // the joiners of a word or an emoji are kept
+            "می\u{200C}خواهم",
+            "👩\u{200D}💻",
         ] {
             let url = preferences_search_link(query).expect("a search");
             assert_eq!(parse(&url), search(query), "{url}");
@@ -611,6 +615,8 @@ mod tests {
         // what the field holds around it is cleaned the same way both sides
         let url = preferences_search_link("  two\twords \u{202E}\n").expect("a search");
         assert_eq!(parse(&url), search("two words"));
+        let url = preferences_search_link("\u{200F}a\u{200B}b\u{2066}c\u{2069}\u{FEFF}").expect("a search");
+        assert_eq!(parse(&url), search("abc"));
         // nothing to share
         for query in ["", "   ", "\u{200B}", "\n\t"] {
             assert_eq!(preferences_search_link(query), None, "{query:?}");
