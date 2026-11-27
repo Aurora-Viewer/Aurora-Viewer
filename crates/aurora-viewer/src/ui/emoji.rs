@@ -417,6 +417,11 @@ impl Emoji {
         let mut total = 0.0;
         let mut start = 0;
         for (i, c) in text.char_indices() {
+            // the row is full: what follows is cut, so neither laid out nor
+            // decoded (a long message of emoji is walked at every frame)
+            if total > width {
+                break;
+            }
             // variation selector / zero-width joiner: part of the previous emoji
             if c == '\u{FE0F}' || c == '\u{200D}' {
                 if i > start {
@@ -440,7 +445,7 @@ impl Emoji {
                 start = i + c.len_utf8();
             }
         }
-        if start < text.len() {
+        if start < text.len() && total <= width {
             let galley = layout(&text[start..]);
             total += galley.size().x;
             pieces.push(Piece::Text(&text[start..], galley));
@@ -892,6 +897,11 @@ mod tests {
         assert!(cut, "the text is cut");
         assert_eq!(pictures, 0, "the emoji did not fit");
         assert!(shown.ends_with('…'), "the cut text ends with an ellipsis: {shown:?}");
+        // cut at a picture: those that fit, then the ellipsis in the room kept for it
+        let (pictures, cut, shown) = row("🫶🫶🫶🫶🫶🫶🫶🫶🫶🫶", 40.0);
+        assert!(cut, "the row of pictures is cut");
+        assert!((1..10).contains(&pictures), "the pictures that fit: {pictures}");
+        assert_eq!(shown, "…", "the ellipsis follows the last picture");
         assert_eq!(row("plain words", 200.0).0, 0, "no emoji, no picture");
     }
 
