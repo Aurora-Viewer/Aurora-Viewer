@@ -178,3 +178,50 @@ fn cascade_temporarily_hidden_documents_keep_their_positions() {
     f.settle();
     assert_eq!([f.rect(first), f.rect(second)], before);
 }
+
+/// A closed Texture preview reopened with the same id opens at the group's
+/// place, not at its old AreaState place (Nearby's cold-start fallback must
+/// not apply to other groups). `open_floater` forgets the cascade entry, as
+/// inventory does when showing the same preview again.
+#[test]
+fn cascade_reopened_texture_opens_at_group_place_not_old_area() {
+    let mut f = Fixture::default();
+    let id = "texture_same_id";
+    f.windows.push(Window {
+        id: id.to_owned(),
+        group: CascadeGroup::Texture,
+        open: true,
+        size: egui::vec2(300.0, 250.0),
+    });
+    f.settle();
+    let default_min = f.rect(0).min;
+    f.move_to(0, egui::pos2(420.0, 260.0));
+    let moved = f.rect(0).min;
+    assert!((moved - default_min).length() > 40.0, "{moved:?} vs {default_min:?}");
+    f.windows[0].open = false;
+    f.settle();
+    let w = &mut f.windows[0];
+    open_floater(&f.ctx, &w.id, &mut w.open);
+    f.settle();
+    same(f.rect(0).min.to_vec2(), default_min.to_vec2());
+}
+
+/// After Reset window positions and sizes, an open cascaded window and
+/// detached Nearby return to their default place and size.
+#[test]
+fn cascade_reset_windows_returns_open_cascaded_and_nearby_to_default() {
+    let default_pos = egui::pos2(100.0, 80.0);
+    let default_size = egui::vec2(300.0, 250.0);
+    for group in [CascadeGroup::Texture, CascadeGroup::Nearby] {
+        let mut f = Fixture::default();
+        let n = f.open(group, default_size);
+        place_floater(&f.ctx, &f.windows[n].id, egui::pos2(420.0, 260.0), egui::vec2(480.0, 360.0));
+        f.settle();
+        assert!((f.rect(n).min - default_pos).length() > 40.0);
+        assert!((f.rect(n).size() - default_size).length() > 40.0);
+        reset_windows(&f.ctx);
+        f.settle();
+        same(f.rect(n).min.to_vec2(), default_pos.to_vec2());
+        same(f.rect(n).size(), default_size);
+    }
+}
