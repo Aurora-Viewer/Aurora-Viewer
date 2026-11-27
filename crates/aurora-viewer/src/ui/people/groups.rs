@@ -870,6 +870,7 @@ mod tests {
                         actions: &mut actions,
                         embedded_contacts: false,
                         contact_sheet_on_click: false,
+                        contact_sheet_room: false,
                     };
                     row_rect = Rect::from_min_size(child.cursor().min, Vec2::new(child.available_width(), RICH_H));
                     row(&mut child, &mut c, &mut st, &g);
