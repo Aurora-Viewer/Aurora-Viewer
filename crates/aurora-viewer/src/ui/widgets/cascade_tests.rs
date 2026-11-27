@@ -223,7 +223,7 @@ fn cascade_group_profiles_keep_their_step_when_taller_than_the_room() {
 fn cascade_group_profiles_start_a_new_column_before_getting_too_small() {
     let mut f = Fixture::default();
     let profile = CascadeGroup::Profile { classic: false };
-    let opened: Vec<usize> = (0..30).map(|_| f.open(profile, egui::vec2(500.0, 600.0))).collect();
+    let opened: Vec<usize> = (0..40).map(|_| f.open(profile, egui::vec2(500.0, 600.0))).collect();
     let first = f.rect(opened[0]);
     let mut wrapped = false;
     let mut at_edge = false;
@@ -243,7 +243,7 @@ fn cascade_group_profiles_start_a_new_column_before_getting_too_small() {
             at_edge = true;
         }
     }
-    assert!(wrapped, "30 windows on an 800 px screen start a new column");
+    assert!(wrapped, "40 windows on an 800 px screen start a new column");
     assert!(at_edge, "and reach the right edge");
 }
 
@@ -332,4 +332,48 @@ fn cascade_steps_from_where_an_opening_window_was_placed_not_its_first_draw() {
     );
     let next = super::cascade::prepare(&ctx, b, profile, default, work, least).expect("placed");
     same(next.pos.to_vec2() - placed.pos.to_vec2(), Vec2::splat(32.0));
+}
+
+/// A notice copy opens its ten windows in one frame, before any of them is
+/// settled: each is stacked on the one opened just before, whose first draw
+/// egui reports before the window is fitted where the cascade put it
+/// (#4964 review: from the 15th window on, all landed at one spot).
+#[test]
+fn cascade_group_profiles_opened_in_one_frame_start_a_new_column_instead_of_piling() {
+    let mut f = Fixture::default();
+    let profile = CascadeGroup::Profile { classic: false };
+    let mut opened = Vec::new();
+    for _ in 0..3 {
+        for _ in 0..10 {
+            opened.push(f.push(profile, egui::vec2(500.0, 600.0), Some(egui::vec2(320.0, 300.0)), 420.0));
+        }
+        f.settle();
+    }
+    let first = f.rect(opened[0]);
+    let mut columns = 1;
+    let mut restarted = false;
+    for (i, &n) in opened.iter().enumerate() {
+        let b = f.rect(n);
+        assert!(b.bottom() <= 800.5 && b.right() <= 1000.5, "on screen: {b:?}");
+        if i == 0 {
+            continue;
+        }
+        for &m in &opened[..i] {
+            let a = f.rect(m);
+            assert!((a.min - b.min).length() > 1.0, "never on an earlier window: {a:?} {b:?}");
+        }
+        let a = f.rect(opened[i - 1]);
+        if (b.min.y - first.min.y).abs() < 1.0 {
+            columns += 1;
+            if a.right() + 32.0 > 1000.5 {
+                // no room to step right: the new column starts at the left edge
+                assert!(b.min.x.abs() < 1.0, "back at the left edge: {a:?} {b:?}");
+                restarted = true;
+            }
+        } else {
+            assert!(b.min.y > a.min.y, "below the window before: {a:?} {b:?}");
+        }
+    }
+    assert!(columns >= 3, "30 windows on an 800 px screen take several columns: {columns}");
+    assert!(restarted, "and a column that reached the right edge restarts at the left");
 }

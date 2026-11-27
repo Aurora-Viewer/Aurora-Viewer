@@ -142,15 +142,21 @@ pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: 
         // a new column, back at that window's top; at the screen's right edge
         // the windows stop moving right and keep their width, stepping down
         // only (human request, #4788: past ~13 group profiles the shrunk
-        // windows ended up anywhere, then piled at one spot)
+        // windows ended up anywhere, then piled at one spot), and the next
+        // column starts back at the left edge instead of on the spots of the
+        // first one (#4964 review: their title bars were all covered)
         if anchor.is_some()
             && group.keeps_step()
             && let Some(first) = windows.0.iter().find(|w| w.group == group && w.visible && !w.minimized)
         {
+            let right = work.max.x - size.x;
             if work.max.y - target.y < column_floor(&windows.0, group, first.rect.height(), least.y) {
                 target.y = first.rect.min.y;
+                if target.x > right {
+                    target.x = work.min.x;
+                }
             }
-            target.x = target.x.min(work.max.x - size.x).max(work.min.x);
+            target.x = target.x.min(right).max(work.min.x);
         }
         let room = (work.max - target).max(Vec2::ZERO);
         let shrunk = !primary && group.keeps_step() && (size.x > room.x || size.y > room.y);
