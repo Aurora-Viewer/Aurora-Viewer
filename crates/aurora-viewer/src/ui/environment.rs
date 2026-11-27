@@ -21,6 +21,8 @@ use uuid::Uuid;
 
 use crate::weather::WeatherSettings;
 
+mod sea;
+
 /// What the window asks the app to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvAction {
@@ -137,6 +139,11 @@ pub struct EnvironmentUi {
     pub night: Option<NightSkyPick>,
     /// The Aurora Weather window is open (from the Environment window).
     pub weather_open: bool,
+    /// The name typed for a sea preset (its Sea section).
+    sea_name: String,
+    /// The Aurora Weather window's page: 0 the weather, 1 the sea (one at a
+    /// time: both at once made the window taller than many screens).
+    weather_tab: usize,
     /// The parcel button (kept by the app).
     pub parcel_choice: ParcelChoice,
     /// Open this list's drop-down on the next frame (demo captures).
@@ -184,6 +191,8 @@ impl EnvironmentUi {
         open: &mut bool,
         lighting: &mut bool,
         weather: &mut WeatherSettings,
+        sea: &mut crate::weather::sea::SeaSettings,
+        sea_now: &aurora_render::water_sea::Sea,
     ) -> Vec<EnvAction> {
         let mut out = Vec::new();
         let screen = ctx.content_rect();
@@ -225,14 +234,27 @@ impl EnvironmentUi {
             }
         }
         let mut weather_open = self.weather_open;
-        self.show_weather(ctx, p, weather, &mut weather_open);
+        self.show_weather(ctx, p, weather, sea, sea_now, &mut weather_open);
         self.weather_open = weather_open;
         out
     }
 
+    /// Show the Aurora Weather window's Sea page (the water demo's panel).
+    pub fn open_sea_page(&mut self) {
+        self.weather_tab = 1;
+    }
+
     /// "Aurora Weather": the weather drawn for this viewer, beside the
     /// Environment window (Aurora's own: the Legacy Viewer has none).
-    fn show_weather(&mut self, ctx: &egui::Context, p: &Palette, weather: &mut WeatherSettings, open: &mut bool) {
+    fn show_weather(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        weather: &mut WeatherSettings,
+        sea: &mut crate::weather::sea::SeaSettings,
+        sea_now: &aurora_render::water_sea::Sea,
+        open: &mut bool,
+    ) {
         if !*open {
             return;
         }
@@ -240,8 +262,32 @@ impl EnvironmentUi {
         // left of the Environment window, which it opens beside
         let left = screen.right() - 750.0 - super::weather_window::WINDOW_SIZE.x;
         let pos = egui::pos2(left.max(screen.left() + 10.0), screen.top() + 90.0);
-        let actions = super::weather_window::floater(pos).show(ctx, p, open, |ui| super::weather_window::body(ui, p, weather));
-        if let Some(actions) = actions {
+        let actions = super::weather_window::floater(pos).show(ctx, p, open, |ui| {
+            // its two pages: the weather (weather_window.rs), and the sea of
+            // enhanced water (one at a time: both made it taller than many
+            // screens)
+            let mut tab = self.weather_tab.min(1);
+            widgets::segmented(
+                ui,
+                p,
+                &mut tab,
+                &[(aurora_i18n::tr!("ui-sea-tab-weather"), true), (aurora_i18n::tr!("ui-sea"), true)],
+            );
+            self.weather_tab = tab;
+            ui.add_space(6.0);
+            if tab == 1 {
+                // the sea: the user's whoever sets the weather (scrolling in
+                // the window's steady size), as the weather's cards, with the
+                // sea drawn now
+                egui::ScrollArea::vertical()
+                    .id_salt("aurora_weather_sea")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| sea::body(ui, p, sea, &mut self.sea_name, sea_now));
+                return None;
+            }
+            Some(super::weather_window::body(ui, p, weather))
+        });
+        if let Some(actions) = actions.flatten() {
             self.weather_clean |= actions.clean;
             self.weather_fill |= actions.fill;
         }

@@ -844,6 +844,8 @@ pub struct App {
     rain_last: Option<Instant>,
     /// The weather settings as last saved (saved again when changed).
     weather_saved: crate::weather::WeatherSettings,
+    /// The Sea panel's settings as last saved.
+    sea_saved: crate::weather::sea::SeaSettings,
     /// The weather's wind, in gusts.
     weather_wind: crate::weather::Wind,
     /// The weather in effect this frame: the settings (`update_weather_now`;
@@ -2208,6 +2210,7 @@ impl App {
             rain_sound_dt: Instant::now(),
             rain_last: None,
             weather_saved: Default::default(),
+            sea_saved: Default::default(),
             weather_wind: Default::default(),
             weather_now: Default::default(),
             thunder: Default::default(),
@@ -7112,6 +7115,42 @@ impl App {
         } else {
             self.camera.position
         }
+    }
+
+    /// The linksets selected in Edit (their roots' object indices): they
+    /// stop riding the waves while they are (scene/water_ride.rs).
+    fn held_for_water(&self) -> Vec<usize> {
+        if !self.build.open {
+            return Vec::new();
+        }
+        self.build
+            .selection
+            .iter()
+            .filter_map(|key| self.world.objects.index_of(key))
+            .map(|i| self.world.objects.linkset_root(i))
+            .collect()
+    }
+
+    /// The wind that raises the sea of enhanced water (m/s, blowing
+    /// toward), as the Sea panel says (`weather::sea::SeaSettings::wind`):
+    /// by default Aurora Weather's while its wind blows, the region's at
+    /// the camera otherwise. In the water demo, its own
+    /// (`demo::water::sea_wind`), unless the panel sets the sea itself.
+    fn sea_wind(&self) -> glam::Vec2 {
+        let sea = &self.settings.sea;
+        if self.demo
+            && sea.source != crate::weather::sea::SeaSource::Mine
+            && let Some(wind) = crate::demo::water::sea_wind()
+        {
+            return wind;
+        }
+        let weather = (self.weather_now.wind_range().1 > 0.0).then_some(self.weather_wind.now);
+        let region = self
+            .world
+            .main()
+            .map_or(Vec3::ZERO, |r| r.wind.velocity(self.camera.position, r.heightmap.size_x as f32))
+            .truncate();
+        sea.wind(region, weather)
     }
 
     /// audio_update_wind: the wind at our avatar, heard while flying above
@@ -12046,9 +12085,14 @@ impl App {
                 &mut self.panels,
                 self.frame_count,
                 self.start.elapsed().as_secs_f32(),
+                &self.scene.lists.water_sea,
             )
         {
             gfx.renderer.apply_settings(self.photo_render_settings());
+        }
+        // the water demo's reef, a mesh whose box is nothing like it
+        if self.demo && matches!(self.screen, Screen::World) && crate::demo::water::reef_to_install() {
+            self.scene.install_demo_reef(&mut gfx.renderer);
         }
         // the order of the blended faces: the user's, the exact one only
         // where the renderer draws it (not under MSAA, scene/blend_order.rs)
@@ -13135,11 +13179,37 @@ impl App {
         self.scene.mirror_plane = mirror.as_ref().map(|m| (m.point, m.normal));
         t_part = self.scene.parts.lap(Part::ParamsMirror, t_part);
         if in_world {
+            if self.demo && crate::demo::water::sea_panel_setup(&mut self.settings) {
+                self.env_ui.weather_open = true;
+                self.env_ui.open_sea_page();
+            }
+            let wind = self.sea_wind();
+            let tune = self.settings.sea.tune();
             self.scene.update_water_effects(
                 &self.world,
                 self.camera.position,
                 world_clock(),
                 self.settings.water_effects.render(),
+                wind,
+                tune,
+                // the sea grid's shore maps made since (water_shore.rs)
+                std::mem::take(&mut gfx.renderer.shore_maps),
+            );
+            // the avatars get wet in it (scene/avatar_wet.rs, run as the
+            // anchors are written)
+            self.scene.avatar_wet.settings = Some(self.settings.water_effects.render());
+            self.scene.avatar_wet.clock = world_clock();
+            self.scene.avatar_wet.eye = self.camera.position;
+            // floating objects ride the same sea (scene/water_ride.rs)
+            let held = self.held_for_water();
+            crate::scene::water_ride::update(
+                &mut self.world,
+                self.settings.water_effects.render(),
+                &self.scene.lists.water_sea,
+                &self.scene.lists.water_ground,
+                world_clock(),
+                self.camera.position,
+                &held,
             );
         }
         // particles
@@ -13463,6 +13533,7 @@ impl App {
             snow_fallen: self.scene.snow_trails.fallen,
             rain_look: aurora_render::RainLook {
                 snow_detail: self.scene.snow_detail.slot(&mut gfx.renderer).unwrap_or(0),
+                water_foam: self.scene.water_foam.slot(&mut gfx.renderer).unwrap_or(0),
                 // AURORA_SNOW_LYING=<0..1>: snow held at least that deep
                 // (demo captures of deep snow, which takes minutes to gather).
                 // Not with "Snow settles" off: the floor laid it again every
@@ -13902,6 +13973,9 @@ impl App {
             // the second, or a click that changed a row's size is lost.
             actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
             self.studio_overlay(ui.ctx());
+            if self.demo {
+                crate::demo::water::sea_panel(ui.ctx(), &self.scene.lists.water_sea);
+            }
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             crate::outside::carry::hint(ui.ctx(), &self.palette);
             if inventory_drop.is_empty() {
@@ -22241,11 +22315,17 @@ impl App {
                     &mut open,
                     &mut lighting,
                     &mut self.settings.weather,
+                    &mut self.settings.sea,
+                    // the sea drawn now, for the Sea page's preview
+                    &self.scene.lists.water_sea,
                 );
                 self.panels.environment = open;
                 // the weather saved once a slider is let go
-                if self.settings.weather != self.weather_saved && !ctx.input(|i| i.pointer.any_down()) {
+                if (self.settings.weather != self.weather_saved || self.settings.sea != self.sea_saved)
+                    && !ctx.input(|i| i.pointer.any_down())
+                {
                     self.weather_saved = self.settings.weather.clone();
+                    self.sea_saved = self.settings.sea.clone();
                     self.settings.save();
                 }
                 // Quick preferences' environment block shares the window's

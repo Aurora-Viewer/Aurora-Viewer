@@ -346,6 +346,10 @@ struct SkinBind {
 // each record's model matrix.
 @group(1) @binding(3) var<storage, read> prev_palettes: array<mat4x4<f32>>;
 @group(1) @binding(4) var<storage, read> prev_models: array<mat4x4<f32>>;
+// The avatars' wet memory (types.rs AVATAR_WET_BLOCKS, AVATAR_WET_JOINTS;
+// object.wgsl avatar_wet_memory).
+@group(1) @binding(5) var<storage, read> avatar_wet: array<vec4<u32>>;
+const AVATAR_WET_JOINTS: u32 = 256u;
 
 // Bindless textures pooled in pages (textures.rs): a slot's location packs
 // the page (high 16 bits) and its layer (low 16 bits).
@@ -496,6 +500,13 @@ fn sample_tex_unbiased(idx: u32, uv: vec2<f32>) -> vec4<f32> {
 fn sample_tex_level(idx: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
     let loc = tex_loc.values[idx];
     return textureSampleLevel(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, lod);
+}
+
+// With the pixel's own uv derivatives (`gx`, `gy`), filtered by the
+// anisotropic sampler as they say: where the control flow is not uniform.
+fn sample_tex_grad(idx: u32, uv: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>) -> vec4<f32> {
+    let loc = tex_loc.values[idx];
+    return textureSampleGrad(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, gx, gy);
 }
 
 fn in_reflection_pass() -> bool {
@@ -3158,13 +3169,17 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
 }
 
 // Local water controls and history. Opaque GTAO depth is never overwritten.
-struct WaterFxControls { area: vec4<f32>, previous: vec4<f32>, clock: vec4<f32>, counts: vec4<u32> };
+struct WaterFxControls { area: vec4<f32>, previous: vec4<f32>, clock: vec4<f32>, counts: vec4<u32>, sea_area: vec4<f32>, sea: WaterSea, fine: vec4<f32> };
 struct WaterFxEvent { position: vec4<f32>, motion: vec4<f32>, params: vec4<f32> };
 @group(0) @binding(15) var water_field: texture_2d<f32>;
 @group(0) @binding(16) var<storage, read> water_events: array<WaterFxEvent>;
 @group(0) @binding(17) var<uniform> water_fx: WaterFxControls;
 @group(0) @binding(18) var water_ground: texture_2d<f32>;
 @group(0) @binding(19) var water_light: texture_2d<f32>;
+// the wind sea's finer maps (water_ocean_gpu.rs): per cascade its
+// displacement and slopes, then the foam; `fine` in water_fx says whether
+// they hold this frame's sea and their tiles
+@group(0) @binding(33) var water_fine: texture_2d_array<f32>;
 fn water_fx_on(bit: u32) -> bool { return (water_fx.counts.z & bit) != 0u; }
 fn water_fx_uv(p: vec2<f32>) -> vec2<f32> { return (p - water_fx.area.xy) / max(water_fx.area.z,1.0); }
 fn water_fx_bed(p: vec2<f32>) -> vec2<f32> {
@@ -3174,6 +3189,205 @@ fn water_fx_bed(p: vec2<f32>) -> vec2<f32> {
     let i = vec2<i32>(floor(pos)); let j = min(i + vec2<i32>(1),vec2<i32>(63)); let f = fract(pos);
     return mix(mix(textureLoad(water_ground,i,0).xy,textureLoad(water_ground,vec2<i32>(j.x,i.y),0).xy,f.x),
         mix(textureLoad(water_ground,vec2<i32>(i.x,j.y),0).xy,textureLoad(water_ground,j,0).xy,f.x),f.y);
+}
+// One texel of the sea grid (water_effects.rs `WaterGround::sea`, 128 a
+// side under the 64 bathymetry rows): x the wave depth, y the shelter
+// packed (`pack_shelter`: calm in 1/255, clearance in centimetres), z the
+// main swell's refraction (its travel's offset from the plane wave, m), w
+// its swell reach and chop packed. Decoded before any mix:
+// [0] depth, calm, travel, swell reach; [1].x clearance, .y chop.
+fn water_fx_sea_texel(c: vec2<i32>) -> array<vec4<f32>,2> {
+    let t=textureLoad(water_ground,c+vec2<i32>(0,64),0);
+    // the previous grid, all of it, fading out (WaterGround::sea_prev, the
+    // sea's shore.x the fade): its refraction offset, swell reach and chop,
+    // its depth and its shelter (a prim entering or leaving the shelter
+    // calmed or roughened a patch of sea at once, a pop)
+    let old=textureLoad(water_ground,c+vec2<i32>(0,192),0);
+    let blend=water_fx.sea.shore.x;
+    let high=floor(t.y/256.0);
+    let old_high=floor(old.w/256.0);
+    let calm=mix((old.w-old_high*256.0)/255.0,(t.y-high*256.0)/255.0,blend);
+    let clear=mix(old_high/100.0,high/100.0,blend);
+    let now=water_fx_exposure(t.w);let was=water_fx_exposure(old.y);
+    let exposure=mix(was,now,blend);
+    return array<vec4<f32>,2>(vec4<f32>(mix(old.z,t.x,blend),calm,mix(old.x,t.z,blend),exposure.x),vec4<f32>(clear,exposure.y,0.0,0.0));
+}
+// A cell's swell reach and chop (`pack_exposure`: 1/255 each).
+fn water_fx_exposure(packed: f32) -> vec2<f32> {
+    let high=floor(packed/256.0);
+    return vec2<f32>(high/255.0,(packed-high*256.0)/255.0);
+}
+struct WaterSeaCell { depth: f32, shelter: vec2<f32>, travel: f32, shadow: f32, chop: f32 };
+// The sea grid at `p`, bilinear; outside it, its nearest edge fading into
+// open sea over 120 m, the swell's travel going on as a plane wave from the
+// edge's (`WaterGround::sea_cell`, EDGE_FADE).
+fn water_fx_sea_cell(p: vec2<f32>) -> WaterSeaCell {
+    let lo=water_fx.sea_area.xy;let extent=max(water_fx.sea_area.z,1.0);
+    let inside=clamp(p,lo,lo+vec2<f32>(extent));
+    let pos=clamp((inside-lo)/extent*128.0-0.5,vec2<f32>(0.0),vec2<f32>(127.0));
+    let i=vec2<i32>(floor(pos));let j=min(i+vec2<i32>(1),vec2<i32>(127));let f=fract(pos);
+    let t00=water_fx_sea_texel(i);let t10=water_fx_sea_texel(vec2<i32>(j.x,i.y));
+    let t01=water_fx_sea_texel(vec2<i32>(i.x,j.y));let t11=water_fx_sea_texel(j);
+    let a=mix(mix(t00[0],t10[0],f.x),mix(t01[0],t11[0],f.x),f.y);
+    let b=mix(mix(t00[1],t10[1],f.x),mix(t01[1],t11[1],f.x),f.y);
+    let clear=b.x;
+    let out=smoothstep(0.0,120.0,distance(p,inside));
+    var cell:WaterSeaCell;
+    cell.depth=mix(a.x,20.0,out);
+    cell.shelter=mix(vec2<f32>(a.y,clear),vec2<f32>(1.0,6.0),out);
+    // the plane wave along the swell now, and the grid's refraction offset,
+    // its edge's going on past the grid (faded out there, tens of metres of
+    // the swell's delay were squeezed into the fade: a line of short waves
+    // all round the grid, some 256 m out)
+    cell.travel=dot(p-lo,water_fx.sea.trains[0].xy)+a.z;
+    cell.shadow=mix(a.w,1.0,out);
+    cell.chop=mix(b.y,1.0,out);
+    return cell;
+}
+// The spectrum's wind sea at `p` (water_fft.rs `OceanMaps::sample`): per
+// cascade, its maps in the bathymetry texture from row 320 (displacement
+// xyz and ∂Dx/∂y, then the slopes and ∂Dx/∂x, ∂Dy/∂y, then the lingering
+// foam), bilinear and wrapping over the cascade's tile. Where a pixel spans
+// `footprint` m, a cascade's slopes and folds fade before they alias; the
+// long chop's foam does not (a smooth field: kept, the whitecaps vanished
+// toward the horizon and at grazing angles, where pixels are long).
+// (`fine`: the surface's own reading, whose short cascade's slope comes
+// from the GPU's finer maps when they are on: water_fx_fine)
+// Each cascade is taken by its share where the sea is read as `at`
+// (water_ocean_weights): the open sea's two, or the lakes' chop over a
+// short fetch (the third cascade, `sea.lake`).
+fn water_fx_ocean(p: vec2<f32>, footprint: f32, fine: bool, at: WaterSeaAt) -> WaterOceanAt {
+    var o=WATER_OCEAN_NONE;
+    if(water_fx.sea.shore.w<=0.0){return o;}
+    let shares=water_ocean_weights(at.chop);
+    for(var c=0;c<3;c++){
+        let w=select(shares.x,shares.y,c==2);
+        if(w<=0.0 || (c==2 && water_fx.sea.lake.x<=0.0)){continue;}
+        let tile=select(select(water_fx.sea.shore.y,water_fx.sea.shore.z,c==1),water_fx.sea.lake.x,c==2);
+        let pos=fract(p/tile)*128.0;
+        let base=floor(pos);let f=pos-base;
+        let i=vec2<i32>(base)%vec2<i32>(128);let j=(i+vec2<i32>(1))%vec2<i32>(128);
+        let row=320+c*384;
+        let d=mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+i.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+i.y),0),f.x),
+            mix(textureLoad(water_ground,vec2<i32>(i.x,row+j.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+j.y),0),f.x),f.y);
+        let s=mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+128+i.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+128+i.y),0),f.x),
+            mix(textureLoad(water_ground,vec2<i32>(i.x,row+128+j.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+128+j.y),0),f.x),f.y);
+        // (the long chop's shortest waves are 10 m, the ripples' and the
+        // lakes' chop's ~2 m on the whole: a pixel past a fraction of them
+        // aliases them)
+        let k=select(2.5,0.63,c==0);
+        let att=(1.0-smoothstep(0.5,2.0,k*footprint))*w;
+        o.offset+=d.xyz*w;
+        if(!(fine && c==1 && water_fine_on())){o.slope+=s.xy*att;}
+        o.jacobian+=vec3<f32>(s.z,d.w,s.w)*att;
+        let foam=mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+256+i.y),0).x,textureLoad(water_ground,vec2<i32>(j.x,row+256+i.y),0).x,f.x),
+            mix(textureLoad(water_ground,vec2<i32>(i.x,row+256+j.y),0).x,textureLoad(water_ground,vec2<i32>(j.x,row+256+j.y),0).x,f.x),f.y);
+        o.foam=max(o.foam,foam*select(att,w,c==0));
+    }
+    return o;
+}
+// One map of a cascade (`row`: its first row) at `q` in tiles, bilinear and
+// wrapping.
+fn water_fx_ocean_tap(q:vec2<f32>,row:i32)->vec4<f32> {
+    let pos=fract(q)*128.0;
+    let base=floor(pos);let f=pos-base;
+    let i=vec2<i32>(base)%vec2<i32>(128);let j=(i+vec2<i32>(1))%vec2<i32>(128);
+    return mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+i.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+i.y),0),f.x),
+        mix(textureLoad(water_ground,vec2<i32>(i.x,row+j.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+j.y),0),f.x),f.y);
+}
+// Enhanced water's surface height at `p` over the region water at `level`
+// (as vs_water draws it: the waves at the place they moved here from, one
+// step back by their sway; flat away from the region's water, as
+// particle_water_level). For what is cut at the surface itself.
+fn water_surface_z(p:vec2<f32>,level:f32)->f32 {
+    if(!water_fx_on(1u)){return level;}
+    let bed=water_fx_bed(p);
+    let region=(1.0-smoothstep(0.25,0.5,abs(level-bed.y)))*smoothstep(0.08,2.4,level-bed.x);
+    if(region<=0.0){return level;}
+    let at=water_fx_sea_at(p);
+    let q=p-water_sea(p,water_fx.clock.x,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(p,0.0,false,at),0.0).offset.xy;
+    let at_q=water_fx_sea_at(q);
+    return level+water_sea(q,water_fx.clock.x,water_fx.counts.w,water_fx.sea,at_q,water_fx_ocean(q,0.0,false,at_q),0.0).offset.z*region;
+}
+// The GPU's finer maps of the wind sea at `p` (water_ocean_gpu.rs: the
+// short cascade's waves four times finer than the CPU's, and the finest
+// ripples, some 4 cm to 0.43 m), filtered over the pixel's footprint
+// (`gx`, `gy`: the world position's screen derivatives) through their mips
+// and the material sampler (repeating, anisotropic). Each cascade is read
+// through its own horizontal displacement (`chop`, as the surface takes
+// the maps here), so the ripples' crests pinch sharp and their troughs
+// open wide: the jagged facets that break the sun into glints. `slope`
+// both cascades' slopes (the short one's replaces the CPU's, read with it
+// in water_fx_ocean), `foam` the short cascade's lingering foam, `kept`
+// how much of the finest ripples the pixel still resolves, `fold` how much
+// the short cascade alone pinches the surface together here (1 - its
+// displacement's Jacobian, filtered over the pixel: the crests of the small
+// wind waves, steep however small they are, where the sea's whole fold
+// takes the long swell with it and seldom shows them).
+struct WaterFine { slope: vec2<f32>, foam: f32, kept: f32, fold: f32 };
+fn water_fine_on() -> bool { return water_fx.fine.x > 0.5; }
+// (`p` where the water lies before the waves move it: water_pixel's
+// `flow`. The short cascade is in the surface's shape already, read there
+// as it is; the finest, not in it, through its own displacement.)
+// (`open`: the open sea's share where the water is read, water_ocean_weights:
+// the short cascade is the open sea's, and over a short fetch gives way to
+// the lakes' chop, read with the CPU's maps; the finest ripples, the
+// wind's, stay on any water)
+fn water_fx_fine(p:vec2<f32>,gx:vec2<f32>,gy:vec2<f32>,chop:f32,open:f32)->WaterFine {
+    var o=WaterFine(vec2<f32>(0.0),0.0,0.0,0.0);
+    if(!water_fine_on()){return o;}
+    let short=chop*open;
+    for(var c=0;c<2;c++){
+        let tile=select(water_fx.fine.y,water_fx.fine.z,c==1);
+        let uv=p/tile;let du=gx/tile;let dv=gy/tile;
+        var at=uv;
+        if(c==1){at=uv-textureSampleGrad(water_fine,tex_sampler,uv,2,du,dv).xy*chop/tile;}
+        let s=textureSampleGrad(water_fine,tex_sampler,at,2*c+1,du,dv);
+        o.slope+=s.xy*select(short,chop,c==1);
+        if(c==0){
+            // its Jacobian (∂Dx/∂x, ∂Dy/∂y in the slopes' zw, ∂Dx/∂y in the
+            // displacement's w), as water_ocean.wgsl's foam takes it; the
+            // finest ripples are capillary and do not break white
+            let dxy=textureSampleGrad(water_fine,tex_sampler,at,0,du,dv).w*short;
+            o.fold=1.0-((1.0+s.z*short)*(1.0+s.w*short)-dxy*dxy);
+        }
+    }
+    o.foam=textureSampleGrad(water_fine,tex_sampler,p/water_fx.fine.y,4,gx/water_fx.fine.y,gy/water_fx.fine.y).x*short;
+    o.kept=1.0-smoothstep(0.02,0.1,max(length(gx),length(gy)));
+    return o;
+}
+// Where the sea is read at `p` (`WaterGround::sea_point`): the wave depth
+// and the swell's travel with their gradients two cells either side, the
+// shelter, and the main swell's phase, wave vector and shadow there. What
+// every sampler of the sea reads.
+fn water_fx_sea_at(p: vec2<f32>) -> WaterSeaAt {
+    let c=water_fx_sea_cell(p);
+    // (two cells either side: a smoother way for the swell)
+    let h=max(water_fx.sea_area.z/64.0,0.25);
+    let e=water_fx_sea_cell(p+vec2<f32>(h,0.0));let w=water_fx_sea_cell(p-vec2<f32>(h,0.0));
+    let n=water_fx_sea_cell(p+vec2<f32>(0.0,h));let s=water_fx_sea_cell(p-vec2<f32>(0.0,h));
+    let k0=water_fx.sea.trains[0].z;let d0=water_fx.sea.trains[0].xy;
+    var at:WaterSeaAt;
+    at.depth=c.depth;
+    at.slope=vec2<f32>(e.depth-w.depth,n.depth-s.depth)/(2.0*h);
+    at.shelter=clamp(c.shelter.x,0.0,1.0);
+    at.cap=water_sea_cap(water_fx.sea,c.shelter.y);
+    // the travel's gradient: the way the swell goes, and how much shorter
+    // it is than in open water (1 to 6 times)
+    let grad=vec2<f32>(e.travel-w.travel,n.travel-s.travel)/(2.0*h);
+    let len=length(grad);
+    at.wave=select(d0,grad/max(len,1e-4)*clamp(len,1.0,6.0),len>0.2)*k0;
+    at.phase=k0*(c.travel+dot(water_fx.sea_area.xy-water_fx.sea.frame.xy,d0));
+    at.shadow=c.shadow;
+    at.chop=c.chop;
+    // the real bed under the fine bathymetry round the camera, the sea
+    // grid's depth past it (faded over its last 12 %: the swash once
+    // switched on and off at a shore as the camera moved)
+    let bed=water_fx_bed(p);
+    let uv=water_fx_uv(p);
+    let inside=smoothstep(0.0,0.12,min(min(uv.x,uv.y),min(1.0-uv.x,1.0-uv.y)));
+    at.bed=mix(c.depth,bed.y-bed.x,inside);
+    return at;
 }
 // Coarse height/velocity/foam above, fine slope/height/foam below. The
 // atlas keeps the existing scene bindings and sampler count unchanged.
@@ -3222,20 +3436,30 @@ fn water_fx_foam(p:vec2<f32>)->f32 {
 // Long wavelengths are resolved by the shared mesh; micro-waves stay in normals.
 fn water_fx_wave(p: vec2<f32>, level: f32) -> vec3<f32> {
     var offset=vec3<f32>(0.0);
+    var held=1.0;
     if(water_fx_on(1u)) {
-        offset+=water_swell(p,frame.camera_pos.w,water_fx.counts.w).offset*smoothstep(0.08,2.4,level-water_fx_bed(p).x);
+        let at=water_fx_sea_at(p);
+        // The swell's geometry flattens 280-310 m out: past 320 m a water
+        // patch is one quad (scene/water.rs `draws`, WAVE_GRID_REACH), and a
+        // displaced grid meeting it left a wall of water along the patch's
+        // edge. The far water keeps the swell in its normals. (Flattened
+        // from 130 m, the sea turned to a flat sheet at a visible line.)
+        let reach=1.0-smoothstep(280.0,310.0,distance(p,frame.camera_pos.xy));
+        offset+=water_sea(p,frame.camera_pos.w,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(p,0.0,false,at),0.0).offset*reach;
+        held=at.cap;
     }
-    offset.z+=clamp(water_wake_sample(p+offset.xy,level).z,-0.16,0.16);
+    // (the wake's ripples stay under a floor at the water too)
+    offset.z+=clamp(water_wake_sample(p+offset.xy,level).z,-0.16,0.16)*held;
     return offset;
 }
-// `swell` and `ground` are the caller's: the gradient of water_swell at `p`
-// and the terrain under it (water_fx_bed(p).x), which the surface reads once
-// for its normal, its wake and its foam.
+// `swell` is the caller's: the gradient of water_sea at `p` (shore handled),
+// which the surface reads once for its normal, its wake and its foam.
+// `ground` the bed under it: (the wind's sea meets the shore itself, in
+// water_sea: shoaling, breaking, swash; no fade of its slope here)
 fn water_fx_normal(p:vec2<f32>,level:f32,wake:vec2<f32>,swell:vec2<f32>,ground:f32)->vec3<f32> {
     var gradient=vec2<f32>(0.0);
     if(water_fx_on(1u)) {
         gradient=swell;
-        gradient*=smoothstep(0.08,2.4,level-ground);
     }
     if(water_fx_on(16u)) {
         let texel=water_fx.area.z/f32(textureDimensions(water_field).x);
@@ -3287,6 +3511,11 @@ fn water_caustic_combine(a:vec3<f32>,b:f32)->vec3<f32> {
 // turned and larger (WATER_CAUSTIC_TURN), through a slow warp of the
 // lookup, and red and blue a little apart along the sun's refracted ray
 // (the water's dispersion, more with the depth).
+// They follow the sea above (water_sea.rs `caustic_focus`, `caustic_drift`):
+// on glassy water, broad soft light wandering slowly, in patches where a
+// breath of wind ripples it; under a breeze, the sharp net, drifting
+// downwind; in a gale, a quick, torn, dimmer light that the swell sways.
+// Behind a reef or in a short fetch, the water is as calm as it is there.
 fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     if(!water_fx_on(32u) || frame.misc.w>0.5){return vec3<f32>(0.0);}
     if(!camera_underwater() && water_excluded(pos)){return vec3<f32>(0.0);}
@@ -3295,13 +3524,22 @@ fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     let light=normalize(frame.sun_dir.xyz);
     let ray=refract(-light,vec3<f32>(0.0,0.0,1.0),0.7501875);
     var project=pos.xy-ray.xy*depth/max(-ray.z,0.2);
-    project-=water_swell(project,frame.camera_pos.w,water_fx.counts.w).gradient*min(depth,7.0)*0.25;
-    // about 11 m across, drifting at a few centimetres a second
+    let sea=water_fx.sea;
+    let at=water_fx_sea_at(project);
+    // (the spectrum's chop left out: the micro waves' map draws the short
+    // caustics, and its texture reads would cost every lit pixel underwater)
+    project-=water_sea(project,frame.camera_pos.w,water_fx.counts.w,sea,at,WATER_OCEAN_NONE,0.0).gradient*min(depth,7.0)*0.25;
+    // how rough the water is above: the wind's, as much as the fetch and
+    // what shelters it leave
+    let rough=clamp(sea.frame.w*clamp(at.chop,0.0,1.0)*clamp(at.shelter,0.0,1.0),0.0,1.0);
+    // the ripples' drift downwind (m), and a slow wander of its own
     let time=frame.camera_pos.w;
-    let warp_at=project*0.09;
-    project+=(vec2<f32>(water_fx_noise(warp_at+vec2<f32>(time*0.021,0.0)),water_fx_noise(warp_at+vec2<f32>(4.7,3.1-time*0.017)))-0.5)*2.4;
+    let drift=sea.look.zw+vec2<f32>(time*0.011,-time*0.007);
+    // about 11 m across, torn further as the sea roughens
+    let warp_at=(project-drift)*0.09;
+    project+=(vec2<f32>(water_fx_noise(warp_at),water_fx_noise(warp_at+vec2<f32>(4.7,3.1)+vec2<f32>(-drift.y,drift.x)*0.03))-0.5)*(1.8+3.2*rough);
     let uv=project/16.0;
-    let second=water_caustic_tap((WATER_CAUSTIC_TURN*project)/WATER_CAUSTIC_TILE2+vec2<f32>(time*0.0041,-time*0.0029),depth);
+    let second=water_caustic_tap((WATER_CAUSTIC_TURN*(project-drift*0.35))/WATER_CAUSTIC_TILE2,depth);
     var focus:vec3<f32>;
     if(water_fx.counts.w==0u){focus=vec3<f32>(water_caustic_tap(uv,depth));}
     else{
@@ -3312,7 +3550,14 @@ fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
             (water_caustic_tap(uv+WATER_CAUSTIC_FILTER,depth)+water_caustic_tap(uv-WATER_CAUSTIC_FILTER,depth))*0.5,
             water_caustic_tap(uv-spread,depth));
     }
-    let energy=max(water_caustic_combine(focus,second)-vec3<f32>(0.9),vec3<f32>(0.0))*0.42;
+    // a rough sea's light is less focused (whitecaps, bubbles, a torn
+    // surface): a lower threshold, a lower gain
+    let threshold=0.9-0.08*rough;
+    var energy=max(water_caustic_combine(focus,second)-vec3<f32>(threshold),vec3<f32>(0.0))*(0.42*(1.0-0.2*rough));
+    // patches some 30 m across drifting downwind, where gusts ripple the
+    // water more than beside them: plain on calm water, less in a gale
+    let gusty=smoothstep(0.15,0.85,water_fx_noise((project-drift*1.6)*0.034+vec2<f32>(9.2,1.7)));
+    energy*=mix(1.0,0.3+1.4*gusty,0.65-0.35*rough);
     let extinction=exp(-depth*(0.13+frame.water_fog.w*0.025));
     return frame.sun_color.rgb*energy*extinction*max(dot(normal,light),0.0)*frame.sun_dir.w*smoothstep(0.03,0.3,depth);
 }
@@ -3330,6 +3575,43 @@ fn water_fx_noise(p: vec2<f32>) -> f32 {
         mix(water_fx_hash(i+vec2<f32>(0.0,1.0)).x,water_fx_hash(i+vec2<f32>(1.0,1.0)).x,w.x),w.y);
 }
 
+// The swash's foam (0..1): a flat, marbled lace over the whole swash, as
+// a breaking wave leaves it. Dense as the swash rushes up the beach, it
+// thins into a net of lines as it drains back, and it rides with the
+// water: up the beach with the front, dragged back seaward with it. The
+// water's surface and the backwash's sheet on the sand draw the same lace
+// at the same place, so as the water sinks under the sand its foam goes on
+// pulling back and fades there. `at` the sea read here, `theta` the swash's
+// phase (water_swash_shift added), `reach` how high it runs.
+fn water_swash_foam(p: vec2<f32>, at: WaterSeaAt, theta: f32, reach: f32) -> f32 {
+    let fall=length(at.slope);
+    let beach=water_swash_beach(at);
+    if(beach<0.01 || reach<0.02){return 0.0;}
+    let down=at.slope/fall;
+    let rise=water_swash_rise(theta).x;
+    let s=fract(-theta/6.2831853);
+    // how much: building as it runs up, thinning to a lace as it drains
+    let u=clamp((s-0.3)/0.7,0.0,1.0);
+    let amount=select(0.15+0.85*smoothstep(0.0,0.3,s),1.0-0.85*u*u,s>0.3)*smoothstep(0.03,0.2,reach);
+    // where the water carried it: the lace slides seaward as the front
+    // falls back, landward as it runs up
+    let slid=min(reach*(1.0-rise)/max(fall,0.03),20.0);
+    let q=p-down*slid;
+    // the foam texture's lace, when there is one (water_foam_lace; the
+    // footprint from the distance, at about a 1080p view's)
+    if(water_foam_textured()){
+        let lace=water_foam_lace(q,distance(p,frame.camera_pos.xy)*0.0012+0.002);
+        return water_foam_lace_cover(amount,lace)*clamp(amount*1.3,0.0,1.0)*beach;
+    }
+    // a marbled network: warped noise folded into ridges
+    let warp=vec2<f32>(water_fx_noise(q*0.35),water_fx_noise(q*0.35+vec2<f32>(5.2,1.3)))-0.5;
+    let r=q+warp*3.0;
+    let n=water_fx_noise(r*0.9)*0.65+water_fx_noise(r*2.3+vec2<f32>(3.7,8.1))*0.35;
+    let ridge=1.0-abs(n-0.5)*2.0;
+    // much foam fills the cells (a sheet with holes), little leaves lines
+    let edge=1.0-amount*0.85;
+    return smoothstep(edge,edge+0.15,ridge)*clamp(amount*1.3,0.0,1.0)*beach;
+}
 // Continuous torn coverage and filtered fine grain, without a lattice of holes.
 // The pattern at a point (x the torn structure, y the grain) does not depend
 // on how much foam there is: the surface works it out once for the foam of
@@ -3348,4 +3630,70 @@ fn water_foam_pattern(p:vec2<f32>,footprint:f32)->vec2<f32> {
 fn water_foam_coverage(amount:f32,pattern:vec2<f32>)->f32 {
     if(amount<0.08){return 0.0;}
     return smoothstep(0.08,0.75,amount)*pattern.x*pattern.y;
+}
+// The foam texture (scene/water_foam.rs: "Foam 003", a lace of sea foam
+// and its thickness), when the viewer has it: its bindless slot rides in
+// `water_fx.fine.w`.
+fn water_foam_textured() -> bool { return water_fx.fine.w > 0.5; }
+const WATER_FOAM_TURN:mat2x2<f32>=mat2x2<f32>(0.7986355,0.6018150,-0.6018150,0.7986355);
+// The lace at `p` for a pixel spanning `footprint` m: read twice, on tiles
+// of 3.1 m and 5.3 m turned 37° against each other (so neither repeats
+// where it shows) through a slow warp, drifting with the wind; mipmapped
+// by the footprint. x the lace, y its thickness, z how much of it the
+// pixel still resolves (past some 20 cm a pixel holds whole cells, and the
+// mips' averages are not a lace to cut).
+fn water_foam_lace(p:vec2<f32>,footprint:f32)->vec3<f32> {
+    let slot=u32(water_fx.fine.w);
+    // (`p` where the water lies before the waves move it: the lace rides
+    // with it; drifting only slowly downwind, as the surface's water does)
+    let drift=p-water_fx.sea.wind.xy*frame.camera_pos.w*(0.02+0.004*water_fx.sea.wind.z);
+    let warp=vec2<f32>(water_fx_noise(drift*0.21),water_fx_noise(drift*0.21+vec2<f32>(5.2,1.3)))-0.5;
+    let q=drift+warp*1.4;
+    let a=sample_tex_level(slot,q/3.1,log2(max(footprint*1024.0/3.1,1.0)));
+    let b=sample_tex_level(slot,(WATER_FOAM_TURN*q)/5.3,log2(max(footprint*1024.0/5.3,1.0)));
+    return vec3<f32>(max(a.r,b.r*0.85),max(a.a,b.a*0.85),1.0-smoothstep(0.04,0.25,footprint));
+}
+// The same on the water's surface, where the pixel's derivatives of `p`
+// are known (`gx`, `gy`, m per pixel across and down the screen): each
+// tile read through the anisotropic sampler along them. One mip for a
+// pixel's mean size kept the lace sharp along the view across a sloping
+// sea, where a pixel spans many of its cells: its holes and edges then
+// stepped from pixel to pixel, and crawled as the waves moved.
+fn water_foam_lace_grad(p:vec2<f32>,gx:vec2<f32>,gy:vec2<f32>)->vec3<f32> {
+    let slot=u32(water_fx.fine.w);
+    let drift=p-water_fx.sea.wind.xy*frame.camera_pos.w*(0.02+0.004*water_fx.sea.wind.z);
+    let warp=vec2<f32>(water_fx_noise(drift*0.21),water_fx_noise(drift*0.21+vec2<f32>(5.2,1.3)))-0.5;
+    let q=drift+warp*1.4;
+    let a=sample_tex_grad(slot,q/3.1,gx/3.1,gy/3.1);
+    let b=sample_tex_grad(slot,(WATER_FOAM_TURN*q)/5.3,(WATER_FOAM_TURN*gx)/5.3,(WATER_FOAM_TURN*gy)/5.3);
+    // (the lace gives way to its average by the pixel's size between its
+    // mean and its longest side, as water_foam_lace's caller had it, and
+    // once its holes, some 9 to 24 cm across, come down to a few pixels:
+    // from 2 cm a pixel, all of it by 7 cm. Cut into holes a pixel or two
+    // across, from 4 cm to 25 cm a pixel, it sparkled as a fine speckle
+    // that crawled with the waves over every patch of foam a little way off)
+    let mean=sqrt(max(length(gx)*length(gy),1e-10));
+    let footprint=sqrt(mean*max(length(gx),length(gy)));
+    return vec3<f32>(max(a.r,b.r*0.85),max(a.a,b.a*0.85),1.0-smoothstep(0.02,0.07,footprint));
+}
+// How much of the lace `amount` of foam shows (0..1): thick foam fills its
+// cells, thin foam leaves only its strands, and fades as it thins (foam
+// left behind by a crest dissolves as it lingers, water_fft.rs `linger`,
+// instead of holding its strands and then vanishing); far off, its
+// average. Under it a soft white veil in the foam's own shape, from which
+// the lace stands out where the foam is dense (Sea of Thieves blurs its
+// foam mask for it: Ang et al., SIGGRAPH 2018); our amount is already a
+// smooth field, read here as it is.
+fn water_foam_lace_cover(amount:f32,lace:vec3<f32>)->f32 {
+    if(amount<0.04){return 0.0;}
+    let veil=smoothstep(0.04,0.7,amount)*0.24;
+    // (soft edges, and the far average about the near lace's: a harder cut
+    // drew paper cut-outs, a fuller average greyed a gale's whole sea)
+    let edge=1.0-clamp(amount,0.0,1.0)*0.85;
+    let body=smoothstep(edge-0.1,edge+0.24,lace.y*0.7+lace.x*0.4);
+    // (faint foam shows as fewer strands, not a fainter sheet: drawn half
+    // see-through, the thin foam a turned-up Foam slider brings out behind
+    // the crests read as a grey fog)
+    let near=body*mix(0.55,1.0,lace.x)*smoothstep(0.04,0.15,amount);
+    return max(mix(clamp(amount,0.0,1.0)*0.45,near,lace.z),veil);
 }

@@ -782,6 +782,8 @@ pub struct Settings {
     /// (an Aurora switch on the lists, off: the order since #812; the
     /// Legacy Viewer's lists are always by name).
     pub env_lists_by_name: bool,
+    /// The waves of enhanced water (the Aurora Weather window's "Sea").
+    pub sea: crate::weather::sea::SeaSettings,
     /// Which stars the night sky shows: the real sky over Paris (Aurora's
     /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
     pub night_sky: crate::world::night_sky::NightSky,
@@ -2564,6 +2566,7 @@ impl Default for Settings {
             env_persist: true,
             weather: Default::default(),
             env_lists_by_name: false,
+            sea: Default::default(),
             night_sky: Default::default(),
             night_sky_place: Default::default(),
             night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
@@ -4514,6 +4517,8 @@ pub struct WaterEffectsSettings {
     pub caustics: bool,
     pub splashes: bool,
     pub bubbles: bool,
+    /// Avatars wet where they were in the water (scene/avatar_wet.rs).
+    pub wet_avatars: bool,
 }
 impl Default for WaterEffectsSettings {
     fn default() -> Self {
@@ -4531,6 +4536,7 @@ impl Default for WaterEffectsSettings {
             caustics: true,
             splashes: true,
             bubbles: true,
+            wet_avatars: true,
         }
     }
 }
@@ -4551,6 +4557,10 @@ impl WaterEffectsSettings {
             caustics: self.caustics,
             splashes: self.splashes,
             bubbles: self.bubbles,
+            wet_avatars: self.wet_avatars,
+            // (the renderer takes the texture's slot from the frame:
+            // RainLook::water_foam)
+            foam_texture: 0,
         }
     }
 }

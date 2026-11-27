@@ -1089,6 +1089,11 @@ fn reflections_and_water(cx: &mut Cx) {
             cx.toggle(tr!("water-effects-caustics"), "", &field!(water_effects.caustics));
             cx.toggle(tr!("water-effects-splashes"), "", &field!(water_effects.splashes));
             cx.toggle(tr!("water-effects-bubbles"), "", &field!(water_effects.bubbles));
+            cx.toggle(
+                tr!("water-effects-wet-avatars"),
+                tr!("water-effects-wet-avatars-help"),
+                &field!(water_effects.wet_avatars),
+            );
         });
     });
 }

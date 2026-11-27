@@ -1,6 +1,9 @@
 // Forward ray projection: overlapping refracted triangles add light, conserving
 // their source area. Three receiving depths share RGB in one bounded light map.
-struct CausticControls { area:vec4<f32>, previous:vec4<f32>, clock:vec4<f32>, counts:vec4<u32> };
+// `sea_area.w`: how hard the ripples focus the sun with the sea now
+// (water_sea.rs `caustic_focus`): soft broad light on glassy water, tight
+// lines under a breeze or a gale.
+struct CausticControls { area:vec4<f32>, previous:vec4<f32>, clock:vec4<f32>, counts:vec4<u32>, sea_area:vec4<f32> };
 @group(0) @binding(0) var<uniform> caustic_fx:CausticControls;
 struct CausticOut {
     @builtin(position) clip:vec4<f32>,
@@ -13,7 +16,8 @@ struct CausticOut {
 // own ripples.
 fn caustic_focus_gain(quality:u32)->f32 {
     let q=min(quality,3u);
-    return select(select(1.0,1.15,q==2u),select(1.4,1.6,q==0u),q<2u);
+    let sea=clamp(caustic_fx.sea_area.w,0.2,2.0);
+    return select(select(1.0,1.15,q==2u),select(1.4,1.6,q==0u),q<2u)*sea;
 }
 @vertex
 fn vs_caustic(@builtin(vertex_index) vertex:u32,@builtin(instance_index) instance:u32)->CausticOut {

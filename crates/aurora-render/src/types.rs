@@ -287,8 +287,21 @@ pub const SKELETON_ANCHOR: u32 = 208;
 /// anchors: column `k` is `palettes[base + LIVE_MORPH_WEIGHTS + k / 16][k / 4 % 4][k % 4]`.
 pub const LIVE_MORPH_WEIGHTS: u32 = 256;
 /// The palette entry after a skeleton's live morph weights (four matrices)
-/// holding how much snow is on the avatar (Aurora Weather).
+/// holding the weather on the avatar: x of its first column how much snow
+/// is on it (Aurora Weather); its second column the water line around it
+/// (z = x + y·px + z·py over region coordinates, w the fully wet band
+/// above it, m; zero: no water near), x of its third column its block of
+/// wet memory in `AVATAR_WET` plus one (0: none). Enhanced water's wet
+/// look (scene/avatar_wet.rs).
 pub const AVATAR_SNOW: u32 = 260;
+/// Blocks of wet memory: the avatars that can be wet at once.
+pub const AVATAR_WET_BLOCKS: usize = 32;
+/// Entries per block: one per palette entry of a skeleton up to its
+/// attachment points (joints, then anchors), a `[u32; 4]` each: eight
+/// cells of wetness (unorm8) along the up the water had in the joint's
+/// frame when it got wet (two snorm16 and one), and how far either way
+/// they reach (snorm16, half of it: m).
+pub const AVATAR_WET_JOINTS: usize = 256;
 /// What the snow entry holds in its last element (w of its last column)
 /// when the viewer wrote it: anything else there (the identity a palette
 /// starts with, a joint's matrix, nothing written yet) is no snow. Read
@@ -672,6 +685,16 @@ pub struct DrawLists {
     pub water_events: Vec<crate::WaterEvent>,
     pub water_contacts: Vec<crate::WaterEvent>,
     pub water_ground: crate::WaterGround,
+    /// The wind's sea this frame (water_sea.rs): the swell every water
+    /// sampler shares.
+    pub water_sea: crate::water_sea::Sea,
+    /// The sea grid's shore map asked for this frame (water_shore.rs), with
+    /// the meshes drawn into it; its cells come back a few frames later in
+    /// `Renderer::shore_maps`.
+    pub water_shore: Option<crate::water_shore::ShoreRequest>,
+    /// The Sea panel's Spray (1: as a real sea throws; 0: none): how much
+    /// fuzz the breaking crests carry (water_effects.rs `crest_mist`).
+    pub water_spray: f32,
     /// Rain prototype: the terrain's heights around the camera.
     pub rain_ground: crate::RainGround,
     /// Sorted back to front, the first `blend_depth` apart (below).
@@ -899,6 +922,9 @@ impl DrawLists {
         self.water_events.clone_from(&src.water_events);
         self.water_contacts.clone_from(&src.water_contacts);
         self.water_ground.clone_from(&src.water_ground);
+        self.water_sea = src.water_sea;
+        self.water_shore.clone_from(&src.water_shore);
+        self.water_spray = src.water_spray;
         self.rain_ground.clone_from(&src.rain_ground);
         self.glow.clone_from(&src.glow);
         self.glow_alpha.clone_from(&src.glow_alpha);
@@ -959,6 +985,7 @@ impl DrawLists {
         self.water_events.clear();
         self.water_contacts.clear();
         self.water_ground = Default::default();
+        self.water_shore = None;
         self.rain_ground = Default::default();
         self.glow.clear();
         self.blend_glow.clear();
@@ -1722,6 +1749,9 @@ pub struct RainLook {
     /// The lying snow's detail texture (normal and height): its bindless
     /// slot, 0 for none.
     pub snow_detail: u32,
+    /// Enhanced water's foam texture (a lace and its thickness): its
+    /// bindless slot, 0 for none (the foam is then the procedural pattern).
+    pub water_foam: u32,
     /// How far the weather lying on the ground is drawn at most (m): the
     /// farther of the puddles' and the snow's distances. The wetness
     /// memory's square covers it (128, 256 or 512 m).
@@ -1790,6 +1820,7 @@ impl Default for RainLook {
             quality: 2,
             snow: 0.0,
             snow_detail: 0,
+            water_foam: 0,
             memory_reach: 60.0,
             snow_distance: 60.0,
             deep_reach: 15.0,

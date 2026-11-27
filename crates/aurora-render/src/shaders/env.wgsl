@@ -941,10 +941,30 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         albedo = srgb_to_linear(p0 * w0 + p1 * w1 + p2 * w2 + p3 * w3) * 1.6;
     }
     var wet=0.0;
+    // the backwash's draining sheet over the sand (0..1)
+    var sheet=0.0;
     if(water_fx_on(1024u)) {
         let level=water_fx_bed(in.world_pos.xy).y;
-        wet=(1.0-smoothstep(0.05,0.45,in.world_pos.z-level))*smoothstep(-2.0,-0.1,in.world_pos.z-level);
-        albedo*=1.0-wet*0.32;
+        let e=in.world_pos.z-level;
+        wet=(1.0-smoothstep(0.05,0.45,e))*smoothstep(-2.0,-0.1,e);
+        // with the wind's waves the sand is wet as far up as the swash
+        // runs: soaked under its front, damp below its highest, drying in
+        // its backwash, so each wave leaves its line on the beach
+        if(water_fx_on(1u) && e>0.0 && e<1.1) {
+            let at=water_fx_sea_at(in.world_pos.xy);
+            let reach=water_swash_reach(water_fx.sea,at);
+            if(reach>0.03) {
+                let theta=at.phase-(water_fx.sea.phase[0]+water_fx.sea.omega[0]*(frame.camera_pos.w-water_fx.sea.frame.z))+water_swash_shift(at);
+                wet=max(wet,water_swash_wet(theta,reach,e)*water_swash_beach(at));
+                let back=water_sand_backwash(in.world_pos.xy,at,theta,reach,e);
+                sheet=back.x;
+                // water standing on the sand: darker, tinted like the
+                // shallows, under the foam it carries
+                albedo=mix(albedo,albedo*vec3<f32>(0.55,0.57,0.58),sheet);
+                albedo=mix(albedo,vec3<f32>(0.66,0.68,0.7),back.y);
+            }
+        }
+        albedo*=1.0-wet*0.32*(1.0-sheet);
     }
     let n = normalize(in.normal);
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
@@ -956,7 +976,13 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         let nv=max(dot(n,v),0.001);let nl=max(dot(n,l),0.0);
         let fresnel=0.02037+0.97963*pow(1.0-nv,5.0);
         let glint=d_ggx(max(dot(n,half_vec),0.0),0.08)*v_smith(nv,nl,0.08)*nl*0.02;
-        wet_light=(sky_color(reflect(-v,n))*fresnel*0.25+frame.sun_color.rgb*sun_glass*min(glint,2.0)*select(sh, shadow_lift(sh), is_classic_sky()))*wet;
+        // (the backwash's sheet is a mirror of water over the sand: its
+        // surface is level, whatever the grains under it)
+        let mirror=normalize(mix(n,vec3<f32>(0.0,0.0,1.0),sheet*0.7));
+        let sheet_fresnel=0.02037+0.97963*pow(1.0-max(dot(mirror,v),0.001),5.0);
+        // (a few centimetres of water: some sky, not a mirror's, which
+        // tinted whole banks blue)
+        wet_light=(sky_color(reflect(-v,n))*fresnel*0.25*(1.0-sheet)+sky_color(reflect(-v,mirror))*sheet_fresnel*0.4*sheet+frame.sun_color.rgb*sun_glass*min(glint,2.0)*(1.0+sheet)*select(sh, shadow_lift(sh), is_classic_sky()))*wet;
     }
     if (is_classic_sky()) {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
@@ -1152,22 +1178,87 @@ struct WaterOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
     @location(1) level: f32,
+    // where this point of the surface lies before the waves move it
+    // (water_pixel reads the surface's detail there)
+    @location(2) rest: vec2<f32>,
 };
 
+// The close patches' grid (scene/water.rs `mesh`, marked by its u past 4)
+// drawn in toward the camera: its lines, a quarter as far apart beside the
+// camera (some 7 cm at the highest quality) and wider toward the patch's
+// far edges, so the short waves' pinched crests are in the surface's shape
+// and not only its light. Per axis on the patch's own span around the
+// camera's place on it, so two patches meeting along an edge put their
+// vertices there alike.
+fn water_near_warp(u: vec2<f32>, model: mat4x4<f32>) -> vec2<f32> {
+    let span = vec2<f32>(length(model[0].xyz), length(model[1].xyz));
+    let c = clamp((frame.camera_pos.xy - model[3].xy) / max(span, vec2<f32>(1e-3)), vec2<f32>(0.0), vec2<f32>(1.0));
+    let below = c - c * pow(max(c - u, vec2<f32>(0.0)) / max(c, vec2<f32>(1e-4)), vec2<f32>(2.0));
+    let above = c + (1.0 - c) * pow(max(u - c, vec2<f32>(0.0)) / max(1.0 - c, vec2<f32>(1e-4)), vec2<f32>(2.0));
+    return mix(u, select(above, below, u < c), 0.75);
+}
+// How many cells a side scene/water.rs `draws` gives a patch of `span`
+// whose nearest point is `reach` m from the camera: its near grid within
+// 24 m, its grid within 160 m, the coarsest grid within 320 m
+// (WAVE_GRID_REACH), else one quad.
+fn water_patch_cells(reach: f32, span: vec2<f32>) -> f32 {
+    let q = min(water_fx.counts.w, 3u);
+    if (max(span.x, span.y) > 64.1 || reach >= 320.0) { return 1.0; }
+    if (reach < 24.0) { return f32(array<u32, 4>(64u, 96u, 160u, 224u)[q]); }
+    if (reach < 160.0) { return f32(array<u32, 4>(32u, 48u, 64u, 96u)[q]); }
+    return 32.0;
+}
+// A patch's edges follow the coarser of it and its neighbour there: a
+// vertex on an edge takes the waves between the two vertices of the
+// coarser grid on either side of it, so the seam is the same line from
+// both patches. (Each sampling the waves at its own vertices, two grids of
+// different sizes drew different lines along a patch's or a region's edge:
+// a step or a crack, as tall as the waves are steep.)
+fn water_patch_reach(origin: vec2<f32>, span: vec2<f32>) -> f32 {
+    let eye = frame.camera_pos.xy;
+    return distance(eye, clamp(eye, origin, origin + span));
+}
+fn water_edge_wave(pos: vec2<f32>, model: mat4x4<f32>, level: f32) -> vec3<f32> {
+    let span = vec2<f32>(length(model[0].xyz), length(model[1].xyz));
+    let origin = model[3].xy;
+    let on_x = pos.x <= 0.0 || pos.x >= 1.0;
+    // the neighbour across this edge: the same size, one span over
+    let side = select(vec2<f32>(0.0, select(-1.0, 1.0, pos.y >= 1.0)), vec2<f32>(select(-1.0, 1.0, pos.x >= 1.0), 0.0), on_x);
+    let own = water_patch_cells(water_patch_reach(origin, span), span);
+    let other = water_patch_cells(water_patch_reach(origin + side * span, span), span);
+    let n = min(own, other);
+    let t = select(pos.x, pos.y, on_x);
+    let k = floor(t * n);
+    let f = t * n - k;
+    let a = select(vec2<f32>(k / n, pos.y), vec2<f32>(pos.x, k / n), on_x);
+    let b = select(vec2<f32>(min(k + 1.0, n) / n, pos.y), vec2<f32>(pos.x, min(k + 1.0, n) / n), on_x);
+    let wa = water_fx_wave((model * vec4<f32>(a, 0.0, 1.0)).xy, level);
+    if (f < 1e-4) { return wa; }
+    return mix(wa, water_fx_wave((model * vec4<f32>(b, 0.0, 1.0)).xy, level), f);
+}
 fn water_vertex(in: VsIn) -> WaterOut {
     let rec = records[in.instance];
-    var wp = rec.model * vec4<f32>(in.pos, 1.0);
+    var pos = in.pos;
+    let near = in.uv.x > 3.0 && water_fx_on(1u);
+    if (near) { pos = vec3<f32>(water_near_warp(pos.xy, rec.model), pos.z); }
+    var wp = rec.model * vec4<f32>(pos, 1.0);
     var wave = vec3<f32>(0.0);
-    if(water_fx_on(1u) || water_fx_on(16u)){wave=water_fx_wave(wp.xy,wp.z);}
+    if(water_fx_on(1u) || water_fx_on(16u)){
+        let edge = any(in.pos.xy <= vec2<f32>(0.0)) || any(in.pos.xy >= vec2<f32>(1.0));
+        if (edge) { wave = water_edge_wave(pos.xy, rec.model, wp.z); } else { wave = water_fx_wave(wp.xy, wp.z); }
+    }
     // Huge void tiles cannot resolve waves. Fade their geometry to avoid aliasing.
     let tile = max(length(rec.model[0].xyz),length(rec.model[1].xyz));
     let geometry = 1.0-smoothstep(70.0,140.0,tile);
-    let near = 1.0-smoothstep(80.0,160.0,distance(wp.xyz,frame.camera_pos.xyz));
-    wp = vec4<f32>(wp.xyz+wave*geometry*near,1.0);
+    // (the swell itself flattens 130-155 m out, in water_fx_wave, as the
+    // CPU's samplers see it)
+    wp = vec4<f32>(wp.xyz+wave*geometry,1.0);
     var out: WaterOut;
     out.clip = world_clip(wp.xyz);
     out.world_pos = wp.xyz;
-    out.level = (rec.model * vec4<f32>(in.pos,1.0)).z;
+    let still = rec.model * vec4<f32>(pos,1.0);
+    out.level = still.z;
+    out.rest = still.xy;
     return out;
 }
 
@@ -1371,6 +1462,39 @@ fn water_unit(v: vec3<f32>) -> vec3<f32> {
 
 // pbrPunctual (deferredUtil.glsl) for the water: metallic 1, so no diffuse;
 // returns clamp(nl x specContrib, 0, 10), before the light, shadow and haze.
+// The sun on water a pixel's waves are too small to draw (water_pixel's
+// LEAN share): GGX of `alpha` with Smith's masking and Schlick's Fresnel at
+// water's 2% reflectance, times n·l: what the light's radiance becomes.
+fn water_broad_glint(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, alpha: f32) -> vec3<f32> {
+    let h = normalize(l + v);
+    let nl = clamp(dot(n, l), 0.0, 1.0);
+    let nv = clamp(dot(n, v), 0.001, 1.0);
+    let nh = clamp(dot(n, h), 0.0, 1.0);
+    let vh = clamp(dot(v, h), 0.0, 1.0);
+    let a2 = max(alpha * alpha, 1e-5);
+    let dd = (nh * a2 - nh) * nh + 1.0;
+    let d = a2 / (PI * dd * dd);
+    let g = 2.0 * nl / (nl + sqrt(a2 + (1.0 - a2) * nl * nl)) * (2.0 * nv / (nv + sqrt(a2 + (1.0 - a2) * nv * nv)));
+    let f = 0.02 + 0.98 * pow(1.0 - vh, 5.0);
+    return vec3<f32>(clamp(d * g * f / (4.0 * max(nl, 0.001) * nv) * nl, 0.0, 10.0));
+}
+// The sun's angular radius as enhanced water's sea sees it (rad): twice
+// the disc's, for its aureole (water_pixel).
+const WATER_SUN_RADIUS: f32 = 0.0093;
+// The sea's light through its crests (fs_water): seawater's scattering
+// coefficient (1/m; clear ocean some 0.04, coastal water 0.2 to 0.5,
+// Petzold's harbour 1.6), and a factor over the physical glow (1: as water
+// scatters). 2.5: chosen by eye on 2026-11-26 against 1 and the thin
+// crest's physical glow, a lift the crests show against a low sun without
+// the old neon (to be checked on the grid).
+const WATER_SCATTERING: f32 = 0.3;
+const WATER_CREST_GLOW: f32 = 2.5;
+// The Henyey-Greenstein phase function (sr⁻¹) at the scattering angle's
+// cosine `c`, of asymmetry `g`: how much light a particle scatters that way.
+fn water_hg_phase(c: f32, g: f32) -> f32 {
+    let d = 1.0 + g * g - 2.0 * g * c;
+    return (1.0 - g * g) / (4.0 * PI * d * sqrt(d));
+}
 fn legacy_water_punctual(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, specular: vec3<f32>) -> vec3<f32> {
     let perceptual = max(roughness, 8.0 / 255.0);
     let a = perceptual * perceptual;
@@ -1407,8 +1531,17 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     let dist = length(rel);
     let view_vec = rel / max(dist, 1e-4);
 
+    // Enhanced water's waves move the surface: its detail (the region's
+    // normal maps, the ripples, the spectrum's slopes and folds, the foam)
+    // is read where this point of it lies before they move it (`in.rest`,
+    // the vertex's own place), so it rides the water. A crest's ripples and
+    // foam go forward with it as it passes and slide back over its top as
+    // it moves on (Sea of Thieves' water does), and its slopes and folds
+    // line up with the crest drawn, instead of the waves sliding under maps
+    // fixed in place.
+    let flow = select(in.world_pos.xy, in.rest, water_fx_on(1u));
     // SL wave layers (big wave + two little waves) from the normal map
-    var v = in.world_pos.xy;
+    var v = flow;
     v.x += (cos(v.x * 0.08) + sin(v.y * 0.02)) * 6.0;
     let w1d = frame.water_waves.xy;
     let w2d = frame.water_waves.zw;
@@ -1420,7 +1553,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var wave2 = sample_tex(slot, little1).xyz * 2.0 - vec3<f32>(1.0);
     var wave3 = sample_tex(slot, little2).xyz * 2.0 - vec3<f32>(1.0);
     if (slot == 0u) {
-        wave1 = analytic_wave(in.world_pos.xy, t * 2.0);
+        wave1 = analytic_wave(flow, t * 2.0);
         wave2 = wave1;
         wave3 = wave1;
     }
@@ -1432,21 +1565,77 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     wavef = vec3<f32>(wavef.xy + rain.xy, wavef.z);
     var n = wavef * frame.water_normal.xyz;
     n.z *= 2.0;
-    let footprint=max(length(dpdx(in.world_pos.xy)),length(dpdy(in.world_pos.xy)));
+    let fine_dx=dpdx(in.world_pos.xy);
+    let fine_dy=dpdy(in.world_pos.xy);
+    let footprint=max(length(fine_dx),length(fine_dy));
+    // (the GPU's maps, mipmapped and read anisotropically, resolve the
+    // detail by the pixel's mean size on the water; the CPU's maps and the
+    // ripple waves, read point by point, must fade by its longest side, or
+    // they alias into bands across the sea: water_fx_ocean, water_micro)
+    let detail_footprint=sqrt(max(length(fine_dx)*length(fine_dy),1e-10));
     // The terrain and the water's own level under this point, and the swell
     // at it: read once, for the wake, the normal and the foam below.
     var bed=vec2<f32>(0.0);
     if((water_fx.counts.z&31u)!=0u){bed=water_fx_bed(in.world_pos.xy);}
-    var swell=WaterSwell(vec3<f32>(0.0),vec2<f32>(0.0),0.0);
-    if((water_fx.counts.z&9u)!=0u){swell=water_swell(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w);}
+    var swell=WaterSwell(vec3<f32>(0.0),vec2<f32>(0.0),0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0);
+    // the swash read here, for its foam
+    var swash_at:WaterSeaAt;
+    var swash_theta=0.0;
+    // the sea left here by what stands in the water (piers, walls, decks)
+    var shelter=1.0;
+    // the open sea's share of the wind sea here (water_ocean_weights): less
+    // over a short fetch, where the lakes' chop takes over
+    var open=1.0;
+    if((water_fx.counts.z&11u)!=0u){
+        // where the sea is read: the wave depth (smoothed: no wall of
+        // water at a step of the bed or a region's edge), the shelter and
+        // the refracted swell
+        let at=water_fx_sea_at(flow);
+        shelter=at.shelter;
+        open=water_ocean_weights(at.chop).x;
+        swash_at=at;
+        swash_theta=at.phase-(water_fx.sea.phase[0]+water_fx.sea.omega[0]*(frame.camera_pos.w-water_fx.sea.frame.z))+water_swash_shift(at);
+        swell=water_sea(flow,frame.camera_pos.w,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(flow,footprint,true,at),footprint);
+    }
+    let rest=flow;
     let wake=water_wake_at(in.world_pos.xy,in.level,bed.y);
     let furrow=1.0-smoothstep(0.003,0.035,-wake.z)*0.7;
+    // the GPU's finer maps of the wind sea, when on (water_fx_fine)
+    var fine=WaterFine(vec2<f32>(0.0),0.0,0.0,0.0);
+    // the gradient of its fold on the water (per metre), for the small
+    // crests' lips below: taken here, while the control flow is uniform
+    // (screen derivatives are not allowed after the underwater return)
+    var fold_grad=vec2<f32>(0.0);
     if(water_fx_on(1u)) {
-        let micro=water_micro(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w,footprint);
+        let micro=water_micro(flow,frame.camera_pos.w,water_fx.counts.w,footprint);
         let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
-        // the rain's slope keeps its own strength: scaled with the waves
-        // (x 0.18), a downpour hardly showed on enhanced water
-        n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow+rain.xy*0.3,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy,swell.gradient,bed.x));
+        // The wind's ripples: a shimmer in a calm, stronger as it blows, in
+        // gust patches (cat's paws) drifting with it across a lake.
+        let u=water_fx.sea.wind.z;
+        let gusts=smoothstep(0.35,0.75,water_fx_noise((in.world_pos.xy-water_fx.sea.wind.xy*frame.camera_pos.w*(0.5+0.08*u))*0.035));
+        let ripple=mix(0.35,1.6,smoothstep(0.5,9.0,u))*mix(1.0,mix(0.6,1.5,gusts),smoothstep(0.5,3.0,u));
+        // and the wakes of those in it stand out more the calmer it is
+        let stir=mix(1.6,1.0,smoothstep(0.1,0.6,water_fx.sea.frame.w));
+        // Where the spectrum's wind sea blows, its own short cascade has
+        // the ripples, in the wind's way: the region's normal maps and the
+        // fixed ripple waves on top of it doubled the slopes into a regular
+        // egg-crate of round blobs (plain under an overcast sky). They stay
+        // as fine detail (a fifth of it once the spectrum's ripples are
+        // up: more of it put SL's pattern into the glints), and in full on
+        // a calm.
+        let spectral=select(0.0,smoothstep(2.0,7.0,u),water_fx.sea.shore.w>0.0);
+        // and its short waves and finest ripples from the GPU's finer
+        // maps, jagged, as calm as the sea here (the shelter); the foam
+        // their folds leave joins the long chop's
+        fine=water_fx_fine(flow,fine_dx,fine_dy,swell.chop*shelter,open);
+        swell.linger=max(swell.linger,fine.foam);
+        // (dpdx = g·∂p/∂x and dpdy = g·∂p/∂y, solved for g)
+        let fold_x=dpdx(fine.fold);let fold_y=dpdy(fine.fold);
+        let fold_det=fine_dx.x*fine_dy.y-fine_dx.y*fine_dy.x;
+        if(abs(fold_det)>1e-12){fold_grad=vec2<f32>(fine_dy.y*fold_x-fine_dx.y*fold_y,fine_dx.x*fold_y-fine_dy.x*fold_x)/fold_det;}
+        // (the rain's slope keeps its own strength: scaled with the waves
+        // (x 0.18), a downpour hardly showed on enhanced water)
+        n=normalize(vec3<f32>((n.xy*0.18*(1.0-0.8*spectral)-micro.xy*detail*ripple*(1.0-0.8*spectral))*furrow+rain.xy*0.3,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy*stir,swell.gradient+fine.slope*furrow,bed.x));
     } else { n=water_unit(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy,swell.gradient,bed.x)); }
     // waterF.glsl: the reflection follows the waves scaled by the EEP normal
     // scale (wave_ibl), the sun glint the unscaled waves flattened with
@@ -1490,7 +1679,11 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         // Shore depth always comes from terrain, never an avatar or submerged
         // mesh in the opaque depth. Contact refinement is masked below.
         foam=smoothstep(0.3,0.95,water_fx_foam(p))*0.55;
-        if(water_fx_on(2u) && depth<2.0) {
+        let rough=water_fx.sea.frame.w;
+        // Without the wind's waves, timed bands of foam lap the shore. With
+        // them, the waves' own breakers and swash whiten it (below): the
+        // timed bands, unrelated to the sea, drew thin lines on a calm lake.
+        if(water_fx_on(2u) && !water_fx_on(1u) && depth<2.0) {
             // Travel along the depth gradient: the front approaches every coast orientation.
             let phase=depth*3.4+frame.camera_pos.w*1.25+water_fx_noise(p*0.32)*1.1;
             let breaker=pow(max(sin(phase),0.0),4.0);
@@ -1512,11 +1705,104 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
                 foam+=obstacle*(1.0-smoothstep(0.03,0.42,clearance))*smoothstep(-0.08,0.03,clearance)*0.45*contact;
             }
         }
-        // crests: the wind patches are worked out only where the swell
-        // folds enough to whiten (the first smoothstep is 0 under 0.08)
-        if(water_fx_on(8u) && swell.compression>0.08) {
-            let windpatch=water_fx_noise(p*0.22-frame.camera_pos.w*0.04);
-            foam+=smoothstep(0.08,0.2,swell.compression)*smoothstep(0.45,0.8,windpatch)*0.6;
+        // breakers: the shore train as it breaks on a beach, and the wind's
+        // waves where flat shallows are too shallow for them (a sandbar).
+        // By the beach's surf similarity: on a gentle beach the waves spill,
+        // foam rolling down their whole front; on a steeper one they plunge,
+        // white along the crest; on rocks and walls they crash, churning
+        // white where they hit. The swash's thin leading edge is white too.
+        if(water_fx_on(2u) && water_fx_on(1u) && swell.breaking>0.01) {
+            let plunge=smoothstep(0.4,1.2,swell.surf);
+            let crash=smoothstep(2.5,4.0,swell.surf);
+            let spilling=smoothstep(-0.35,0.45,swell.crest)*0.85;
+            let plunging=smoothstep(0.35,0.95,swell.crest);
+            foam=max(foam,swell.breaking*mix(spilling,plunging,plunge)*(0.55+0.4*rough));
+            // the water over the bed now, the swash's sheet included
+            let wet=in.world_pos.z-bed.x;
+            foam=max(foam,crash*swell.breaking*exp(-max(wet,0.0)*2.5)*(0.6+0.4*rough));
+        }
+        // the swash: its lace of foam over the water running up and back
+        // (the backwash's sheet on the sand draws the same lace). (A thin
+        // white line at its edge followed the coarse bathymetry, not the
+        // real waterline, and drew a line along every beach: left out.)
+        if(water_fx_on(2u) && swell.swash>0.01) {
+            let reach=water_swash_reach(water_fx.sea,swash_at);
+            foam=max(foam,swell.swash*water_swash_foam(p,swash_at,swash_theta,reach)*(0.7+0.25*rough)*water_fx.sea.look.x);
+        }
+        // Whitecaps: where the crests fold over (the displacement's Jacobian
+        // under 1: `breakers` above 0, the chop's own). A breeze whitens a crest here and
+        // there, a gale most of them (whitecap coverage grows about as
+        // U^3.4): the fold it takes falls with the roughness. Each cap is a
+        // dense core on the fold in a thinner veil the pattern tears, so it
+        // fades into the water instead of reading as a cut-out flake. The
+        // patches are drawn out along the wind and drift with it. (Long wind
+        // streaks between the crests read as painted stripes: left out.)
+        // (from a fresh breeze on: a Beaufort 4 sea already shows scattered
+        // white horses)
+        let cap_start=mix(0.25,0.04,sqrt(rough));
+        // (the veil starts on a real fold, however rough the sea: from
+        // `cap_start - 0.12`, under 0 past a strong breeze, a sea that does
+        // not fold at all, a swell with no chop or a lake's flat water,
+        // took the veil wherever the gusts' patches lay, as large white
+        // blotches)
+        let veil_start=max(cap_start-0.12,0.03);
+        // (the veil also takes the foam the crests left in the last
+        // seconds, fading and drawn out downwind (water_fft.rs): thinner,
+        // from deeper folds only, so a gale's sea is streaked, not grey)
+        if(water_fx_on(8u) && max(swell.breakers,swell.linger-0.14)>veil_start) {
+            let toward=water_fx.sea.wind.xy;
+            let along=vec2<f32>(dot(p,toward),dot(p,vec2<f32>(-toward.y,toward.x)));
+            let drift=vec2<f32>(frame.camera_pos.w*(0.3+0.04*water_fx.sea.wind.z),0.0);
+            // warped, so the patches never line up in straight dashes along
+            // the wind
+            let q=along-drift;
+            let warp=vec2<f32>(water_fx_noise(q*0.045),water_fx_noise(q*0.045+vec2<f32>(3.1,8.7)))-0.5;
+            let w=q+warp*vec2<f32>(10.0,6.0);
+            let windpatch=0.65*water_fx_noise(w*vec2<f32>(0.11,0.19))+0.35*water_fx_noise(w*vec2<f32>(0.27,0.4)+vec2<f32>(9.0,2.0));
+            let gusty=smoothstep(0.3-0.25*rough,0.75-0.25*rough,windpatch);
+            let core=smoothstep(cap_start,cap_start+0.35,swell.breakers);
+            let veil=max(smoothstep(veil_start,cap_start+0.1,swell.breakers),smoothstep(cap_start+0.02,cap_start+0.3,swell.linger)*0.75);
+            // (the Sea panel's foam: more or less of it)
+            // (past 100 %, more of the dense core only: the veil and what
+            // lingers, turned up with it, spread the faint foam behind every
+            // crest into a grey haze)
+            foam+=(core*(0.5+0.35*rough)*water_fx.sea.look.x+veil*0.28*min(water_fx.sea.look.x,1.0))*gusty;
+        }
+        // The crests of the small wind waves: a young wind sea's short waves
+        // are steep however small, and from a gentle breeze on (Beaufort 3,
+        // some 4 m/s: "crests begin to break") their tips spill over in thin
+        // white lips, long before whole whitecaps (above) form. Where the
+        // GPU's short cascade alone pinches the surface together (its own
+        // fold, `fine.fold`: the sea's whole fold takes the long swell with
+        // it and seldom reaches the threshold on a small crest), a crisp
+        // sliver along the crest, more of them the harder it blows, torn
+        // into dashes a metre or two long that run with the short waves.
+        // Read through the maps' mips, it fades far out before it aliases.
+        // (On a 7 m/s sea the fold passes 0.2 only along the small crests'
+        // tops, in slivers a few centimetres to decimetres wide and up to a
+        // couple of metres long, and seldom passes 0.3 (seen in the demo
+        // with the fold drawn in colour): those slivers are the lips. A
+        // lower threshold drew the fold's broad patches, soft white smudges
+        // a metre or two wide. A crest spills forward, so the side of the
+        // sliver the fold falls downwind from takes the lip.)
+        // (`fold_grad`: the fold's gradient on the water, read with `fine`)
+        // (drawn after the foam texture's lace, below, as it is: the lace,
+        // made to tear whitecaps, tore a thin lip into a faint grey veil)
+        var lip_foam=0.0;
+        if(water_fx_on(8u) && water_fine_on() && fine.fold>0.12) {
+            let u=water_fx.sea.wind.z;
+            let start=mix(0.27,0.14,smoothstep(4.0,12.0,u));
+            let toward=water_fx.sea.wind.xy;
+            let steep=length(fold_grad);
+            let leading=smoothstep(-0.2,0.5,-dot(fold_grad,toward)/max(steep,1e-6));
+            let lip=smoothstep(start,start+0.06,fine.fold)*leading;
+            // (the short waves' phase speed, some 1.5 to 3 m/s)
+            let run=rest-toward*frame.camera_pos.w*clamp(0.8+0.12*u,1.2,3.0);
+            let crest_way=vec2<f32>(dot(run,toward),dot(run,vec2<f32>(-toward.y,toward.x)));
+            let dash=smoothstep(0.32,0.62,water_fx_noise(crest_way*vec2<f32>(0.35,0.7)+vec2<f32>(0.0,frame.camera_pos.w*0.06)));
+            // (the shelter is in the fold already: the maps are read at the
+            // chop it leaves)
+            lip_foam=lip*dash*smoothstep(3.5,7.0,u)*0.9*min(water_fx.sea.look.x,1.5);
         }
         // Fine breaking filaments already have a narrow, resolved footprint.
         // Applying the coarse accumulation threshold twice erased slow swimmers.
@@ -1525,12 +1811,27 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         var wake_foam=0.0;
         if(water_fx_on(4u)){wake_foam=smoothstep(0.018,0.18,wake.w);}
         if(foam>=0.08 || wake_foam>0.0) {
-            let pattern=water_foam_pattern(p,footprint);
-            foam=water_foam_coverage(foam,pattern)+wake_foam*water_foam_coverage(1.0,pattern)*0.55;
+            if(water_foam_textured()) {
+                // the foam texture's lace, filtered along the pixel's own
+                // span on the water (water_foam_lace_grad: by one size for
+                // the pixel, its mean or its longest side, it either
+                // stepped from pixel to pixel along the view, or gave way
+                // to its smooth average close in)
+                let lace=water_foam_lace_grad(rest,fine_dx,fine_dy);
+                foam=water_foam_lace_cover(foam,lace)+wake_foam*water_foam_lace_cover(0.7,lace)*0.7;
+            } else {
+                let pattern=water_foam_pattern(p,footprint);
+                foam=water_foam_coverage(foam,pattern)+wake_foam*water_foam_coverage(1.0,pattern)*0.55;
+            }
         } else {
             foam=0.0;
         }
-        foam=clamp(foam,0.0,1.0)*smoothstep(0.0,0.06,depth);
+        foam=max(foam,lip_foam);
+        // (over the swash's sheet the water stands above the still level)
+        // (the swash is a sheet of a few centimetres: its foam stays on it
+        // until it is gone, instead of fading with the thin water)
+        let thick=max(depth,in.world_pos.z-bed.x);
+        foam=clamp(foam,0.0,1.0)*mix(smoothstep(0.0,0.06,thick),smoothstep(-0.002,0.012,thick),clamp(swell.swash,0.0,1.0));
     }
 
     // fresnel (calculateFresnelFactors)
@@ -1641,7 +1942,36 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var rough=clamp(frame.water_params.w,0.02,1.0);
     if(water_fx_on(1u)){rough=clamp(rough*0.65+footprint*0.06,0.035,0.25);}
     rough=mix(rough,0.055,smoothstep(0.004,0.045,-wake.z)*0.65);
-    let gn = select(n, legacy_glint_n, legacy_water);
+    // The wave detail a pixel no longer draws still tilts the water under
+    // it: its slopes' variance widens the sun's lobe instead (LEAN mapping:
+    // Olano and Baker, 2010; GGX's alpha about √2 times the slopes' RMS), so
+    // the far sea keeps a rough, broad glitter rather than turning into a
+    // smooth mirror past where its waves fade. The sea's mean square slope
+    // is Cox and Munk's (0.003 + 0.00512 U), about a tenth of it in the
+    // long chop, half in the short waves, the rest in the finest ripples
+    // (water_ocean_gpu.rs's test), each lost as it is filtered out. That
+    // share of the glint is drawn as water reflects (water_broad_glint):
+    // the Legacy Viewer's glint, tuned for a sharp point, whitened the whole
+    // sea once widened.
+    var broad_share = 0.0;
+    var broad_alpha = 0.0;
+    if (water_fx_on(1u) && water_fx.sea.shore.w > 0.0) {
+        let msq = (0.003 + 0.00512 * water_fx.sea.wind.z) * min(swell.chop, 1.5);
+        let long_kept = 1.0 - smoothstep(0.5, 2.0, 0.63 * footprint);
+        let short_kept = select(1.0 - smoothstep(0.5, 2.0, 2.5 * footprint), 1.0 - smoothstep(0.1, 0.5, detail_footprint), water_fine_on());
+        let lost = msq * (0.11 * (1.0 - long_kept) + 0.51 * (1.0 - short_kept) + 0.38 * (1.0 - fine.kept));
+        let a = rough * rough;
+        broad_alpha = min(sqrt(a * a + 2.0 * lost), 0.5);
+        broad_share = clamp(lost / max(msq, 1e-5), 0.0, 1.0);
+    }
+    // (the sun's glints see the finest facets steeper than the reflection
+    // does: Sea of Thieves' glints, and a real sea's under a low sun, are
+    // the ripples' sharp faces catching it one by one; at their real slope
+    // the broad waves' gloss outshone them)
+    var gn = select(n, legacy_glint_n, legacy_water);
+    if (!legacy_water && water_fine_on()) {
+        gn = normalize(vec3<f32>(n.xy - fine.slope * 0.8 * furrow, n.z));
+    }
     // waterF.glsl: punctual = clamp(nl x (diffPunc + specPunc), 0, 10) x
     // sunlit_linear x shadow x atten, metallic 1 (no diffuse), roughness the
     // blur multiplier, F0 the `specular` uniform (LLDrawPoolWater: the
@@ -1657,19 +1987,137 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     // calcAtmosphericVarsLinear: sunlit made linear only on a sky with a
     // probe ambiance, then x sky_sunlight_scale (1.5)
     let sunlit_linear = select(srgb_to_linear(atm.sunlit), atm.sunlit, frame.sky_ll.x > 0.5) * 1.5;
-    let glint_lit = legacy_water_punctual(gn, vv, l, perceptual, spec_color) * sunlit_linear * atm.atten;
+    // Enhanced water's sea takes the sun as the disc it is, not a point
+    // (Karis 2013, "Real Shading in Unreal Engine 4": the light's direction
+    // moved to the point of the disc nearest the reflected ray, and the lobe
+    // widened by the disc's size, its energy kept). Its ripples are sharp
+    // enough (roughness down to 0.035) that a point sun made each facet a
+    // pinprick; as a disc, every facet that sees any of it shines, and a low
+    // sun draws a broad, broken path. (Twice the sun's 0.27°: its bright
+    // aureole too.) The legacy water keeps its point light.
+    var sun_l = l;
+    var sun_norm = 1.0;
+    if (water_fx_on(1u) && !legacy_water) {
+        let radius = WATER_SUN_RADIUS;
+        let r = reflect(-vv, gn);
+        let to_ray = dot(l, r) * r - l;
+        sun_l = normalize(l + to_ray * clamp(radius / max(length(to_ray), 1e-6), 0.0, 1.0));
+        let a = max(perceptual, 8.0 / 255.0) * max(perceptual, 8.0 / 255.0);
+        let widened = clamp(a + radius * 0.5, 0.0, 1.0);
+        // (Karis' normalization is (a / widened)²: kept to its root, the
+        // disc's facets shine as a sea's do, where the full one dimmed the
+        // whole path below the point sun's: past white either way, that
+        // one's energy was not seen)
+        sun_norm = a / widened;
+    }
+    var glint_lit = legacy_water_punctual(gn, vv, sun_l, perceptual, spec_color) * sun_norm * sunlit_linear * atm.atten;
+    if (broad_share > 0.0) {
+        let broad = water_broad_glint(gn, vv, l, broad_alpha) * srgb_to_linear(light_hue) * sunlit_linear * atm.atten;
+        glint_lit = mix(glint_lit, broad, broad_share);
+    }
     // The sun's shadow, the costliest lookup of the surface, only where
     // something shows it: the glint, a narrow lobe that is next to nothing
     // over most of the water (under WATER_GLINT_FLOOR, a thousandth of the
     // smallest step an 8-bit image can show), or the foam.
     var shadow = 1.0;
-    if (foam > 0.0 || max(glint_lit.r, max(glint_lit.g, glint_lit.b)) > WATER_GLINT_FLOOR) {
+    // (the glitter, below, strews sparkles wider than the glint's lobe)
+    let glitter_on = water_fx_on(1u) && !legacy_water && l.z > 0.0;
+    if (foam > 0.0 || max(glint_lit.r, max(glint_lit.g, glint_lit.b)) > WATER_GLINT_FLOOR || (glitter_on && dot(n, h) > 0.92)) {
         shadow = shadow_lift(shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist));
     }
     let punctual = glint_lit * shadow;
 
+    // Sun glitter, far out: where a pixel spans the finest ripples (nearer,
+    // their own jagged facets draw the glints: water_fx_fine), the tiny
+    // facets under it each throw the sun's disc back for a moment:
+    // sparkles strewn along the sun's path, wider the rougher the sea. One
+    // facet per cell of a pixel and a half or more, tilted at random and
+    // drawn again five times a second (each cell on its own beat).
+    var glitter = vec3<f32>(0.0);
+    if (glitter_on && dot(n, h) > 0.92 && fine.kept < 0.98) {
+        let spread = mix(0.05, 0.2, smoothstep(1.0, 12.0, water_fx.sea.wind.z));
+        let cell = max(0.06, footprint * 1.6);
+        let id = floor(in.world_pos.xy / cell);
+        let seed = water_fx_hash(id);
+        let epoch = floor(frame.camera_pos.w * 5.0 + seed.x * 7.0);
+        let tilt = water_fx_hash(id + vec2<f32>(epoch * 13.0, -epoch * 7.0)) - 0.5;
+        let facet = normalize(n + vec3<f32>(tilt * 2.0 * spread, 0.0));
+        let hit = smoothstep(0.99955, 0.99985, dot(facet, h));
+        glitter = hit * spec_color * sunlit_linear * atm.atten * shadow * (0.3 + 0.7 * seed.y) * 2.5 * (1.0 - fine.kept);
+    }
+    // Light through the waves (enhanced water's sea): the sun's light
+    // scattered in the water comes back out through the thin crests; and
+    // the sky's light scattered under the surface lifts the deep water from
+    // black, more in the crests. Into what the surface transmits: the
+    // reflection still covers it at grazing angles, and shallow water shows
+    // its bed instead. The crests are where the waves stand high or the
+    // chop pinches the surface together (Sea of Thieves' wave-peak mask,
+    // from its chop: Ang et al., "The Technical Art of Sea of Thieves",
+    // SIGGRAPH 2018).
+    //
+    // The sun's share is single scattering, as water does it: sunlight
+    // enters through the crest's back face; a part of it, by the water's
+    // scattering over the crest's thickness, is turned toward the eye, by
+    // the phase function of seawater's particles (strongly forward:
+    // Henyey-Greenstein, g 0.9 for the particles with a broad tenth, close
+    // to Petzold's measurements), and leaves through the front face; the
+    // water takes its red on the way. A sheet of white paper in the same
+    // sun is the scale: physically, a thin crest seen against a low sun
+    // gives some 10 to 25 % of it, a few % 30° off the sun's way, next to
+    // nothing beyond; drawn at WATER_CREST_GLOW times that. (It was the
+    // sun's whole light x 4/π by the view's bearing to the sun squared:
+    // some 1.3 times the paper over half the sea, in the fog's colour at
+    // full strength, a neon cyan.)
+    if (water_fx_on(1u) && (water_fx.counts.z & 11u) != 0u) {
+        // (its green held back a little: the light that comes back out of
+        // a crest has crossed less water than the fog's colour stands for,
+        // and in full it read as too green on the grid)
+        let fog_hue = frame.water_fog.rgb * vec3<f32>(1.0, 0.8, 1.0);
+        let tint = fog_hue / max(max(fog_hue.r, fog_hue.g), max(fog_hue.b, 0.001));
+        let behind = smoothstep(1.0, 8.0, refr_dist - surf_dist);
+        // (and the small wind waves' crests, by their own fold: a 30 cm
+        // wave's crest is thin, and lets the light through as a metre's
+        // does, where its height alone gave it a tenth of the glow)
+        let big_crest = max(smoothstep(-0.1, 1.2, swell.offset.z), smoothstep(-0.05, 0.4, swell.compression));
+        let small_crest = smoothstep(0.04, 0.45, fine.fold) * 0.85;
+        let crest = max(big_crest, small_crest) * shelter;
+        // the crest's thickness the light crosses (m): a big wave's some
+        // 0.8 m, a small one's 0.3 m (fewer particles on the way: a small
+        // crest glows less, as it does)
+        let thick = max(big_crest * 0.8, small_crest * 0.3);
+        let up = smoothstep(-0.02, 0.12, l.z);
+        // the sun's light on a surface facing it, and the sky's: the paper's
+        // scale is `sun_e / PI` (classic skies keep their own units)
+        var sun_e = frame.sun_color.rgb * up;
+        var sky_in = frame.sky_horizon.rgb * 0.3;
+        if (is_classic_sky()) {
+            sun_e = frame.sun_color.rgb * up * 0.6 * PI;
+            sky_in = frame.sky_horizon.rgb * 0.32;
+        }
+        // The scattering angle is the one between the sun's light and the
+        // way to the eye as they are in the air: a thin, steep crest is a
+        // sheet of water the light crosses nearly straight, in at its back
+        // and out at its front. (Each ray refracted at the mean surface
+        // instead, both bent down into the water some 45° and met near
+        // 90°, where water scatters next to nothing: on a 7 to 9 m/s sea
+        // the glow was gone, only the steepest crests kept a trace.)
+        let cos_s = dot(-l, vv);
+        let phase = mix(water_hg_phase(cos_s, 0.3), water_hg_phase(cos_s, 0.9), 0.9);
+        // scattered over the thickness, the water's own red taken over the
+        // path in and out (its fog colour as what 4 m of it lets through)
+        let scattered = 1.0 - exp(-WATER_SCATTERING * thick);
+        let path = 0.6 + 1.5 * thick;
+        let kept = pow(max(tint, vec3<f32>(0.02)), vec3<f32>(path / 4.0));
+        // (the phase function is held under 3 sr⁻¹: in the sun's very line
+        // the crest passes the sun's own disc, refracted, which the glint
+        // and the bloom draw)
+        let sun_out = sun_e * crest * scattered * min(phase, 3.0) * kept * WATER_CREST_GLOW;
+        let facing = max(dot(vv, n), 0.0);
+        let sky_out = tint * sky_in * (0.04 + 0.12 * crest) * facing * facing;
+        fb += max(sun_out + sky_out, vec3<f32>(0.0)) * behind;
+    }
     var reflectance = min(1.0,df2.x);
-    var glint = punctual;
+    var glint = punctual + glitter;
     if (water_fx_on(512u)) {
         // (the glint has its own fresnel, F of pbrPunctual)
         let cos_i = clamp(dot(n,vv),0.0,1.0);
@@ -1687,7 +2135,10 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
             let peak=max(lit.r,max(lit.g,lit.b));
             foam_light=lit/max(1.0,peak/1.15);
         }
-        color=mix(color,max(foam_light,vec3<f32>(0.0)),foam*0.9);
+        // foam is aerated water: lit like the sky and the sun, but keeping
+        // some of the water's own colour, and never quite opaque
+        let tinted=mix(max(foam_light,vec3<f32>(0.0)),color*1.15+foam_light*0.35,0.3);
+        color=mix(color,tinted,foam*0.78);
     }
     color = rain_dull(color, rain.w);
     // waterF.glsl: frag_color = min(vec4(1), max(color, vec4(0))). The
@@ -1777,16 +2228,27 @@ struct WaterParticleOut {
     @location(3) @interpolate(flat) kind: u32,
     @location(4) @interpolate(flat) level: f32,
     @location(5) normal: vec3<f32>,
+    // a crash burst's own seed (0..1), so no two look alike
+    @location(6) @interpolate(flat) seed: f32,
 };
 fn particle_water_level(p:vec2<f32>,level:f32)->f32 {
     if(!water_fx_on(1u)){return level;}
-    return level+water_swell(p,water_fx.clock.x,water_fx.counts.w).offset.z*smoothstep(0.08,2.4,level-water_fx_bed(p).x);
+    let bed=water_fx_bed(p);
+    // the swell is the region water's: a prim water volume's level (#2008),
+    // away from it, stays flat
+    let region=1.0-smoothstep(0.25,0.5,abs(level-bed.y));
+    let at=water_fx_sea_at(p);
+    return level+water_sea(p,water_fx.clock.x,water_fx.counts.w,water_fx.sea,at,water_fx_ocean(p,0.0,false,at),0.0).offset.z*region*smoothstep(0.08,2.4,level-bed.x);
 }
 @vertex
 fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index) instance: u32) -> WaterParticleOut {
     let counts=array<u32,4>(4u,6u,8u,12u); let count=counts[min(water_fx.counts.w,3u)]; let event=water_events[instance/count]; let index=instance%count;
     let age=water_fx.clock.x-event.position.w; let bubble=event.params.y==1.0;
     let entry=event.params.y==5.0;let fan=event.params.y==7.0;
+    // a wave crashing on a wall or a rock, and the white water it leaves
+    // (scene/water_crash.rs, water_crash_particle)
+    let crash=event.params.y==9.0 || event.params.y==10.0;
+    let drip=event.params.y==11.0;
     let footfall=fan && event.params.w>0.5;
     let h=water_fx_hash(vec2<f32>(f32(index)+event.motion.x*8.0,event.position.w*19.0+event.motion.y*8.0));
     let angle=h.x*6.283185; let direction=vec2<f32>(cos(angle),sin(angle));
@@ -1800,6 +2262,32 @@ fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index)
         life*=smoothstep(0.0,0.04,particle_water_level(pos.xy,event.params.z)-pos.z);
         let bubbles=2u+min(water_fx.counts.w,2u);
         if(index>=bubbles){life=0.0;}
+    } else if (event.params.y==11.0 && water_fx_on(64u)) {
+        // Drops dripping off a wet avatar (scene/avatar_drip.rs, after
+        // Radiance's rdwetdrip.cpp): the event's drops leave one after
+        // another (params.w s apart: close together, a stream), from about
+        // where it starts, with the limb's motion; air drag holds them near
+        // 7 m/s (drops of a few millimetres); each stretches with its speed
+        // and ends where it stops falling (params.z: the water, the ground
+        // or the feet), where the CPU rings the water.
+        let t=age-(f32(index)+h.x*0.4)*event.params.w;
+        let start=event.position.xyz+vec3<f32>((h.xy-0.5)*0.01,0.0);
+        let fall=7.0;let k=9.81/fall;
+        let ease=(1.0-exp(-max(t,0.0)*1.5))/1.5;
+        let drop=fall/k*log(cosh(k*max(t,0.0)));
+        pos=start+vec3<f32>(event.motion.xy*ease,event.motion.z*(1.0-exp(-max(t,0.0)*2.0))*0.5-drop);
+        velocity=vec3<f32>(event.motion.xy*exp(-max(t,0.0)*1.5),event.motion.z*exp(-max(t,0.0)*2.0)-fall*tanh(k*max(t,0.0)));
+        // never thinner than RAIN_MIN_PX pixels, fainter by as much (as the
+        // rain: a drop of a few millimetres vanished at arm's length), and
+        // streaked over the eye's 1/20 s as it falls
+        let clip0=world_clip(pos);let clip1=world_clip(pos+frame.cam_right.xyz);
+        let px_per_m=length((clip1.xy/max(clip1.w,1e-3)-clip0.xy/max(clip0.w,1e-3))*frame.screen.xy*0.5);
+        let real=event.params.x*(0.75+0.5*h.y)*2.0;
+        let wide=max(real,RAIN_MIN_PX*1.25/max(px_per_m,1e-3));
+        size=wide*0.5;
+        elongation=min(length(velocity)*RAIN_EXPOSURE,0.3);
+        life=smoothstep(0.0,0.02,t)*step(event.params.z,pos.z)*pow(clamp(real/wide,0.0,1.0),0.5);
+        if(index>=u32(event.motion.w)){life=0.0;}
     } else if ((event.params.y==0.0 || entry || fan) && water_fx_on(64u)) {
         var launch=0.85+h.y*0.65+event.motion.w*0.9;
         var horizontal=direction*(0.25+event.motion.w*0.5)+event.motion.xy*0.15;
@@ -1872,6 +2360,15 @@ fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index)
         crown.normal=normalize(vec3<f32>(direction,-top));
         return crown;
     }
+    if(crash) {
+        return water_crash_particle(event,index,corner,f32(vertex/6u),age);
+    }
+    if(event.params.y==12.0) {
+        return water_spindrift_particle(event,index,corner*select(0.0,1.0,segment<0.5),age);
+    }
+    if(event.params.y==13.0) {
+        return water_avatar_splash(event,index,corner*select(0.0,1.0,segment<0.5),age);
+    }
     if(fan && index<2u) {
         let forward=normalize(event.motion.xy+vec2<f32>(0.0001,0.0));
         let side=vec2<f32>(-forward.y,forward.x)*select(-1.0,1.0,index==0u);
@@ -1903,10 +2400,596 @@ fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index)
     let offset=across*corner.x*size+along*corner.y*(size+elongation);
     pos+=frame.cam_right.xyz*offset.x+frame.cam_up.xyz*offset.y;
     var out: WaterParticleOut; out.clip=world_clip(pos);out.world=pos;out.uv=corner;
-    out.life=life;out.kind=select(select(0u,3u,entry),1u,bubble);out.level=event.params.z;out.normal=vec3<f32>(0.0,0.0,1.0);
+    out.life=life;out.kind=select(select(select(0u,3u,entry),1u,bubble),6u,drip);out.level=event.params.z;out.normal=vec3<f32>(0.0,0.0,1.0);
+    // a drip is shaded as the rain's drops are (water_drip_color): its
+    // side across the streak, in the world
+    if(drip){out.normal=normalize(frame.cam_right.xyz*across.x+frame.cam_up.xyz*across.y);}
     return out;
 }
+// A wave crashing on a wall or a rock (scene/water_crash.rs). Kind 9, the
+// burst, per event: three sheets of water fanned out from where the crest
+// hit (index 0 to 2: curved strips from the water to their rim, rising,
+// spreading and tearing apart, water_crash_sheet_color) and fine droplets
+// torn off their rims (3 and up: sharp specks streaked by their speed).
+// Kind 10, the white water it leaves: a lace of foam spreading on the sea
+// at the foot of the face (index 0, laid on the waves) and the water
+// streaming back down the face (1, `motion.z` the face's height above the
+// water). Each burst draws its own shapes (`params.w` its seed).
+fn water_crash_particle(event: WaterFxEvent, index: u32, quad: vec2<f32>, segment: f32, age: f32) -> WaterParticleOut {
+    // (a sheet is a strip of the instance's three quads; anything else is
+    // one quad, the other two collapsed)
+    let sheet=event.params.y==9.0 && index<3u;
+    let corner=quad*select(select(0.0,1.0,segment<0.5),1.0,sheet);
+    let power=max(event.motion.w,0.1);
+    let away=normalize(event.motion.xy+vec2<f32>(0.0001,0.0));
+    let along=vec2<f32>(-away.y,away.x);
+    let h=water_fx_hash(vec2<f32>(f32(index)*3.7+event.params.w*61.0,event.position.w*11.3));
+    let g=water_fx_hash(vec2<f32>(f32(index)*7.1+event.params.w*17.0,event.position.w*5.9+1.3));
+    let level=event.params.z;
+    // the sea's surface there now: the spray rises from the waves, not from
+    // the still level, and is cut a little under them (cut at the still
+    // level, the waves moving through its foot made it flicker)
+    let water=particle_water_level(event.position.xy,level);
+    var o:WaterParticleOut;
+    o.seed=fract(event.params.w*13.0+f32(index)*0.37);
+    o.level=water-0.15;
+    o.normal=vec3<f32>(0.0,0.0,1.0);
+    o.uv=corner;
+    var pos=vec3<f32>(event.position.xy,level);
+    var size=0.0;var life=0.0;
+    // a camera-facing sprite, or (droplets) one streaked along their flight
+    var velocity=vec3<f32>(0.0);var streak=0.0;
+    if(event.params.y==10.0) {
+        if(index==0u) {
+            // the foam spreading at the foot, laid on the waves
+            let radius=event.params.x*(0.6+age*0.35)+0.3;
+            let centre=event.position.xy+away*(radius*0.6);
+            let at=centre+(along*corner.x+away*corner.y)*radius;
+            pos=vec3<f32>(at,particle_water_level(at,level)+0.03);
+            life=smoothstep(0.1,0.4,age)*(1.0-smoothstep(1.8,4.2,age));
+            o.kind=9u;o.level=-1e9;
+        } else if(index==1u) {
+            // the water streaming back down the face, once the burst falls
+            // (lying along a face that slopes back: `motion.xy` is longer
+            // by how much it does)
+            let height=clamp(event.motion.z,0.2,6.0);
+            let slope_back=clamp(length(event.motion.xy)-1.0,0.0,1.0);
+            let up=corner.y*0.5+0.5;
+            let at=event.position.xy+away*0.2+along*corner.x*event.params.x-away*up*height*slope_back;
+            pos=vec3<f32>(at,mix(water-0.05,level+height,up));
+            life=smoothstep(0.5,0.8,age)*(1.0-smoothstep(1.6,3.2,age));
+            o.kind=10u;
+        }
+        if(age<0.0 || !water_fx_on(64u)){life=0.0;}
+        o.life=life;o.world=pos;o.clip=frame.view_proj*vec4<f32>(pos,1.0);
+        return o;
+    }
+    let foot=event.position.xy+along*(h.x*2.0-1.0)*event.params.x*0.5;
+    // the room above (a deck, a floor on stilts): nothing goes through it
+    let roof=level+select(50.0,event.motion.z,event.motion.z>0.0)-0.05;
+    // the jet: how fast the water is thrown up the face, and when it tops out
+    let jet=(4.5+2.6*min(power,2.5))*(0.75+0.5*g.x);
+    let apex=jet/9.81;
+    if(index<3u) {
+        // Sheets of water thrown up the face: three fanned out from where
+        // the crest hit (one straight up, two leaning along the face), each
+        // a curved strip from the water to its rim that rises, spreads and
+        // bends out to sea as it goes, then tears apart and falls (drawn as
+        // water going white, water_crash_sheet_color).
+        let k=f32(index);
+        let fan=select(select(0.75,-0.75,index==1u),0.0,index==0u)+(h.x-0.5)*0.5;
+        let t=age-k*0.04-h.y*0.06;let tt=max(t,0.0);
+        let v0=jet*(0.85+0.3*g.y)*(1.0-0.15*k);
+        let height=max(v0*tt-4.905*tt*tt,0.0);
+        let u=(segment+quad.x*0.5+0.5)/3.0;
+        let across=u*2.0-1.0;
+        let s=quad.y*0.5+0.5;
+        let lean=(0.35+0.3*min(power,2.5))*tt*(0.8+0.5*h.y);
+        let curve=s*s;
+        let half=event.params.x*(0.35+0.9*s*(0.4+tt));
+        // (up a sloping face the water runs up the slope as it rises:
+        // `motion.xy` is longer by how much the face slopes back)
+        let slope_back=clamp(length(event.motion.xy)-1.0,0.0,1.0);
+        // (a shallow shell round the impact, its middle further out: a flat
+        // strip seen edge on was a line)
+        let shell=(1.0-across*across)*(0.25+0.35*s)*min(height,3.0)*0.35;
+        let flat=foot+along*(across*half+fan*(0.3+lean*curve*1.4))+away*(0.12+lean*curve+shell)-away*height*s*slope_back*0.8;
+        // (under a deck the sheet slaps its underside and flattens there)
+        pos=vec3<f32>(flat,min(water+height*s*(1.0-0.3*slope_back)+0.05,roof));
+        let top=v0/9.81;
+        life=smoothstep(0.0,0.04,t)*(1.0-smoothstep(0.9*top,1.6*top,tt))*smoothstep(0.0,0.2,height);
+        if(age<0.0 || !water_fx_on(64u)){life=0.0;}
+        o.uv=vec2<f32>(across,s*2.0-1.0);
+        o.normal=normalize(vec3<f32>(away*(0.6+curve)+along*(fan*0.4+across*0.7),0.25-0.6*curve));
+        o.kind=11u;
+        // (its own seed, and how far it has torn: from its rim down, as it
+        // slows and falls; smoothly, or its holes would jump)
+        o.seed=floor(fract(event.params.w*13.0+k*0.37)*1000.0)+clamp(tt/max(top,0.05),0.0,1.9)*0.5;
+        o.life=life;o.world=pos;o.clip=frame.view_proj*vec4<f32>(pos,1.0);
+        return o;
+    }
+    {
+        // droplets torn off the sheets' rims as they rise, flying on alone
+        // and falling back
+        let release=h.y*apex*0.8;
+        let t=age-release;let tt=max(t,0.0);
+        let rim=jet*release-4.905*release*release;
+        let theta=(h.x*2.0-1.0)*1.3;
+        let out=away*cos(theta)*0.7+along*sin(theta);
+        let speed=(1.0+1.2*min(power,2.5))*(0.5+g.y);
+        let up=(jet-9.81*release)*(0.8+0.4*g.x);
+        pos=vec3<f32>(foot+away*(0.3+0.4*release)+out*speed*tt,water+0.05+rim+up*tt-4.905*tt*tt);
+        velocity=vec3<f32>(out*speed,up-9.81*tt);
+        size=0.008+g.x*0.014;
+        streak=min(length(velocity)*0.03,0.3);
+        life=smoothstep(0.0,0.03,t)*(1.0-smoothstep(1.0,1.6,t))*smoothstep(water-0.1,water+0.1,pos.z)*step(pos.z,roof);
+        o.kind=5u;
+    }
+    if(age<0.0 || !water_fx_on(64u)){life=0.0;}
+    let projected=vec2<f32>(dot(velocity,frame.cam_right.xyz),dot(velocity,frame.cam_up.xyz));
+    let dir=select(vec2<f32>(0.0,1.0),normalize(projected),length(projected)>1e-4);
+    let side=vec2<f32>(dir.y,-dir.x);
+    let offset=side*corner.x*size+dir*corner.y*(size+streak);
+    pos+=frame.cam_right.xyz*offset.x+frame.cam_up.xyz*offset.y;
+    o.life=life;o.world=pos;o.clip=frame.view_proj*vec4<f32>(pos,1.0);
+    return o;
+}
+// Spindrift (scene/water_spindrift.rs): in a strong wind, spray torn off a
+// breaking crest and blown downwind as a thin mist. Each wisp of the event
+// leaves the crest a moment apart, a little to the side, barely lifted and
+// blown off at about a third of the wind's speed (`motion.xy` the wind),
+// drawn out along it, thinning out within a second or so. `motion.w` how
+// hard the crest broke. (Round puffs lifted higher and slower read as small
+// clouds; blown off at over half the wind's speed, large, it flew all over
+// the sea.)
+//
+// The crests' own spray (`params.x` 2: a breaking crest's lip; 1: crests
+// meeting, thrown up higher) follows GodotOceanWaves' sea spray (MIT, Ethan
+// Truong): a splash kept on the water, breaking up into drops as it fades
+// (water_crash_color, kind 13): a burst of white water blooming out at its
+// foot, and clusters of drops fanned out of it, each hopping off on a
+// flight of its own (`motion.z`) and falling back, streaked along the way
+// it flies. (One hop shared by all, popping up and flattening, read as a
+// sprite set on the crest.) It goes on with its crest, the way it folds
+// over at the speed its foam rides (`motion.xy`: scene/water_spindrift.rs
+// `squeeze`), its height the surface's there (water_surface_z) as the waves
+// lift and drop it. (Thrown as cards stretched along the wind, at up to
+// 0.9 m, they flew off the crests.)
+fn water_spindrift_particle(event: WaterFxEvent, index: u32, quad: vec2<f32>, age: f32) -> WaterParticleOut {
+    let h=water_fx_hash(vec2<f32>(f32(index)*5.3+event.params.w*31.0,event.position.w*7.7));
+    let g=water_fx_hash(vec2<f32>(f32(index)*2.9+event.params.w*13.0,event.position.w*3.1+0.7));
+    let u=max(length(event.motion.xy),0.1);
+    let toward=event.motion.xy/u;
+    let side=vec2<f32>(-toward.y,toward.x);
+    var pos:vec3<f32>;
+    var life:f32;
+    var offset:vec2<f32>;
+    if(event.params.x>=0.9) {
+        let lip=event.params.x>=1.9;
+        let delay=h.x*select(0.12,0.1,lip);
+        let t=max(age-delay,0.0);
+        // carried on with the crest (`u`), each cluster has a flight of its
+        // own off it: the first two a burst of white water at its foot that
+        // blooms out and settles, the others drops fanned out from it
+        // (ahead, to the sides, up), which arc and fall back one by one
+        let bloom=index<2u;
+        let vz=select(event.motion.z*(0.45+0.55*g.x),0.0,bloom);
+        let ahead=select(0.15+0.8*g.y,0.1,bloom)*select(0.5,1.0,lip);
+        let aside=(h.y-0.5)*select(1.6,1.1,lip);
+        let hop=max(vz*t-4.905*t*t,0.0);
+        let span=select(vz/4.905+0.25,0.7+0.2*g.x,bloom);
+        let turn=t/span;
+        let origin=event.position.xy+side*(h.y-0.5)*select(0.3,1.2,lip);
+        let xy=origin+toward*(u+ahead)*t+side*aside*t;
+        let size=select(select(0.08+0.1*h.y,0.05+0.07*h.y,lip)*(1.0+0.8*t),(0.15+0.1*g.x)*(1.0+2.5*log(1.0+3.0*t)),bloom);
+        let surface=water_surface_z(xy,event.params.z);
+        pos=vec3<f32>(xy,surface+hop+select(0.6*size,0.3*size,bloom));
+        life=smoothstep(0.0,0.04,age-delay)*(1.0-smoothstep(select(0.6,0.35,bloom),1.0,turn));
+        // (no big splash in one's face)
+        life*=smoothstep(1.5,4.0,distance(pos,frame.camera_pos.xyz));
+        // drawn out along the way it flies off the crest as it is seen
+        // (a streak rising fast, a round drop at the top of its arc, a
+        // streak again falling), the bloom flattened on the water
+        let flight=vec3<f32>(toward*ahead+side*aside,vz-9.81*t);
+        let seen=vec2<f32>(dot(flight,frame.cam_right.xyz),dot(flight,frame.cam_up.xyz));
+        let speed=length(seen);
+        let dir=select(vec2<f32>(0.0,1.0),seen/max(speed,1e-4),speed>0.05);
+        let stretch=select(1.0+min(speed*0.35,2.0),1.0,bloom);
+        let squash=select(1.0,0.45,bloom);
+        offset=select(dir*quad.y*size*stretch+vec2<f32>(dir.y,-dir.x)*quad.x*size,vec2<f32>(quad.x*size,quad.y*size*squash),bloom);
+    } else {
+        let t=max(age-h.x*0.25,0.0);
+        let drift=u*0.35*(1.0-exp(-t*0.8))/0.8;
+        let lift=(0.05+0.2*g.x)*(1.0-exp(-t*4.0))-0.08*t*t;
+        let size=(0.12+0.18*h.y)*(1.0+t*0.7)*(0.6+0.5*min(event.motion.w,1.0));
+        life=smoothstep(0.0,0.1,age-h.x*0.25)*(1.0-smoothstep(0.4,1.2,t));
+        let start=event.position.xy+side*(h.y-0.5)*1.4;
+        pos=vec3<f32>(start+toward*drift+side*(g.y-0.5)*t*0.3,event.position.z+max(lift,-0.05));
+        // a wisp drawn out along the wind as it is seen (up to two and a
+        // half times as long as it is wide)
+        let along=vec3<f32>(toward,0.0);
+        let seen=vec2<f32>(dot(along,frame.cam_right.xyz),dot(along,frame.cam_up.xyz));
+        let dir=select(vec2<f32>(1.0,0.0),normalize(seen),length(seen)>0.05);
+        let stretch=1.0+1.5*min(length(seen),1.0);
+        offset=dir*quad.x*size*stretch+vec2<f32>(-dir.y,dir.x)*quad.y*size;
+    }
+    if(age<0.0 || !water_fx_on(64u)){life=0.0;}
+    pos+=frame.cam_right.xyz*offset.x+frame.cam_up.xyz*offset.y;
+    var o:WaterParticleOut;
+    // (the water thrown up, denser drops than the spindrift's mist: kind 13)
+    o.clip=frame.view_proj*vec4<f32>(pos,1.0);o.world=pos;o.uv=quad;o.life=life;o.kind=select(12u,13u,event.params.x>=0.9);
+    o.level=-1e9;o.normal=vec3<f32>(0.0,0.0,1.0);o.seed=fract(event.params.w*7.0+f32(index)*0.29);
+    return o;
+}
+// An avatar's splash (scene/water_contacts.rs, `WaterEvent` kind 13), after
+// Radiance Viewer's rdwatersplash.cpp (PyKat Resident's, originally LGPL
+// 2.1): masses of spray that bloom out of the contact point fast, then
+// slowly, and settle back into the water, and clusters of drops thrown out
+// of it on arcs of their own (air drag, gravity; the light splashes' drops
+// fall slower, to hang a moment), streaked along their flight, gone where
+// they meet the water. What happened (`params.x`) sets how many of each and
+// how they fly: a step (a burst and drops kicked forward and up), an arm or
+// a leg slapping in (a burst, a few drops), a limb leaving the water fast
+// (drops thrown along its swing), a part ploughing through the surface
+// (spray off its leading edge), the torso jumped in (a ring of bursts low
+// on the water, a core, a top, a crown of drops out and a jet up).
+// `motion.xyz` the part's velocity through the water, `motion.w` the
+// splash's size. Drawn as the crests' drops, water_crash_color kind 13.
+fn water_avatar_splash(event: WaterFxEvent, index: u32, quad: vec2<f32>, age: f32) -> WaterParticleOut {
+    var o:WaterParticleOut;
+    o.clip=vec4<f32>(0.0,0.0,-1.0,1.0);o.world=vec3<f32>(0.0);o.uv=quad;o.life=0.0;o.kind=13u;
+    o.level=-1e9;o.normal=vec3<f32>(0.0,0.0,1.0);o.seed=0.0;
+    if(age<0.0 || !water_fx_on(64u)){return o;}
+    let h=water_fx_hash(vec2<f32>(f32(index)*5.3+event.params.w*31.0,event.position.w*7.7));
+    let g=water_fx_hash(vec2<f32>(f32(index)*2.9+event.params.w*13.0,event.position.w*3.1+0.7));
+    let what=u32(event.params.x+0.5);
+    let s=event.motion.w;
+    let v=event.motion.xyz;
+    let drift=vec3<f32>(v.xy,0.0);
+    let up=vec3<f32>(0.0,0.0,1.0);
+    let angle=6.283185*g.x;
+    let out=vec3<f32>(cos(angle),sin(angle),0.0);
+    let level=event.params.z;
+    // how many bursts lead the event's instances; the rest are drops
+    var bursts=1u;
+    if(what==4u){bursts=4u;}
+    if(what==2u || (what==3u && h.y>0.4)){bursts=0u;}
+    var pos=event.position.xyz;
+    var size=0.0;
+    var life=0.0;
+    var flight=vec3<f32>(0.0,0.0,1.0);
+    if(index<bursts) {
+        // a mass of spray on the contact point: zooming out of it fast, then
+        // slowly, fading in, then out, sinking into the water from a third
+        // of its life (Radiance's burst_update)
+        var reach=select((0.45+0.25*h.x)*(0.6+0.4*s),(0.55+0.2*h.x)*s,what==4u);
+        var offset=up*(0.3*reach);
+        var span=0.75+0.2*h.y;
+        if(what==4u) {
+            // the torso's: a ring low on the water, a core, and a top
+            if(index==3u){offset=out*(0.1*reach)+up*(1.1*reach);span=0.9;}
+            else if(index==2u){offset=out*(0.1*reach)+up*(0.55*reach);reach*=1.3;span=1.0;}
+            else {offset=out*(0.55*reach)+up*(0.2*reach);reach*=1.2;span=1.1;}
+        }
+        if(what==2u){reach*=0.7;}
+        let t=clamp(age/span,0.0,1.0);
+        let rest=(1.0-t)*(1.0-t);
+        let zoom=mix(0.2,1.0,1.0-rest*rest);
+        let sink=max(t-0.3,0.0)/0.7;
+        let moved=drift*0.2*(1.0-exp(-age*3.0))/3.0;
+        pos=event.position.xyz+moved+offset*zoom-up*(offset.z+0.4*reach)*sink*sink;
+        size=0.5*reach*zoom;
+        let fade=smoothstep(0.0,0.1,t);
+        life=fade*pow(1.0-t,1.3)*0.9;
+        o.seed=fract(event.params.w*7.0+f32(index)*0.29);
+    } else {
+        // drops thrown out of it
+        var velocity=vec3<f32>(0.0);
+        var gravity=5.0;var drag=0.8;var size0=0.05*(0.5+0.5*s);
+        if(what==0u) {
+            velocity=out*(0.2+0.4*h.x)+up*((0.8+0.6*h.y)*s)+drift*0.3;
+        } else if(what==1u) {
+            velocity=out*(0.3+0.5*h.x)+up*((0.8+0.8*h.y)*s)+drift*0.4;
+        } else if(what==2u) {
+            // along the limb's swing
+            velocity=v*(0.5+0.3*h.x)+vec3<f32>((h.y-0.5)*0.4,(g.y-0.5)*0.4,(h.x-0.3)*0.3);
+            size0=0.04+0.02*h.y;
+        } else if(what==3u) {
+            velocity=drift*(0.4+0.3*h.x)+up*(0.6+0.7*h.y)+vec3<f32>((g.y-0.5)*0.3,(h.y-0.5)*0.3,0.0);
+        } else {
+            // the torso's: a crown thrown out, every third a jet straight up
+            let jet=index%3u==0u;
+            let rise=select(0.95+0.35*h.y,1.4+0.14*h.y,jet);
+            let speed=select(3.0+1.5*h.x,4.5+2.5*h.x,jet)*sqrt(s);
+            velocity=(out*cos(rise)+up*sin(rise))*speed+drift*0.2;
+            gravity=9.81;drag=0.7;size0=(0.06+0.03*h.y)*(0.7+0.3*s);
+        }
+        let delay=h.y*0.05;
+        let t=max(age-delay,0.0);
+        let k=drag;
+        let ease=(1.0-exp(-k*t))/k;
+        // (drag on the throw, gravity on the fall: near enough for drops
+        // a moment in the air)
+        let start=event.position.xyz+out*(0.1*s)+up*0.06;
+        pos=start+velocity*ease-up*0.5*gravity*t*t;
+        flight=velocity*exp(-k*t)-up*gravity*t;
+        size=size0*(0.6+0.4*(1.0-exp(-t*4.0)));
+        // gone where they meet the water, fading as they reach it
+        let water=particle_water_level(pos.xy,level);
+        let above=pos.z-water;
+        life=smoothstep(0.0,0.03,age-delay)*smoothstep(-0.02,0.06,above)*select(1.0,0.0,flight.z<0.0 && above<-0.02);
+        life*=1.0-smoothstep(1.4,2.0,t);
+        o.seed=fract(event.params.w*3.0+f32(index)*0.41);
+    }
+    // (no splash in one's face)
+    life*=smoothstep(0.3,1.0,distance(pos,frame.camera_pos.xyz));
+    // drawn out along its flight as it is seen (a burst stays round)
+    let seen=vec2<f32>(dot(flight,frame.cam_right.xyz),dot(flight,frame.cam_up.xyz));
+    let speed=length(seen);
+    let dir=select(vec2<f32>(0.0,1.0),seen/max(speed,1e-4),speed>0.05);
+    let stretch=select(1.0+min(speed*0.35,2.0),1.0,index<bursts);
+    let offset=dir*quad.y*size*stretch+vec2<f32>(dir.y,-dir.x)*quad.x*size;
+    pos+=frame.cam_right.xyz*offset.x+frame.cam_up.xyz*offset.y;
+    o.clip=frame.view_proj*vec4<f32>(pos,1.0);o.world=pos;o.life=life;
+    return o;
+}
+// The crests' fuzz (water_effects.rs `crest_mist`): from a fresh breeze
+// on, a fuzz of fine spray on every crest breaking white round the camera,
+// all the time, as the driving waves of a stylised game sea carry it. No
+// events, nothing from the CPU but how many: each puff is at a place on the
+// water round the camera (more of them near), a new one each time round
+// its second-long loop, and shows only while the surface drawn there is
+// breaking white now: the whitecaps' own test (the surface's fold past
+// `cap_start`, in the wind's gusty patches: vs_water's foam), on the swell
+// and the chop together. It sits on the water where the waves have moved
+// it, lifts a little off the cap and is blown on downwind as it thins, and
+// fades as the cap moves on or ebbs, so it stays on the breaking water.
+// GodotOceanWaves' sea spray (MIT, Ethan Truong) does the same over a
+// fixed grid. (One band along each swell crest ignored the chop the crests
+// are drawn with, and read as a wall of fog.) Drawn as the spindrift's
+// mist, water_crash_color kind 12.
+@vertex
+fn vs_water_crest_mist(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> WaterParticleOut {
+    var o:WaterParticleOut;
+    o.clip=vec4<f32>(0.0,0.0,-1.0,1.0);o.world=vec3<f32>(0.0);o.uv=vec2<f32>(0.0);o.life=0.0;o.kind=12u;
+    o.level=-1e9;o.normal=vec3<f32>(0.0,0.0,1.0);o.seed=0.0;
+    let sea=water_fx.sea;
+    let breeze=smoothstep(8.0,16.0,sea.wind.z);
+    if(breeze<=0.0 || !water_fx_on(1u) || !water_fx_on(8u) || !water_fx_on(64u) || camera_underwater()){return o;}
+    let corners=array<vec2<f32>,6>(vec2<f32>(-1.0,-1.0),vec2<f32>(1.0,-1.0),vec2<f32>(1.0,1.0),vec2<f32>(-1.0,-1.0),vec2<f32>(1.0,1.0),vec2<f32>(-1.0,1.0));
+    let quad=corners[vertex%6u];let puff=f32(vertex/6u);
+    let time=frame.camera_pos.w;
+    // (each puff's loop, and its place this time round: within 45 m,
+    // as many per metre of distance near as far)
+    let g=water_fx_hash(vec2<f32>(f32(instance)*3.1+puff*17.3,11.7));
+    let period=0.8+0.6*g.x;
+    let cycle=time/period+g.y;
+    let turn=fract(cycle);
+    let r=water_fx_hash(vec2<f32>(f32(instance)*5.7+puff*7.9,floor(cycle)*1.37+3.3));
+    let r2=water_fx_hash(r*vec2<f32>(91.7,37.3)+vec2<f32>(puff,1.9));
+    let cam=frame.camera_pos.xy;
+    let far=3.0+42.0*r.x;
+    let p=cam+vec2<f32>(cos(r.y*6.283185),sin(r.y*6.283185))*far;
+    let level=frame.cam_up.w;
+    let bed=water_fx_bed(p);
+    // (the region's water only, deep enough to break in open water)
+    let region=(1.0-smoothstep(0.25,0.5,abs(level-bed.y)))*smoothstep(1.0,3.0,level-bed.x);
+    if(region<=0.0){return o;}
+    let at=water_fx_sea_at(p);
+    let swell=water_sea(p,time,water_fx.counts.w,sea,at,water_fx_ocean(p,0.0,false,at),0.0);
+    let shown=vec3<f32>(p,level)+swell.offset*region;
+    // the whitecaps' test where it is drawn (vs_water's `core`, `gusty`)
+    let rough=sea.frame.w;
+    let cap_start=mix(0.25,0.04,sqrt(rough));
+    let toward=sea.wind.xy;
+    let along=vec2<f32>(dot(shown.xy,toward),dot(shown.xy,vec2<f32>(-toward.y,toward.x)));
+    let q=along-vec2<f32>(time*(0.3+0.04*sea.wind.z),0.0);
+    let warp=vec2<f32>(water_fx_noise(q*0.045),water_fx_noise(q*0.045+vec2<f32>(3.1,8.7)))-0.5;
+    let w=q+warp*vec2<f32>(10.0,6.0);
+    let windpatch=0.65*water_fx_noise(w*vec2<f32>(0.11,0.19))+0.35*water_fx_noise(w*vec2<f32>(0.27,0.4)+vec2<f32>(9.0,2.0));
+    let gusty=smoothstep(0.3-0.25*rough,0.75-0.25*rough,windpatch);
+    let cap=smoothstep(cap_start+0.05,cap_start+0.35,swell.breakers)*gusty*at.shelter;
+    let fade=smoothstep(2.0,5.0,far)*(1.0-smoothstep(32.0,45.0,far));
+    let strength=cap*breeze*fade*region;
+    if(strength<=0.02){return o;}
+    let t=turn*period;
+    let size=(0.25+0.3*r2.x)*(1.0+1.2*turn)*(0.7+0.3*cap);
+    let xy=shown.xy+toward*(0.3+0.04*sea.wind.z)*t+vec2<f32>(-toward.y,toward.x)*(r2.y-0.5)*0.5;
+    var pos=vec3<f32>(xy,shown.z+0.05+(0.1+0.25*r2.x)*sqrt(turn)*cap+0.4*size);
+    // drawn out a little along the wind as it is seen
+    let wind=vec3<f32>(toward,0.0);
+    let seen=vec2<f32>(dot(wind,frame.cam_right.xyz),dot(wind,frame.cam_up.xyz));
+    let d=select(vec2<f32>(1.0,0.0),normalize(seen),length(seen)>0.05);
+    let stretch=1.0+0.6*min(length(seen),1.0);
+    let offset=d*quad.x*size*stretch+vec2<f32>(-d.y,d.x)*quad.y*size*0.8;
+    pos+=frame.cam_right.xyz*offset.x+frame.cam_up.xyz*offset.y;
+    o.clip=frame.view_proj*vec4<f32>(pos,1.0);o.world=pos;o.uv=quad;
+    // (twice the spindrift's mist, as thick as the cap)
+    o.life=smoothstep(0.0,0.15,turn)*(1.0-smoothstep(0.4,1.0,turn))*strength*2.0;
+    o.seed=fract(r2.x*7.0+puff*0.31);
+    return o;
+}
+// The colour of a crash's particles (water_crash_particle): its sheets
+// (water_crash_sheet_color), droplets, and the white water it leaves, lit
+// by the sun and greyed by the sky's light under.
+fn water_crash_color(in: WaterParticleOut) -> vec4<f32> {
+    if(in.life<=0.001){discard;}
+    if(in.kind==11u){return water_crash_sheet_color(in);}
+    let sun=normalize(frame.sun_dir.xyz);
+    let day=clamp(frame.sun_dir.z*2.5,0.15,1.0);
+    var alpha=0.0;var lit=0.6;var up=0.5;
+    let r=length(in.uv);
+    if(in.kind==9u) {
+        // the foam spreading at the foot: a lace of thin strands over a
+        // faint veil, its rim torn and ragged. (A disc with blotches cut in
+        // it read as a sprite: the rim is the disc's radius bent by noise,
+        // the strands two scales of ridged noise warped together.)
+        let p=in.world.xy;
+        let warp=vec2<f32>(water_fx_noise(p*0.4+in.seed*9.0),water_fx_noise(p*0.4+vec2<f32>(4.1,in.seed*5.0)))-0.5;
+        let q=p+warp*2.5;
+        let ridge=1.0-abs(water_fx_noise(q*1.3)*0.6+water_fx_noise(q*3.4+vec2<f32>(3.0,8.0))*0.4-0.5)*2.0;
+        let fine=1.0-abs(water_fx_noise(q*7.0+vec2<f32>(in.seed*13.0,1.7))-0.5)*2.0;
+        let wobble=water_fx_noise(in.uv*1.4+vec2<f32>(in.seed*11.0,2.3))*0.6+water_fx_noise(in.uv*3.6+vec2<f32>(5.1,in.seed*7.0))*0.4;
+        let rim=1.0-smoothstep(0.25,1.0,r*(0.7+0.7*wobble));
+        var lace=smoothstep(0.58,0.86,ridge)*mix(0.55,1.0,smoothstep(0.4,0.8,fine));
+        if(water_foam_textured()) {
+            // the foam texture's lace, thinning as it spreads (life)
+            let t=water_foam_lace(p,distance(in.world,frame.camera_pos.xyz)*0.0012+0.002);
+            lace=water_foam_lace_cover(0.35+0.45*in.life,t);
+        }
+        alpha=rim*(0.12+0.6*lace)*0.75;
+        lit=0.75;up=1.0;
+    } else if(in.kind==13u) {
+        // water thrown up off a crest (water_spindrift_particle): a
+        // cluster of drops, denser than the mist, with a few loose drops
+        // round it; breaking up into drops as it fades (GodotOceanWaves'
+        // dissolve: fewer of its blobs clear the noise's rising cut)
+        // (its blobs drifting outward as it opens up; no edge to the quad)
+        let opened=in.uv*mix(0.75,1.0,in.life);
+        let n=water_fx_noise(opened*3.1+vec2<f32>(in.seed*17.0,0.0))*0.55+water_fx_noise(opened*7.3+vec2<f32>(2.0,in.seed*9.0))*0.45;
+        let cut=mix(0.78,0.42,in.life);
+        let edge=1.0-smoothstep(0.35,1.0,r);
+        alpha=edge*edge*smoothstep(cut,cut+0.2,n)*0.55;
+        let q=opened*6.0+vec2<f32>(in.seed*31.0,in.seed*17.0);
+        let cell=floor(q);
+        let at=water_fx_hash(cell);
+        let drop=1.0-smoothstep(0.07,0.13,length(fract(q)-0.5-(at-0.5)*0.6));
+        alpha=max(alpha,drop*step(0.55,water_fx_hash(cell+vec2<f32>(3.7,1.3)).x)*edge*0.55);
+        lit=0.85;up=0.9;
+    } else if(in.kind==12u) {
+        // spindrift: a soft, torn puff of mist (water_spindrift_particle)
+        let n=water_fx_noise(in.uv*1.7+vec2<f32>(in.seed*13.0,frame.camera_pos.w*0.4))*0.6+water_fx_noise(in.uv*4.3+vec2<f32>(3.0,in.seed*7.0))*0.4;
+        alpha=exp(-r*r*2.2)*smoothstep(0.3,0.8,n)*0.12;
+        lit=0.85;up=0.9;
+    } else if(in.kind==10u) {
+        // white water streaming down the face in ropes
+        let top=in.uv.y*0.5+0.5;
+        let bend=water_fx_noise(vec2<f32>(top*3.0+in.seed*7.0,in.uv.x*2.0))-0.5;
+        let n=water_fx_noise(vec2<f32>((in.uv.x+bend*0.15)*11.0+in.seed*19.0,top*(1.2+in.seed)+frame.camera_pos.w*2.2))*0.7+water_fx_noise(vec2<f32>(in.uv.x*23.0,top*4.0+frame.camera_pos.w*3.1))*0.3;
+        alpha=smoothstep(0.58,0.82,n)*(1.0-smoothstep(0.5,1.0,abs(in.uv.x)))*(1.0-smoothstep(0.6,1.0,top))*smoothstep(0.0,0.15,top)*0.45;
+        lit=0.55;up=0.4;
+    } else {
+        // a fine droplet
+        alpha=(1.0-smoothstep(0.4,1.0,r))*0.85;
+        lit=0.8;up=0.8;
+    }
+    alpha*=in.life;
+    // (faded where it meets what is solid, over a few decimetres: lying on
+    // a rock's uneven face it went in and out of it, flickering)
+    let solid_depth=scene_depth_at(screen_uv(in.clip.xy));
+    if(solid_depth>0.0) {
+        let solid=world_from_depth(screen_uv(in.clip.xy),solid_depth);
+        alpha*=clamp((distance(solid,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.35,0.0,1.0);
+    }
+    if(alpha<0.004){discard;}
+    // lit as the foam on the water is (water_pixel's foam_light), in the
+    // sun's shadow: brighter, it stood out as if fullbright
+    let shade=sun_shadow(in.world,vec3<f32>(0.0,0.0,1.0),distance(in.world,frame.camera_pos.xyz),in.clip.xy);
+    let color=(frame.sky_horizon.rgb*(0.25+0.15*up)+frame.sun_color.rgb*(0.04+lit/PI)*shade*day)*0.8;
+    return vec4<f32>(apply_fog(color,in.world)*alpha,alpha);
+}
+// A sheet of a crash (water_crash_particle): water first, see-through and
+// mirroring the sky, going white as it is torn and aerated toward its rim
+// and as it falls apart; ragged holes open from the rim down as it goes.
+// `seed`: its own (whole part, 0..999) and how far it has torn (twice the
+// fraction, 0..1.9).
+fn water_crash_sheet_color(in: WaterParticleOut) -> vec4<f32> {
+    let top=in.uv.y*0.5+0.5;
+    let torn=fract(in.seed)*2.0;
+    let own=floor(in.seed)/1000.0;
+    // The pattern is the sheet's own (across it, up it), not the world's:
+    // it rises with the water and stretches as the sheet grows, drawn out
+    // upward the way flung water is. (In world space the sheet rose through
+    // a still pattern, as if a light swept up a patterned wall.) Warped, in
+    // turned layers: thresholded plain value noise tore into square blocks.
+    let q=vec2<f32>(in.uv.x*2.2,top*3.0)+vec2<f32>(own*41.0,-own*7.0);
+    let warp=vec2<f32>(water_fx_noise(q*1.3),water_fx_noise(q*1.3+vec2<f32>(5.1,2.7)))-0.5;
+    let w=q+warp*1.6;
+    let ragged=water_fx_noise(w*2.3)*0.6+water_fx_noise(vec2<f32>(w.x*0.7-w.y*0.7,w.x*0.7+w.y*0.7)*4.1+vec2<f32>(3.3,1.9))*0.4;
+    let fine=water_fx_noise(vec2<f32>(w.x*0.5+w.y*0.87,w.y*0.5-w.x*0.87)*8.3+vec2<f32>(own*13.0,0.0));
+    let streaks=water_fx_noise(vec2<f32>((in.uv.x+own)*5.0+warp.x*2.0,top*2.4+own*5.0));
+    // the sheet tears from its rim down, and more as it falls
+    let tear=0.12+top*0.38+max(torn-0.6,0.0)*0.55;
+    let holes=smoothstep(tear,tear+0.22,ragged*0.6+fine*0.28+streaks*0.12);
+    let sides=1.0-smoothstep(0.65,1.0,abs(in.uv.x));
+    let foot=smoothstep(0.0,0.06,top);
+    let white=clamp(0.15+top*0.65+torn*0.35+(fine-0.5)*0.3,0.0,1.0);
+    let rim=smoothstep(0.82,0.97,top)*(0.6+fine*0.4);
+    let view=normalize(frame.camera_pos.xyz-in.world);
+    let normal=normalize(in.normal+vec3<f32>((ragged-0.5)*0.25,(fine-0.5)*0.25,(streaks-0.5)*0.15));
+    let facing=abs(dot(normal,view));
+    let fresnel=0.02037+0.97963*pow(1.0-facing,5.0);
+    let sun=normalize(frame.sun_dir.xyz);
+    let day=clamp(frame.sun_dir.z*2.5,0.15,1.0);
+    let lit=abs(dot(normal,sun));
+    let uv=clamp(screen_uv(in.clip.xy)+vec2<f32>(dot(normal,frame.cam_right.xyz),-dot(normal,frame.cam_up.xyz))*0.02,vec2<f32>(0.001),vec2<f32>(0.999));
+    let behind=textureSampleLevel(scene_tex,lin_clamp,uv,0.0).rgb;
+    let reflected=sky_color(reflect(-view,normal));
+    let water=mix(behind*vec3<f32>(0.82,0.92,0.94),reflected,fresnel*0.75);
+    // (lit as the foam on the water, in the sun's shadow)
+    let shade=sun_shadow(in.world,normal,distance(in.world,frame.camera_pos.xyz),in.clip.xy);
+    let foam=(frame.sky_horizon.rgb*0.32+frame.sun_color.rgb*(0.04+lit/PI)*shade*day)*0.8;
+    let color=mix(water,foam,max(white,rim));
+    // (fading out as it turns edge on: never a line across the view)
+    let edge_on=smoothstep(0.06,0.32,abs(dot(normalize(in.normal),view)));
+    var alpha=(0.3+0.6*max(white,rim)+fresnel*0.25)*holes*sides*foot*in.life*edge_on;
+    alpha=min(alpha,0.95);
+    if(alpha<0.004){discard;}
+    let depth=scene_depth_at(screen_uv(in.clip.xy));
+    var a=alpha;
+    if(depth>0.0) {
+        let solid=world_from_depth(screen_uv(in.clip.xy),depth);
+        a*=clamp((distance(solid,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.35,0.0,1.0);
+    }
+    return vec4<f32>(apply_fog(color,in.world)*a,a);
+}
+// A drop dripping off a wet avatar (kind 6, scene/avatar_drip.rs), as the
+// rain's drops are drawn (rain_streak): a thin cylinder of water across
+// its streak (`normal` its side), reflecting the sky, the sun shining
+// through it from behind and the lamps around lighting it; soft where it
+// meets what is behind. Only the light it adds, as the rain's drops over
+// the water: what is behind it comes from the scene's copy, which lacks
+// what is drawn later (a blended prim the avatar stands on showed the sea
+// under it through the drops, as if they fell behind it), and a drop of a
+// few millimetres shows what is behind it hardly bent.
+const DRIP_BODY: f32 = 0.55;
+fn water_drip_color(in: WaterParticleOut) -> vec4<f32> {
+    if(in.life<=0.001){discard;}
+    let across=in.uv.x;
+    let r=1.0-across*across;
+    if(r<=0.0){discard;}
+    let view=normalize(frame.camera_pos.xyz-in.world);
+    let normal=normalize(in.normal*across+view*sqrt(r));
+    let taper=1.0-smoothstep(0.55,1.0,abs(in.uv.y));
+    let fresnel=0.02037+0.97963*pow(1.0-max(dot(normal,view),0.0),5.0);
+    let suv=screen_uv(in.clip.xy);
+    let reflection=reflect(-view,normal);
+    let reflected=sky_color(vec3<f32>(reflection.xy,abs(reflection.z)));
+    let toward_sun=max(dot(-view,frame.sun_dir.xyz),0.0);
+    let glint=frame.sun_color.rgb*frame.sun_dir.w*(pow(toward_sun,12.0)*1.5+pow(toward_sun,3.0)*0.15);
+    let ambient=frame.sky_horizon.rgb*0.12;
+    let lamps=rain_lamps(in.world,in.clip.xy,view);
+    // a body of its own: the sky it reflects across it (brightest at its
+    // edges) and a soft fill, over what is behind (only added light was
+    // too faint to see)
+    let color=reflected*(0.3+0.7*fresnel)+frame.sky_horizon.rgb*0.12+(glint+ambient)*(0.35+fresnel)+lamps*(0.3+fresnel*0.5);
+    var alpha=taper*sqrt(r)*(0.45+fresnel*0.55)*in.life;
+    let depth=scene_depth_at(suv);
+    if(depth>0.0){
+        let behind=world_from_depth(suv,depth);
+        alpha*=clamp((distance(behind,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.05,0.0,1.0);
+    }
+    if(alpha<0.003){discard;}
+    // (covering what is behind up to some half at its core: DRIP_BODY)
+    return vec4<f32>(apply_fog(color,in.world)*alpha,alpha*DRIP_BODY);
+}
 fn water_particle_color(in: WaterParticleOut) -> vec4<f32> {
+    if(in.kind>=7u) {
+        return water_crash_color(in);
+    }
+    if(in.kind==6u) {
+        return water_drip_color(in);
+    }
     if(in.kind==2u || in.kind==4u) {
         let top=in.uv.y*0.5+0.5;
         let ragged=water_fx_noise(in.world.xy*7.0+vec2<f32>(in.level,top*3.0));
@@ -1917,7 +3000,6 @@ fn water_particle_color(in: WaterParticleOut) -> vec4<f32> {
         let normal=normalize(in.normal+vec3<f32>((ragged-0.5)*0.12,(fine-0.5)*0.12,0.0));
         let fresnel=0.02037+0.97963*pow(1.0-abs(dot(normal,view)),5.0);
         var alpha=(0.22+fresnel*0.28+edge*0.32)*holes*in.life;
-        if(in.life<=0.001 || alpha<0.005){discard;}
         let uv=clamp(screen_uv(in.clip.xy)+vec2<f32>(dot(normal,frame.cam_right.xyz),-dot(normal,frame.cam_up.xyz))*0.006*in.life,vec2<f32>(0.001),vec2<f32>(0.999));
         let transmitted=textureSampleLevel(scene_tex,lin_clamp,uv,0.0).rgb;
         let reflection=reflect(-view,normal);
@@ -1948,7 +3030,20 @@ fn water_particle_color(in: WaterParticleOut) -> vec4<f32> {
 @fragment
 fn fs_water_particle(in: WaterParticleOut) -> @location(0) vec4<f32> {
     if(!camera_underwater() && in.world.z<in.level){discard;}
-    return water_particle_color(in);
+    return water_particle_color(in)*water_particle_unhidden(in);
+}
+// How much of a particle seen from above the water the sea in front of it
+// leaves visible: the water writes no depth, so without this a crest or its
+// foam between the camera and the spray behind it did not hide it. The
+// nearest water surface of the pixel (water_interface, the displaced waves)
+// against the particle's own distance, faded over a few decimetres.
+fn water_particle_unhidden(in: WaterParticleOut) -> f32 {
+    if(camera_underwater()){return 1.0;}
+    let first=textureLoad(water_interface,vec2<i32>(in.clip.xy),0);
+    if(first<=0.0){return 1.0;}
+    let water=1.0/first-1.0;
+    let mine=1.0/water_interface_depth(in.clip.w)-1.0;
+    return clamp((water-mine)/0.8+1.0,0.0,1.0);
 }
 @fragment
 fn fs_water_particle_under(in: WaterParticleOut) -> @location(0) vec4<f32> {
@@ -4262,4 +5357,24 @@ fn fs_snow_mesh(in: SnowMeshOut) -> @location(0) vec4<f32> {
     // ground's own snow shows instead
     if (c.a < 0.5) { discard; }
     return vec4<f32>(c.rgb / c.a, 1.0);
+}
+
+// The backwash on the sand (water_backwash): how much of a draining sheet
+// of water lies here (x, 0..1) and the swash's foam on it (y, 0..1), the
+// same lace as on the water, dragged seaward with it, so the wave is seen
+// pulling back out to sea instead of sinking into the sand. `at` the sea read here, `theta` the
+// swell's phase, `reach` how high the swash runs, `e` the sand's height
+// above the still water (m).
+fn water_sand_backwash(p:vec2<f32>,at:WaterSeaAt,theta:f32,reach:f32,e:f32)->vec2<f32> {
+    let beach=water_swash_beach(at);
+    let rise=water_swash_rise(theta).x;
+    let back=water_backwash(theta,rise*reach,reach,e);
+    let sheet=smoothstep(0.002,0.02,back.x)*beach;
+    if(sheet<0.01 || !water_fx_on(2u)){return vec2<f32>(sheet,0.0);}
+    // the swash's lace, as the water over it drew it (water_swash_foam):
+    // where the water has sunk under the sand, its foam goes on sliding
+    // back on the draining sheet, and fades with it
+    let lace=water_swash_foam(p,at,theta,reach);
+    let foam=sheet*lace*(0.7+0.25*water_fx.sea.frame.w)*water_fx.sea.look.x;
+    return vec2<f32>(sheet,clamp(foam,0.0,1.0));
 }

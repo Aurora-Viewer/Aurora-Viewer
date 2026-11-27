@@ -110,7 +110,10 @@ fn simulate(@builtin(global_invocation_id) id: vec3<u32>) {
             if (edge < -0.2) { velocity *= 0.5; foam *= 0.5; }
         }
     }
-    if ((fx.counts.z & 2u) != 0u) {
+    // (timed wash at the shore, without the wind's waves only: with them,
+    // their own breakers and swash whiten the shore, and this band lingered
+    // round every lake, however calm)
+    if ((fx.counts.z & 2u) != 0u && (fx.counts.z & 1u) == 0u) {
         let wash=sin(depth*3.4+fx.clock.x*1.25+sin(world.x*0.4+world.y*0.31)*0.7);
         foam+=exp(-pow((depth-0.3)*2.8,2.0))*pow(max(wash,0.0),4.0)*dt*1.4;
     }

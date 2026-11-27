@@ -1002,7 +1002,7 @@ impl Scene {
         self.face_hit_in(world, idx, ray, now, include_hidden, mode, None)
     }
 
-    fn geometry_hit(&self, world: &World, idx: usize, ray: (Vec3, Vec3), now: Instant) -> Option<pick::FaceHit> {
+    pub(super) fn geometry_hit(&self, world: &World, idx: usize, ray: (Vec3, Vec3), now: Instant) -> Option<pick::FaceHit> {
         self.face_hit_mode(world, idx, ray, now, true, FacePick::Geometry)
     }
 

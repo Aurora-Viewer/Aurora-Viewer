@@ -92,6 +92,40 @@ struct Motion {
     bubble_at: f32,
     foot_armed: bool,
     carrier_z: f32,
+    /// Sprays owed while it ploughs through the surface (`PLOUGH_RATE`).
+    plough: f32,
+    fling_at: f32,
+}
+
+/// The avatar splashes (`WaterEvent` kind 13, env.wgsl
+/// `water_avatar_splash`), after Radiance Viewer's rdwatercontact.cpp and
+/// rdwatersplash.cpp (PyKat Resident's, originally LGPL 2.1): a mass of
+/// spray blooming where the body meets the water and drops thrown from
+/// it, by what happened there (`params.x`).
+const STEP: f32 = 0.0;
+const LIMB: f32 = 1.0;
+const FLING: f32 = 2.0;
+const PLOUGH: f32 = 3.0;
+const BODY: f32 = 4.0;
+/// Speeds (m/s, through the water): an arm or a leg slapping in, a limb
+/// leaving it fast enough to throw drops, the torso jumped in, a part
+/// cutting through the surface fast enough to spray from its leading edge.
+const LIMB_ENTRY_SPEED: f32 = 1.1;
+const FLING_SPEED: f32 = 1.5;
+const BODY_ENTRY_SPEED: f32 = 2.0;
+const PLOUGH_SPEED: f32 = 1.4;
+/// Sprays a second per m/s past `PLOUGH_SPEED`, and at most.
+const PLOUGH_RATE: f32 = 1.5;
+const PLOUGH_MAX_RATE: f32 = 3.0;
+/// The torso: pelvis, belly, chest.
+const TORSO: std::ops::RangeInclusive<usize> = 12..=14;
+
+fn splash(kind: f32, at: Vec3, velocity: Vec3, strength: f32, level: f32, time: f32, seed: f32) -> WaterEvent {
+    WaterEvent {
+        position: at.extend(time).to_array(),
+        motion: velocity.extend(strength).to_array(),
+        params: [kind, 13.0, level, seed],
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -103,16 +137,23 @@ pub(super) struct Sample {
     pub surface: f32,
     pub ground: f32,
     pub carrier_z: f32,
+    /// How fast the water here moves sideways (m/s, `Sea::flow`: a swell's
+    /// orbits): a body standing in a sea has it pushing past.
+    pub flow: Vec2,
 }
 
 #[derive(Default)]
 pub(super) struct Bodies {
     history: HashMap<(Uuid, u8), Motion>,
+    /// When each avatar last jumped into the water (one splash for its
+    /// whole torso).
+    entered: HashMap<Uuid, f32>,
 }
 
 impl Bodies {
     pub fn retain(&mut self, time: f32) {
         self.history.retain(|_, m| time - m.time < 0.5);
+        self.entered.retain(|_, t| time - *t < 2.0);
     }
 
     pub fn sample(&mut self, sample: Sample, time: f32, settings: WaterEffects, events: &mut Vec<WaterEvent>) {
@@ -124,12 +165,14 @@ impl Bodies {
             surface,
             ground,
             carrier_z,
+            flow,
         } = sample;
         if !matrix.is_finite()
             || !level.is_finite()
             || !surface.is_finite()
             || !ground.is_finite()
             || !carrier_z.is_finite()
+            || !flow.is_finite()
             || !time.is_finite()
         {
             return;
@@ -148,6 +191,8 @@ impl Bodies {
             bubble_at: time - 1.25,
             foot_armed: foot && bottom > surface + 0.02,
             carrier_z,
+            plough: 0.0,
+            fling_at: time - 0.3,
         };
         let Some(previous) = self.history.insert(key, current) else {
             return;
@@ -164,6 +209,13 @@ impl Bodies {
             ..previous
         };
         let carried_speed = (carrier_z - previous.carrier_z) / dt;
+        // The part's motion through the water: sideways, less the swell's
+        // orbits pushing past it (a crest flowing against a standing body
+        // leaves a wake round it and throws spray off it; against the still
+        // water alone, waves passed through bodies as if they were not
+        // there); up and down, its own (water rising over a still foot is
+        // no step, and a swimmer carried with the waves disturbs nothing).
+        let water = flow.extend(carried_speed);
         // Like the independent contact transitions of updateFootstepSounds
         // (indra/newview/llvoavatar.cpp), each foot must lift before another hit.
         // The visual extension tests the water surface, with hysteresis for waves.
@@ -178,7 +230,7 @@ impl Bodies {
             None
         };
         if let Some(c) = swept.or(contact) {
-            let velocity = (matrix.transform_point3(c.local) - previous.matrix.transform_point3(c.local)) / dt - Vec3::Z * carried_speed;
+            let velocity = (matrix.transform_point3(c.local) - previous.matrix.transform_point3(c.local)) / dt - water;
             let speed = velocity.length();
             if !velocity.is_finite() || speed > 40.0 {
                 self.history.insert(key, current);
@@ -198,6 +250,8 @@ impl Bodies {
                     .wake_position
                     .map(|p| c.position.truncate() - p.truncate())
                     .unwrap_or(Vec2::ZERO);
+                // (through the water: less the way it flowed meanwhile)
+                let path = path - flow * elapsed;
                 let length = path.length();
                 if (0.008..2.0).contains(&length) && elapsed < 0.3 {
                     // Pressure follows the interval's motion, not a brief
@@ -250,6 +304,17 @@ impl Bodies {
                     });
                 }
                 if settings.splashes {
+                    // and the spray of it: every step, and an arm or a leg
+                    // slapping in hard enough
+                    let seed = (time * 7.31 + part as f32 * 0.37).fract();
+                    let speed = velocity.length();
+                    if foot {
+                        let s = (0.35 + 0.12 * speed).clamp(0.5, 1.0);
+                        events.push(splash(STEP, c.position, velocity, s, level, time, seed));
+                    } else if downstroke && -velocity.z > LIMB_ENTRY_SPEED {
+                        let s = (0.5 + 0.15 * -velocity.z).clamp(0.5, 1.0);
+                        events.push(splash(LIMB, c.position, velocity, s, level, time, seed));
+                    }
                     events.push(WaterEvent {
                         position: c.position.extend(time).to_array(),
                         motion: if foot && horizontal < 0.03 {
@@ -264,6 +329,37 @@ impl Bodies {
                 state.strike_at = time;
                 state.splash_at = time;
                 state.foot_armed = false;
+            }
+            let seed = (time * 5.17 + part as f32 * 0.61).fract();
+            // A limb leaving the water fast throws drops along its swing.
+            if !foot && emerged && velocity.z > 0.5 && velocity.length() > FLING_SPEED && time - state.fling_at >= 0.3 && settings.splashes
+            {
+                events.push(splash(FLING, c.position, velocity, 1.0, level, time, seed));
+                state.fling_at = time;
+            }
+            // The torso jumped in: one mass of spray for the whole body.
+            if TORSO.contains(&part) && entered && -velocity.z > BODY_ENTRY_SPEED && settings.splashes {
+                let last = self.entered.get(&id).copied().unwrap_or(f32::MIN);
+                if time - last >= 0.8 {
+                    let s = (0.6 + 0.15 * -velocity.z).clamp(0.6, 1.5);
+                    events.push(splash(BODY, c.position, velocity, s, level, time, seed));
+                    self.entered.insert(id, time);
+                }
+            }
+            // A part cutting through the surface sprays from its leading
+            // edge, the more often the faster (feet are left to the steps).
+            if !foot && c.depth == 0.0 && horizontal > PLOUGH_SPEED {
+                state.plough += ((horizontal - PLOUGH_SPEED) * PLOUGH_RATE).min(PLOUGH_MAX_RATE) * dt;
+                if state.plough >= 1.0 {
+                    state.plough = state.plough.fract();
+                    if settings.splashes {
+                        let ahead = (velocity.truncate() / horizontal).extend(0.0);
+                        let s = (0.6 + 0.2 * (horizontal - PLOUGH_SPEED)).clamp(0.6, 1.0);
+                        events.push(splash(PLOUGH, c.position + ahead * c.radius, velocity, s, level, time, seed));
+                    }
+                }
+            } else {
+                state.plough = 0.0;
             }
             // Horizontal pushing makes a low, sparse spray only at an actual
             // surface intersection. Submerged hands cannot spray through water.
@@ -424,6 +520,7 @@ mod tests {
                 surface: 0.0,
                 ground: -2.0,
                 carrier_z: 0.0,
+                flow: Vec2::ZERO,
             },
             time,
             settings,
@@ -447,6 +544,7 @@ mod tests {
                         surface: z,
                         ground: -3.0,
                         carrier_z: z,
+                        flow: Vec2::ZERO,
                     },
                     time,
                     WaterEffects::default(),
@@ -507,6 +605,7 @@ mod tests {
                         surface: 0.0,
                         ground,
                         carrier_z: 0.0,
+                        flow: Vec2::ZERO,
                     },
                     time,
                     settings,
@@ -577,6 +676,126 @@ mod tests {
     }
 
     #[test]
+    fn a_swell_flowing_past_a_standing_body_stirs_the_water_round_it() {
+        let run = |flow: Vec2, drift: Vec2| {
+            let (mut bodies, mut events) = (Bodies::default(), Vec::new());
+            for frame in 0..=180 {
+                let time = frame as f32 / 60.0;
+                // a shin through the surface, standing or carried along
+                let at = (drift * time).extend(0.0);
+                bodies.sample(
+                    Sample {
+                        id: Uuid::nil(),
+                        part: 2,
+                        matrix: volume(at, Vec3::new(0.06, 0.06, 0.25)),
+                        level: 0.0,
+                        surface: 0.0,
+                        ground: -1.0,
+                        carrier_z: 0.0,
+                        flow,
+                    },
+                    time,
+                    WaterEffects::default(),
+                    &mut events,
+                );
+            }
+            events
+        };
+        let kinds = |e: &[WaterEvent], k: f32| e.iter().filter(|e| e.params[1] == k).count();
+        // calm water round a still leg: nothing
+        assert!(run(Vec2::ZERO, Vec2::ZERO).is_empty());
+        // a gentle swell's orbits past it: a wake, no spray
+        let gentle = run(Vec2::new(0.5, 0.0), Vec2::ZERO);
+        assert!(kinds(&gentle, 4.0) > 3 && kinds(&gentle, 7.0) == 0, "{}", gentle.len());
+        // a crest driving into it: spray off it too
+        let crest = run(Vec2::new(1.4, 0.0), Vec2::ZERO);
+        assert!(kinds(&crest, 4.0) > 3 && kinds(&crest, 7.0) > 0);
+        // drifting along with the water: nothing
+        assert!(run(Vec2::new(0.5, 0.0), Vec2::new(0.5, 0.0)).is_empty());
+    }
+
+    #[test]
+    fn steps_slaps_flings_ploughs_and_a_jump_in_each_splash() {
+        let splashes = |e: &[WaterEvent], kind: f32| e.iter().filter(|e| e.params[1] == 13.0 && e.params[0] == kind).count();
+        // a walk in the shallows: a splash every step
+        let walk = stepping(0.65, -0.15, 60, WaterEffects::default());
+        let steps = splashes(&walk, STEP);
+        assert!(
+            steps >= 10 && steps == walk.iter().filter(|e| e.params[1] == 7.0 && e.params[3] == 1.0).count(),
+            "{steps}"
+        );
+        assert!(
+            stepping(
+                0.65,
+                -0.15,
+                60,
+                WaterEffects {
+                    splashes: false,
+                    ..WaterEffects::default()
+                }
+            )
+            .iter()
+            .all(|e| e.params[1] != 13.0)
+        );
+        let run = |part: usize, path: &dyn Fn(f32) -> Vec3, radius: Vec3, frames: u32| {
+            let (mut bodies, mut events) = (Bodies::default(), Vec::new());
+            for frame in 0..=frames {
+                let time = frame as f32 / 60.0;
+                bodies.sample(
+                    Sample {
+                        id: Uuid::nil(),
+                        part,
+                        matrix: volume(path(time), radius),
+                        level: 0.0,
+                        surface: 0.0,
+                        ground: -2.0,
+                        carrier_z: 0.0,
+                        flow: Vec2::ZERO,
+                    },
+                    time,
+                    WaterEffects::default(),
+                    &mut events,
+                );
+            }
+            events
+        };
+        // a hand swung up out of the water: drops thrown along its swing
+        let fling = run(6, &|t| Vec3::new(0.0, 0.0, -0.3 + 2.5 * t), Vec3::splat(0.05), 30);
+        assert_eq!(splashes(&fling, FLING), 1);
+        // the same slowly: none
+        let slow = run(6, &|t| Vec3::new(0.0, 0.0, -0.3 + 0.4 * t), Vec3::splat(0.05), 120);
+        assert_eq!(splashes(&slow, FLING), 0);
+        // a forearm ploughing along the surface at 2.5 m/s for two seconds:
+        // some (2.5 - 1.4) x 1.5 sprays a second
+        let plough = run(8, &|t| Vec3::new(2.5 * t, 0.0, 0.0), Vec3::new(0.15, 0.05, 0.05), 120);
+        let n = splashes(&plough, PLOUGH);
+        assert!((2..=5).contains(&n), "{n}");
+        // a torso dropping in at 3 m/s: one splash for the body
+        let (mut bodies, mut events) = (Bodies::default(), Vec::new());
+        for frame in 0..=40 {
+            let time = frame as f32 / 60.0;
+            for part in TORSO {
+                bodies.sample(
+                    Sample {
+                        id: Uuid::nil(),
+                        part,
+                        matrix: volume(Vec3::new(0.0, 0.0, 0.6 + 0.2 * (part - 12) as f32 - 3.0 * time), Vec3::splat(0.14)),
+                        level: 0.0,
+                        surface: 0.0,
+                        ground: -3.0,
+                        carrier_z: 0.0,
+                        flow: Vec2::ZERO,
+                    },
+                    time,
+                    WaterEffects::default(),
+                    &mut events,
+                );
+            }
+        }
+        assert_eq!(splashes(&events, BODY), 1);
+    }
+
+    #[test]
     fn submerged_dragging_and_stationary_wave_crossings_cannot_retrigger_foot_slaps() {
         for moving in [false, true] {
             let (mut bodies, mut events) = (Bodies::default(), Vec::new());
@@ -594,6 +813,7 @@ mod tests {
                         surface: if moving { 0.0 } else { (time * 4.0).sin() * 0.1 },
                         ground: -0.2,
                         carrier_z: 0.0,
+                        flow: Vec2::ZERO,
                     },
                     time,
                     WaterEffects::default(),
@@ -625,6 +845,7 @@ mod tests {
                     surface: (t * 3.0).sin() * 0.1,
                     ground: -2.0,
                     carrier_z: 0.0,
+                    flow: Vec2::ZERO,
                 },
                 t,
                 WaterEffects::default(),

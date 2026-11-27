@@ -1183,6 +1183,7 @@ struct Pipelines {
     particles: wgpu::RenderPipeline,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
+    water_crest_mist: wgpu::RenderPipeline,
     /// Rain prototype (`vs_rain` in env.wgsl, `AURORA_RAIN`).
     rain: wgpu::RenderPipeline,
     /// Rain prototype's splashes (`vs_rain_splash`).
@@ -1291,6 +1292,9 @@ struct Pipelines {
     /// lying on what the map says, left every slope bare.
     shelter: wgpu::RenderPipeline,
     shelter_terrain: wgpu::RenderPipeline,
+    /// The sea grid's shore map (water_shore.rs): the meshes in the water
+    /// seen from below, the nearest face's height and which way it faces.
+    shore: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
     /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
     /// one-sided and two-sided faces.
@@ -2169,6 +2173,8 @@ pub(crate) struct Backend {
     histogram: crate::histogram::Histogram,
     /// The small pictures of the view asked for (thumbnail.rs).
     thumbnails: crate::thumbnail::Thumbnails,
+    /// The sea grid's shore maps asked for (water_shore.rs).
+    water_shore: crate::water_shore::ShoreMaps,
     /// The glow was drawn last frame: its image is there for the exposure.
     glow_drawn: bool,
     frame_buffer: wgpu::Buffer,
@@ -3922,6 +3928,8 @@ fn ortho_reverse_z(half: f32, near: f32, far: f32) -> Mat4 {
 /// Index ranges of the draw lists inside the indirect buffer.
 #[derive(Default, Clone, Copy)]
 struct Ranges {
+    /// The sea grid's shore map's meshes (`DrawLists::water_shore`).
+    shore: (u64, u32),
     terrain: (u64, u32),
     terrain_pbr: (u64, u32),
     terrain_mask: (u64, u32),
@@ -4294,6 +4302,18 @@ impl Backend {
             // how open each place is, from the traced probes (rt_gi.wgsl
             // `cs_gi_sky`, common.wgsl `screen_open`)
             float_tex(32),
+            // the wind sea's finer maps (water_ocean_gpu.rs, common.wgsl
+            // `water_fx_fine`)
+            wgpu::BindGroupLayoutEntry {
+                binding: 33,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
             // the night sky's stars (stars.rs)
             wgpu::BindGroupLayoutEntry {
                 binding: 24,
@@ -4376,6 +4396,17 @@ impl Backend {
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 4,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // the avatars' wet memory (enhanced water's wet look)
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -4480,6 +4511,7 @@ impl Backend {
             mapped_at_creation: false,
         });
         let probe_shadow_group = shadow_bind_group(&device, &shadow_layout, &probe_shadow_buffer, &lin_clamp);
+        let water_shore = crate::water_shore::ShoreMaps::new(&device, &shadow_layout, &lin_clamp, std::mem::size_of::<ShadowU>() as u64);
         let records_bind_group = Self::make_records_bg(&device, &records_layout, &scene);
 
         let post_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -4805,6 +4837,7 @@ impl Backend {
             exposure,
             histogram,
             thumbnails: crate::thumbnail::Thumbnails::new(),
+            water_shore,
             glow_drawn: false,
             frame_buffer,
             refl_buffers,
@@ -4949,6 +4982,10 @@ impl Backend {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: scene.prev_models.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: scene.avatar_wet.as_entire_binding(),
                 },
             ],
         })
@@ -5624,6 +5661,16 @@ impl Backend {
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Greater,
             ..base("water droplets and bubbles", "vs_water_particle", "fs_water_particle")
+        });
+        // the crests' fuzz (env.wgsl vs_water_crest_mist), as the droplets
+        let water_crest_mist = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("crest fuzz", "vs_water_crest_mist", "fs_water_particle")
         });
         let water_particles_under = pipe(PipeDesc {
             vb: Vb::None,
@@ -6325,6 +6372,18 @@ impl Backend {
                 ..shadow_desc("rain shelter terrain", Some("fs_shadow_terrain"))
             },
         );
+        // (a height map too: no bias; both faces, the nearest kept)
+        let shore = batch.add(
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                depth_bias: level,
+                depth_compare: wgpu::CompareFunction::Less,
+                format: Some(wgpu::TextureFormat::Rg16Float),
+                depth_format: Some(wgpu::TextureFormat::Depth32Float),
+                ..shadow_desc("water shore map", Some("fs_shore"))
+            },
+        );
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/post.wgsl").into()),
@@ -6403,6 +6462,7 @@ impl Backend {
             particles: particles.resolve(&mut done),
             water_particles: water_particles.resolve(&mut done),
             water_particles_under: water_particles_under.resolve(&mut done),
+            water_crest_mist: water_crest_mist.resolve(&mut done),
             rain: rain.resolve(&mut done),
             rain_wet: rain_wet.resolve(&mut done),
             rain_wet_g: rain_wet_g.resolve(&mut done),
@@ -6457,6 +6517,7 @@ impl Backend {
             shadow_terrain: shadow_terrain.resolve(&mut done),
             shelter: shelter.resolve(&mut done),
             shelter_terrain: shelter_terrain.resolve(&mut done),
+            shore: shore.resolve(&mut done),
             post: post.resolve(&mut done),
             pick: pick.resolve(&mut done),
             pick_terrain: pick_terrain.resolve(&mut done),
@@ -6877,6 +6938,10 @@ impl Backend {
                         resource: wgpu::BindingResource::TextureView(open),
                     },
                     wgpu::BindGroupEntry {
+                        binding: 33,
+                        resource: wgpu::BindingResource::TextureView(water_effects.ocean_view()),
+                    },
+                    wgpu::BindGroupEntry {
                         binding: 15,
                         resource: wgpu::BindingResource::TextureView(&water_effects.view),
                     },
@@ -6898,7 +6963,14 @@ impl Backend {
                     },
                     wgpu::BindGroupEntry {
                         binding: 20,
-                        resource: wgpu::BindingResource::TextureView(if sample_water { &t.water_interface } else { &dummies.depth }),
+                        // (also where the water mask is: both are written in their own
+                        // pass before the scene, and the water particles drawn with
+                        // group a hide behind the nearest water surface)
+                        resource: wgpu::BindingResource::TextureView(if sample_water || sample_mask {
+                            &t.water_interface
+                        } else {
+                            &dummies.depth
+                        }),
                     },
                     wgpu::BindGroupEntry {
                         binding: 21,
@@ -8447,6 +8519,7 @@ impl Backend {
             equirect: None,
             histogram: self.histogram.take(),
             thumbnails: self.thumbnails.take(),
+            shore_maps: self.water_shore.take(),
             // (`render` fills it once the windows outside are drawn)
             outside: Vec::new(),
             films,
@@ -9562,10 +9635,13 @@ impl Backend {
         // ---- planar reflections this frame
         // LLViewerCamera::cameraUnderWater uses a flat region plane. Our
         // displaced surface needs the camera's actual wave height instead.
-        let camera_water_level =
-            lists
-                .water_ground
-                .camera_level(f.camera_pos.truncate(), f.time, self.settings.water_effects, f.water_height);
+        let camera_water_level = lists.water_ground.camera_level(
+            f.camera_pos.truncate(),
+            f.time,
+            self.settings.water_effects,
+            &lists.water_sea,
+            f.water_height,
+        );
         // Fine interaction height stays on the GPU. Keep both eligible paths
         // within its bounded displacement; their fragments select the side.
         let wake_margin = if self.settings.water_effects.enabled && self.settings.water_effects.interactions {
@@ -10667,6 +10743,9 @@ impl Backend {
         for (range, list) in rg.spot_terrain.iter_mut().zip(&spot_terrain_lists) {
             *range = push(cpu, list);
         }
+        if let Some(shore) = &lists.water_shore {
+            rg.shore = push(cpu, &shore.draws);
+        }
         // after every CPU-built list: main view, HUD, debug, selection,
         // preview, shadows and probes
         if cpu_clamped.get() > 0 {
@@ -10737,7 +10816,8 @@ impl Backend {
 
         let mut water_settings = self.settings.water_effects;
         water_settings.enabled &= !f.hide_water;
-        water_settings.particle_budget = water_settings.particle_budget.saturating_sub(n_particles);
+        water_settings.foam_texture = f.rain_look.water_foam;
+        water_settings.particle_budget = crate::water_effects::water_particle_budget(water_settings.particle_budget, n_particles);
         if self.water_effects.prepare(
             &self.device,
             &self.queue,
@@ -10745,6 +10825,8 @@ impl Backend {
             f.time,
             f.camera_pos.truncate(),
             &lists.water_ground,
+            &lists.water_sea,
+            lists.water_spray,
             &lists.water_events,
             &lists.water_contacts,
         ) {
@@ -12156,6 +12238,7 @@ impl Backend {
                 .encode(&self.device, &mut encoder, color, depth, HDR_FORMAT, samples);
         }
         let water_particles = if f.cutout { 0 } else { self.water_effects.particles };
+        let crest_mist = if f.cutout { 0 } else { self.water_effects.crest_mist };
         let rain_drops = if f.cutout { 0 } else { rain_drops(f.rain, f.rain_look.quality) };
         // rain prototype: the wetness memory, from the last one and the
         // shelter map, then copied where it is read
@@ -12610,6 +12693,10 @@ impl Backend {
             if water_particles > 0 {
                 pass.set_pipeline(&self.pipelines.water_particles);
                 pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..water_particles);
+            }
+            if crest_mist > 0 {
+                pass.set_pipeline(&self.pipelines.water_crest_mist);
+                pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..crest_mist);
             }
             pass_mark(pass, MARK_RAIN_BEGIN);
             if rain_drops > 0 {
@@ -13727,6 +13814,61 @@ impl Backend {
             self.thumbnails
                 .encode(&self.device, &mut encoder, source, width, height, format, tag);
         }
+        // the sea grid's shore map, when asked for (water_shore.rs): the
+        // meshes in the water seen from below, then its cells, read back
+        // once the frame is submitted
+        if let Some(request) = &lists.water_shore
+            && rg.shore.1 > 0
+            && self.water_shore.begin(&self.device, &self.queue, request)
+        {
+            let vp = crate::water_shore::shore_matrix(Vec2::from(request.origin), request.extent, request.low, request.high);
+            let shadow = ShadowU {
+                vp: vp.to_cols_array_2d(),
+                anim_clock: self.anim_now,
+                kind: [0, request.low.to_bits(), 0, 0],
+            };
+            self.queue.write_buffer(&self.water_shore.uniform, 0, bytemuck::bytes_of(&shadow));
+            if let Some((color, depth)) = self.water_shore.views() {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("water shore map"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: color,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            // (y -1: nothing there, shaders/water_shore.wgsl)
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.0,
+                                g: -1.0,
+                                b: 0.0,
+                                a: 0.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.set_bind_group(3, &self.water_shore.group, &[]);
+                pass.set_vertex_buffer(0, scene.vertices.slice(..));
+                pass.set_vertex_buffer(1, scene.skin.slice(..));
+                pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_pipeline(&self.pipelines.shore);
+                pass.multi_draw_indexed_indirect(&self.indirect, rg.shore.0, rg.shore.1);
+            }
+            self.water_shore.encode(&self.device, &mut encoder, request.tag);
+        }
         let draws_hud_selection = hud_select_faces_range.1 > 0 && self.hud_selection.is_some() && self.hud_depth.is_some();
         // HUDs retain their original texture colors and never inherit world
         // depth, fog, shadows, exposure or post effects (render_hud_attachments).
@@ -13931,6 +14073,7 @@ impl Backend {
         self.exposure.after_submit();
         self.histogram.after_submit();
         self.thumbnails.after_submit();
+        self.water_shore.after_submit();
         self.drawn_pick.after_submit();
         self.part_pick.after_submit();
         prof.mark("submit");

@@ -1,6 +1,7 @@
 //! The weather of this viewer: what the Environment window's "Weather"
 //! section sets, kept in the settings. It is drawn for your view only.
 
+pub mod sea;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
@@ -407,6 +408,7 @@ impl WeatherSettings {
             snow: if self.snowing() { self.flake_scale() } else { 0.0 },
             // the app gives the detail texture's slot (scene/snow_detail.rs)
             snow_detail: 0,
+            water_foam: 0,
             // the app gives AURORA_SNOW_LYING's floor (demo captures)
             snow_lying: 0.0,
             memory_reach: self.memory_reach(),
