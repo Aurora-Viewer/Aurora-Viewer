@@ -532,7 +532,7 @@ const UPDATE_ROLLBACK_WAIT: std::time::Duration = std::time::Duration::from_secs
 /// its wait: the helper then restores the previous version, which says that
 /// the update did not complete. That is no crash: nothing is reported. Only
 /// the helper's own end (`TerminateProcess` leaves exit code 1), with no
-/// crash or panic of the viewer's own, and `ended` (the helper's rollback
+/// record of the viewer's own ([`own_record`]), and `ended` (the helper's rollback
 /// note, `aurora_updater::install::ended_by_update`). The "ended from
 /// outside, window never shown, 90 s" reports were these. Windows only, as
 /// the helper is; the tests run it everywhere.
