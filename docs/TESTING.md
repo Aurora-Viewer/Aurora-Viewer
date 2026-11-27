@@ -5564,10 +5564,13 @@ both open states and the selection count. Capture at frame 620.
   night's hour, or `AURORA_DEMO_NIGHT_SKY_CLOCK=2.35,2026-01-15T23:00`.
   The southern figures drawn with lines only: `AURORA_DEMO_NIGHT_SKY_PLACE=-33.87`
   and `real:180,45`. No figure may show in the water's or a mirror's
-  reflection, nor in a reflection probe. The lines and names of the
-  western culture and six sky cultures are built in
+  reflection, nor in a reflection probe. The lines of the western
+  culture and six sky cultures are built in
   (`crates/aurora-viewer/assets/constellations/`, its README;
-  `world/constellations_builtin.rs`), no picture. The user's folder,
+  `world/constellations_builtin.rs`), no picture, no figure name and no
+  stroke timing: the western figures and the planets show the
+  catalogues' names, the other cultures' figures none (their Names
+  switch and size are greyed), and every line of a figure draws at once. The user's folder,
   `constellations` in the configuration folder (the demo's own
   `demo/constellations`), adds drawing sets and replaces a built-in unit
   whole (a culture's folder, the root `lines.json`/`names.json` pair,
@@ -5608,7 +5611,7 @@ both open states and the selection count. Capture at frame 620.
   Korean names in Hangul, `zh` the Chinese ones in Han, `ja` the Japanese
   ones, to check that the fonts draw them (boxes are a missing font, never
   to hide). A name falls back to English, then to the name of its
-  `lines.json`, then to its id. `AURORA_DEMO_CONSTELLATIONS_WINDOW=list`
+  `lines.json`; a figure named nowhere shows no name. `AURORA_DEMO_CONSTELLATIONS_WINDOW=list`
   opens the window with its constellation sets' drop-down open. The log
   says `constellations: tables of <n> figures (<cultures>):
   <KiB>, cell lists of <a> and <b> references at most` each time the
@@ -5655,7 +5658,8 @@ both open states and the selection count. Capture at frame 620.
   `planets.json` of the constellation data (built in, or the user's folder's),
   `{"venus": {"name": "Venus", "names": {"fr": "Vénus", "ja": "金星"}}, ...}`
   by `mercury`, `venus`, `mars`, `jupiter`, `saturn`, `uranus`; a body
-  or file it lacks shows the built-in name (the catalogue's, in the
+  or file it lacks, or an entry left empty (`{"name": "", "names": {}}`,
+  the built-in file's), shows the built-in name (the catalogue's, in the
   interface's language), a language an entry
   lacks the entry's own `name`. They draw with the
   constellations off too (`AURORA_CONSTELLATIONS=0`), at the

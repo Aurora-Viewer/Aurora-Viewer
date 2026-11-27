@@ -1,21 +1,23 @@
 # Constellation data
 
-The stick lines and names of the constellations the viewer draws over the
-real night sky, and the planets' names. The JSON files the viewer reads are
-built into the executable (`src/world/constellations_builtin.rs`, its
-`TABLE`); nothing is read from disk or from the network to show them. No
-picture is built in: drawing sets come from the user's own folder only.
+The stick lines of the constellations the viewer draws over the real
+night sky. The JSON files the viewer reads are built into the executable
+(`src/world/constellations_builtin.rs`, its `TABLE`); nothing is read from
+disk or from the network to show them. No picture, no figure name, no
+kana reading and no stroke timing is built in: their files and keys are
+kept empty, and the user's own folder may fill them (below). The western
+figures and the planets take the names of the interface's catalogues
+(`constellation-*`, `planet-*`); the other figures show no name.
 
 ```text
-lines.json, names.json        the western culture: the 88 constellations' stick lines,
-                              name positions and names by language
-drafts.json                   which of those names (and kana readings) are drafts made
-                              for this viewer, not taken from a source
-planets.json                  the planets' names by language
-cultures/<id>/lines.json      a sky culture's stick lines, name positions and names
-cultures/<id>/names.json      its figures' names by language
+lines.json, names.json        the western culture: the 88 constellations' stick lines;
+                              its figures' names by language (empty)
+drafts.json                   names and readings written without a source (empty)
+planets.json                  the planets' names by language (empty)
+cultures/<id>/lines.json      a sky culture's stick lines and label points
+cultures/<id>/names.json      its figures' names by language (empty)
 cultures/<id>/culture.json    its own name by language
-cultures/<id>/drafts.json     its draft names and readings, as above
+cultures/<id>/drafts.json     as the root's (empty)
 credits.json                  the sources of each unit (the root's: the western culture
 cultures/<id>/credits.json    and the planets), shown in the viewer's "Licenses and
                               attribution" window
@@ -33,16 +35,20 @@ and that every figure has its origin marks.
 
 Each source, what was taken from it, its licence and its address are in
 the unit's `credits.json`, and summed up in `NOTICE.md`. In short: the
-western lines and Latin names come from d3-celestial (Olaf Frohn,
-BSD-3-Clause), their line ends moved onto the nearest catalogue star; the
-six cultures from the Stellarium sky cultures at commit
+western lines come from d3-celestial (Olaf Frohn, BSD-3-Clause), their
+line ends moved onto the nearest catalogue star; the six cultures' lines
+from the Stellarium sky cultures at commit
 `e233fa9b3d21e2cafe9c168e6710b627532a7dd4` (Chinese, Japanese: CC BY-SA 4.0;
 Egyptian, Inuit, Korean: "GNU GPL v2.0" as their descriptions write it;
 Norse (Edda): CC BY 4.0), converted to sky positions and separate segments;
-the names in other languages from the Stellarium project's translations,
-Wikidata, Wikipedia and OpenCC's conversion tables, as each file's credits
-say. What has no source (name positions, the strokes' order and timing,
-draft names and kana readings) was made for this viewer and is marked so.
+the names of the cultures themselves (`culture.json`) in other languages
+from the Stellarium project's translations, as each file's credits say
+(the Japanese culture's name has no source and is left empty: the window
+lists it by its id). A name position no source gives
+is the centre of the figure's segment ends (a fixed rule): the cultures'
+are written in their `lines.json`, the western ones are left out and the
+viewer computes them by the same rule. A segment's stroke times (`t0`,
+`t1`) are left out: every line of a figure draws at once.
 
 ## Origin marks
 
@@ -54,8 +60,7 @@ draft names and kana readings) was made for this viewer and is marked so.
   onto the nearest catalogue star, a name position at the centre of the
   figure's segments);
 - `adapted`: source content changed by judgement;
-- `made`: no source content (name positions placed by hand, the strokes'
-  timing, draft names);
+- `made`: no source content (none is built in: a test checks it);
 - `unknown`: not recorded.
 
 A figure's field (`lines`, `label`, `timing`…) resolves as

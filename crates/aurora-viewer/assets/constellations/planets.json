@@ -1,8 +1,8 @@
 {
-  "mercury": { "name": "Mercury", "names": { "fr": "Mercure", "ja": "水星(すいせい)", "de": "Merkur", "es": "Mercurio", "it": "Mercurio", "nb": "Merkur", "pl": "Merkury", "pt": "Mercúrio", "pt-BR": "Mercúrio", "ru": "Меркурий", "tr": "Merkür", "uk": "Меркурій", "zh-Hans": "水星", "zh-Hant": "水星" } },
-  "venus": { "name": "Venus", "names": { "fr": "Vénus", "ja": "金星(きんせい)", "de": "Venus", "es": "Venus", "it": "Venere", "nb": "Venus", "pl": "Wenus", "pt": "Vénus", "pt-BR": "Vênus", "ru": "Венера", "tr": "Venüs", "uk": "Венера", "zh-Hans": "金星", "zh-Hant": "金星" } },
-  "mars": { "name": "Mars", "names": { "fr": "Mars", "ja": "火星(かせい)", "de": "Mars", "es": "Marte", "it": "Marte", "nb": "Mars", "pl": "Mars", "pt": "Marte", "pt-BR": "Marte", "ru": "Марс", "tr": "Mars", "uk": "Марс", "zh-Hans": "火星", "zh-Hant": "火星" } },
-  "jupiter": { "name": "Jupiter", "names": { "fr": "Jupiter", "ja": "木星(もくせい)", "de": "Jupiter", "es": "Júpiter", "it": "Giove", "nb": "Jupiter", "pl": "Jowisz", "pt": "Júpiter", "pt-BR": "Júpiter", "ru": "Юпитер", "tr": "Jüpiter", "uk": "Юпітер", "zh-Hans": "木星", "zh-Hant": "木星" } },
-  "saturn": { "name": "Saturn", "names": { "fr": "Saturne", "ja": "土星(どせい)", "de": "Saturn", "es": "Saturno", "it": "Saturno", "nb": "Saturn", "pl": "Saturn", "pt": "Saturno", "pt-BR": "Saturno", "ru": "Сатурн", "tr": "Satürn", "uk": "Сатурн", "zh-Hans": "土星", "zh-Hant": "土星" } },
-  "uranus": { "name": "Uranus", "names": { "fr": "Uranus", "ja": "天王星(てんのうせい)", "de": "Uranus", "es": "Urano", "it": "Urano", "nb": "Uranus", "pl": "Uran", "pt": "Urano", "pt-BR": "Urano", "ru": "Уран", "tr": "Uranüs", "uk": "Уран", "zh-Hans": "天王星", "zh-Hant": "天王星" } }
+  "mercury": { "name": "", "names": {} },
+  "venus": { "name": "", "names": {} },
+  "mars": { "name": "", "names": {} },
+  "jupiter": { "name": "", "names": {} },
+  "saturn": { "name": "", "names": {} },
+  "uranus": { "name": "", "names": {} }
 }

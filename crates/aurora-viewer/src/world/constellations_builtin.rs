@@ -492,7 +492,21 @@ mod tests {
         assert_eq!(c.figures.iter().filter(|f| f.culture == 0).count(), 88);
         let mut problems = Vec::new();
         let planets = super::super::planet_names::read(&data, &mut problems);
-        assert!(planets.iter().all(Option::is_some), "every planet named");
+        assert!(
+            planets.iter().all(Option::is_none),
+            "planets.json names none: the catalogues' names"
+        );
+        // no name and no stroke timing is built in: a culture's figures
+        // have none, the western ones the catalogues' (`constellation-*`)
+        for f in &c.figures {
+            assert!(f.names.is_empty() && f.name.is_empty(), "{}: a built-in name", f.id);
+            assert_eq!(f.name_key.is_some(), f.culture == 0, "{}", f.id);
+            assert!(
+                f.geom.lines.iter().all(|l| (l.t0, l.t1) == (0.0, 1.0)),
+                "{}: a built-in stroke timing",
+                f.id
+            );
+        }
         let cultures: Vec<(String, String)> = c.cultures.iter().map(|k| (k.id.clone(), k.id.clone())).collect();
         let groups = super::super::credits::read(&data, &cultures, &[], &mut problems);
         assert!(problems.is_empty(), "{problems:?}");
@@ -596,6 +610,34 @@ mod tests {
                 }
                 assert!(!marks.contains_key("drawing"), "{unit}/{id}: a drawing is marked, none is built in");
             }
+        }
+    }
+
+    /// No built-in part is marked `made` (no source content): every
+    /// origin mark of every `provenance.json`, the planets' included.
+    #[test]
+    fn no_built_in_part_is_made_without_a_source() {
+        fn marks<'a>(v: &'a Value, at: String, out: &mut Vec<(String, &'a str)>) {
+            match v {
+                Value::Object(m) => {
+                    // (the record's own words, not marks)
+                    for (k, x) in m.iter().filter(|(k, _)| !["about", "notes", "unit"].contains(&k.as_str())) {
+                        marks(x, format!("{at}/{k}"), out);
+                    }
+                }
+                Value::String(s) => out.push((at, s.as_str())),
+                _ => {}
+            }
+        }
+        let units = TABLE.iter().filter_map(|(rel, _)| unit_of(rel)).filter(|u| u != PLANETS);
+        for unit in units.collect::<BTreeSet<_>>() {
+            let dir = if unit == WESTERN_ROOT { String::new() } else { format!("{unit}/") };
+            let record = json(&format!("{dir}provenance.json"));
+            let mut found = Vec::new();
+            marks(&record, unit.clone(), &mut found);
+            assert!(!found.is_empty(), "{unit}: no mark");
+            let made: Vec<&String> = found.iter().filter(|(_, m)| *m == "made").map(|(at, _)| at).collect();
+            assert!(made.is_empty(), "made without a source: {made:?}");
         }
     }
 }

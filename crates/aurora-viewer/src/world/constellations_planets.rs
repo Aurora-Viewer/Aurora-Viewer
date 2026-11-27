@@ -6,10 +6,11 @@
 //!
 //! The text is data: `planets.json` of the constellation data, per
 //! planet id (`mercury`…`uranus`) the form of a culture's name
-//! (`{"name": …, "names": {"fr": …, "ja": …}}`). A missing file or planet
-//! is its built-in name (the catalogue's `planet-*`, in the interface's
-//! language); a language the entry does not have, the entry's own `name`
-//! (the form's default name). The file is read with the
+//! (`{"name": …, "names": {"fr": …, "ja": …}}`). A missing file or planet,
+//! or an entry left empty (`{"name": "", "names": {}}`), is its built-in
+//! name (the catalogue's `planet-*`, in the interface's language); a
+//! language the entry does not have, the entry's own `name` (the form's
+//! default name). The file is read with the
 //! rest of the folder, on its thread, and again on Rescan when it changed.
 //!
 //! The names show in the dark only, by the constellations' darkness
@@ -68,7 +69,7 @@ pub fn parse(bytes: &[u8], problems: &mut Vec<String>) -> Texts {
             .map_err(|e| e.to_string())
             .and_then(|b| catalogue::parse_culture(&b))
         {
-            Ok(n) => out[k] = Some(n),
+            Ok(n) => out[k] = n,
             Err(e) => problems.push(format!("{FILE}: {}: {e}", body.id())),
         }
     }

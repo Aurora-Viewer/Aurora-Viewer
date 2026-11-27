@@ -185,7 +185,8 @@ impl Figure {
     /// Its name in `language` (the interface's code): the catalogues' for
     /// the 88; else its culture's `names.json` in that language (or the
     /// language without its region, `zh` for `zh-Hans`), then in English,
-    /// then the name its lines give, then its id.
+    /// then the name its lines give; none (empty: no name is drawn) when
+    /// the data names it nowhere.
     /// A western figure's `names.json` in the language (or its base) comes
     /// before its catalogue key, never its English: the catalogues keep the
     /// languages the file lacks.
@@ -472,10 +473,15 @@ pub fn parse_set(id: &str, bytes: &[u8]) -> Result<SetInfo, String> {
     })
 }
 
-/// `culture.json`.
-pub fn parse_culture(bytes: &[u8]) -> Result<Names, String> {
+/// `culture.json`. Its name left empty with no translation (`{"name": "",
+/// "names": {}}`, the file kept with no value) is no name: `None`, nothing
+/// said.
+pub fn parse_culture(bytes: &[u8]) -> Result<Option<Names>, String> {
     let f: CultureFile = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-    names(&f.name, f.names)
+    if f.name.trim().is_empty() && f.names.is_empty() {
+        return Ok(None);
+    }
+    names(&f.name, f.names).map(Some)
 }
 
 /// A culture's figures' names: per figure id, its name per language code.
@@ -721,7 +727,7 @@ pub fn scan_data(data: &Data, problems: &mut Vec<String>) -> Catalogue {
         let dir = format!("cultures/{name}");
         let names = match data.read(&format!("{dir}/culture.json"), MAX_SET_FILE) {
             Some(read) => match read.and_then(|b| parse_culture(&b)) {
-                Ok(n) => Some(n),
+                Ok(n) => n,
                 Err(e) => {
                     problems.push(format!("cultures/{name}/culture.json: {e}"));
                     None
@@ -872,7 +878,7 @@ pub fn scan_data(data: &Data, problems: &mut Vec<String>) -> Catalogue {
                 culture: k,
                 // the catalogues name the western figures only
                 name_key: if culture == WESTERN { super::names::key(id) } else { None },
-                name: if name.is_empty() { id.clone() } else { name },
+                name,
                 kind,
                 geom: FigureGeom { centre, label, lines },
                 drawings,
@@ -1369,13 +1375,13 @@ pub(super) mod tests {
         assert_eq!(c.cultures[1].display_name("fr"), "Ciel B");
         let fig = |id: &str| c.figures.iter().find(|f| f.culture == 1 && f.id == id).expect(id);
         // the language, the language without its region, English, the
-        // lines' name, the id
+        // lines' name, none
         assert_eq!(fig("Aa").display_name("fr"), "Grande Louche");
         assert_eq!(fig("Aa").display_name("fr-CA"), "Grande Louche");
         assert_eq!(fig("Aa").display_name("ja"), "Big Ladle");
         assert_eq!(fig("Aa").display_name("xx-Latn"), "Lado");
         assert_eq!(fig("Cc").display_name("fr"), "Stone");
-        assert_eq!(fig("Dd").display_name("en"), "Dd");
+        assert_eq!(fig("Dd").display_name("en"), "", "no name anywhere: none drawn, never its id");
         // the western names stay the catalogues'
         assert_eq!(c.figures[1].display_name("ja"), aurora_i18n::text("constellation-ori"));
         // a figure of one star and a figure of a point only both stay, with

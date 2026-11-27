@@ -818,6 +818,10 @@ pub struct CultureRow {
     /// Its figures past the GPU's room (aurora-render `MAX_FIGURES`, every
     /// culture together, in the catalogue's order): never drawn.
     pub left_out: usize,
+    /// A figure of it has a name (the catalogues', its lines', its
+    /// `names.json`'s): without one, the names' settings do nothing and
+    /// the window greys them, as it says when there is no drawing set.
+    pub named: bool,
 }
 
 /// What the Constellations window shows of the data: whether it is being
@@ -856,6 +860,14 @@ pub fn data_status() -> DataStatus {
                     *n += 1;
                 }
             }
+            let mut named = vec![false; l.catalogue.cultures.len()];
+            for f in &l.catalogue.figures {
+                if (f.name_key.is_some() || !f.name.is_empty() || !f.names.is_empty())
+                    && let Some(n) = named.get_mut(f.culture)
+                {
+                    *n = true;
+                }
+            }
             (
                 l.catalogue
                     .cultures
@@ -866,6 +878,7 @@ pub fn data_status() -> DataStatus {
                         name: c.display_name(language),
                         constellations: constellations.get(k).copied().unwrap_or(0),
                         left_out: left_out.get(k).copied().unwrap_or(0),
+                        named: named.get(k).copied().unwrap_or(false),
                     })
                     .collect(),
                 l.catalogue.sets.len(),

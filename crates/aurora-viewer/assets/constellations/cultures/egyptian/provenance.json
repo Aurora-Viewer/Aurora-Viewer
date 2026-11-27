@@ -1,5 +1,5 @@
 {
- "about": "Origin marks of this unit's data. sourced: taken from the credited source, only its format or coordinates converted; derived: made from sourced data by a fixed rule; adapted: source content changed by judgement (pixels erased or filled, plates joined, a sourced name replaced); made: no source content (new drawings, drafts, stroke timing, name boxes); unknown: not recorded. A figure field resolves as figures[id][field], then default[field], then unknown; a field a figure does not have (no drawing, no name box) is not listed. names and readings list every entry; \"*\" is the file's own default name.",
+ "about": "Origin marks of this unit's data. sourced: taken from the credited source, only its format or coordinates converted; derived: made from sourced data by a fixed rule; adapted: source content changed by judgement; made: no source content; unknown: not recorded. A figure field resolves as figures[id][field], then default[field], then unknown; a field a figure does not have is not listed. names and readings mark each name and kana reading of the unit's names.json (and culture_name its culture.json); none of the built-in files has a figure name or a reading. \"*\" is the file's own default name.",
  "culture_name": {
   "*": "sourced",
   "de": "sourced",
@@ -21,567 +21,119 @@
  "figures": {
   "eg001": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg002": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg003": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg004": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg005": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg006": {
    "label": "derived",
-   "lines": "adapted",
-   "timing": "made"
+   "lines": "adapted"
   },
   "eg007": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg008": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg009": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg010": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg011": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg012": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg013": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg014": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg015": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg016": {
    "label": "derived",
-   "lines": "adapted",
-   "timing": "made"
+   "lines": "adapted"
   },
   "eg017": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg018": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg019": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg020": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg021": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg022": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg023": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg024": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg025": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg026": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg027": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   },
   "eg028": {
    "label": "derived",
-   "lines": "sourced",
-   "timing": "made"
+   "lines": "sourced"
   }
  },
  "format": 1,
- "names": {
-  "*": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg005": "sourced",
-   "eg006": "sourced",
-   "eg007": "sourced",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg012": "sourced",
-   "eg013": "sourced",
-   "eg014": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg024": "sourced",
-   "eg025": "sourced",
-   "eg026": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "de": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg006": "made",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg013": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "en": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg005": "sourced",
-   "eg006": "sourced",
-   "eg007": "sourced",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg012": "sourced",
-   "eg013": "sourced",
-   "eg014": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg024": "sourced",
-   "eg025": "sourced",
-   "eg026": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "es": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg006": "made",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg013": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "fr": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg006": "made",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg013": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "it": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg006": "made",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg013": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "ja": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg005": "sourced",
-   "eg006": "made",
-   "eg007": "sourced",
-   "eg008": "adapted",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg012": "sourced",
-   "eg013": "sourced",
-   "eg014": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg024": "sourced",
-   "eg025": "sourced",
-   "eg026": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "nb": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg006": "made",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg013": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "pl": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg006": "made",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg013": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "pt": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg006": "made",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg012": "sourced",
-   "eg013": "sourced",
-   "eg014": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "made",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "pt-BR": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg012": "sourced",
-   "eg013": "sourced",
-   "eg014": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "ru": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg005": "sourced",
-   "eg006": "made",
-   "eg007": "sourced",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg012": "sourced",
-   "eg013": "sourced",
-   "eg014": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg024": "sourced",
-   "eg025": "sourced",
-   "eg026": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "tr": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg006": "made",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg013": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "uk": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg005": "sourced",
-   "eg006": "made",
-   "eg007": "sourced",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg012": "sourced",
-   "eg013": "sourced",
-   "eg014": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg024": "sourced",
-   "eg025": "sourced",
-   "eg026": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "zh-Hans": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg005": "sourced",
-   "eg006": "made",
-   "eg007": "sourced",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg012": "sourced",
-   "eg013": "sourced",
-   "eg014": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg024": "sourced",
-   "eg025": "sourced",
-   "eg026": "sourced",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  },
-  "zh-Hant": {
-   "eg001": "sourced",
-   "eg002": "sourced",
-   "eg003": "sourced",
-   "eg004": "sourced",
-   "eg005": "sourced",
-   "eg006": "made",
-   "eg007": "made",
-   "eg008": "sourced",
-   "eg009": "sourced",
-   "eg010": "sourced",
-   "eg011": "sourced",
-   "eg012": "sourced",
-   "eg013": "sourced",
-   "eg014": "sourced",
-   "eg015": "sourced",
-   "eg016": "sourced",
-   "eg017": "sourced",
-   "eg018": "sourced",
-   "eg019": "sourced",
-   "eg020": "sourced",
-   "eg021": "sourced",
-   "eg022": "sourced",
-   "eg023": "sourced",
-   "eg024": "made",
-   "eg025": "made",
-   "eg026": "made",
-   "eg027": "sourced",
-   "eg028": "sourced"
-  }
- },
+ "names": {},
  "notes": {
   "eg001": {
    "label": "centre of the figure's segment ends (fixed rule)"
@@ -670,26 +222,6 @@
    "label": "centre of the figure's segment ends (fixed rule)"
   }
  },
- "readings": {
-  "ja": {
-   "eg001": "derived",
-   "eg002": "derived",
-   "eg003": "derived",
-   "eg006": "derived",
-   "eg008": "derived",
-   "eg009": "derived",
-   "eg010": "made",
-   "eg013": "derived",
-   "eg015": "derived",
-   "eg016": "derived",
-   "eg018": "derived",
-   "eg019": "made",
-   "eg020": "derived",
-   "eg021": "derived",
-   "eg023": "derived",
-   "eg027": "derived",
-   "eg028": "derived"
-  }
- },
+ "readings": {},
  "unit": "culture egyptian"
 }

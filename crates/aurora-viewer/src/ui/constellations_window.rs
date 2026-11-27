@@ -120,7 +120,7 @@ pub fn body(
         ui.add_space(4.0);
         drawings_card(ui, p, s, data);
         ui.add_space(4.0);
-        lines_card(ui, p, s);
+        lines_card(ui, p, s, data);
         ui.add_space(4.0);
         view_card(ui, p, s);
         ui.add_space(4.0);
@@ -456,8 +456,14 @@ fn switch_line(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &str, tip: &str
 }
 
 /// "Lines and names": the lines and their width, the names and their
-/// size, and the figures no longer counted.
-fn lines_card(ui: &mut egui::Ui, p: &Palette, s: &mut ConstellationSettings) {
+/// size (greyed when the culture shown names none of its figures), and
+/// the figures no longer counted.
+fn lines_card(ui: &mut egui::Ui, p: &Palette, s: &mut ConstellationSettings, data: &DataStatus) {
+    use crate::world::constellations::catalogue;
+    let ids: Vec<String> = data.cultures.iter().map(|c| c.id.clone()).collect();
+    let named = catalogue::shown_culture(&ids, s.cultures.as_deref())
+        .and_then(|k| data.cultures.get(k))
+        .is_none_or(|c| c.named);
     card(
         ui,
         p,
@@ -486,27 +492,29 @@ fn lines_card(ui: &mut egui::Ui, p: &Palette, s: &mut ConstellationSettings) {
                     egui::Slider::new(&mut s.line_width, WIDTH_RANGE),
                 );
             });
-            switch_line(
-                ui,
-                p,
-                "typography",
-                aurora_i18n::tr!("ui-options-constellations-names"),
-                aurora_i18n::tr!("ui-options-constellations-names-help"),
-                &mut s.names,
-            );
-            // their size, right under their switch, greyed with it
-            ui.add_enabled_ui(s.names, |ui| {
-                slider_row(
+            ui.add_enabled_ui(named, |ui| {
+                switch_line(
                     ui,
                     p,
-                    (
-                        aurora_i18n::tr!("ui-options-constellations-font-size"),
-                        aurora_i18n::tr!("ui-options-constellations-font-size-help"),
-                    ),
-                    &format!("{:.0} pt", s.font_size),
-                    None,
-                    egui::Slider::new(&mut s.font_size, FONT_RANGE),
+                    "typography",
+                    aurora_i18n::tr!("ui-options-constellations-names"),
+                    aurora_i18n::tr!("ui-options-constellations-names-help"),
+                    &mut s.names,
                 );
+                // their size, right under their switch, greyed with it
+                ui.add_enabled_ui(s.names, |ui| {
+                    slider_row(
+                        ui,
+                        p,
+                        (
+                            aurora_i18n::tr!("ui-options-constellations-font-size"),
+                            aurora_i18n::tr!("ui-options-constellations-font-size-help"),
+                        ),
+                        &format!("{:.0} pt", s.font_size),
+                        None,
+                        egui::Slider::new(&mut s.font_size, FONT_RANGE),
+                    );
+                });
             });
             switch_line(
                 ui,

@@ -6,7 +6,7 @@
    "licence": "CC BY-SA 4.0",
    "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/japanese",
    "imported": "2026-11-25",
-   "note": "Licence line of the culture's description: 'CC BY-SA 4.0'. Derived files stay CC BY-SA 4.0. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Made for this viewer'."
+   "note": "Licence line of the culture's description: 'CC BY-SA 4.0'. Derived files stay CC BY-SA 4.0. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Conversion for this viewer'."
   },
   {
    "holder": "Lyu Haocheng",
@@ -14,7 +14,7 @@
    "licence": "CC BY-SA 4.0",
    "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/japanese",
    "imported": "2026-11-25",
-   "note": "Licence line: 'CC BY-SA 4.0'. Derived files stay CC BY-SA 4.0. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Made for this viewer'."
+   "note": "Licence line: 'CC BY-SA 4.0'. Derived files stay CC BY-SA 4.0. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Conversion for this viewer'."
   },
   {
    "holder": "Olaf Frohn (d3-celestial)",
@@ -25,60 +25,12 @@
    "note": "Used only to turn Hipparcos numbers and DSO names into positions; stars.8.json (magnitude 8 and brighter, same project, same BSD-3-Clause licence) supplies the numbers that stars.6.json lacks (identical positions on all 5044 shared stars). Licence file quoted: 'Copyright (c) 2015, Olaf Frohn. All rights reserved.' Star data of that project derive from the Hipparcos catalogue; positions only are used here. The dsos files were read from the master branch on the import date (not a pinned commit)."
   },
   {
-   "holder": "The Stellarium project and its translators",
-   "work": "Translations of the 'Japanese Yasui Map' figure names (and the culture's name, where given): po/stellarium-skycultures/{de,es,fr,it,nb,pl,pt,pt_BR,ru,tr,uk,zh_CN,zh_TW}.po and po/stellarium-skycultures-descriptions/, written as de, es, fr, it, nb, pl, pt, pt-BR, ru, tr, uk, zh-Hans, zh-Hant",
-   "licence": "GPL-2.0-or-later",
-   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-skycultures",
-   "imported": "2026-11-25",
-   "note": "Repository licence: COPYING (GNU GPL version 2) at the pinned commit; codemeta.json: '\"license\": \"https://spdx.org/licenses/GPL-2.0-or-later\"'. The .po files carry no licence header of their own. The translated English names are the culture's own (see the entries above for their licence). Matched by msgid = the English name, checked against the .pot comment 'Japanese Yasui Map constellation/asterism'; fuzzy, empty, equal-to-English and over-64-character entries not used; no key in the culture's own language."
-  },
-  {
-   "holder": "Wikipedia contributors (Ukrainian Wikipedia)",
-   "work": "Ukrainian names of 100 figures (uk), from the tables of the lunar-mansion articles, matched by exact Chinese characters",
-   "licence": "CC BY-SA 4.0",
-   "url": "https://uk.wikipedia.org/wiki/Китайські_сузір'я",
-   "imported": "2026-11-25",
-   "note": "Site licence (siteinfo rightsinfo): 'Creative Commons Attribution-Share Alike 4.0'. Articles and revisions: https://uk.wikipedia.org/w/index.php?title=%D0%91%D0%B8%D0%BA_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49171690; https://uk.wikipedia.org/w/index.php?title=%D0%92%D0%BE%D0%BB%D0%BE%D1%85%D0%B0%D1%82%D0%B0_%D0%93%D0%BE%D0%BB%D0%BE%D0%B2%D0%B0_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49171829; https://uk.wikipedia.org/w/index.php?title=%D0%94%D0%B0%D1%85_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49143954; https://uk.wikipedia.org/w/index.php?title=%D0%94%D1%96%D0%B2%D1%87%D0%B8%D0%BD%D0%B0_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49143949; https://uk.wikipedia.org/w/index.php?title=%D0%97%D0%BE%D1%80%D1%8F_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49176010; https://uk.wikipedia.org/w/index.php?title=%D0%9A%D0%BE%D0%BB%D0%BE%D0%B4%D1%8F%D0%B7%D1%8C_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49175937; https://uk.wikipedia.org/w/index.php?title=%D0%9A%D0%BE%D0%BB%D1%96%D1%81%D0%BD%D0%B8%D1%86%D1%8F_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49175985; https://uk.wikipedia.org/w/index.php?title=%D0%9A%D0%BE%D1%80%D1%96%D0%BD%D1%8C_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49171365; https://uk.wikipedia.org/w/index.php?title=%D0%9A%D0%BE%D1%88%D0%B8%D0%BA_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49144015; https://uk.wikipedia.org/w/index.php?title=%D0%9A%D1%80%D0%B8%D0%BB%D0%B0_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49175975; https://uk.wikipedia.org/w/index.php?title=%D0%9A%D1%96%D0%B2%D1%88_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49143946; https://uk.wikipedia.org/w/index.php?title=%D0%9A%D1%96%D0%BC%D0%BD%D0%B0%D1%82%D0%B0_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49178400; https://uk.wikipedia.org/w/index.php?title=%D0%9D%D0%BE%D0%B3%D0%B8_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49143976; https://uk.wikipedia.org/w/index.php?title=%D0%9F%D0%BE%D1%80%D0%BE%D0%B6%D0%BD%D0%B5%D1%87%D0%B0_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49143952; https://uk.wikipedia.org/w/index.php?title=%D0%9F%D1%80%D0%B8%D0%B2%D0%B8%D0%B4_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49175943; https://uk.wikipedia.org/w/index.php?title=%D0%A0%D0%BE%D0%B7%D1%82%D1%8F%D0%B3%D0%BD%D1%83%D1%82%D0%B0_%D1%81%D1%96%D1%82%D0%BA%D0%B0_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49184651; https://uk.wikipedia.org/w/index.php?title=%D0%A0%D1%96%D0%B3_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49171306; https://uk.wikipedia.org/w/index.php?title=%D0%A1%D0%B5%D1%80%D1%86%D0%B5_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49171432; https://uk.wikipedia.org/w/index.php?title=%D0%A1%D1%82%D1%96%D0%BD%D0%B0_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49143971; https://uk.wikipedia.org/w/index.php?title=%D0%A1%D1%96%D1%82%D0%BA%D0%B0_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49171871; https://uk.wikipedia.org/w/index.php?title=%D0%A2%D0%B0%D0%B1%D1%96%D1%80_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49143956; https://uk.wikipedia.org/w/index.php?title=%D0%A7%D0%B5%D1%80%D0%B5%D0%BF%D0%B0%D1%88%D0%B8%D0%B9_%D0%94%D0%B7%D1%8C%D0%BE%D0%B1_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49171896; https://uk.wikipedia.org/w/index.php?title=%D0%A8%D0%B8%D1%8F_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49171367; https://uk.wikipedia.org/w/index.php?title=%D0%A8%D0%BB%D1%83%D0%BD%D0%BE%D0%BA_%28%D0%BA%D0%B8%D1%82%D0%B0%D0%B9%D1%81%D1%8C%D0%BA%D0%B5_%D1%81%D1%83%D0%B7%D1%96%D1%80%27%D1%8F%29&oldid=49171707. These entries sit beside entries under other licences in the same file; each keeps its own licence."
-  },
-  {
-   "holder": "Jeong Tae-Min; Lyu Haocheng (Stellarium sky culture 'Korean')",
-   "work": "Traditional Chinese names (zh-Hant) of 13 figures: the korean set's Hanja of the same asterism (its Simplified form, by OpenCC's tables, equals this figure's zh-Hans name)",
-   "licence": "GPL-2.0",
-   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/korean",
-   "imported": "2026-11-25",
-   "note": "Licence line of the culture's description: 'GNU GPL v2.0'. These entries sit beside entries under other licences in the same file; each keeps its own licence."
-  },
-  {
-   "holder": "The OpenCC project (BYVoid/OpenCC)",
-   "work": "zh-Hant of 72 figures converted from their zh-Hans (Stellarium) names. Simplified-to-Traditional (Taiwan standard) conversion of zh-Hans names into zh-Hant: dictionaries STPhrases, STCharacters, TWVariantsPhrases, TWVariants (the s2tw chain), applied for this viewer; TSCharacters, TSPhrases and JPShinjitaiCharacters used only to compare characters",
-   "licence": "Apache-2.0",
-   "url": "https://github.com/BYVoid/OpenCC/tree/fae2a0a911c30764e669a7d8b0591cd8e852934a/data/dictionary",
-   "imported": "2026-11-25",
-   "note": "LICENSE: 'Apache License Version 2.0, January 2004'; each dictionary file: '# License: Apache-2.0 (see LICENSE)'. The generated STPhrases_GeneratedFromRegionalPhrases dictionary is not in the repository and was not used."
-  },
-  {
-   "holder": "Wikipedia contributors (Ukrainian Wikipedia)",
-   "work": "Ukrainian names of 2 lunar-mansion figures (Hairy Head, Turtle Beak) from the titles of their articles 'Волохата Голова (китайське сузір'я)' and 'Черепаший Дзьоб (китайське сузір'я)', reached through the Wikidata items whose zh label equals the figure's characters; trailing disambiguation removed",
-   "licence": "CC BY-SA 4.0",
-   "url": "https://uk.wikipedia.org/wiki/Волохата_Голова_(китайське_сузір'я)",
-   "imported": "2026-11-25",
-   "note": "Site licence: 'Creative Commons Attribution-Share Alike 4.0'. These entries sit beside entries under other licences; each keeps its own licence."
-  },
-  {
-   "holder": "Made for this viewer",
-   "work": "Draft translations of figure names, not from a source: de 68, es 5, fr 156, it 290, nb 296, pl 295, pt 292, ru 15, tr 295, uk 152; the culture's name in 14 languages",
-   "licence": "Own work; may be replaced by a sourced name",
-   "url": "",
-   "imported": "2026-11-25",
-   "note": "Made from the English name and the star group's characters on 2026-11-25, some checked against public reference pages; listed in drafts.json; not proofread by native speakers. Not counted: 16 names reused from another set's sourced name of the same star group. 1 of the drafts replace a sourced name (drafts.json replaced_source)."
-  },
-  {
-   "holder": "Made for this viewer",
+   "holder": "Conversion for this viewer",
    "work": "Changes to the imported stick lines and label points",
-   "licence": "Own work",
+   "licence": "No content of its own: changes to the source's data, under the source's licence",
    "url": "",
    "imported": "2026-11-26",
-   "note": "Figure ja09B left out (no line in the source). 2 zero-length segment(s) dropped (nothing visible lost). 73 one-star figures (the source writes the star twice) kept as one zero-length line. Repeated segments dropped: ja12B 1. Label points: the centre of the segment ends, except 11 given by the source. Stroke order, direction and timing (t0/t1) made for this viewer; no end point moved."
+   "note": "Figure ja09B left out (no line in the source). 2 zero-length segment(s) dropped (nothing visible lost). 73 one-star figures (the source writes the star twice) kept as one zero-length line. Repeated segments dropped: ja12B 1. Label points: the centre of the segment ends, except 11 given by the source. No end point moved."
   }
  ]
 }

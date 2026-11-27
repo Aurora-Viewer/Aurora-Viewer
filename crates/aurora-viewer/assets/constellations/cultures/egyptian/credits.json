@@ -6,7 +6,7 @@
    "licence": "GNU GPL v2.0",
    "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/egyptian",
    "imported": "2026-11-25",
-   "note": "Licence line of the culture's description: 'GNU GPL v2.0'. Derived data stays GPL v2.0. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Made for this viewer'."
+   "note": "Licence line of the culture's description: 'GNU GPL v2.0'. Derived data stays GPL v2.0. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Conversion for this viewer'."
   },
   {
    "holder": "misibacsi",
@@ -14,7 +14,7 @@
    "licence": "GNU GPL v2.0",
    "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/egyptian",
    "imported": "2026-11-25",
-   "note": "Credited because the description names the update under the same licence line. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Made for this viewer'."
+   "note": "Credited because the description names the update under the same licence line. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Conversion for this viewer'."
   },
   {
    "holder": "Olaf Frohn (d3-celestial)",
@@ -26,35 +26,19 @@
   },
   {
    "holder": "The Stellarium project and its translators",
-   "work": "Translations of the 'Egyptian' figure names (and the culture's name, where given): po/stellarium-skycultures/{de,es,fr,it,ja,nb,pl,pt,pt_BR,ru,tr,uk,zh_CN,zh_TW}.po and po/stellarium-skycultures-descriptions/, written as de, es, fr, it, ja, nb, pl, pt, pt-BR, ru, tr, uk, zh-Hans, zh-Hant",
+   "work": "Translations of the culture's name 'Egyptian' in culture.json: po/stellarium-skycultures-descriptions/, written as de, es, fr, it, ja, nb, pl, pt, pt-BR, ru, tr, uk, zh-Hans, zh-Hant",
    "licence": "GPL-2.0-or-later",
-   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-skycultures",
+   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-skycultures-descriptions",
    "imported": "2026-11-25",
-   "note": "Repository licence: COPYING (GNU GPL version 2) at the pinned commit; codemeta.json: '\"license\": \"https://spdx.org/licenses/GPL-2.0-or-later\"'. The .po files carry no licence header of their own. The translated English names are the culture's own (see the entries above for their licence). Matched by msgid = the English name, checked against the .pot comment 'Egyptian constellation/asterism'; fuzzy, empty, equal-to-English and over-64-character entries not used; no key in the culture's own language."
+   "note": "Repository licence: COPYING (GNU GPL version 2) at the pinned commit; codemeta.json: '\"license\": \"https://spdx.org/licenses/GPL-2.0-or-later\"'. The .po files carry no licence header of their own."
   },
   {
-   "holder": "Made for this viewer",
-   "work": "Draft translations of figure names, not from a source: de 1, es 1, fr 1, it 1, ja 2, nb 1, pl 1, pt 2, ru 1, tr 1, uk 1, zh-Hans 1, zh-Hant 5",
-   "licence": "Own work; may be replaced by a sourced name",
-   "url": "",
-   "imported": "2026-11-25",
-   "note": "Made from the English name and the star group's characters on 2026-11-25, some checked against public reference pages; listed in drafts.json; not proofread by native speakers. 1 of the drafts replace a sourced name (drafts.json replaced_source)."
-  },
-  {
-   "holder": "Made for this viewer",
+   "holder": "Conversion for this viewer",
    "work": "Changes to the imported stick lines and label points",
-   "licence": "Own work",
+   "licence": "No content of its own: changes to the source's data, under the source's licence",
    "url": "",
    "imported": "2026-11-26",
-   "note": "Segments dropped because a star of the source is not in the star tables: eg006 2, eg016 1. Label points: the centre of the segment ends. Stroke order, direction and timing (t0/t1) made for this viewer; no end point moved."
-  },
-  {
-   "holder": "Made for this viewer",
-   "work": "Kana readings over the Japanese names (ja)",
-   "licence": "Own work",
-   "url": "",
-   "imported": "2026-11-26",
-   "note": "15 copied or built from the Japanese set's readings of the same characters (or the dictionary reading of an everyday word), 2 chosen by us. Not the source's readings; marked in drafts.json (readings_added) and provenance.json."
+   "note": "Segments dropped because a star of the source is not in the star tables: eg006 2, eg016 1. Label points: the centre of the segment ends. No end point moved."
   }
  ]
 }

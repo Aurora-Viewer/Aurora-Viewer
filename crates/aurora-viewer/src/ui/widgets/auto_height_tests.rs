@@ -68,6 +68,7 @@ fn pass(ctx: &egui::Context, p: &crate::theme::Palette, screen: Vec2, kind: Kind
                         name: id.into(),
                         constellations: 88,
                         left_out,
+                        named: true,
                     };
                     let data = DataStatus {
                         reading: false,
