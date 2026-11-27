@@ -223,6 +223,24 @@ impl App {
         ))
     }
 
+    /// The Director's shutter while its window is open with its motion
+    /// blur on (°), at the film's frame rate.
+    pub(super) fn director_shutter(&self) -> Option<f32> {
+        if !self.panels.director || !self.in_world() {
+            return None;
+        }
+        self.director.d.motion_blur
+    }
+
+    /// The motion blur of a frame drawn `dt` seconds after the last one:
+    /// the Director's shutter while it has one, else the viewer's own.
+    pub(super) fn motion_blur_frame(&self, dt: f32) -> Option<aurora_render::MotionBlur> {
+        match self.director_shutter() {
+            Some(angle) => crate::motion_blur::shutter(angle, self.settings.director_record.rate(), dt),
+            None => crate::motion_blur::frame(crate::motion_blur::strength(&self.settings.motion_blur), dt),
+        }
+    }
+
     /// The folder of this account's saved tracks.
     fn director_tracks_folder(&self) -> PathBuf {
         crate::settings::account_dir(&self.world.agent_id).join("director")

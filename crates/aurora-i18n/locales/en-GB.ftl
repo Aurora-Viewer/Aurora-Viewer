@@ -217,10 +217,6 @@ common-behavior = Behaviour
 
 app-login-canceled = Login cancelled.
 
-ui-options-favorite-emojis = Favourite emojis
-
-ui-options-favorite-emojis-hint = Right-click an emoji in the picker or the recent row to keep it: favourites come first in that row and have their own tab in the picker.
-
 ui-options-blocked-chat-greyed = Greyed
 
 ui-options-flash-conversations-button-hint = When a message arrives with the Conversations window closed, its button flashes softly in violet, then stays tinted until the window is opened. Minimised, the window's bar flashes instead, then stays tinted while messages wait unread.
@@ -790,6 +786,12 @@ inventory-folder-color-none = Select a folder to colour it.
 import-folders-enable = Organise upload folders
 
 ui-weather-northern-lights-colours = Colours
+
+ui-weather-fog-follow-sky = Colour of the sky’s light
+
+ui-weather-fog-follow-sky-tip = The fog takes the colour of the sky’s light, as the haze does; off, it takes its own colour
+
+ui-weather-fog-colour-tip = The fog’s own colour
 
 wearable-favorites-all = All Favourites
 

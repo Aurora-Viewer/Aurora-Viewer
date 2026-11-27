@@ -189,6 +189,7 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
             p,
             pics,
             images,
+            emoji,
             world,
             st,
             actions,

@@ -846,6 +846,8 @@ pub struct App {
     weather_saved: crate::weather::WeatherSettings,
     /// The weather's wind, in gusts.
     weather_wind: crate::weather::Wind,
+    /// How far the wind has carried the weather's fog (weather/fog.rs).
+    fog_drift: crate::weather::FogDrift,
     /// The weather in effect this frame: the settings (`update_weather_now`;
     /// the demo's snow spin may change it after).
     weather_now: crate::weather::WeatherSettings,
@@ -2209,6 +2211,7 @@ impl App {
             rain_last: None,
             weather_saved: Default::default(),
             weather_wind: Default::default(),
+            fog_drift: Default::default(),
             weather_now: Default::default(),
             thunder: Default::default(),
             thunder_demo_done: false,
@@ -7136,6 +7139,14 @@ impl App {
         self.weather_wind
             .advance(std::time::Instant::now(), range, heading, region_wind.truncate());
         let weather_wind = range.1 > 0.0;
+        // the fog drifts with the weather's wind, or the region's without it
+        let fog_wind = if weather_wind {
+            self.weather_wind.now
+        } else {
+            region_wind.truncate()
+        };
+        self.fog_drift
+            .advance(std::time::Instant::now(), fog_wind, self.weather_now.fog_drift);
         if weather_wind {
             let open = self.scene.sound_reverb.sky.map_or(1.0, |s| s.exposure.clamp(0.0, 1.0));
             region_wind = self.weather_wind.now.extend(0.0) * (0.15 + 0.85 * open);
@@ -7561,9 +7572,22 @@ impl App {
     fn pump_network_events(&mut self, t_ev: Instant) {
         let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
         while let Ok((sent, ev)) = self.net.events.try_recv() {
+            let folder_reply = matches!(
+                &ev,
+                NetEvent::InventoryContents(_) | NetEvent::InventoryTreeFetched { result: Ok(_), .. }
+            );
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
             self.receive_event(ev, self.director_render_stamp(sent));
+            if folder_reply {
+                let items = self.world.inventory.take_accepted_snapshot_items();
+                if !items.is_empty() {
+                    self.net.send(NetCommand::InventoryItemsKnown {
+                        items,
+                        owner: self.world.agent_id,
+                    });
+                }
+            }
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
             // (more per frame in gaming mode's slow loop, app/gaming_mode.rs;
@@ -7710,6 +7734,15 @@ impl App {
 
     pub fn requested_vr_restart(&self) -> Option<crate::camera::VrView> {
         self.restart_into_vr.then_some(self.vr_requested_mode)
+    }
+
+    /// Just before the app is dropped at exit: leaves the world's objects,
+    /// the scene's meshes and egui's texture copies to the system instead of
+    /// freeing them one by one on the main thread (`ObjectStore::leak_at_exit`).
+    pub fn leak_session_at_exit(&mut self) {
+        self.world.leak_at_exit();
+        self.scene.leak_at_exit();
+        self.egui_shadow.leak_at_exit();
     }
 
     fn record_inventory_logout(&mut self) {
@@ -13412,6 +13445,14 @@ impl App {
             sharpen: self.settings.sharpen,
             glow: self.settings.glow,
             bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
+            sun_rays: if self.settings.sun_rays {
+                self.settings.sun_rays_strength.clamp(
+                    *crate::settings::SUN_RAYS_STRENGTH.start(),
+                    *crate::settings::SUN_RAYS_STRENGTH.end(),
+                )
+            } else {
+                0.0
+            },
             water_height: self.world.main_water_height(),
             shadows: self.photo_shadow_quality() > 0 && matches!(self.screen, Screen::World),
             shadow_distance: Settings::shadow_params_of(self.photo_shadow_quality()).1,
@@ -13448,6 +13489,7 @@ impl App {
                 };
                 self.dof_frame(&mut gfx.renderer, dt, view)
             },
+            motion_blur: self.motion_blur_frame(dt),
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
             // (the Director's green screen, in place of the checkerboard)
@@ -13483,6 +13525,14 @@ impl App {
             curvature: self.settings.planet_radius(),
             look: None,
             look_thumbs: None,
+            fog: self.weather_now.fog_look(
+                self.fog_drift.at,
+                crate::weather::fog::utc_clock(),
+                self.world
+                    .main_region
+                    .map_or([0.0; 2], |h| [(h >> 32) as f64, (h & 0xffff_ffff) as f64]),
+                self.weather_now.quality_index(),
+            ),
             clouds: crate::world::env::clouds_frame(
                 self.settings.volumetric_clouds,
                 self.world.main_region,
@@ -14232,6 +14282,7 @@ impl App {
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
         }
         crate::theme::apply_motion(&self.egui_ctx, self.settings.reduce_motion);
+        crate::ui::aurora_bg::snow::update(&self.egui_ctx, self.settings.reduce_motion);
         self.demo_gains_tick(Instant::now());
         if actions.settings_changed || std::mem::take(&mut self.snapshots.settings_changed) {
             crate::language_file::select(&self.settings.language, self.settings.custom_language);
@@ -14440,6 +14491,8 @@ impl App {
         }
         let raining = self.rain_last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1500));
         self.scene.update_rain_ground(&self.world, fp.camera_pos, raining);
+        self.scene
+            .update_fog_ground(&self.world, fp.camera_pos, fp.water_height, fp.fog.is_some());
         let lists = if self.in_world() && !self.scene_paused() {
             &self.scene.lists
         } else {
@@ -15144,6 +15197,9 @@ impl App {
                 self.world.apply(event);
             }
             for event in crate::demo::sky::events(self.frame_count) {
+                self.world.apply(event);
+            }
+            for event in crate::demo::fog::events(self.frame_count) {
                 self.world.apply(event);
             }
             for event in crate::demo::clouds::events(self.frame_count) {
@@ -17623,7 +17679,11 @@ impl App {
 
     /// Places › Favorites, the first tab.
     fn open_places_favorites(&mut self) {
-        self.places_ui.tab = 0;
+        // open_tab, not the field alone: Aurora's look follows its own
+        // source, which stayed on the last list shown (#4771); a place
+        // profile left open would hide the list
+        self.world.place_details.close_panel();
+        self.places_ui.open_tab(ui::places::TAB_FAVORITES);
         ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
     }
 
@@ -20427,14 +20487,25 @@ impl App {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
                     // in their bubbles
                     let residents = !(self.chat_bubbles() && self.settings.chat_bubbles_hide_console);
+                    // by the chat bar, wherever it was moved to; at the
+                    // bottom left when no bar draws it
+                    let lines_place = match ui::bars::chrome::chat_place(&ctx) {
+                        Some(block) => {
+                            let screen = ctx.content_rect();
+                            let top = self.interface.last_room.map_or(screen.top(), |(room, _)| room.top());
+                            ui::chat::LinesPlace::by(block, self.settings.chat_lines_direction, screen, (top, bottom_top))
+                        }
+                        None => ui::chat::LinesPlace::above(bottom_top),
+                    };
                     ui::chat::toasts(
                         &ctx,
                         &p,
+                        &mut self.emoji,
                         &self.world,
                         &self.avatar_pics,
                         &mut self.chat_ui.wanted_names,
                         &mut self.chat_ui.wanted_pics,
-                        bottom_top,
+                        lines_place,
                         if crate::demo::chat_volume_comparison() {
                             3600.0
                         } else {
@@ -20551,14 +20622,25 @@ impl App {
                 self.chat_ui.group_emotes = self.settings.group_emotes || (self.demo && crate::demo::emotes_grouped());
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 // the Legacy chat style keeps its own switch; both are off by
-                // default, the demo switch shows the row whatever they say
-                self.chat_ui.recent_emojis.enabled = (self.demo && crate::demo::recent_emojis_on())
-                    || if self.settings.chat_style == crate::settings::ChatStyle::Legacy {
-                        self.settings.show_recent_emojis_legacy
+                // default, and the arrow beside the emoji buttons turns the
+                // one of the style in use. The demo switch shows the row
+                // whatever they say: its arrow hides it for the run, nothing
+                // saved
+                let demo_row = self.demo && crate::demo::recent_emojis_on();
+                if self.chat_ui.recent_emojis.take_toggle() {
+                    if demo_row {
+                        self.chat_ui.recent_emojis.demo_hidden ^= true;
                     } else {
-                        self.settings.show_recent_emojis
-                    };
-                self.chat_ui.recent_emojis.favorites_enabled = self.settings.favorite_emojis;
+                        let switch = self.settings.recent_emojis_switch();
+                        *switch = !*switch;
+                        self.settings.save();
+                    }
+                }
+                self.chat_ui.recent_emojis.enabled = if demo_row {
+                    !self.chat_ui.recent_emojis.demo_hidden
+                } else {
+                    *self.settings.recent_emojis_switch()
+                };
                 self.chat_ui.recent_emojis.above = self.settings.chat_style != crate::settings::ChatStyle::Legacy;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
@@ -21473,6 +21555,14 @@ impl App {
                     .filter(|_| self.demo)
                     .unwrap_or(self.settings.presence_position);
                 let classic_bars = self.bars_look().0;
+                // the center's width dragged by the user; AURORA_DEMO_NOTIF_WIDTH
+                // sets it for this run only, nothing saved
+                let demo_notif_width = self
+                    .demo
+                    .then(|| std::env::var("AURORA_DEMO_NOTIF_WIDTH").ok()?.trim().parse::<f32>().ok())
+                    .flatten()
+                    .filter(|w| w.is_finite());
+                self.notif_ui.width = demo_notif_width.unwrap_or(self.settings.notification_width);
                 let mut toast_env = ui::notifications::ToastEnv {
                     pics: &self.avatar_pics,
                     images: &self.ui_images,
@@ -21516,6 +21606,14 @@ impl App {
                 };
                 self.world.notifications = list;
                 self.world.notification_history = hist;
+                // the grip moved the center's width: kept, and saved when released
+                let width_committed = std::mem::take(&mut self.notif_ui.width_committed);
+                if demo_notif_width.is_none() {
+                    self.settings.notification_width = self.notif_ui.width;
+                    if width_committed {
+                        self.settings.save();
+                    }
+                }
                 // the region restart over the toasts, under the open list
                 self.show_region_restart(&ctx, &p);
                 self.show_link_health(&ctx, &p);
@@ -23113,7 +23211,8 @@ impl ApplicationHandler for App {
                 self.settings.sync_night_sky();
             }
             // AURORA_DEMO_CLOUDS: the region's fixed sky, not a time of day
-            if crate::demo::clouds::scenario().is_some() {
+            // (the clouds' and the fog's scenarios show the region's sky)
+            if crate::demo::clouds::scenario().is_some() || crate::demo::fog::scenario().is_some() {
                 self.panels.time_of_day = 0;
             }
             // AURORA_DEMO_NIGHT_SKY_CLOCK: the real time at this longitude

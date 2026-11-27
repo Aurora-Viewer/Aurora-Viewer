@@ -49,6 +49,32 @@ impl Drop for Scope {
     }
 }
 
+/// A menu of its own drawn inside a native control (an emoji of the chat
+/// block's picker or of its recent row): the control's scope is set aside
+/// while this lives, so that menu does not end with the button's and the
+/// block's settings (`append`).
+pub(crate) struct Outside {
+    ctx: Context,
+    scope: Option<String>,
+}
+
+impl Outside {
+    pub fn new(ctx: &Context) -> Self {
+        Self {
+            ctx: ctx.clone(),
+            scope: ctx.data_mut(|data| data.remove_temp::<String>(scope_id())),
+        }
+    }
+}
+
+impl Drop for Outside {
+    fn drop(&mut self) {
+        if let Some(scope) = self.scope.take() {
+            self.ctx.data_mut(|data| data.insert_temp(scope_id(), scope));
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct Request {
     pub command: Option<String>,
@@ -281,5 +307,20 @@ mod tests {
         }
         assert!(ctx.data(|data| data.get_temp::<String>(scope_id())).is_none());
         assert!(take(&ctx).is_none(), "scoping and hover never enqueue an edit");
+    }
+
+    #[test]
+    fn a_menu_of_its_own_stands_outside_the_native_scope_and_gives_it_back() {
+        let ctx = Context::default();
+        let block = Scope::new(&ctx, "bar_chat");
+        {
+            let _alone = Outside::new(&ctx);
+            assert!(target(&ctx).is_none(), "no native target for the menu drawn here");
+        }
+        assert_eq!(target(&ctx).as_deref(), Some("bar_chat"));
+        // outside any native control: nothing to set aside, nothing given back
+        drop(block);
+        drop(Outside::new(&ctx));
+        assert!(target(&ctx).is_none());
     }
 }

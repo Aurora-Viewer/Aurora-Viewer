@@ -26,7 +26,8 @@ mod cutout;
 mod dedicated;
 mod device_lost;
 pub use device_lost::{
-    GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, in_guarded_start, is_loss_panic, is_start_loss_panic, loss_details, start_guarded,
+    GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_drop, in_guarded_poll, in_guarded_start, is_drop_loss_panic, is_loss_panic,
+    is_start_loss_panic, loss_details, start_guarded,
 };
 mod dof;
 mod drawn_pick;
@@ -35,6 +36,7 @@ mod exposure;
 mod film_readback;
 mod fit_clip;
 pub use fit_clip::FitClipParams;
+mod fog;
 pub mod frame_priority;
 mod fsr;
 pub mod gi;
@@ -49,6 +51,7 @@ pub mod light_tiles;
 pub mod look_thumbs;
 pub mod looks;
 pub mod main_thread;
+mod motion_blur;
 mod motion_debug;
 mod motion_history;
 mod occlusion;
@@ -90,6 +93,7 @@ pub mod spirv_fix;
 pub mod stars;
 pub mod start_progress;
 pub mod stereo_view;
+mod sun_shafts;
 #[cfg(test)]
 mod terrain_tests;
 #[cfg(test)]

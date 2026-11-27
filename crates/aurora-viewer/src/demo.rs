@@ -145,6 +145,9 @@ pub mod env;
 pub mod experience;
 #[path = "demo_floating_text.rs"]
 pub mod floating_text;
+/// AURORA_DEMO_FOG: Aurora Weather's fog under a fixed sky, with props.
+#[path = "demo_fog.rs"]
+pub mod fog;
 /// A trail of footprints in the snow, then Footprints turned off
 /// (AURORA_DEMO_FOOTPRINTS_OFF, #4019).
 #[path = "demo_footprints.rs"]
@@ -1512,13 +1515,15 @@ pub fn bubbles_events() -> Vec<NetEvent> {
     ev
 }
 
-/// `AURORA_DEMO_CHAT_LINES=1|legacy|volumes`: nearby chat said at the arrival, to
-/// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
-/// one resident, an emote, an object's line, a long line with a link, a
-/// shout. `legacy` shows them as the Legacy Viewer's lines for the session
-/// (nothing is saved). An optional `:0` through `:50` overrides the maximum
-/// wrapped text lines for this demo. Some(true) for `legacy`. `stagger` and
-/// `legacy:stagger` say them one at a time (`chat_lines_due`).
+/// `AURORA_DEMO_CHAT_LINES=1|legacy|volumes|emoji`: nearby chat said at the
+/// arrival, to see the lines above the chat bar (`ui/chat/console.rs`): two
+/// lines of one resident, an emote, an object's line, a long line with a
+/// link, a shout. `legacy` shows them as the Legacy Viewer's lines for the
+/// session (nothing is saved). `emoji` shows a line and its sender's name
+/// with colour emoji, the same in both styles. An optional `:0` through `:50`
+/// overrides the maximum wrapped text lines for this demo. Some(true) for
+/// `legacy`. `stagger` and `legacy:stagger` say them one at a time
+/// (`chat_lines_due`).
 pub fn chat_lines_scenario() -> Option<bool> {
     let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
     match mode.split(':').next()? {
@@ -1532,6 +1537,12 @@ pub fn chat_lines_scenario() -> Option<bool> {
 /// at a time instead of at the arrival.
 fn chat_lines_stagger() -> bool {
     std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.ends_with("stagger"))
+}
+
+/// `AURORA_DEMO_CHAT_LINES=emoji|legacy:emoji`: the line of the scenario
+/// holds colour emoji, in its text and in its sender's name (#5097).
+fn chat_lines_emoji() -> bool {
+    std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.split(':').any(|part| part == "emoji"))
 }
 
 /// `AURORA_DEMO_CHAT_LINES=stagger`: the scenario's next line now due, once:
@@ -1616,6 +1627,10 @@ fn chat_lines_said() -> Vec<NetEvent> {
             ]
         })
         .collect();
+    }
+    if chat_lines_emoji() {
+        let name = format!("{nova} 🫶");
+        return vec![say(DEMO_NOVA, &name, "Colour emoji: 🫶 ❤️ 😀 👍", false, normal)];
     }
     vec![
         say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-1"), false, normal),
@@ -5348,6 +5363,10 @@ pub fn events() -> Vec<NetEvent> {
     // ordinary point light (fixed ids). The first lights the wall through
     // its image; the ground stays dark outside the frustums. `point`: the
     // projectors without their texture, as plain point lights, to compare.
+    // AURORA_DEMO_FOG: the fog scenario's props (demo_fog.rs)
+    for o in fog::objects() {
+        add(o);
+    }
     if let Ok(mode) = std::env::var("AURORA_DEMO_PROJECTOR") {
         let floor = height(cx, cy) + 0.35;
         let wall = [0.82, 0.82, 0.82, 1.0];
@@ -9215,7 +9234,7 @@ pub fn sun_override() -> Option<Vec3> {
     static SUN: std::sync::OnceLock<Option<Vec3>> = std::sync::OnceLock::new();
     *SUN.get_or_init(|| match std::env::var("AURORA_DEMO_SUN").ok() {
         Some(v) => parse_sun(&v),
-        None => soft_shadows::sun(),
+        None => fog::sun().or_else(soft_shadows::sun),
     })
 }
 
@@ -9424,6 +9443,10 @@ pub fn projector_bench_done() -> bool {
 
 /// Fixed framing of the #1494 offline fixture, or a repeatable camera sweep.
 pub fn projector_camera(frame: u64) -> Option<(Vec3, Vec3)> {
+    // (AURORA_DEMO_FOG's camera, placed the same way)
+    if let Some(view) = fog::camera_at(frame) {
+        return Some(view);
+    }
     let mode = std::env::var("AURORA_DEMO_PROJECTOR").ok()?;
     if !mode.starts_with("cluster") {
         return None;

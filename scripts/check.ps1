@@ -23,6 +23,7 @@ $steps = @(
     @{ Name = 'PowerShell scripts (5.1 parser)'; Run = { & "$PSScriptRoot\check-scripts.ps1" } },
     @{ Name = 'Shell hook of the agents'; Run = { & "$PSScriptRoot\test-agent-hook.ps1" } },
     @{ Name = 'Task clean-up (last build, PR)'; Run = { & "$PSScriptRoot\test-task-cleanup.ps1" } },
+    @{ Name = 'Review queue rules'; Run = { & "$PSScriptRoot\test-review-queue.ps1" } },
     @{ Name = 'Formatting (rustfmt)'; Run = { cargo fmt --all -- --check } },
     @{ Name = 'Clippy'; Heavy = $true; Run = { cargo clippy --workspace --all-targets --locked -- @clippyArgs } },
     @{ Name = 'Tests'; Heavy = $true; Run = { cargo test --workspace --locked } }

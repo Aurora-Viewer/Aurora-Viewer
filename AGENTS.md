@@ -597,7 +597,8 @@ change to the interface:
    never for intermediate changes.
 8. **Carry on right away, without handing back**: `gh pr checks <n> --watch`
    (the command waits for the end of the PR's CI: formatting, clippy,
-   secrets; the tests, you ran them with `check.ps1`), then the full review
+   secrets, the translation catalogues' tests; the other tests, you ran
+   them with `check.ps1`), then the full review
    (section 11) and the review comment. **Never count on a notification**
    that CI has finished: if you hand back "while waiting for CI", the review
    never happens. If CI fails, fix, push, and start this step again.
@@ -622,8 +623,8 @@ change to the interface:
      "Claude permissions" choice of `aurora-tools.cmd`, which allows the
      follow-up commands once and for all: `gh pr view / list / checks /
      comment`, `gh run view / list / watch`, `gh issue list / view / edit /
-     comment / close / reopen`, `merge-pr.ps1`, `pr-captures.ps1` and
-     `issue-board.ps1`. Run
+     comment / close / reopen`, `merge-pr.ps1`, `pr-captures.ps1`,
+     `issue-board.ps1` and `review-queue.ps1`. Run
      each one alone, with no `cd`, `;` or variable around it, so that it
      matches the rule.
 10. **After the merge**: first move to the main repository, **in a separate
@@ -787,6 +788,35 @@ the review again. If a problem is beyond you (design conflict with another
 task, product choice, regression you cannot solve), **do not improvise**:
 explain it to the human and propose 2–3 solutions.
 
+**Which PR of someone else's to review next** comes from the review queue,
+never from a PR picked by hand: several maintainers review at once, and the
+queue keeps them off each other's PRs.
+
+```powershell
+./scripts/review-queue.ps1            # your queue, in order, and what is left out
+./scripts/review-queue.ps1 -Claim <n> # before reading it: assigns it to your human
+./scripts/review-queue.ps1 -Release <n>  # handing it back without a review
+```
+
+- **Order**: re-reviews (a maintainer reviewed it and its author answered
+  since), then PRs tied to a crash, then fixes (the `fix` label or a
+  `fix(area):` title), then the rest not reviewed yet. In each, crash
+  before fix before the rest, then the longest waiting. A PR your human
+  already claimed comes before all of them: finish it first.
+- **Claim before you read** the PR. `-Claim` refuses a PR another
+  maintainer holds: a claim (an assignee whose review is not posted yet),
+  a re-review that belongs to its previous reviewer for 2 days after the
+  author's answer, or a decision their review left open (⚠️ verdict). Take the next one; never remove another maintainer's
+  assignment. A claim ends with the review you post; `-Release` it if you
+  stop without one.
+- A claim shown as stale (no word from its maintainer for 3 days) is still
+  theirs: tell your human, who asks them.
+- The queue leaves out drafts, bots, `on-hold`, `waiting-for-slot`,
+  `needs-description`, the merge queue, red CI, PRs waiting on their author
+  or on a team decision, and approved ones; it does not replace the rules below (complete
+  description, green CI before reading the code).
+- On Linux the agents run it with `pwsh ./scripts/review-queue.ps1`.
+
 Then post the review as a comment (`gh pr comment <n> --body-file …`). The
 file given to `--body-file` (like the one of the PR description) is a draft
 in `.scratch/`, never committed: the review lives in the PR comment, not in
@@ -809,7 +839,7 @@ them):
 | Check | Result |
 |---|---|
 | No conflict with main | ✅ |
-| PR CI (fmt, clippy, secrets) | ✅ |
+| PR CI (fmt, clippy, secrets, catalogues) | ✅ |
 | Demo scenarios (before / after) | ✅ screenshots below |
 | Non-regression of neighbouring features | ✅ … |
 | Legacy Viewer fidelity | ✅ files checked: … |

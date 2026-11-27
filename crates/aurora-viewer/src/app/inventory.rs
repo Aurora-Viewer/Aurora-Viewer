@@ -70,7 +70,7 @@ impl App {
         true
     }
 
-    /// `AURORA_DEMO_INVENTORY=big,toggle=â€¦,churn=â€¦`: open and close the
+    /// `AURORA_DEMO_INVENTORY=big,toggle=…,churn=…`: open and close the
     /// window, and change one item now and then, once in the world.
     pub(super) fn demo_big_inventory(&mut self, big: &crate::world::inventory::demo::Big) {
         use std::sync::OnceLock;
