@@ -2509,6 +2509,15 @@ pub(crate) struct Backend {
     dlss_aside: Option<(crate::dlss::Dlss, Instant)>,
     /// DLSS frame generation's images while it runs (`fg_on`, dlss_fg.rs)
     fg: Option<crate::dlss_fg::FrameGen>,
+    /// Windows' frame generation (Streamline's, at the present): the
+    /// window's image before the interface, in its format and size
+    #[cfg(windows)]
+    fg_hudless: Option<wgpu::Texture>,
+    /// Windows' frame generation is off for this frame's present: the
+    /// window's size or vsync changes at the next frame, whose swapchain
+    /// is not made under frame generation (DLSS-G guide §17)
+    #[cfg(windows)]
+    fg_hold: bool,
     /// This frame's TAA jitter in pixels, y down: where it moved the image.
     taa_jitter: glam::Vec2,
     prev_view_proj: Option<Mat4>,
@@ -4557,6 +4566,10 @@ impl Backend {
         let mut surface_usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
         if caps.usages.contains(wgpu::TextureUsages::COPY_SRC) {
             surface_usage |= wgpu::TextureUsages::COPY_SRC;
+        } else if cfg!(windows) {
+            // Windows' frame generation copies the window's image before
+            // the interface: without the copy it stays off
+            log::info!("presentation: the window's images cannot be copied: no DLSS frame generation");
         }
         let config = wgpu::SurfaceConfiguration {
             usage: surface_usage,
@@ -5482,6 +5495,10 @@ impl Backend {
             dlss_drew: None,
             dlss_aside: None,
             fg: None,
+            #[cfg(windows)]
+            fg_hudless: None,
+            #[cfg(windows)]
+            fg_hold: false,
             taa_jitter: glam::Vec2::ZERO,
             prev_view_proj: None,
             prev_motion_view: None,
@@ -8482,8 +8499,20 @@ impl Backend {
     /// Follow the window: size and vsync wanted for the frame being drawn.
     fn apply_surface(&mut self, s: SurfaceState) {
         self.fg_allowed = s.fg_allowed;
+        let resize = (s.width, s.height) != (self.config.width, self.config.height);
+        // Windows' frame generation, on at the last present: off for this
+        // frame's, and the swapchain made again at the next (`fg_hold`).
+        // One frame at most: a frame not presented leaves it asked.
+        #[cfg(windows)]
+        {
+            let asked = self.taa.as_ref().and_then(|t| t.dlss.as_ref()).is_some_and(|(d, _)| d.fg_asked());
+            self.fg_hold = !self.fg_hold && asked && (resize || s.vsync != self.vsync);
+            if self.fg_hold {
+                return;
+            }
+        }
         self.set_vsync(s.vsync);
-        if (s.width, s.height) != (self.config.width, self.config.height) {
+        if resize {
             self.resize(s.width, s.height);
         }
     }
@@ -9269,9 +9298,9 @@ impl Backend {
         self.fg_allowed && self.settings.frame_generation() && self.taa.as_ref().is_some_and(|t| t.dlss.is_some())
     }
 
-    /// The presentation mode for the vsync setting, or Fifo while frame
-    /// generation runs (`fg`): its two presents a frame are paced by the
-    /// screen, the drawn frames at half its rate (dlss_fg.rs).
+    /// The presentation mode for the vsync setting, or Fifo while Linux's
+    /// frame generation runs (`fg`): its two presents a frame are paced by
+    /// the screen, the drawn frames at half its rate (dlss_fg.rs).
     /// `AURORA_PRESENT_MODE` wins over both.
     fn set_presentation(&mut self, vsync: bool, fg: bool) {
         if (vsync, fg) == (self.vsync, self.fg_paced) {
@@ -10623,9 +10652,18 @@ impl Backend {
             );
         }
         // DLSS frame generation paces the window under Fifo: set before the
-        // window image is acquired
+        // window image is acquired (Linux's; Windows' Streamline paces its
+        // own presents)
         if output.is_none() && snapshot.is_none() {
-            self.set_presentation(self.vsync, self.fg_on());
+            self.set_presentation(self.vsync, cfg!(target_os = "linux") && self.fg_on());
+            // Windows' frame generation: the frame's token, Reflex's
+            // sleep and its first markers, before the acquire
+            #[cfg(windows)]
+            if !self.external
+                && let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut())
+            {
+                dlss.fg_begin();
+            }
         }
         let t_acquire = Instant::now();
         let surface_tex = if self.lost.get() {
@@ -10714,16 +10752,22 @@ impl Backend {
             result.captured = captured;
             return result;
         }
-        // ---- DLSS frame generation (`fg_on`, dlss_fg.rs): the frame is
-        // drawn aside, and the window image waits for its end; its images
-        // go when it stops
+        // ---- DLSS frame generation (`fg_on`, dlss_fg.rs): on Linux the
+        // frame is drawn aside, and the window image waits for its end; its
+        // images go when it stops. Windows' Streamline makes its frames at
+        // the present, from the window's image
         let fg_on = self.fg_on();
-        if !fg_on && self.fg.take().is_some() {
+        let fg_linux = cfg!(target_os = "linux") && fg_on;
+        if !fg_linux && self.fg.take().is_some() {
             log::info!("DLSS frame generation: stopped, images let go");
         }
-        crate::dlss_fg::set_running(fg_on);
+        #[cfg(windows)]
+        if !fg_on {
+            self.fg_hudless = None;
+        }
+        crate::dlss_fg::set_running(fg_linux);
         let (surface_tex, fg_held) = match surface_tex {
-            FrameTarget::Surface(t) if fg_on => {
+            FrameTarget::Surface(t) if fg_linux => {
                 let (size, format) = ((self.config.width, self.config.height), self.config.format);
                 if self.fg.as_ref().is_none_or(|fg| !fg.fits(size, format)) {
                     self.fg = Some(crate::dlss_fg::FrameGen::new(&self.device, &self.queue, size, format));
@@ -15347,6 +15391,38 @@ impl Backend {
         } else if let Some(fg) = &mut self.fg {
             fg.broken();
         }
+        // Windows' frame generation: the window's image before the
+        // interface, copied as it is (same format, same size), under the
+        // same conditions
+        #[cfg(windows)]
+        let fg_hudless = match &surface_tex {
+            FrameTarget::Surface(t)
+                if fg_on
+                    && !self.fg_hold
+                    && dlss_cmds.is_some()
+                    && self.ui_blur.is_none()
+                    && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) =>
+            {
+                let (size, format) = (t.texture.size(), t.texture.format());
+                if self.fg_hudless.as_ref().is_none_or(|h| h.size() != size || h.format() != format) {
+                    self.fg_hudless = Some(self.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("DLSS FG hudless"),
+                        size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format,
+                        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    }));
+                }
+                self.fg_hudless.as_ref().map(|h| {
+                    encoder.copy_texture_to_texture(t.texture.as_image_copy(), h.as_image_copy(), size);
+                    h.create_view(&wgpu::TextureViewDescriptor::default())
+                })
+            }
+            _ => None,
+        };
         // ---- egui: its meshes, and what it painted for the world (name
         // tags, floating texts), which the HUD attachments cover
         let mut extra_cmds = Vec::new();
@@ -15773,6 +15849,16 @@ impl Backend {
                 fg_cmds.extend(fg.encode_dump(&self.device));
             }
         }
+        // Windows' frame generation: the image before the interface tagged
+        // and the present's options, after the frame's commands (off
+        // without one; its memory kept while the setting is on)
+        #[cfg(windows)]
+        if !self.external
+            && let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut())
+            && let Some(commands) = dlss.fg_present(&mut encoder, fg_hudless.as_ref(), fg_on)
+        {
+            fg_cmds.push(commands);
+        }
         let (pre, post, scene) = self.finishers.pair(enc_pre, encoder, move || enc_scene.finish());
         match (pre, post) {
             (Some(pre), Some(post)) => {
@@ -15812,6 +15898,12 @@ impl Backend {
             upload_cmds.into_iter().chain(extra_cmds).chain(output_transition),
         );
         self.gpu_frames.submitted(index, submission);
+        #[cfg(windows)]
+        if !self.external
+            && let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut())
+        {
+            dlss.fg_submitted();
+        }
         if self.gpu_frames.enabled {
             // the news as soon as a poll sees the frame done (the start of
             // the next frame's job): a GPU that is not the limit does not
@@ -15888,7 +15980,23 @@ impl Backend {
             stats.presented = true;
             stats.input_ms = input_at.map(|at| at.elapsed().as_secs_f32() * 1000.0);
         } else if let FrameTarget::Surface(t) = surface_tex {
+            // (Windows' frame generation: the present's markers around it,
+            // Streamline's frames made in it)
+            #[cfg(windows)]
+            let mut fg_dlss = if self.external {
+                None
+            } else {
+                self.taa.as_mut().and_then(|t| t.dlss.as_mut()).map(|(d, _)| d)
+            };
+            #[cfg(windows)]
+            if let Some(dlss) = &mut fg_dlss {
+                dlss.fg_presenting();
+            }
             self.queue.present(t);
+            #[cfg(windows)]
+            if let Some(dlss) = fg_dlss {
+                dlss.fg_end();
+            }
             stats.presented = true;
             stats.input_ms = input_at.map(|at| at.elapsed().as_secs_f32() * 1000.0);
         }

@@ -1809,9 +1809,9 @@ pub struct Settings {
     /// overrides it for a run). Like `dlss`, this computer's.
     pub dlss_rr: bool,
     /// With DLSS, its frame generation shows a frame made between each two
-    /// drawn, the screen pacing them (experimental, off by default, Linux;
-    /// `AURORA_DLSS_FG` overrides it for a run). Like `dlss`, this
-    /// computer's.
+    /// drawn (experimental, off by default; Linux, and Windows from the
+    /// next start; `AURORA_DLSS_FG` overrides it for a run). Like `dlss`,
+    /// this computer's.
     pub dlss_fg: bool,
     /// The model Ray Reconstruction draws with: 0 NVIDIA's choice, 1 D,
     /// 2 E, 3 F (`aurora_render::DlssRrModel`). Like `dlss`, this

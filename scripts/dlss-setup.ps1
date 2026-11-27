@@ -19,6 +19,8 @@ signed by NVIDIA:
   sl.interposer.dll, sl.common.dll, sl.dlss.dll   NVIDIA Streamline
   nvngx_dlss.dll                                  the DLSS model
   sl.dlss_d.dll, nvngx_dlssd.dll                  the same, for Ray Reconstruction
+  sl.dlss_g.dll, nvngx_dlssg.dll                  frame generation
+  sl.reflex.dll, sl.pcl.dll, NvLowLatencyVk.dll   Reflex, which it needs
   NVIDIA-DLSS-LICENSE.txt     NVIDIA's DLSS licence you accepted
   STREAMLINE-LICENSE.txt      Streamline's own (MIT)
 
@@ -39,7 +41,8 @@ $ZipName = "streamline-sdk-$Release.zip"
 $Url = "https://github.com/NVIDIA-RTX/Streamline/releases/download/$Release/$ZipName"
 $Sha256 = '32041E51DB0CAB709A271B72A352281B690C2ABBD669A827809401A5DD23956B'
 
-$Dlls = @('sl.interposer.dll', 'sl.common.dll', 'sl.dlss.dll', 'nvngx_dlss.dll', 'sl.dlss_d.dll', 'nvngx_dlssd.dll')
+$Dlls = @('sl.interposer.dll', 'sl.common.dll', 'sl.dlss.dll', 'nvngx_dlss.dll', 'sl.dlss_d.dll', 'nvngx_dlssd.dll',
+    'sl.dlss_g.dll', 'nvngx_dlssg.dll', 'sl.reflex.dll', 'sl.pcl.dll', 'NvLowLatencyVk.dll')
 # zip entry -> installed name: the licences under their own names, so a
 # LICENSE.txt of the user's in a custom AURORA_DLSS_DIR is left alone
 $Licences = [ordered]@{

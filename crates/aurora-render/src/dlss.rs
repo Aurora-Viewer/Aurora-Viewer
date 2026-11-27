@@ -167,9 +167,17 @@ mod sl {
     /// `sl::Feature`
     pub const FEATURE_DLSS: u32 = 0;
     pub const FEATURE_DLSS_RR: u32 = 1001;
-    /// `kFeatureDLSS_G`: frame generation, which sl-ngx has the caller
-    /// evaluate (prototype, `RenderSettings::dlss_fg`)
+    /// `kFeatureDLSS_G`: frame generation (`RenderSettings::dlss_fg`).
+    /// sl-ngx has the caller evaluate it; Windows' Streamline makes the
+    /// frames itself, at the window's present.
     pub const FEATURE_DLSS_G: u32 = 1000;
+    /// `kFeatureReflex` and `kFeaturePCL`: frame generation in Windows'
+    /// Streamline runs only with both (its markers name the frame each
+    /// present shows).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub const FEATURE_REFLEX: u32 = 3;
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub const FEATURE_PCL: u32 = 4;
 
     /// `sl::Result`: `eOk` and the values the viewer tells apart.
     pub const OK: i32 = 0;
@@ -264,6 +272,12 @@ mod sl {
     /// `sl::ResourceLifecycle::eValidUntilEvaluate`: the viewer's images
     /// stay as they are until `slEvaluateFeature` returns.
     pub const VALID_UNTIL_EVALUATE: u32 = 2;
+    /// `sl::ResourceLifecycle::eOnlyValidNow`: the library copies the
+    /// image in the tag's command buffer. Windows' frame generation reads
+    /// its inputs at the present, after the frame's later passes have
+    /// changed their layouts (`ResourceTag::copied`).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub const ONLY_VALID_NOW: u32 = 0;
     /// `sl::ResourceType::eTex2d`
     pub const TEX_2D: u8 = 0;
     /// `sl::RenderAPI::eVulkan`
@@ -331,9 +345,185 @@ mod sl {
     id!(DLSSD_OPTIMAL_SETTINGS, 1, [0x37 0xc6 0xd0 0xfb 0x8f 0xa2 0xf2 0x41 0xbc 0x91 0xb4 0x21 0xfa 0xee 0x8e 0x1e]);
     id!(VIEWPORT_HANDLE, 1, [0x35 0x64 0x1b 0x17 0x3c 0x9b 0xc8 0x4f 0x99 0x94 0xfb 0xe5 0x25 0x69 0xaa 0xa4]);
     id!(ADAPTER_INFO, 1, [0x5f 0x31 0x77 0x06 0x46 0xa7 0x92 0x44 0x9f 0x42 0xcb 0x61 0x42 0xc9 0xc3 0xd4]);
+    id!(#[cfg_attr(not(windows), allow(dead_code))] DLSSG_OPTIONS, 5, [0xcb 0xf1 0xc5 0xfa 0xfd 0x2d 0x36 0x4f 0xa1 0xe6 0x3a 0x9e 0x86 0x52 0x56 0xc5]);
+    id!(#[cfg_attr(not(windows), allow(dead_code))] DLSSG_STATE, 4, [0xe1 0xc8 0x8a 0xcc 0x79 0xa1 0xf5 0x44 0x97 0xfa 0xe7 0x41 0x12 0xf9 0xbc 0x61]);
+    id!(#[cfg_attr(not(windows), allow(dead_code))] REFLEX_OPTIONS, 1, [0x1a 0xf8 0x3a 0xf0 0x0b 0x6d 0x02 0x49 0xa6 0x51 0xc4 0x96 0x5e 0x21 0x54 0x34]);
 
     const fn base((id, version): (Guid, usize)) -> Base {
         Base::of(id, version)
+    }
+
+    /// `sl::DLSSGMode`
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub mod dlssg_mode {
+        pub const OFF: u32 = 0;
+        pub const ON: u32 = 1;
+    }
+
+    /// `sl::DLSSGFlags::eRetainResourcesWhenOff`: a pause (a frame DLSS
+    /// did not draw, a modal's blur) keeps the feature's memory.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub const DLSSG_RETAIN_RESOURCES_WHEN_OFF: u32 = 1 << 3;
+
+    /// `sl::DLSSGOptions` (sl_dlss_g.h, version 5)
+    #[repr(C)]
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub struct DlssgOptions {
+        pub base: Base,
+        pub mode: u32,
+        pub num_frames_to_generate: u32,
+        pub flags: u32,
+        pub dynamic_res_width: u32,
+        pub dynamic_res_height: u32,
+        pub num_back_buffers: u32,
+        pub mvec_depth_width: u32,
+        pub mvec_depth_height: u32,
+        pub color_width: u32,
+        pub color_height: u32,
+        pub color_buffer_format: u32,
+        pub mvec_buffer_format: u32,
+        pub depth_buffer_format: u32,
+        pub hud_less_buffer_format: u32,
+        pub ui_buffer_format: u32,
+        pub on_error_callback: *const c_void,
+        pub reserved_15: u8,
+        pub queue_parallelism_mode: u32,
+        pub enable_user_interface_recomposition: u8,
+        pub dynamic_target_frame_rate: f32,
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    impl DlssgOptions {
+        /// The header's defaults, with `mode` and `frames` generated per
+        /// frame drawn (1 for 2x).
+        pub fn new(mode: u32, frames: u32, flags: u32) -> Self {
+            Self {
+                base: base(DLSSG_OPTIONS),
+                mode,
+                num_frames_to_generate: frames,
+                flags,
+                dynamic_res_width: 0,
+                dynamic_res_height: 0,
+                num_back_buffers: 0,
+                mvec_depth_width: 0,
+                mvec_depth_height: 0,
+                color_width: 0,
+                color_height: 0,
+                color_buffer_format: 0,
+                mvec_buffer_format: 0,
+                depth_buffer_format: 0,
+                hud_less_buffer_format: 0,
+                ui_buffer_format: 0,
+                on_error_callback: std::ptr::null(),
+                // `Boolean::eInvalid`, as the header leaves it
+                reserved_15: 2,
+                queue_parallelism_mode: 0,
+                enable_user_interface_recomposition: FALSE,
+                dynamic_target_frame_rate: 0.0,
+            }
+        }
+    }
+
+    /// `sl::DLSSGStatus` bits, for the log.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn dlssg_status(status: u32) -> String {
+        if status == 0 {
+            return String::from("ok");
+        }
+        let names = [
+            (1, "resolution too low"),
+            (2, "Reflex not detected"),
+            (4, "HDR format not supported"),
+            (8, "common constants invalid"),
+            (16, "back buffer index not asked"),
+        ];
+        let mut out: Vec<String> = names
+            .iter()
+            .filter(|(bit, _)| status & bit != 0)
+            .map(|(_, name)| String::from(*name))
+            .collect();
+        let rest = status & !31;
+        if rest != 0 {
+            out.push(format!("0x{rest:x}"));
+        }
+        out.join(", ")
+    }
+
+    /// `sl::DLSSGState` (sl_dlss_g.h, version 4)
+    #[repr(C)]
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub struct DlssgState {
+        pub base: Base,
+        pub estimated_vram_usage_in_bytes: u64,
+        pub status: u32,
+        pub min_width_or_height: u32,
+        pub num_frames_actually_presented: u32,
+        pub num_frames_to_generate_max: u32,
+        pub reserved_4: u8,
+        pub is_vsync_support_available: u8,
+        pub inputs_processing_completion_fence: *mut c_void,
+        pub last_present_inputs_processing_completion_fence_value: u64,
+        pub is_dynamic_mfg_supported: u8,
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    impl DlssgState {
+        pub fn new() -> Self {
+            Self {
+                base: base(DLSSG_STATE),
+                estimated_vram_usage_in_bytes: 0,
+                status: 0,
+                min_width_or_height: 0,
+                num_frames_actually_presented: 0,
+                num_frames_to_generate_max: 0,
+                reserved_4: 2,
+                is_vsync_support_available: FALSE,
+                inputs_processing_completion_fence: std::ptr::null_mut(),
+                last_present_inputs_processing_completion_fence_value: 0,
+                is_dynamic_mfg_supported: FALSE,
+            }
+        }
+    }
+
+    /// `sl::ReflexMode::eLowLatency`
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub const REFLEX_LOW_LATENCY: u32 = 1;
+
+    /// `sl::ReflexOptions` (sl_reflex.h, version 1)
+    #[repr(C)]
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub struct ReflexOptions {
+        pub base: Base,
+        pub mode: u32,
+        pub frame_limit_us: u32,
+        pub use_markers_to_optimize: bool,
+        pub virtual_key: u16,
+        pub id_thread: u32,
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    impl ReflexOptions {
+        pub fn new(mode: u32) -> Self {
+            Self {
+                base: base(REFLEX_OPTIONS),
+                mode,
+                frame_limit_us: 0,
+                use_markers_to_optimize: false,
+                virtual_key: 0,
+                id_thread: 0,
+            }
+        }
+    }
+
+    /// `sl::PCLMarker`: the frame's stages, each told with its token.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub mod pcl {
+        pub const SIMULATION_START: u32 = 0;
+        pub const SIMULATION_END: u32 = 1;
+        pub const RENDER_SUBMIT_START: u32 = 2;
+        pub const RENDER_SUBMIT_END: u32 = 3;
+        pub const PRESENT_START: u32 = 4;
+        pub const PRESENT_END: u32 = 5;
     }
 
     /// `sl::Preferences`
@@ -567,6 +757,15 @@ mod sl {
                 lifecycle: VALID_UNTIL_EVALUATE,
                 extent,
             }
+        }
+
+        /// Copied by the library in the tag's command buffer
+        /// ([`ONLY_VALID_NOW`]): what Windows' frame generation reads at
+        /// the present.
+        #[cfg_attr(not(windows), allow(dead_code))]
+        pub fn copied(mut self) -> Self {
+            self.lifecycle = ONLY_VALID_NOW;
+            self
         }
     }
 
@@ -970,6 +1169,21 @@ mod sl {
         assert!(offset_of!(AdapterInfo, device_luid_size_in_bytes) == 40);
         assert!(offset_of!(AdapterInfo, vk_physical_device) == 48);
         assert!(size_of::<ViewportHandle>() == 40 && offset_of!(ViewportHandle, value) == 32);
+        // (sl_dlss_g.h and sl_reflex.h of 2.14.16, measured with clang)
+        assert!(size_of::<DlssgOptions>() == 120 && offset_of!(DlssgOptions, mode) == 32);
+        assert!(offset_of!(DlssgOptions, num_back_buffers) == 52 && offset_of!(DlssgOptions, mvec_depth_width) == 56);
+        assert!(offset_of!(DlssgOptions, color_buffer_format) == 72 && offset_of!(DlssgOptions, ui_buffer_format) == 88);
+        assert!(offset_of!(DlssgOptions, on_error_callback) == 96 && offset_of!(DlssgOptions, reserved_15) == 104);
+        assert!(offset_of!(DlssgOptions, queue_parallelism_mode) == 108);
+        assert!(offset_of!(DlssgOptions, enable_user_interface_recomposition) == 112);
+        assert!(offset_of!(DlssgOptions, dynamic_target_frame_rate) == 116);
+        assert!(size_of::<DlssgState>() == 88 && offset_of!(DlssgState, status) == 40);
+        assert!(offset_of!(DlssgState, num_frames_actually_presented) == 48);
+        assert!(offset_of!(DlssgState, num_frames_to_generate_max) == 52 && offset_of!(DlssgState, reserved_4) == 56);
+        assert!(offset_of!(DlssgState, inputs_processing_completion_fence) == 64);
+        assert!(offset_of!(DlssgState, is_dynamic_mfg_supported) == 80);
+        assert!(size_of::<ReflexOptions>() == 48 && offset_of!(ReflexOptions, use_markers_to_optimize) == 40);
+        assert!(offset_of!(ReflexOptions, virtual_key) == 42 && offset_of!(ReflexOptions, id_thread) == 44);
     };
 
     /// `wchar_t`: one UTF-32 unit on Linux, one UTF-16 unit on Windows.
@@ -1031,6 +1245,19 @@ mod sl {
     pub struct Dlssd {
         pub optimal_settings: unsafe extern "C" fn(*const DlssdOptions, *mut DlssOptimalSettings) -> i32,
         pub set_options: unsafe extern "C" fn(*const ViewportHandle, *const DlssdOptions) -> i32,
+    }
+
+    /// Windows' frame generation and the Reflex and PCL functions it runs
+    /// with, from `slGetFeatureFunction` (sl_dlss_g.h, sl_reflex.h,
+    /// sl_pcl.h; a `const FrameToken&` is the token's address, as for
+    /// `slSetConstants`).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub struct Dlssg {
+        pub set_options: unsafe extern "C" fn(*const ViewportHandle, *const DlssgOptions) -> i32,
+        pub get_state: unsafe extern "C" fn(*const ViewportHandle, *mut DlssgState, *const DlssgOptions) -> i32,
+        pub reflex_set_options: unsafe extern "C" fn(*const ReflexOptions) -> i32,
+        pub reflex_sleep: unsafe extern "C" fn(FrameToken) -> i32,
+        pub pcl_set_marker: unsafe extern "C" fn(u32, FrameToken) -> i32,
     }
 
     /// The library the user put in the folder: sl-ngx built on their
@@ -1207,6 +1434,26 @@ mod sl {
                 Ok(Dlssd {
                     optimal_settings: self.function(FEATURE_DLSS_RR, c"slDLSSDGetOptimalSettings")?,
                     set_options: self.function(FEATURE_DLSS_RR, c"slDLSSDSetOptions")?,
+                })
+            }
+        }
+
+        /// Windows' frame generation functions, with Reflex's and PCL's,
+        /// as [`Lib::dlss`].
+        ///
+        /// # Safety
+        /// As [`Lib::dlss`].
+        #[cfg_attr(not(windows), allow(dead_code))]
+        pub unsafe fn dlssg(&self) -> Result<Dlssg, String> {
+            // SAFETY: the types the three headers give these names; the
+            // caller's contract
+            unsafe {
+                Ok(Dlssg {
+                    set_options: self.function(FEATURE_DLSS_G, c"slDLSSGSetOptions")?,
+                    get_state: self.function(FEATURE_DLSS_G, c"slDLSSGGetState")?,
+                    reflex_set_options: self.function(FEATURE_REFLEX, c"slReflexSetOptions")?,
+                    reflex_sleep: self.function(FEATURE_REFLEX, c"slReflexSleep")?,
+                    pcl_set_marker: self.function(FEATURE_PCL, c"slPCLSetMarker")?,
                 })
             }
         }
@@ -1445,9 +1692,60 @@ mod imp {
 
     /// DLSS frame generation is asked for: the setting
     /// (`RenderSettings::dlss_fg`), unless `AURORA_DLSS_FG` says otherwise.
-    /// Linux's sl-ngx only (a prototype).
+    /// Linux's sl-ngx (a prototype) and Windows' Streamline.
     pub(crate) fn fg_wanted(setting: bool) -> bool {
-        cfg!(target_os = "linux") && fg_forced().unwrap_or(setting)
+        cfg!(any(target_os = "linux", windows)) && fg_forced().unwrap_or(setting)
+    }
+
+    /// Windows: frame generation is wanted at the next `slInit` (the
+    /// setting as the renderer is made, [`set_fg_at_start`]). Streamline
+    /// loads its plugin then or not at all, and while it is loaded every
+    /// window's swapchain goes through its proxy, which costs a copy and a
+    /// queue even with frame generation off (DLSS-G guide §18).
+    #[cfg(windows)]
+    static FG_AT_START: AtomicBool = AtomicBool::new(false);
+
+    /// Windows: the `slInit` in effect loaded frame generation
+    /// ([`FG_AT_START`] then).
+    #[cfg(windows)]
+    static FG_LOADED: AtomicBool = AtomicBool::new(false);
+
+    /// The frame generation setting as the renderer is made: on Windows,
+    /// whether Streamline loads frame generation at its start.
+    pub(crate) fn set_fg_at_start(setting: bool) {
+        #[cfg(windows)]
+        FG_AT_START.store(fg_wanted(setting), Ordering::Relaxed);
+        #[cfg(not(windows))]
+        let _ = setting;
+    }
+
+    /// The setting `setting` asks for what only a restart gives: on
+    /// Windows, frame generation loaded or let go (Streamline loads it at
+    /// its start).
+    pub(crate) fn fg_restart(setting: bool) -> bool {
+        #[cfg(windows)]
+        {
+            INITED.load(Ordering::Relaxed) && fg_wanted(setting) != FG_LOADED.load(Ordering::Relaxed)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = setting;
+            false
+        }
+    }
+
+    /// Windows: frames generated per frame drawn, `AURORA_DLSS_FG_FRAMES`
+    /// for a test (1 for 2x, 3 for 4x; the GPU's most at most), else 1.
+    #[cfg(windows)]
+    fn fg_frames() -> u32 {
+        static N: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        *N.get_or_init(|| {
+            std::env::var("AURORA_DLSS_FG_FRAMES")
+                .ok()
+                .and_then(|v| v.trim().parse().ok())
+                .filter(|n| *n >= 1)
+                .unwrap_or(1)
+        })
     }
 
     /// `AURORA_DLSS_FG` for a test: `1` turns frame generation on whatever
@@ -1730,7 +2028,24 @@ mod imp {
         // Ray Reconstruction's plugin too: Streamline loads what it finds
         // (on Windows `sl.dlss_d.dll`, which the user may not have copied),
         // and says per feature whether it runs ([`start`])
-        let features = [sl::FEATURE_DLSS, sl::FEATURE_DLSS_RR];
+        // Windows: frame generation's too, with the Reflex and PCL it
+        // needs, only when it is wanted at the start ([`FG_AT_START`])
+        let all = [
+            sl::FEATURE_DLSS,
+            sl::FEATURE_DLSS_RR,
+            sl::FEATURE_DLSS_G,
+            sl::FEATURE_REFLEX,
+            sl::FEATURE_PCL,
+        ];
+        #[cfg(windows)]
+        let fg = {
+            let fg = FG_AT_START.load(Ordering::Relaxed);
+            FG_LOADED.store(fg, Ordering::Relaxed);
+            fg
+        };
+        #[cfg(not(windows))]
+        let fg = false;
+        let features = &all[..if fg { all.len() } else { 2 }];
         let mut p = sl::Preferences::new();
         p.paths_to_plugins = dirs.as_ptr();
         p.num_paths_to_plugins = 1;
@@ -2562,16 +2877,40 @@ mod imp {
         // SAFETY: as sl.h declares it; `adapter` lives through the call
         let r = unsafe { (lib.is_feature_supported)(sl::FEATURE_DLSS, &adapter) };
         if r == sl::OK {
-            // frame generation: Linux's sl-ngx only (Windows' Streamline
-            // would want its own present hooks)
-            if cfg!(target_os = "linux") {
+            // frame generation: Linux's sl-ngx, and Windows' Streamline
+            // when it loaded the plugin ([`FG_AT_START`])
+            #[cfg(windows)]
+            let asked = FG_LOADED.load(Ordering::Relaxed);
+            #[cfg(not(windows))]
+            let asked = true;
+            if asked {
                 // SAFETY: as above
                 let fg = unsafe { (lib.is_feature_supported)(sl::FEATURE_DLSS_G, &adapter) };
-                FG_SUPPORTED.store(fg == sl::OK, Ordering::Relaxed);
-                if fg == sl::OK {
-                    log::info!("DLSS: frame generation supported here");
-                } else {
+                #[allow(unused_mut)] // Windows: Reflex too
+                let mut ok = fg == sl::OK;
+                if !ok {
                     log::info!("DLSS: no frame generation here ({})", sl::result_name(fg));
+                }
+                // Windows: Reflex in low-latency mode, which frame
+                // generation needs
+                #[cfg(windows)]
+                if ok {
+                    // SAFETY: under the lock, after slInit; `options`
+                    // lives through the call
+                    let reflex = unsafe {
+                        lib.dlssg().and_then(|f| {
+                            let options = sl::ReflexOptions::new(sl::REFLEX_LOW_LATENCY);
+                            sl::check((f.reflex_set_options)(&options)).map_err(|e| format!("slReflexSetOptions: {e}"))
+                        })
+                    };
+                    if let Err(e) = reflex {
+                        log::error!("DLSS: no frame generation here: {e}");
+                        ok = false;
+                    }
+                }
+                FG_SUPPORTED.store(ok, Ordering::Relaxed);
+                if ok {
+                    log::info!("DLSS: frame generation supported here");
                 }
             }
             if RR_DEVICE.load(Ordering::Relaxed) {
@@ -3285,6 +3624,31 @@ mod imp {
         /// this frame's token and constants, taken by frame generation
         /// ([`Dlss::generate`])
         fg_frame: Option<(usize, sl::Constants)>,
+        /// Windows' frame generation, made at the present ([`Dlss::fg_begin`])
+        #[cfg(windows)]
+        fg_win: FgWin,
+    }
+
+    /// Windows' frame generation, for the main window's DLSS: this
+    /// frame's token from [`Dlss::fg_begin`] to the present's end marker,
+    /// and what the log says of it.
+    #[cfg(windows)]
+    #[derive(Default)]
+    struct FgWin {
+        /// the frame's token (its address), while the frame runs
+        token: Option<usize>,
+        /// the options asked for the frame's present: frames generated
+        /// per frame drawn, 0 for off
+        asked: u32,
+        /// presents with frame generation asked, and the state's last
+        /// status, for the log
+        presents: u64,
+        status: Option<u32>,
+        /// frames the GPU can generate per frame drawn
+        /// (`numFramesToGenerateMax`), 0 until its state is read
+        max: u32,
+        /// a failure was logged (one line, not one a frame)
+        failed: bool,
     }
 
     /// `view` as the library takes it, in the layout wgpu-hal leaves it
@@ -3803,6 +4167,8 @@ mod imp {
                 lost: lost.clone(),
                 rr,
                 fg_frame: None,
+                #[cfg(windows)]
+                fg_win: FgWin::default(),
             })
         }
 
@@ -4207,18 +4573,35 @@ mod imp {
                 }
                 Some(own.as_hal_mut::<Vulkan, _, _>(|e| {
                     let cmd = e.ok_or("not a Vulkan encoder")?.raw_handle();
-                    let mut token: sl::FrameToken = std::ptr::null_mut();
-                    sl::check((lib.new_frame_token)(&mut token, std::ptr::null())).map_err(|e| format!("slGetNewFrameToken: {e}"))?;
+                    // Windows' frame generation: the frame's own token,
+                    // which its present markers name ([`Dlss::fg_begin`])
+                    #[cfg(windows)]
+                    let given = self.fg_win.token;
+                    #[cfg(not(windows))]
+                    let given: Option<usize> = None;
+                    let token = match given {
+                        Some(token) => token as sl::FrameToken,
+                        None => {
+                            let mut token: sl::FrameToken = std::ptr::null_mut();
+                            sl::check((lib.new_frame_token)(&mut token, std::ptr::null()))
+                                .map_err(|e| format!("slGetNewFrameToken: {e}"))?;
+                            token
+                        }
+                    };
                     frame = token;
                     sl::check((lib.set_constants)(&constants, token, &handle)).map_err(|e| format!("slSetConstants: {e}"))?;
                     if let Some(options) = &rr_options {
                         let dlssd = lib.dlssd()?;
                         sl::check((dlssd.set_options)(&handle, options)).map_err(|e| format!("slDLSSDSetOptions: {e}"))?;
                     }
+                    // (the depth and motion of a frame with Windows' frame
+                    // generation are copied now: it reads them at the
+                    // present, when later passes have moved them on)
+                    let fg_copy = |tag: sl::ResourceTag| if given.is_some() { tag.copied() } else { tag };
                     let mut tags = vec![
                         sl::ResourceTag::new(&mut color, sl::buffer::SCALING_INPUT_COLOR, extent(render)),
-                        sl::ResourceTag::new(&mut depth, sl::buffer::DEPTH, extent(render)),
-                        sl::ResourceTag::new(&mut motion, sl::buffer::MOTION_VECTORS, extent(render)),
+                        fg_copy(sl::ResourceTag::new(&mut depth, sl::buffer::DEPTH, extent(render))),
+                        fg_copy(sl::ResourceTag::new(&mut motion, sl::buffer::MOTION_VECTORS, extent(render))),
                         sl::ResourceTag::new(&mut output, sl::buffer::SCALING_OUTPUT_COLOR, extent(display)),
                     ];
                     if let Some((diffuse, specular, normals)) = &mut guides {
@@ -4239,6 +4622,240 @@ mod imp {
             .ok_or("DLSS is no longer started for this feature")?;
             r?;
             Ok((own.finish(), frame as usize, constants))
+        }
+
+        /// Windows' frame generation, at the frame's start (renderer.rs,
+        /// before the window image is acquired): the frame's token,
+        /// Reflex's sleep, and the PCL markers up to the submit's start.
+        /// Every frame while Streamline has frame generation loaded
+        /// ([`fg_ready`]), on or off: its markers name the frame each
+        /// present shows, and `evaluate` uses the token.
+        #[cfg(windows)]
+        pub fn fg_begin(&mut self) {
+            self.fg_win.token = None;
+            if !fg_ready() || !self.on() || self.lost.get() {
+                return;
+            }
+            let lib = self.lib;
+            // SAFETY: under the lock, for the start that made the viewport;
+            // the token is the library's own, kept by it for some frames
+            let r = with_started(lib, &self.device, &self.lost, false, |st| unsafe {
+                if st.start != self.start {
+                    return None;
+                }
+                Some((|| {
+                    let f = lib.dlssg()?;
+                    let mut token: sl::FrameToken = std::ptr::null_mut();
+                    sl::check((lib.new_frame_token)(&mut token, std::ptr::null())).map_err(|e| format!("slGetNewFrameToken: {e}"))?;
+                    sl::check((f.reflex_sleep)(token)).map_err(|e| format!("slReflexSleep: {e}"))?;
+                    for marker in [sl::pcl::SIMULATION_START, sl::pcl::SIMULATION_END, sl::pcl::RENDER_SUBMIT_START] {
+                        sl::check((f.pcl_set_marker)(marker, token)).map_err(|e| format!("slPCLSetMarker({marker}): {e}"))?;
+                    }
+                    Ok::<_, String>(token as usize)
+                })())
+            })
+            .flatten();
+            match r {
+                Some(Ok(token)) => self.fg_win.token = Some(token),
+                Some(Err(e)) => self.fg_failed(&e),
+                None => {}
+            }
+        }
+
+        /// Windows' frame generation, before the frame's last submit: the
+        /// window's image before the interface (`hudless`, at the window's
+        /// size, in its format) tagged with the frame's token, and frame
+        /// generation asked on for the present, [`fg_frames`] generated per
+        /// frame drawn (1 for 2x, up to what the GPU says). Off with
+        /// `hudless` None (the setting off, a modal's blur, a resize to
+        /// come) and for a frame DLSS did not draw; `keep` keeps the
+        /// feature's memory through an off of a moment. The commands go
+        /// after the encoder's; None when there are none to run.
+        #[cfg(windows)]
+        pub fn fg_present(
+            &mut self,
+            encoder: &mut wgpu::CommandEncoder,
+            hudless: Option<&wgpu::TextureView>,
+            keep: bool,
+        ) -> Option<wgpu::CommandBuffer> {
+            let token = self.fg_win.token?;
+            // a frame DLSS drew: `evaluate` set its constants with the token
+            let drew = self.fg_frame.as_ref().is_some_and(|(t, _)| *t == token);
+            let hudless = hudless.filter(|_| drew);
+            let mut hudless_r = hudless.and_then(|view| resource(view, &self.adapter, false));
+            if let Some(view) = hudless.filter(|_| hudless_r.is_some()) {
+                encoder.transition_resources(
+                    std::iter::empty(),
+                    std::iter::once(wgpu::TextureTransition {
+                        texture: view.texture(),
+                        selector: None,
+                        state: wgpu::TextureUses::RESOURCE,
+                    }),
+                );
+            }
+            let on = hudless_r.is_some();
+            let frames = match self.fg_win.max {
+                0 => fg_frames(),
+                max => fg_frames().min(max),
+            };
+            let options = sl::DlssgOptions::new(
+                if on { sl::dlssg_mode::ON } else { sl::dlssg_mode::OFF },
+                frames,
+                if on || keep { sl::DLSSG_RETAIN_RESOURCES_WHEN_OFF } else { 0 },
+            );
+            let extent = hudless.map(|view| {
+                let size = view.texture().size();
+                sl::Extent {
+                    top: 0,
+                    left: 0,
+                    width: size.width,
+                    height: size.height,
+                }
+            });
+            let mut own = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("DLSS frame generation inputs"),
+            });
+            let handle = sl::ViewportHandle::new(self.viewport);
+            let lib = self.lib;
+            // SAFETY: as in `evaluate`: under the lock, for the start that
+            // made the viewport; the token is this frame's ([`fg_begin`]);
+            // the structs are locals that outlive the calls; the library
+            // copies the image in `own`'s open command buffer, submitted
+            // after the encoder that drew it
+            let r = with_started(lib, &self.device, &self.lost, false, |st| unsafe {
+                if st.start != self.start {
+                    return None;
+                }
+                Some(own.as_hal_mut::<Vulkan, _, _>(|e| {
+                    let cmd = e.ok_or("not a Vulkan encoder")?.raw_handle();
+                    let f = lib.dlssg()?;
+                    if let (Some(resource), Some(extent)) = (&mut hudless_r, extent) {
+                        let tag = sl::ResourceTag::new(resource, sl::buffer::HUDLESS_COLOR, extent).copied();
+                        sl::check((lib.set_tag_for_frame)(token as sl::FrameToken, &handle, &tag, 1, cmd))
+                            .map_err(|e| format!("slSetTagForFrame (frame generation): {e}"))?;
+                    }
+                    sl::check((f.set_options)(&handle, &options)).map_err(|e| format!("slDLSSGSetOptions: {e}"))
+                }))
+            })
+            .flatten();
+            match r {
+                Some(Ok(())) => {
+                    if on && self.fg_win.asked == 0 {
+                        log::info!("DLSS frame generation: on, {} frame(s) generated per frame drawn", frames);
+                    } else if !on && self.fg_win.asked != 0 {
+                        log::info!("DLSS frame generation: off for now");
+                    }
+                    self.fg_win.asked = if on { frames } else { 0 };
+                    Some(own.finish())
+                }
+                Some(Err(e)) => {
+                    self.fg_failed(&e);
+                    None
+                }
+                None => None,
+            }
+        }
+
+        /// Windows' frame generation: the frame's commands are submitted
+        /// (its PCL marker).
+        #[cfg(windows)]
+        pub fn fg_submitted(&mut self) {
+            self.fg_mark(sl::pcl::RENDER_SUBMIT_END);
+        }
+
+        /// Windows' frame generation: the window's image is about to be
+        /// presented (its PCL marker).
+        #[cfg(windows)]
+        pub fn fg_presenting(&mut self) {
+            self.fg_mark(sl::pcl::PRESENT_START);
+        }
+
+        /// Windows' frame generation was asked on for the last present: a
+        /// swapchain made again now would be made under it, which the
+        /// DLSS-G guide (§17) says to avoid (off for a present first).
+        #[cfg(windows)]
+        pub fn fg_asked(&self) -> bool {
+            self.fg_win.asked != 0
+        }
+
+        /// Windows' frame generation: the PCL marker `marker` (a stage of
+        /// the submit or the present, `sl::pcl`) for the frame's token.
+        #[cfg(windows)]
+        fn fg_mark(&mut self, marker: u32) {
+            let Some(token) = self.fg_win.token else {
+                return;
+            };
+            let lib = self.lib;
+            // SAFETY: as in `fg_begin`
+            let r = with_started(lib, &self.device, &self.lost, false, |st| unsafe {
+                if st.start != self.start {
+                    return None;
+                }
+                Some(lib.dlssg().and_then(|f| {
+                    sl::check((f.pcl_set_marker)(marker, token as sl::FrameToken)).map_err(|e| format!("slPCLSetMarker({marker}): {e}"))
+                }))
+            })
+            .flatten();
+            if let Some(Err(e)) = r {
+                self.fg_failed(&e);
+            }
+        }
+
+        /// Windows' frame generation, once the window's image is presented:
+        /// the present's end marker, and the frame's token let go. With
+        /// frame generation asked, its state, logged at the first present,
+        /// each 600th and when its status changes.
+        #[cfg(windows)]
+        pub fn fg_end(&mut self) {
+            self.fg_mark(sl::pcl::PRESENT_END);
+            self.fg_win.token = None;
+            if self.fg_win.asked == 0 {
+                return;
+            }
+            self.fg_win.presents += 1;
+            let handle = sl::ViewportHandle::new(self.viewport);
+            let lib = self.lib;
+            let mut state = sl::DlssgState::new();
+            // SAFETY: as in `fg_begin`; `state` lives through the call, and
+            // no options are passed (no VRAM estimate, the cheap call)
+            let r = with_started(lib, &self.device, &self.lost, false, |st| unsafe {
+                if st.start != self.start {
+                    return None;
+                }
+                Some(lib.dlssg().and_then(|f| {
+                    sl::check((f.get_state)(&handle, &mut state, std::ptr::null())).map_err(|e| format!("slDLSSGGetState: {e}"))
+                }))
+            })
+            .flatten();
+            match r {
+                Some(Ok(())) => {
+                    self.fg_win.max = state.num_frames_to_generate_max;
+                    let n = self.fg_win.presents;
+                    if n == 1 || n.is_multiple_of(600) || self.fg_win.status != Some(state.status) {
+                        let level = if state.status == 0 { log::Level::Info } else { log::Level::Warn };
+                        log::log!(
+                            level,
+                            "DLSS frame generation: {n} presents, status {}; {} frame(s) presented per frame drawn, up to {}x here (minimum size {})",
+                            sl::dlssg_status(state.status),
+                            state.num_frames_actually_presented,
+                            state.num_frames_to_generate_max + 1,
+                            state.min_width_or_height,
+                        );
+                    }
+                    self.fg_win.status = Some(state.status);
+                }
+                Some(Err(e)) => self.fg_failed(&e),
+                None => {}
+            }
+        }
+
+        /// Windows' frame generation failed: one line in the log a DLSS.
+        #[cfg(windows)]
+        fn fg_failed(&mut self, e: &str) {
+            if !self.fg_win.failed {
+                self.fg_win.failed = true;
+                log::error!("DLSS frame generation: {e}");
+            }
         }
 
         /// Frame generation (prototype, `RenderSettings::dlss_fg`, Linux's sl-ngx
@@ -4424,6 +5041,12 @@ mod imp {
     }
 
     pub(crate) fn fg_ready() -> bool {
+        false
+    }
+
+    pub(crate) fn set_fg_at_start(_: bool) {}
+
+    pub(crate) fn fg_restart(_: bool) -> bool {
         false
     }
 
@@ -4616,13 +5239,44 @@ mod imp {
         ) -> Result<(wgpu::CommandBuffer, bool), String> {
             match self.0 {}
         }
+
+        #[cfg(windows)]
+        pub fn fg_begin(&mut self) {
+            match self.0 {}
+        }
+
+        #[cfg(windows)]
+        pub fn fg_present(&mut self, _: &mut wgpu::CommandEncoder, _: Option<&wgpu::TextureView>, _: bool) -> Option<wgpu::CommandBuffer> {
+            match self.0 {}
+        }
+
+        #[cfg(windows)]
+        pub fn fg_submitted(&mut self) {
+            match self.0 {}
+        }
+
+        #[cfg(windows)]
+        pub fn fg_presenting(&mut self) {
+            match self.0 {}
+        }
+
+        #[cfg(windows)]
+        pub fn fg_asked(&self) -> bool {
+            match self.0 {}
+        }
+
+        #[cfg(windows)]
+        pub fn fg_end(&mut self) {
+            match self.0 {}
+        }
     }
 }
 
 pub(crate) use imp::{
-    Dlss, closing, fg_ready, fg_wanted, folder_named, instance, left_behind, optimal_size, refused_here, refused_memory, request_device,
-    resizing, retry, retry_asked, rr_device, rr_probe, rr_ready, rr_ready_on, rr_refused_here, rr_retry, rr_targets_refused, rr_wanted,
-    snapshot_rr_refused, snapshot_rr_refused_here, snapshot_rr_targets_refused, support, support_on, wanted,
+    Dlss, closing, fg_ready, fg_restart, fg_wanted, folder_named, instance, left_behind, optimal_size, refused_here, refused_memory,
+    request_device, resizing, retry, retry_asked, rr_device, rr_probe, rr_ready, rr_ready_on, rr_refused_here, rr_retry,
+    rr_targets_refused, rr_wanted, set_fg_at_start, snapshot_rr_refused, snapshot_rr_refused_here, snapshot_rr_targets_refused, support,
+    support_on, wanted,
 };
 #[cfg(windows)]
 pub(crate) use imp::{forget_instance, xr_entry};

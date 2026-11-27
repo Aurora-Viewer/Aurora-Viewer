@@ -188,12 +188,26 @@ pub use renderer::rr_untraced as dlss_rr_untraced;
 pub use renderer::{CASCADES, RenderError};
 
 /// DLSS frame generation can be chosen: Streamline, started on the
-/// device, supports it (Linux's sl-ngx with frame generation; dlss.rs).
+/// device, supports it (Linux's sl-ngx with frame generation, Windows'
+/// Streamline with it loaded; dlss.rs).
 pub fn dlss_fg_ready() -> bool {
     dlss::fg_ready()
 }
+/// The DLSS frame generation setting as the renderer is about to be made
+/// (before `Renderer::new`): on Windows, Streamline loads frame generation
+/// at its start only when it is wanted then.
+pub fn dlss_fg_at_start(setting: bool) {
+    dlss::set_fg_at_start(setting);
+}
+/// The DLSS frame generation setting `setting` takes effect only after a
+/// restart: on Windows, Streamline loaded frame generation, or not, at its
+/// start.
+pub fn dlss_fg_restart(setting: bool) -> bool {
+    dlss::fg_restart(setting)
+}
 /// DLSS frame generation runs in the window, under Fifo: the frame cap
-/// stands aside (dlss_fg.rs).
+/// stands aside (dlss_fg.rs; Linux only, Windows' Streamline paces its
+/// own presents).
 pub use dlss_fg::running as dlss_fg_running;
 /// DLSS Ray Reconstruction can be chosen: the device was opened with its
 /// extensions and Streamline did not refuse it (dlss.rs).

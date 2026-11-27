@@ -60,6 +60,9 @@ impl App {
         // restart the VR button offers) or Preferences › Camera › VR (#2309);
         // never again in a run whose runtime closed (`reopen_without_vr`)
         self.vr_set_up = !self.vr_runtime_gone && (crate::cli::get().vr || self.settings.camera.vr_at_start);
+        // DLSS frame generation as the setting is now: on Windows,
+        // Streamline loads it with the instance or not at all
+        aurora_render::dlss_fg_at_start(self.settings.dlss_fg);
         let renderer = Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu, self.vr_set_up)?;
         log::info!(
             "renderer ready: {} via {} ({} texture slots in {} pages at most, GPU timers: {})",

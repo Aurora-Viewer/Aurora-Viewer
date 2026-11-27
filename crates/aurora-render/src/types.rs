@@ -1626,8 +1626,10 @@ impl RenderSettings {
 
     /// DLSS frame generation runs (`dlss_fg`, unless `AURORA_DLSS_FG` says
     /// otherwise): DLSS draws the FSR frames and Streamline, started on the
-    /// device, supports it (Linux's sl-ngx, a prototype). The renderer
-    /// draws the frame aside and presents two, under Fifo (dlss_fg.rs).
+    /// device, supports it. On Linux (sl-ngx, a prototype) the renderer
+    /// draws the frame aside and presents two, under Fifo (dlss_fg.rs); on
+    /// Windows Streamline, which loaded it at its start, makes the frames
+    /// at the present (dlss.rs, `Dlss::fg_present`).
     pub fn frame_generation(&self) -> bool {
         matches!(self.aa, AntiAliasing::Fsr(_))
             && crate::dlss::wanted(self.dlss)

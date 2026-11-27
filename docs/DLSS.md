@@ -178,7 +178,8 @@ resolution there.
 ## Frame generation (prototype, Linux)
 
 With DLSS on, Preferences › Graphics › Anti-aliasing › **Frame generation**
-(experimental, off by default, Linux only) has DLSS make a frame between
+(experimental, off by default; Windows: *Frame generation on Windows*,
+below) has DLSS make a frame between
 each two the viewer draws, shown before the drawn one. The frame is drawn
 aside, into a texture in the window's format; at its end the generated
 frame is presented in the window image acquired at the frame's start, then
@@ -239,6 +240,10 @@ files come from the release's `bin\x64`, unchanged:
 - `sl.interposer.dll`, `sl.common.dll`, `sl.dlss.dll`: NVIDIA Streamline;
 - `nvngx_dlss.dll`: the DLSS model;
 - `sl.dlss_d.dll` and `nvngx_dlssd.dll`: the same, for Ray Reconstruction;
+- `sl.dlss_g.dll` and `nvngx_dlssg.dll`: frame generation, with
+  `sl.reflex.dll`, `sl.pcl.dll` and `NvLowLatencyVk.dll`, the Reflex it
+  needs (*Frame generation on Windows*, below; files installed by an earlier
+  run of the script lack them: run it again);
 - `NVIDIA-DLSS-LICENSE.txt`, NVIDIA's licence you accepted, and
   `STREAMLINE-LICENSE.txt`, Streamline's own (MIT).
 
@@ -251,6 +256,44 @@ device through `sl.interposer.dll` too: Streamline is shut down on the
 window's device first and starts again on the headset's. Streamline normally also watches the frames
 presented. The viewer calls DLSS without that, which Streamline allows,
 but whether its long-running cleanup then runs has not been checked.
+
+### Frame generation on Windows (experimental)
+
+Preferences › Graphics › Anti-aliasing › **Frame generation** works on
+Windows too, through NVIDIA's own DLSS frame generation in Streamline rather
+than the Linux prototype's two presents: Streamline hooks the window's
+present (the viewer's Vulkan calls already go through `sl.interposer.dll`)
+and presents the generated frames itself, paced on its own queue, with
+Reflex keeping input latency down. Not yet run on Windows.
+
+- **A restart to turn it on or off.** Streamline loads frame generation when
+  it starts, with the viewer's GPU, or not at all; loaded, every swapchain
+  goes through its proxy, which costs a copy even with frame generation off.
+  So the setting is read as the viewer starts, and Preferences says when a
+  change waits for a restart. Off at that start, nothing of it is loaded.
+- **What it is given.** For each frame DLSS draws: the depth and motion
+  DLSS reads, copied by Streamline as it is tagged, and the window's image
+  before the interface (a copy of it, in the window's format). The
+  interface itself is not given, so in a generated frame it is moved with
+  the scene behind it where they differ.
+- **Off for a frame** DLSS did not draw, under a modal's blur, and for one
+  present before the window's size or vsync changes (NVIDIA's guide: not
+  while the swapchain is made again); the frame after, it is on again.
+- **Vsync is not applied** while it runs: NVIDIA supports vsync with frame
+  generation on Direct3D 12 only. The frame rate limit stays in effect, and
+  limits the frames drawn.
+- **Needs** an RTX 40 or 50 card, Windows 10 20H1 or later, and
+  hardware-accelerated GPU scheduling on (Windows' Graphics settings).
+  RTX 40 makes one frame per frame drawn (2x); `AURORA_DLSS_FG_FRAMES=<n>`
+  asks for `n` per frame drawn for a test, up to what the card says (the
+  log's `up to <n>x here`).
+- **The log.** `DLSS: frame generation supported here` (or why not) at the
+  start; `DLSS frame generation: on` when it is first asked for; then at the
+  first present with it, each 600th and at each change, its status (`ok`,
+  or what Streamline refused) and the frames presented per frame drawn.
+- Other windows of the viewer that present (a window sent outside it) go
+  through Streamline's proxy too; only the main window is given frame
+  generation.
 
 ## Which DLSS version
 
@@ -295,5 +338,6 @@ more than K does.
   above) on or off for one launch, whatever the setting;
   `AURORA_PRESENT_MODE` still wins over its Fifo.
   `AURORA_DLSS_FG_DUMP=<folder>` writes three frames' images as PPM
-  (docs/TESTING.md).
+  (docs/TESTING.md). On Windows `AURORA_DLSS_FG_FRAMES=<n>` asks for `n`
+  generated frames per frame drawn (1 by default).
 - The log's `DLSS:` lines say what was found and why DLSS did not start.
