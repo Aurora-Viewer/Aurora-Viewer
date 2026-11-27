@@ -7,7 +7,7 @@ use super::hud::Projector;
 use crate::scene::{LodInfo, Scene};
 use crate::settings::DebugView;
 use crate::world::World;
-use egui::{Color32, Stroke};
+use egui::{Color32, Pos2, Stroke};
 use glam::{Mat4, Quat, Vec3};
 use std::time::Instant;
 
@@ -86,6 +86,41 @@ impl Lines<'_> {
 
     fn obb(&self, pos: Vec3, rot: Quat, half: Vec3, color: Color32) {
         self.cube(|x, y, z| pos + rot * (half * Vec3::new(x, y, z)), color);
+    }
+
+    /// Oriented box, culled when fully off-screen: each of the 8 corners
+    /// projected once (today's `cube` projects every corner once per edge,
+    /// 24 times), and nothing drawn unless some corner lands on screen.
+    /// Exactly what the unculled box draws: every one of its edges then has
+    /// an end the projector refuses. Behind walls still draws (this overlay
+    /// has no depth test, as the skeletons above); only off-screen is culled.
+    fn obb_culled(&self, pos: Vec3, rot: Quat, half: Vec3, color: Color32) {
+        let corner = |x: f32, y: f32, z: f32| pos + rot * (half * Vec3::new(x, y, z));
+        let sign = |i: usize| if i == 0 { -1.0 } else { 1.0 };
+        // one projection per corner, remembered by its signs
+        let seen: [[[Option<(Pos2, f32)>; 2]; 2]; 2] = std::array::from_fn(|xi| {
+            std::array::from_fn(|yi| std::array::from_fn(|zi| self.proj.project(corner(sign(xi), sign(yi), sign(zi)))))
+        });
+        if !seen.iter().flatten().flatten().any(|pt| pt.is_some()) {
+            return;
+        }
+        let at = |x: f32, y: f32, z: f32| seen[(x > 0.0) as usize][(y > 0.0) as usize][(z > 0.0) as usize];
+        // the 12 edges of `cube`, from the remembered corners
+        let s = [-1.0f32, 1.0];
+        for &a in &s {
+            for &b in &s {
+                self.cached_seg(at(-1.0, a, b), at(1.0, a, b), color);
+                self.cached_seg(at(a, -1.0, b), at(a, 1.0, b), color);
+                self.cached_seg(at(a, b, -1.0), at(a, b, 1.0), color);
+            }
+        }
+    }
+
+    /// An edge of `obb_culled`, from its remembered projected ends.
+    fn cached_seg(&self, a: Option<(Pos2, f32)>, b: Option<(Pos2, f32)>, color: Color32) {
+        if let (Some((pa, _)), Some((pb, _))) = (a, b) {
+            self.painter.line_segment([pa, pb], Stroke::new(self.width, color));
+        }
     }
 
     /// Sphere as its three great circles.
@@ -468,7 +503,7 @@ pub fn draw(
                 hitbox_rotation(o.rotation, parent)
             };
             let (pos, _, half) = avatar_hitbox_frame(pp, rot, o.scale);
-            wide.obb(pos, rot, half, super::minimap::avatar_color(world, &o.full_id));
+            wide.obb_culled(pos, rot, half, super::minimap::avatar_color(world, &o.full_id));
         }
     }
 }
@@ -660,6 +695,44 @@ mod tests {
         assert_eq!(hitbox_draw_range(0.0), 0.0);
         assert_eq!(hitbox_draw_range(-4.0), 0.0);
         assert_eq!(hitbox_draw_range(RANGE + 1000.0), RANGE);
+    }
+
+    /// A hitbox draws its 12 edges while on screen and nothing once fully
+    /// off-screen: off to the side, or behind the camera. A box straddling
+    /// the screen's edge still draws the edges with an end on screen.
+    #[test]
+    fn a_hitbox_draws_its_edges_only_while_on_screen() {
+        let paint = |view_proj: Mat4, pos: Vec3| {
+            let ctx = egui::Context::default();
+            let proj = Projector {
+                view_proj,
+                width: 800.0,
+                height: 600.0,
+                ppp: 1.0,
+            };
+            let output = ctx.run_ui(Default::default(), |_| {
+                let lines = Lines {
+                    painter: ctx.layer_painter(egui::LayerId::background()),
+                    proj: &proj,
+                    width: 2.0,
+                };
+                lines.obb_culled(pos, Quat::IDENTITY, Vec3::ONE, RED);
+            });
+            output.shapes.len()
+        };
+        // centred: every corner lands on screen, all 12 edges draw
+        assert_eq!(paint(Mat4::IDENTITY, Vec3::ZERO), 12);
+        // straddling the edge: fewer edges, but still some
+        let straddling = paint(Mat4::IDENTITY, Vec3::new(1.0, 0.0, 0.0));
+        assert!((1..12).contains(&straddling), "{straddling}");
+        // off to the side: no corner lands on screen
+        assert_eq!(paint(Mat4::IDENTITY, Vec3::new(500.0, 0.0, 0.0)), 0);
+        // behind the camera: every corner fails the w check
+        let behind = Mat4 {
+            w_axis: glam::Vec4::new(0.0, 0.0, 0.0, -1.0),
+            ..Mat4::IDENTITY
+        };
+        assert_eq!(paint(behind, Vec3::ZERO), 0);
     }
 
     #[test]
