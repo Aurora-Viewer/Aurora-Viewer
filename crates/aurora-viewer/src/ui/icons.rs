@@ -976,7 +976,7 @@ impl Icons {
         let mut map: HashMap<String, egui::TextureHandle> = HashMap::new();
         let opts = egui::TextureOptions::LINEAR;
         let mut sources: HashMap<String, Source> = HashMap::new();
-        for (name, bytes) in OUTLINE.iter().chain(FILLED) {
+        for (name, bytes) in OUTLINE.iter().chain(FILLED).chain(std::iter::once(&TRANSLATION_SVG)) {
             sources.insert((*name).to_owned(), Source::Svg(Cow::Borrowed(*bytes)));
             match rasterize_svg(bytes, RASTER_PX) {
                 Some(ci) => {

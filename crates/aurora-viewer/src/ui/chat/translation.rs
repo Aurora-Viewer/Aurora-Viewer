@@ -14,7 +14,7 @@ use uuid::Uuid;
 #[derive(Default)]
 pub(crate) struct Controls {
     ready: bool,
-    enabled: bool,
+    pub(super) enabled: bool,
     automatic: bool,
     target: String,
 }
@@ -38,7 +38,11 @@ impl Controls {
 
 pub(super) fn toolbar(ui: &mut egui::Ui, p: &Palette, icons: &Icons, controls: &Controls, characters: usize) {
     let button = super::tool_resp(ui, p, icons, "language", controls.enabled).on_hover_text(tr!("ui-chat-translation-menu"));
-    menu::dropdown(&button, p, PopupCloseBehavior::CloseOnClick, |ui| {
+    toolbar_menu(&button, p, controls, characters);
+}
+
+pub(super) fn toolbar_menu(button: &egui::Response, p: &Palette, controls: &Controls, characters: usize) {
+    menu::dropdown(button, p, PopupCloseBehavior::CloseOnClick, |ui| {
         if menu::check(
             ui,
             p,
