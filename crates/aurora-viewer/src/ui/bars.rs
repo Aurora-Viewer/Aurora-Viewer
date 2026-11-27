@@ -1063,7 +1063,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // menu_viewer.xml: Pose Stand... (Floater.Show fs_posestand, enabled
         // by fs_when_not_sitting): it opens the window, or brings it forward
         // when open; the toolbar button is the one that toggles it
-        if menu::item_if(ui, p, "man-filled", aurora_i18n::tr!("ui-bars-pose-stand"), !st.seated) {
+        if menu::command(ui, p, "ui-bars-pose-stand").item_if("man-filled", aurora_i18n::tr!("ui-bars-pose-stand"), !st.seated) {
             super::widgets::open_floater(ui.ctx(), super::pose_stand::WINDOW, &mut panels.pose_stand);
             super::widgets::bring_floater_front(ui.ctx(), super::pose_stand::WINDOW);
         }
@@ -1213,9 +1213,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // menu_viewer.xml: Conversation Log… after Gestures (Floater.Toggle
         // conversation, checked while it is open; always enabled, its
         // logging check is left out of the Legacy Viewer's menu)
-        if menu::check(
-            ui,
-            p,
+        if menu::command(ui, p, "ui-bars-conversation-log").check(
             "file-text-filled",
             aurora_i18n::tr!("ui-bars-conversation-log"),
             panels.conversation_log,
@@ -1227,7 +1225,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // tab of Conversations or its torn-off window
         // (FSFloaterContacts::onOpen), shortcut="control|alt|shift|F"
         let contacts = crate::keybinds::chord_label("KeyF", true, true, true);
-        if menu::item_keys(ui, p, "users", aurora_i18n::tr!("common-contacts"), &contacts) {
+        if menu::command(ui, p, "common-contacts").item_keys("users", aurora_i18n::tr!("common-contacts"), &contacts) {
             *action = BarAction::Contacts;
         }
         for (tab, icon, label) in [
@@ -1548,7 +1546,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             }
             // Aurora's own: the weather beside the lighting it rides on; it
             // lights the scene, so @setenv holds it like the rest
-            if menu::item_if(ui, p, "umbrella-filled", aurora_i18n::tr!("ui-bars-aurora-weather"), free) {
+            if menu::command(ui, p, "ui-bars-aurora-weather").item_if("umbrella-filled", aurora_i18n::tr!("ui-bars-aurora-weather"), free) {
                 *action = BarAction::AuroraWeather;
             }
             // Firestorm's Phototools "New preset" buttons (World.EnvPreset)
@@ -1615,9 +1613,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         ) {
             *action = BarAction::ToggleFriendsOnly;
         }
-        if menu::check(
-            ui,
-            p,
+        if menu::command(ui, p, "ui-bars-immersive-hide-tags").check(
             "label-off",
             aurora_i18n::tr!("ui-bars-immersive-hide-tags"),
             !st.show_name_tags,
@@ -1666,18 +1662,20 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         // Phototools (menu_viewer.xml `phototools_item_call`, alt|P)
         let phototools = crate::keybinds::chord_label("KeyP", false, true, false);
-        if menu::item_keys(ui, p, "camera-cog", aurora_i18n::tr!("toolbar-command-phototools"), &phototools) {
+        if menu::command(ui, p, "toolbar-command-phototools").item_keys(
+            "camera-cog",
+            aurora_i18n::tr!("toolbar-command-phototools"),
+            &phototools,
+        ) {
             super::widgets::toggle_floater(ui.ctx(), super::phototools::WINDOW, &mut panels.phototools);
         }
         // the Director (camera tracks and films), Aurora's own, beside the
         // photo: it was only on the toolbar
-        if menu::item(ui, p, "movie", aurora_i18n::tr!("toolbar-command-director")) {
+        if menu::command(ui, p, "toolbar-command-director").item("movie", aurora_i18n::tr!("toolbar-command-director")) {
             super::widgets::toggle_floater(ui.ctx(), super::director::WINDOW, &mut panels.director);
         }
         // Aurora's own: our avatar seen by a camera of its own
-        if menu::check(
-            ui,
-            p,
+        if menu::command(ui, p, "second-camera-title").check(
             "device-cctv-filled",
             aurora_i18n::tr!("second-camera-title"),
             panels.second_camera,
@@ -1743,9 +1741,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             // features (Selected, Highlighted, Dynamic Textures, Foot
             // Shadows, Fog, Test FRInfo, Flexible Objects) are debugging
             // switches of its own pipeline, not ported.
-            menu::submenu(ui, p, "stack-filled", aurora_i18n::tr!("render-features-menu"), true, |ui| {
+            menu::command(ui, p, "render-features-menu").submenu("stack-filled", aurora_i18n::tr!("render-features-menu"), true, |ui| {
                 let label = aurora_i18n::tr!("render-features-ui");
-                if menu::check_keys(ui, p, "app-window-filled", label, true, true, &st.ui_feature_keys) {
+                if menu::command(ui, p, "render-features-ui").check_keys("app-window-filled", label, true, true, &st.ui_feature_keys) {
                     *action = BarAction::ToggleUiFeature;
                 }
             });
@@ -1770,10 +1768,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             if st.god_level == 0 {
                 // the default chord (⌘⌥G on macOS), as the other menu rows
                 let keys = crate::keybinds::chord_label("KeyG", true, true, false);
-                if menu::item_keys(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-request"), &keys) {
+                if menu::command(ui, p, "god-mode-request").item_keys("crown-filled", aurora_i18n::tr!("god-mode-request"), &keys) {
                     *action = BarAction::AdminStatus(true);
                 }
-            } else if menu::item(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-leave")) {
+            } else if menu::command(ui, p, "god-mode-leave").item("crown-filled", aurora_i18n::tr!("god-mode-leave")) {
                 *action = BarAction::AdminStatus(false);
             }
             // Advanced › Admin (menu_viewer.xml), while the region keeps
@@ -1786,26 +1784,26 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             if menu::command(ui, p, "quiet").check("camera-off", quiet, st.quiet_snapshots, true) {
                 *action = BarAction::ToggleQuietSnapshots;
             }
-            menu::submenu(
-                ui,
-                p,
+            menu::command(ui, p, "ui-bars-animation-speed").submenu(
                 "player-play-filled",
                 aurora_i18n::tr!("ui-bars-animation-speed"),
                 true,
                 |ui| {
-                    if menu::item(ui, p, "player-skip-forward-filled", aurora_i18n::tr!("ui-bars-animation-faster")) {
+                    if menu::command(ui, p, "ui-bars-animation-faster")
+                        .item("player-skip-forward-filled", aurora_i18n::tr!("ui-bars-animation-faster"))
+                    {
                         *action = BarAction::AnimationSpeed(crate::scene::anim::adjusted_animation_speed(st.animation_speed, 0.1));
                     }
-                    if menu::item(ui, p, "player-skip-back-filled", aurora_i18n::tr!("ui-bars-animation-slower")) {
+                    if menu::command(ui, p, "ui-bars-animation-slower")
+                        .item("player-skip-back-filled", aurora_i18n::tr!("ui-bars-animation-slower"))
+                    {
                         *action = BarAction::AnimationSpeed(crate::scene::anim::adjusted_animation_speed(st.animation_speed, -0.1));
                     }
-                    if menu::item(ui, p, "refresh", aurora_i18n::tr!("ui-bars-animation-reset")) {
+                    if menu::command(ui, p, "ui-bars-animation-reset").item("refresh", aurora_i18n::tr!("ui-bars-animation-reset")) {
                         *action = BarAction::AnimationSpeed(1.0);
                     }
                     menu::separator(ui, p);
-                    if menu::check(
-                        ui,
-                        p,
+                    if menu::command(ui, p, "ui-bars-slow-motion-animations").check(
                         "player-pause-filled",
                         aurora_i18n::tr!("ui-bars-slow-motion-animations"),
                         st.slow_motion_animations,
@@ -1837,7 +1835,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             // Advanced › Release Keys (Tools.ReleaseKeys), greyed while no
             // script holds a control (Tools.EnableReleaseKeys); no shortcut
             let release = aurora_i18n::tr!("ui-bars-release-keys");
-            if menu::item_if(ui, p, "keyboard-filled", release, st.release_keys) {
+            if menu::command(ui, p, "ui-bars-release-keys").item_if("keyboard-filled", release, st.release_keys) {
                 *action = BarAction::ReleaseKeys;
             }
         });
@@ -2050,7 +2048,7 @@ fn build_menu(
     ) {
         *action = BarAction::SaveToObjectContents;
     }
-    menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("build-options-menu"), true, |ui| {
+    menu::command(ui, p, "build-options-menu").submenu("adjustments-filled", aurora_i18n::tr!("build-options-menu"), true, |ui| {
         build_options_menu(ui, p, action, options);
     });
     menu::separator(ui, p);
@@ -2121,56 +2119,42 @@ fn import_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction) {
 /// the selection shows. The entries stay open to set several in a row.
 fn build_options_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, options: crate::build::MenuOptions) {
     let mut o = options;
-    menu::toggle(ui, p, "user-check", aurora_i18n::tr!("build-compact-owned-only"), &mut o.owned_only);
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-compact-owned-only").toggle("user-check", aurora_i18n::tr!("build-compact-owned-only"), &mut o.owned_only);
+    menu::command(ui, p, "build-compact-movable-only").toggle(
         "arrows-move",
         aurora_i18n::tr!("build-compact-movable-only"),
         &mut o.movable_only,
     );
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-options-locked-only").toggle(
         "lock-filled",
         aurora_i18n::tr!("build-options-locked-only"),
         &mut o.locked_only,
     );
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-options-copyable-only").toggle(
         "copy-filled",
         aurora_i18n::tr!("build-options-copyable-only"),
         &mut o.copyable_only,
     );
-    menu::toggle(ui, p, "sphere", aurora_i18n::tr!("build-compact-probes"), &mut o.probes);
-    menu::toggle(ui, p, "focus-2", aurora_i18n::tr!("build-compact-surrounding"), &mut o.surrounding);
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-compact-probes").toggle("sphere", aurora_i18n::tr!("build-compact-probes"), &mut o.probes);
+    menu::command(ui, p, "build-compact-surrounding").toggle("focus-2", aurora_i18n::tr!("build-compact-surrounding"), &mut o.surrounding);
+    menu::command(ui, p, "build-options-group-owned").toggle(
         "users-group",
         aurora_i18n::tr!("build-options-group-owned"),
         &mut o.group_owned,
     );
     menu::separator(ui, p);
-    menu::toggle(ui, p, "eye-filled", aurora_i18n::tr!("build-compact-highlight"), &mut o.highlight);
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-compact-highlight").toggle("eye-filled", aurora_i18n::tr!("build-compact-highlight"), &mut o.highlight);
+    menu::command(ui, p, "build-options-hidden-selection").toggle(
         "eye-closed",
         aurora_i18n::tr!("build-options-hidden-selection"),
         &mut o.hidden_selection,
     );
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-options-light-radius").toggle(
         "bulb-filled",
         aurora_i18n::tr!("build-options-light-radius"),
         &mut o.light_radius,
     );
-    menu::toggle(
-        ui,
-        p,
+    menu::command(ui, p, "build-options-probe-volumes").toggle(
         "sphere",
         aurora_i18n::tr!("build-options-probe-volumes"),
         &mut o.probe_volumes,
