@@ -593,10 +593,11 @@ pub fn init() {
             return;
         }
         // the lost renderer dropped by the recovery, wgpu's queue failing
-        // its last wait (#3915): logged by `drop_guarded` (aurora-render
-        // device_lost.rs); any other panic there is reported
+        // its last wait (#3915): taken by `drop_guarded` (aurora-render
+        // device_lost.rs), logged here only, with where wgpu panicked; any
+        // other panic there is reported
         if aurora_render::in_guarded_drop() && info.payload_as_str().is_some_and(aurora_render::is_drop_loss_panic) {
-            log::warn!("GPU recovery: wgpu failed dropping the lost renderer: {info}");
+            log::error!("GPU recovery: wgpu failed dropping the lost renderer, taken: {info}");
             return;
         }
         let bt = std::backtrace::Backtrace::force_capture();

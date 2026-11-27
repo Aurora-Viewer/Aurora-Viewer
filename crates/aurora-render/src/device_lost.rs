@@ -152,16 +152,19 @@ pub fn is_drop_loss_panic(message: &str) -> bool {
 }
 
 /// Runs `drop`, which drops the objects of a GPU device. When the device is
-/// `lost`, wgpu's panic for it ([`is_drop_loss_panic`]) is logged instead of
-/// ending the process; any other panic goes on, and so does every panic of
-/// a device not lost. wgpu-core's `Queue::drop` panics when its last wait
-/// fails with anything but `Lost`, before it retires its submissions: the
-/// recovery dropping the lost renderer ended the session there (#3915).
-/// The root fix belongs to the wgpu fork (#3693); this keeps the recovery
-/// going until it is in. What that drop did not finish is left to the
-/// process, as the lost surface is (`Backend`'s drop). Rust allows one
-/// panic at a time: a second one while the rest of the renderer unwinds
-/// still aborts the process.
+/// `lost`, wgpu's panic for it ([`is_drop_loss_panic`]) is taken instead of
+/// ending the process (the panic hook logs it, with where wgpu panicked);
+/// any other panic goes on, and so does every panic of a device not lost.
+/// wgpu-core's `Queue::drop` panics when its last wait fails with anything
+/// but `Lost`, before it retires its submissions: the recovery dropping the
+/// lost renderer ended the session there (#3915). The root fix belongs to
+/// the wgpu fork (#3693); this keeps the recovery going until it is in. The
+/// rest of that queue (its pending writes, its encoders in flight) is
+/// unwound without waiting for the GPU. Rust allows one panic at a time: a
+/// second one while the rest of the renderer unwinds still aborts the
+/// process. A clone of the queue a ray-tracer build still holds when the
+/// device is lost (`Backend::follow_ray_tracing`'s worker) drops on that
+/// worker, outside this guard.
 pub(crate) fn drop_guarded(lost: bool, drop: impl FnOnce()) {
     if !lost {
         drop();
@@ -180,11 +183,9 @@ pub(crate) fn drop_guarded(lost: bool, drop: impl FnOnce()) {
             .downcast_ref::<String>()
             .map(String::as_str)
             .or_else(|| payload.downcast_ref::<&str>().copied());
-        match message {
-            Some(message) if is_drop_loss_panic(message) => {
-                log::error!("GPU device lost: wgpu failed while the lost renderer was dropped, left to the process: {message}");
-            }
-            _ => std::panic::resume_unwind(payload),
+        // taken: logged once, by the panic hook (aurora-viewer logging.rs)
+        if !message.is_some_and(is_drop_loss_panic) {
+            std::panic::resume_unwind(payload);
         }
     }
 }
