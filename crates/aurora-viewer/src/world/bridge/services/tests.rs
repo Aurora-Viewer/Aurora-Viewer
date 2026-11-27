@@ -34,6 +34,34 @@ fn setup() -> (Services, Endpoint, Instant) {
     let _ = services.sync(id(10), Some(1), Some(&endpoint));
     (services, endpoint, Instant::now())
 }
+/// The script editor's figure: asked once per refresh, kept quietly (no
+/// message over the world), and handed over once.
+#[test]
+fn the_editor_asks_for_its_objects_script_figure_once_and_takes_it_quietly() {
+    let (mut s, endpoint, now) = setup();
+    let object = id(20);
+    assert!(s.editor_script_info(object, now), "a figure is wanted");
+    // queued until the endpoint is there, then sent
+    let request = command_request(s.update(Some(&endpoint), now).0);
+    assert!(
+        !s.editor_script_info(object, now + Duration::from_secs(5)),
+        "not asked again within the refresh"
+    );
+    let info = ScriptInfo {
+        object,
+        name: "Panel Script".into(),
+        running: 2,
+        total: 3,
+        memory: 3 * 65_536,
+        cpu_seconds: 0.0,
+        character_seconds: 0.0,
+    };
+    let answered = s.reply(request, Ok(Reply::ScriptInfo(info.clone())), now + Duration::from_secs(1));
+    assert_eq!(answered, None, "no message over the world");
+    assert_eq!(s.take_editor_info(), Some(info), "the figure the bar shows");
+    assert_eq!(s.take_editor_info(), None, "once");
+}
+
 #[test]
 fn radar_height_updates_unknown_distance_but_never_overwrites_precise_or_other_region_positions() {
     let (mut s, endpoint, now) = setup();
