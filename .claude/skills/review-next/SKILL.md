@@ -355,6 +355,9 @@ prose. On their yes, for each PR:
      board says so (AGENTS.md section 15): `pwsh ./scripts/issue-board.ps1
      -Issue <i>`, then `Done`, or `Waiting Review` while a 🟡 line of
      TASKS.md waits for the QA.
+   - **A queue run fails while `merge-pr.ps1` still waits**: the group it
+     was tested in may hold another PR ahead of it; GitHub regroups and
+     runs it again on its own. Keep waiting while the script does.
    - **Left the queue**: `gh run view <id> --log-failed`. The PR's failure
      on the code combined with `main`: step 6 (fix it or ask). Not the
      PR's (a runner lost, a job red on `main` too): queue it again once
