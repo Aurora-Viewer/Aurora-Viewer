@@ -3400,7 +3400,7 @@ What sets the frame rate at KB once the ray tracing is kept to Deluxe (RT) ([PR 
 
 ## Interface
 
-- 🔧 Four small interface fixes (task `small-ui-fixes-batch`, 2026-11-27):
+- ✅ Four small interface fixes (task `small-ui-fixes-batch`, 2026-11-27; validated by the human in a logged-in viewer on 2026-11-27):
   - "Open Places › Favorites" of the favorites bar shows the Favorites list in Aurora's look too ([#4771](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/4771)): it set the classic tab only, and Aurora's look kept the last list shown. It now goes through `PlacesUi::open_tab` and closes a place profile left open, like the teleport history's shortcut.
   - The build tools' position / rotation / size readout shows as soon as the handles do, not only during a drag ([#4716](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/4716)): LLManipTranslate::render, LLManipRotate::render and LLManipScale::render call LLManip::renderXYZ at rest too.
   - Legacy-style profile: "Add friend" / "Remove friend" works ([#4977](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/4977)): the button was left disabled ("coming soon"); it now asks for the friendship or the removal through the shared actions and their confirmations (LLPanelProfileSecondLife::onCommitMenu, llpanelprofile.cpp), like Aurora's look.
