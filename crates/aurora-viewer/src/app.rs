@@ -23170,6 +23170,12 @@ impl ApplicationHandler for App {
             if let Ok(v) = std::env::var("AURORA_DEMO_DEBUG") {
                 let d = &mut self.settings.debug;
                 for k in v.split(',').map(str::trim) {
+                    // hitboxes=<metres> also sets the overlay's range
+                    if let Some(range) = k.strip_prefix("hitboxes=").and_then(|v| v.parse::<f32>().ok()) {
+                        d.avatar_hitboxes = true;
+                        d.avatar_hitbox_range = range;
+                        continue;
+                    }
                     match k {
                         "complexity" => d.complexity_tags = true,
                         "alpha" => d.show_alpha = true,

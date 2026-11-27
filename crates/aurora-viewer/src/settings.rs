@@ -447,7 +447,7 @@ pub enum GridChoice {
 }
 
 /// Debug overlays (the Dev Toolbox's toggles), not saved: they reset at each launch.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DebugView {
     /// Complexity under the name tags, green to red (Firestorm FSTagShowARW).
     pub complexity_tags: bool,
@@ -482,6 +482,9 @@ pub struct DebugView {
     /// oriented box, half its scale in either direction. Visual parity only:
     /// picking still tests the fixed click box (see `scene::picking`).
     pub avatar_hitboxes: bool,
+    /// How far the hitbox overlay reaches, in metres (the Dev Toolbox's
+    /// O10 slider): drawing every box every frame is heavy in a crowd.
+    pub avatar_hitbox_range: f32,
     /// Detail level of the objects around the pointer, with the distance
     /// and the radius it comes from (Firestorm: Develop › Render Metadata ›
     /// LOD Info).
@@ -491,6 +494,34 @@ pub struct DebugView {
     /// Advanced › Rendering types: what is not drawn (the Legacy Viewer's
     /// render types, not saved there either).
     pub hidden_types: crate::scene::render_types::Hidden,
+}
+
+impl Default for DebugView {
+    fn default() -> Self {
+        DebugView {
+            complexity_tags: false,
+            show_alpha: false,
+            show_alpha_rigged: false,
+            wireframe: false,
+            bounds: false,
+            culling: false,
+            freeze_culling: false,
+            lights: false,
+            glow_objects: false,
+            glow_view: false,
+            shadow_view: false,
+            ao_view: false,
+            check_light_sets: false,
+            check_probe_sets: false,
+            probes: false,
+            skeletons: false,
+            avatar_hitboxes: false,
+            avatar_hitbox_range: crate::ui::debug_overlay::HITBOX_RANGE,
+            lod_info: false,
+            pass_view: false,
+            hidden_types: crate::scene::render_types::Hidden::default(),
+        }
+    }
 }
 
 impl DebugView {
@@ -5552,6 +5583,11 @@ mod tests {
         assert!(!d.shadow_view && !d.ao_view && !d.glow_view && d.lod_info && d.check_probe_sets);
         let asked = d.render();
         assert!(asked.check_probe_sets && !asked.check_light_sets && !asked.shadows && !asked.ambient_occlusion);
+    }
+
+    #[test]
+    fn the_hitbox_range_option_defaults_to_the_overlay_s_range() {
+        assert_eq!(DebugView::default().avatar_hitbox_range, crate::ui::debug_overlay::HITBOX_RANGE);
     }
     use crate::keybinds::{Action, Input};
     use winit::keyboard::KeyCode;

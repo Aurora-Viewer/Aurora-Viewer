@@ -23,8 +23,16 @@ const LOD_LINE: f32 = 13.0;
 const SKELETON_RANGE: f32 = 32.0;
 /// Avatar hitboxes: drawn to their own range, not the skeletons', so the
 /// box distance can be tuned (or culled by visibility) without moving the
-/// skeleton and collision-volume views.
-const HITBOX_RANGE: f32 = 32.0;
+/// skeleton and collision-volume views. The default of the Dev Toolbox's
+/// O10 range slider (`DebugView::avatar_hitbox_range`); 0 draws nothing.
+pub(crate) const HITBOX_RANGE: f32 = 32.0;
+
+/// The range hitboxes draw to: the debug option, kept inside what the
+/// object overlay looks at (past it the scene may hold no placed data to
+/// draw the boxes from).
+fn hitbox_draw_range(range: f32) -> f32 {
+    range.clamp(0.0, RANGE)
+}
 
 const GREEN: Color32 = Color32::from_rgb(80, 220, 120);
 const RED: Color32 = Color32::from_rgb(240, 70, 70);
@@ -446,7 +454,7 @@ pub fn draw(
             let Some((pp, _, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            if pp.distance(eye) > HITBOX_RANGE {
+            if pp.distance(eye) > hitbox_draw_range(dv.avatar_hitbox_range) {
                 continue;
             }
             // Our own avatar turns with the agent's yaw, as the Legacy
@@ -644,6 +652,14 @@ mod tests {
         // the corners reach the rotated half extents, not an axis-aligned box
         let corner = pos + rot * (half * Vec3::new(1.0, 1.0, 1.0));
         assert!(corner.abs_diff_eq(Vec3::new(9.7, 4.3, 1.95), 1e-5), "{corner}");
+    }
+
+    #[test]
+    fn the_hitbox_range_option_stays_inside_what_the_scene_looks_at() {
+        assert_eq!(hitbox_draw_range(HITBOX_RANGE), HITBOX_RANGE);
+        assert_eq!(hitbox_draw_range(0.0), 0.0);
+        assert_eq!(hitbox_draw_range(-4.0), 0.0);
+        assert_eq!(hitbox_draw_range(RANGE + 1000.0), RANGE);
     }
 
     #[test]

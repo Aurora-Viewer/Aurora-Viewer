@@ -41,6 +41,8 @@ const SEND_TIGHT_H: f32 = 460.0;
 pub struct View {
     /// The toggles that are on.
     pub on: HashSet<&'static str>,
+    /// O10's range in metres (the hitbox slider).
+    pub hitbox_range: f32,
     /// The second line of a button with something live ("8.4 ms · worst 31").
     pub live: HashMap<&'static str, String>,
     /// What the target bar names, and its hint.
@@ -72,6 +74,8 @@ pub enum Action {
     Aim,
     /// One of Avatar health's actions (O8).
     Health(Health),
+    /// O10's range slider moved (metres).
+    HitboxRange(f32),
 }
 
 /// O8: the usual fixes of a broken avatar (the Me menu's Avatar health).
@@ -391,6 +395,21 @@ fn groups(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, layout: &Layout
         }
         if st.edit {
             drop_zone(ui, p, st, grid, gi, g.tools.len(), &rects);
+        }
+        // O10's range: the tool's button moves between groups in
+        // Customize, so the slider sits with the Objects group instead.
+        if g.key == Group::Objects.key() && view.on.contains("O10") {
+            let mut range = view.hitbox_range;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(tr!("dev-toolbox-hitbox-range")).size(12.0).color(p.muted));
+                if ui
+                    .add(egui::Slider::new(&mut range, 0.0..=crate::ui::debug_overlay::RANGE).step_by(1.0))
+                    .changed()
+                {
+                    st.actions.push(Action::HitboxRange(range));
+                }
+            });
+            ui.add_space(2.0);
         }
         ui.add_space(10.0);
     }
