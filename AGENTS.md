@@ -788,59 +788,69 @@ the review again. If a problem is beyond you (design conflict with another
 task, product choice, regression you cannot solve), **do not improvise**:
 explain it to the human and propose 2–3 solutions.
 
-**Which PR of someone else's to review next** comes from the review queue,
-never from a PR picked by hand: several maintainers review at once, and the
-queue keeps them off each other's PRs.
+**Someone else's PRs come from the review queue**, never from a PR picked
+by hand: several maintainers review at once, and the queue keeps them off
+each other's PRs. The Claude Code routine `.claude/skills/review-next`
+follows the steps below; on Linux the scripts run as `pwsh
+./scripts/<script>.ps1`.
 
 ```powershell
+./scripts/review-queue.ps1 -Pending   # first: your approvals to merge, your reviews left on a decision
 ./scripts/review-queue.ps1            # your queue, in order, and what is left out
 ./scripts/review-queue.ps1 -Claim <n> # before reading it: assigns it to your human
 ./scripts/review-queue.ps1 -Release <n>  # handing it back without a review
-./scripts/review-queue.ps1 -ToMerge   # the PRs you approved that nobody merged yet
 ```
 
-- **Order**: re-reviews (a maintainer reviewed it and its author answered
-  since), then PRs tied to a crash, then fixes (the `fix` label or a
-  `fix(area):` title), then the rest not reviewed yet. In each, crash
-  before fix before the rest, then the longest waiting. A PR your human
-  already claimed comes before all of them: finish it first.
-- **Your human picks.** Offer them a selection from the top of the queue,
-  in its order, and claim only the PRs they choose; never pick and claim
-  on your own.
-- **Claim before you read** the PR. `-Claim` refuses a PR another
-  maintainer holds: a claim (an assignee whose review is not posted yet),
-  a re-review that belongs to its previous reviewer for 2 days after the
-  author's answer, or a decision their review left open (⚠️ verdict). Take the next one; never remove another maintainer's
-  assignment. A claim ends with the review you post; `-Release` it if you
-  stop without one.
-- A claim shown as stale (no word from its maintainer for 3 days) is still
-  theirs: tell your human, who asks them.
-- The queue leaves out drafts, bots, `on-hold`, `waiting-for-slot`,
-  `needs-description`, the merge queue, red CI, PRs waiting on their author
-  or on a team decision, and approved ones; it does not replace the rules below (complete
-  description, green CI before reading the code).
-- **The review itself does not change**: the queue picks the PR and adds
-  the claim, then the review goes to its end in the same turn, as for your
-  own PR (section 8, steps 8 and 9): once the outside CI is approved
-  (below; one question to your human for all the PRs you claimed), wait
-  for it without handing back, review, then test it in a demo or on the
-  grid (your human's choice; never skipped when the change can be seen in
-  the viewer) before any verdict, post the comment yourself, and
-  offer your human the merge of a ✅ PR as a question they answer (rule 5),
-  then `merge-pr.ps1`. Never end a turn on "I will review it once CI is
-  green": release the claim instead. A PR in conflict with `main` gets no
-  CI (GitHub cannot build its merge): ask its author to merge `main`
-  first, without approving or waiting for CI. Whatever the author has to
-  change, ask your human first whether you fix it yourself on their branch
-  (when it allows maintainers' pushes and the fix is small and sure) or
-  post the `## Changes requested`.
-- **Approved PRs**: the queue leaves out a PR you approved, so nobody else
-  merges it. `-ToMerge` lists yours that nobody queued: offer their merge
-  with the next reviews. A review names the head it read (``Reviewed head:
-  `<sha>` ``): an approval counts for the merge of that head only, and a
-  head pushed since (a merge of main included) is re-reviewed first.
-- On Linux the agents run it with `pwsh ./scripts/review-queue.ps1`. The
-  Claude Code routine `.claude/skills/review-next` follows these steps.
+1. **What waits on your human first** (`-Pending`): the PRs they approved
+   that nobody merged (the queue leaves them out, so nobody else would),
+   and those their ⚠️ review left on a decision (a hand or grid test, a
+   product choice). Ask them once, and carry each to its end (merged,
+   re-reviewed, the decision posted) before taking anything new. An
+   approval counts for the head it names (``Reviewed head: `<sha>` ``): a
+   head pushed since, a merge of `main` included, is re-reviewed first.
+2. **The queue, and your human picks.** Its order: re-reviews (a
+   maintainer reviewed it and its author answered since), then PRs tied to
+   a crash, then fixes (the `fix` label or a `fix(area):` title), then the
+   rest not reviewed yet; in each, crash before fix before the rest, then
+   the longest waiting; a PR your human already claimed before all of
+   them. Offer them a selection from the top, in that order, and claim
+   only the PRs they choose, before reading them; never pick and claim on
+   your own.
+   - `-Claim` refuses a PR another maintainer holds: a claim (an assignee
+     whose review is not posted yet), a re-review that belongs to its
+     previous reviewer for 2 days after the author's answer, or a decision
+     their review left open. Never remove another maintainer's assignment.
+     A claim ends with the review you post; `-Release` it if you stop
+     without one. A claim shown as stale (no word from its maintainer for
+     3 days) is still theirs: tell your human, who asks them.
+   - The queue leaves out drafts, bots, `on-hold`, `waiting-for-slot`,
+     `needs-description`, the merge queue, red CI, PRs waiting on their
+     author or on a team decision, and approved ones.
+3. **Diff and conflicts before any CI**: in a review worktree made by
+   `new-task.ps1` (`-Name review-<n>`), the PR's head with the latest
+   `main` merged into it; read the whole diff there, what CI would run
+   first (`.github/`, scripts, build files). A conflict gets no CI: GitHub
+   cannot build the PR's merge.
+4. **CI**, then the wait for it in the same turn, without handing back
+   (below for an outside contributor's "Approve and run"). Never end a
+   turn on "I will review it once CI is green": release the claim instead.
+5. **`check.ps1` in the review worktree** (approved runs test the merge
+   with `main` as it was when they started), then **a demo or a grid
+   test** whenever the change can be seen in the viewer, your human
+   choosing which: never skipped (section 4 for the demo, section 1 for the
+   grid). A grid test they cannot run yet leaves a ⚠️ verdict until it is
+   done.
+6. **Whatever the author has to change** (a conflict, a test broken on the
+   merge with `main`, a finding, a failing test): ask your human whether
+   you fix it yourself on the author's branch (when it allows maintainers'
+   pushes and the fix is small and sure: merge `main`, fix, `check.ps1`,
+   push, wait for green) or post the `## Changes requested`.
+7. **Post the review yourself**, naming the head it read, then end the
+   review worktree (`end-task.ps1 -Name review-<n> -Force`, once nothing
+   is left to push).
+8. **The merge** of a ✅ PR is a question your human answers (rule 5),
+   then `merge-pr.ps1`; once merged, the Status of the issues it closes
+   (`issue-board.ps1`, section 15).
 
 Then post the review as a comment (`gh pr comment <n> --body-file …`). The
 file given to `--body-file` (like the one of the PR description) is a draft
@@ -848,7 +858,9 @@ in `.scratch/`, never committed: the review lives in the PR comment, not in
 the repository. **Someone else's PR** is reviewed only once its description
 is complete (no `needs-description` label) and its PR CI is green: an
 outside contributor's CI waits for a maintainer's "Approve and run", so ask
-your human to approve it, and do not read the code before. When you ask the
+your human to approve it, once you have read its diff and checked its
+conflicts with `main` (step 3 above), naming anything it changes that CI
+runs. When you ask the
 author of someone else's PR for changes,
 open that comment with `## Changes requested`: the PR tracking of
 `aurora-tools.cmd` lists the PR as waiting on its author until a new

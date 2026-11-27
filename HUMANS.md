@@ -128,19 +128,24 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
   anyone. `-Release <n>` hands a claimed PR back, `-All` also lists every
   PR left out with the reason, `-As <login>` shows another maintainer's
   queue. A claim with no word from its maintainer for 3 days shows in
-  yellow: ask them rather than taking it. The PRs you approved leave the
-  queue but nobody else merges them: they are listed under "Approved by
-  you, to merge" (`-ToMerge` alone), and your agents offer you their merge
-  if the head is still the one the review names ("Reviewed head:"); after a
-  push, a merge of main included, they review it again first.
-  An agent that reviews from the queue offers you a selection from its top
-  and claims only what you pick; it asks you once to approve the
-  outside CI of the PRs it claimed (naming any that changes `.github/`,
-  scripts or build files), waits for it, tests every change that can be
-  seen in the viewer in a demo or on the grid (it asks you which; a grid
-  test is yours to run), asks you whether to fix what the author has to
-  change itself (a merge of main, a small fix pushed to their branch) or
-  to ask the author, posts its review and asks you before any merge.
+  yellow: ask them rather than taking it.
+  - **What waits on you** (`-Pending`, also at the end of the queue's
+    output): the PRs you approved that nobody merged, and those your
+    review left on a decision (a hand or grid test, a choice). The queue
+    leaves them out, so nobody else picks them up. An approval counts for
+    the head your review names ("Reviewed head:"): after a push, a merge of
+    main included, the PR is reviewed again first.
+  - **With an agent** (`.claude/skills/review-next`): it handles what waits
+    on you first, then offers you a selection from the top of the queue
+    and claims only what you pick. For each PR it makes a review worktree
+    with `new-task.ps1` (the PR's head with the latest main merged in),
+    reads the diff and checks the conflicts before asking you to approve
+    the outside CI, waits for that CI, runs `check.ps1` there, and tests
+    every change that can be seen in the viewer in a demo or on the grid
+    (it asks you which; a grid test is yours to run). Whatever the author
+    has to change, it asks you whether to fix it itself on their branch or
+    to post a "Changes requested". It posts its review, ends the worktree
+    with `end-task.ps1`, and asks you before any merge (`merge-pr.ps1`).
 - **Outside contributors' CI** waits for a maintainer: on their PR, "Approve
   and run" (look first that it does not change `.github/`). Review it only
   once that CI is green and the description is complete.
