@@ -620,10 +620,10 @@ fn glass_card<R>(
         ];
         // The spill fades out on its own: clipped to the card's area (the
         // sidebar's column), it ended in a straight edge above the cards.
-        behind
-            .0
-            .with_clip_rect(ctx.content_rect())
-            .set(behind.1, egui::Shape::Vec(lights.clone()));
+        // `set_clip_rect`, not `with_clip_rect`, which only narrows the clip.
+        let mut spill = behind.0;
+        spill.set_clip_rect(ctx.content_rect());
+        spill.set(behind.1, egui::Shape::Vec(lights.clone()));
         let mut shapes = super::aurora_bg::frosted_pane(
             p,
             ctx.content_rect(),
@@ -1822,5 +1822,44 @@ mod tests {
             ("synthetic.resident", "synthetic-input")
         );
         assert!(settings.remember_password);
+    }
+    /// The two lights of a login card spill around it and fade out on their
+    /// own: clipped to the sidebar's column, they ended in a straight edge
+    /// above the Version card.
+    #[test]
+    fn the_cards_light_spill_is_not_cut_at_the_sidebar_column() {
+        let ctx = egui::Context::default();
+        let mut settings = Settings::default();
+        let mut form = LoginForm::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(2006.0, 1106.0));
+        let mut output = None;
+        for _ in 0..3 {
+            output = Some(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui, &p, &icons, None, &mut settings, &mut form, &info, None);
+                },
+            ));
+        }
+        let output = output.expect("three frames");
+        // the lights: wider than the sidebar, reaching above its top
+        let lights: Vec<_> = output
+            .shapes
+            .iter()
+            .filter(|s| {
+                let b = s.shape.visual_bounding_rect();
+                b.left() < screen.right() - 400.0 && b.right() > screen.right() && b.top() < 0.0 && b.width() < screen.width()
+            })
+            .collect();
+        assert!(!lights.is_empty(), "the Version card's lights");
+        for light in lights {
+            assert_eq!(light.clip_rect, screen, "a card's light is clipped short of the screen");
+        }
     }
 }
