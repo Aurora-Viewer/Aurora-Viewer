@@ -1,6 +1,8 @@
 //! LLScriptEdCore::loadScriptText / writeToFile / openInExternalEditor and
 //! LLLiveLSLFile (Firestorm, LGPL 2.1). Dialogs and file IO run off the UI thread.
 
+use super::Lang;
+
 use aurora_net::scripts::MAX_SOURCE;
 use std::{
     collections::HashMap,
@@ -66,16 +68,18 @@ pub(super) fn open(convert_tabs: bool) -> Job {
 
 /// The file extension of a script: `.luau` for SLua (LLPreviewLSL /
 /// LLLiveLSLEditor::onSaveToFile's script_extension).
-fn extension(lua: bool) -> &'static str {
+fn extension(lang: Lang) -> &'static str {
+    let lua = lang.is_lua();
     if lua { "luau" } else { "lsl" }
 }
 
-pub(super) fn save(name: String, source: String, lua: bool) -> Job {
+pub(super) fn save(name: String, source: String, lang: Lang) -> Job {
+    let lua = lang.is_lua();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let done = match rfd::FileDialog::new()
-            .set_file_name(format!("{}.{}", safe_name(&name), extension(lua)))
-            .add_filter(if lua { "SLua" } else { "LSL" }, &[extension(lua)])
+            .set_file_name(format!("{}.{}", safe_name(&name), extension(lang)))
+            .add_filter(if lua { "SLua" } else { "LSL" }, &[extension(lang)])
             .save_file()
         {
             None => Done::Cancelled,
@@ -274,7 +278,8 @@ impl Drop for Watch {
 /// folder as `sl_script_<name>_<script id>.<lsl|luau>`
 /// (LLScriptEdContainer::getTmpFileName), the name the editor sync's
 /// editors read the script's id from, and the editor opens it.
-pub(super) fn external(name: String, script_id: String, source: String, command_line: String, convert_tabs: bool, lua: bool) -> Job {
+pub(super) fn external(name: String, script_id: String, source: String, command_line: String, convert_tabs: bool, lang: Lang) -> Job {
+    let lua = lang.is_lua();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let file_name = aurora_editor_sync::subscriptions::file_name(&safe_name(&name), &script_id, lua);

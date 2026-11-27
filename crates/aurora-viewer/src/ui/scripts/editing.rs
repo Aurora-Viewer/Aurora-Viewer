@@ -1,6 +1,8 @@
 //! LLScriptEdCore::performAction, LLTextEditor selection / search (Firestorm,
 //! LGPL 2.1). Commands share egui's cursor and undo history with keyboard edits.
 
+use super::Lang;
+
 use egui::{
     Id, TextBuffer,
     text::{CCursor, CCursorRange, CharIndex},
@@ -408,8 +410,189 @@ pub(super) fn error_location(error: &str) -> Option<(usize, usize)> {
     Some((line.trim().parse().ok()?, column.trim().parse().ok()?))
 }
 
+/// The pair of brackets to light up for a caret at char `at`: the bracket just
+/// before it, or the one at it, and its match (LLScriptEditor::highlightMatchingBracket,
+/// indra/newview/llpreviewscript.cpp). A bracket in a line or block comment,
+/// or in a quoted string, is not one of the code's.
+pub(super) fn bracket_match(source: &str, at: usize) -> Option<(usize, usize)> {
+    let chars: Vec<char> = source.chars().collect();
+    let code = code_mask(&chars);
+    let index = if at > 0 && kind(chars[at - 1]).is_some() && code[at - 1] {
+        at - 1
+    } else if at < chars.len() && kind(chars[at]).is_some() && code[at] {
+        at
+    } else {
+        return None;
+    };
+    let (open, close, forward) = kind(chars[index])?;
+    let (step, wanted) = if forward { (1isize, close) } else { (-1isize, open) };
+    let mut depth = 0usize;
+    let mut i = index as isize;
+    loop {
+        i += step;
+        if i < 0 || i as usize >= chars.len() {
+            return None;
+        }
+        let at = i as usize;
+        if !code[at] {
+            continue;
+        }
+        let ch = chars[at];
+        if ch == chars[index] {
+            depth += 1;
+        } else if ch == wanted {
+            if depth == 0 {
+                return Some((index.min(at), index.max(at)));
+            }
+            depth -= 1;
+        }
+    }
+}
+
+/// The Lua block word at char `at` and the word that pairs with it, as char
+/// ranges: `function`, `do`, `if` or `repeat` with the `end` or the `until`
+/// that closes it, the caret on either of the two. A word in a comment or a
+/// string opens nothing (`syntax::lua_block_pairs`).
+pub(super) fn keyword_pair(source: &str, at: usize) -> Option<(Range<usize>, Range<usize>)> {
+    let index = |byte: usize| source[..byte].chars().count();
+    let pairs: Vec<(Range<usize>, Range<usize>)> = super::syntax::lua_block_pairs(source)
+        .into_iter()
+        .map(|(open, close)| (index(open.start)..index(open.end), index(close.start)..index(close.end)))
+        .collect();
+    let holds = |range: &Range<usize>| range.start <= at && at <= range.end;
+    pairs
+        .iter()
+        .find(|(open, _)| holds(open))
+        .or_else(|| pairs.iter().find(|(_, close)| holds(close)))
+        .map(|(open, close)| (open.clone(), close.clone()))
+}
+
+/// The bracket a character is: its opening and closing forms, and whether it
+/// opens.
+fn kind(ch: char) -> Option<(char, char, bool)> {
+    Some(match ch {
+        '(' => ('(', ')', true),
+        '[' => ('[', ']', true),
+        '{' => ('{', '}', true),
+        ')' => ('(', ')', false),
+        ']' => ('[', ']', false),
+        '}' => ('{', '}', false),
+        _ => return None,
+    })
+}
+
+/// Which characters are code: not in a `//` line comment, a `/* */` block
+/// comment or a quoted string (`"` or `'`, a backslash escaping the next
+/// character).
+pub(super) fn code_mask(chars: &[char]) -> Vec<bool> {
+    let mut code = vec![true; chars.len()];
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '/' && chars.get(i + 1) == Some(&'/') {
+            while i < chars.len() && chars[i] != '\n' {
+                code[i] = false;
+                i += 1;
+            }
+        } else if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+            code[i] = false;
+            code[i + 1] = false;
+            i += 2;
+            while i < chars.len() {
+                code[i] = false;
+                if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    code[i + 1] = false;
+                    i += 2;
+                    break;
+                }
+                i += 1;
+            }
+        } else if matches!(chars[i], '"' | '\'') {
+            let quote = chars[i];
+            code[i] = false;
+            i += 1;
+            while i < chars.len() {
+                code[i] = false;
+                if chars[i] == '\\' {
+                    if i + 1 < chars.len() {
+                        code[i + 1] = false;
+                    }
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == quote {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    code
+}
+
+/// The characters a diagnostic's line and column point at: the word there (or
+/// the next one on the line, when the column falls on a space), or the line's
+/// last character when it points past its text. LSL errors give their place,
+/// not their length.
+pub(super) fn error_span(source: &str, line: usize, column: usize) -> std::ops::Range<usize> {
+    let chars: Vec<char> = source.chars().collect();
+    let start = line_cursor(source, line, column);
+    let line_end = chars[start.min(chars.len())..]
+        .iter()
+        .position(|ch| *ch == '\n')
+        .map_or(chars.len(), |at| start + at);
+    let word = |ch: char| ch == '_' || ch.is_alphanumeric();
+    // the word the place is in (a column inside it lights all of it), or the
+    // next one on the line when the column falls on a space
+    let begin = if start < line_end && word(chars[start]) {
+        let mut begin = start;
+        while begin > 0 && word(chars[begin - 1]) {
+            begin -= 1;
+        }
+        begin
+    } else {
+        match (start..line_end).find(|at| word(chars[*at])) {
+            Some(begin) => begin,
+            None => {
+                let end = line_end.max(start);
+                // an empty line has nothing to underline; a column past a
+                // line's text takes its last character
+                if end > 0 && chars[end - 1] == '\n' {
+                    return end..end;
+                }
+                return end.saturating_sub(1)..end;
+            }
+        }
+    };
+    let end = (begin..line_end).find(|at| !word(chars[*at])).unwrap_or(line_end);
+    begin..end
+}
+
+/// The word under the caret (its range) and every place it appears as a whole
+/// word, for the boxes of its other occurrences. A number, a keyword or a
+/// built-in name is not one: they are everywhere.
+pub(super) fn occurrences(source: &str, at: usize, lang: Lang) -> Option<(std::ops::Range<usize>, Vec<std::ops::Range<usize>>)> {
+    let word = self::word(source, at, lang);
+    if word.is_empty() || word.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    if word.chars().count() < 2 || super::syntax::catalog(lang).entry(word).is_some() {
+        return None;
+    }
+    let found = matches_filtered(source, word, false, true);
+    if found.len() < 2 {
+        return None;
+    }
+    // the occurrence the caret is in, or the one ending at it
+    let mine = found.iter().position(|range| range.contains(&at) || range.end == at).unwrap_or(0);
+    Some((found[mine].clone(), found))
+}
+
 /// The word around `at`; an SLua word keeps its library (`ll.Say`).
-pub(super) fn word(source: &str, at: usize, lua: bool) -> &str {
+pub(super) fn word(source: &str, at: usize, lang: Lang) -> &str {
+    let lua = lang.is_lua();
     let byte = source.byte_index_from_char_index(CharIndex(at)).0;
     let is_word = |c: char| c == '_' || c.is_alphanumeric() || (lua && c == '.');
     let start = source[..byte]
@@ -588,6 +771,78 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_bracket_at_the_caret_matches_its_pair_across_nesting() {
+        let text = "default { if (a) { b(); } }";
+        // caret after the outer `{` (char 9)
+        assert_eq!(bracket_match(text, 9), Some((8, 26)));
+        // caret before the `(`: the bracket after it
+        let chars: Vec<char> = text.chars().collect();
+        let at = chars.iter().position(|c| *c == '(').unwrap();
+        assert_eq!(bracket_match(text, at), Some((at, at + 2)));
+    }
+
+    #[test]
+    fn a_bracket_in_a_string_or_a_comment_is_not_matched() {
+        let text = "llSay(0, \"(\"); // )\n/* ] */ x = 1;\n";
+        // the `(` of llSay matches its own pair
+        assert_eq!(bracket_match(text, 6), Some((5, 12)));
+        // the `(` inside the string, the `)` of the line comment and the `]`
+        // of the block comment are not brackets of the code
+        assert_eq!(bracket_match(text, 11), None);
+        assert_eq!(bracket_match(text, 19), None);
+        assert_eq!(bracket_match(text, 24), None);
+        // an unmatched bracket finds nothing
+        assert_eq!(bracket_match("(a", 1), None);
+        assert_eq!(bracket_match("a)", 1), None);
+        // no bracket at the caret
+        assert_eq!(bracket_match("abc", 1), None);
+    }
+
+    #[test]
+    fn a_diagnostics_span_is_the_word_at_its_place_or_the_next_one() {
+        let text = "default\n{\n    llSay(0, message);\n}\n";
+        // a column inside `llSay` lights the whole word
+        assert_eq!(error_span(text, 2, 5), 14..19);
+        // a column on a space takes the next word
+        assert_eq!(error_span(text, 2, 2), 14..19);
+        // past the text of a line: its last character
+        assert_eq!(error_span(text, 0, 40), 6..7);
+        // an empty line points at nothing of it
+        assert_eq!(error_span("a\n\nb\n", 1, 0), 2..2);
+    }
+
+    #[test]
+    fn occurrences_leave_keywords_numbers_and_lone_words_alone() {
+        let text = "integer alpha = 0;\nalpha = alpha + 1;\n";
+        let (mine, found) = occurrences(text, 8, Lang::Lsl).expect("alpha appears three times");
+        assert_eq!(mine, 8..13);
+        assert_eq!(found.len(), 3);
+        // from the end of a word, it is that word
+        let (mine, _) = occurrences(text, 13, Lang::Lsl).expect("the caret at alpha's end");
+        assert_eq!(mine, 8..13);
+        // `integer` is a keyword, `0` a number, `x` alone
+        assert_eq!(occurrences(text, 2, Lang::Lsl), None);
+        assert_eq!(occurrences("x = 0;\nx = 1;\n", 0, Lang::Lsl), None);
+        assert_eq!(occurrences("0 = 0;\n", 0, Lang::Lsl), None);
+        // a word that appears once has no other occurrence
+        assert_eq!(occurrences("integer alpha = 0;\n", 8, Lang::Lsl), None);
+    }
+
+    /// A Lua script's own words and libraries are no occurrences either: the
+    /// catalogue read is the script's language.
+    #[test]
+    fn occurrences_leave_lua_keywords_and_libraries_alone() {
+        let text = "if alpha then\n    ll.Say(0, alpha)\n    table.insert(alpha, 1)\nend\n";
+        let (mine, found) = occurrences(text, 3, Lang::Lua).expect("alpha appears three times");
+        assert_eq!(mine, 3..8);
+        assert_eq!(found.len(), 3);
+        // `then` is Lua's, and a library's call is one name
+        assert_eq!(occurrences(text, 9, Lang::Lua), None);
+        let say = text.find("ll.Say").expect("the call");
+        assert_eq!(occurrences(text, say, Lang::Lua), None);
+    }
+
+    #[test]
     fn whole_words_exclude_substrings_but_accept_punctuation_delimiters() {
         let text = "This hi high hi_there hi-there (hi) \u{E9}hi hi\u{E9}";
         let found = matches_filtered(text, "hi", true, true);
@@ -738,7 +993,7 @@ mod tests {
         assert_eq!(line_cursor("é\r\nあx", 99, 0), 5);
         assert_eq!(error_location("(3, 7) : ERROR : Syntax error"), Some((3, 7)));
         assert_eq!(error_location("network error"), None);
-        assert_eq!(word("é llSay(0)", 4, false), "llSay");
-        assert_eq!(word("x = ll.Say(0)", 8, true), "ll.Say");
+        assert_eq!(word("é llSay(0)", 4, Lang::Lsl), "llSay");
+        assert_eq!(word("x = ll.Say(0)", 8, Lang::Lua), "ll.Say");
     }
 }

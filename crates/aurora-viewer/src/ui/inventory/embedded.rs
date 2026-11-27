@@ -207,7 +207,15 @@ pub(super) fn editor(
     };
     let mut output = if editable {
         if matches!(appearance, Appearance::CodeSource(..)) {
-            let (mut output, changed) = super::super::scripts::edit_code(ui, id, text, &super::markdown::code::scope, show);
+            let (mut output, changed) = super::super::scripts::edit_code(
+                ui,
+                id,
+                text,
+                crate::ui::scripts::Lang::Lsl,
+                super::super::scripts::TAB_SIZE,
+                &super::markdown::code::scope,
+                show,
+            );
             if changed {
                 output.response.mark_changed();
             }

@@ -117,6 +117,14 @@ impl App {
             self.send(command);
         }
         let endpoint = self.sync_bridge_queries();
+        // the editor's status bar: its window's object's scripts, as the
+        // region reports them through the bridge (throttled there)
+        if endpoint.is_some() {
+            let wanted = self.script_editors.stats_wanted();
+            for object in wanted {
+                self.bridge_services.editor_script_info(object, Instant::now());
+            }
+        }
         let (command, message) = self.bridge_services.update(endpoint.as_ref(), Instant::now());
         if let Some(command) = command {
             self.send(command);

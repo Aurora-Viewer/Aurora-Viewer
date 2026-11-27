@@ -2,6 +2,8 @@
 //! cursor/undo indices; hidden rows have zero height instead of a substituted
 //! text buffer. Saving, copying and compilation always use the complete source.
 
+use super::Lang;
+
 use super::{editing, syntax};
 use crate::theme::Palette;
 use egui::{
@@ -25,7 +27,11 @@ pub(super) struct State {
 }
 
 impl State {
-    pub fn sync(&mut self, source: &str) {
+    /// The folds of `source`, read as Lua when `lua`: its words open and close
+    /// its blocks (`function … end`, `if … end`, `repeat … until`), where an
+    /// LSL block is a pair of braces; a Lua table's braces fold as well.
+    pub fn sync(&mut self, source: &str, lang: Lang) {
+        let lua = lang.is_lua();
         if self.source == source {
             return;
         }
@@ -58,7 +64,16 @@ impl State {
             })
             .collect();
         let starts: Vec<_> = std::iter::once(0).chain(source.match_indices('\n').map(|(i, _)| i + 1)).collect();
-        self.blocks = syntax::brace_pairs(source)
+        let mut pairs: Vec<(usize, usize)> = syntax::brace_pairs(source);
+        if lua {
+            pairs.extend(
+                syntax::lua_block_pairs(source)
+                    .into_iter()
+                    .map(|(open, close)| (open.start, close.start)),
+            );
+            pairs.sort_unstable();
+        }
+        self.blocks = pairs
             .into_iter()
             .filter_map(|(open, close)| {
                 let first = starts.partition_point(|&start| start <= open) - 1;
@@ -238,7 +253,7 @@ mod tests {
         let p = crate::theme::Theme::default().palette();
         let source = format!("default {{ // {}\n    llOwnerSay(\"hidden\");\n}}", "long header ".repeat(15));
         let mut state = State::default();
-        state.sync(&source);
+        state.sync(&source, Lang::Lsl);
         state.collapse_all();
         let mut expected_y = 0.0;
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -267,12 +282,63 @@ mod tests {
         output.textures_delta.clear();
     }
 
+    /// A Lua script folds on its words: a `function` to its `end`, an `if`
+    /// to its `end`, a `repeat` to its `until`, a table's braces too, and no
+    /// word of a comment or a string opens a block.
+    #[test]
+    fn lua_blocks_fold_on_their_words() {
+        let source = "\
+local function f(x)
+    if x then
+        do
+            print(x)
+        end
+    end
+    repeat
+        x = x - 1
+    until x == 0
+    local t = {
+        1,
+        2,
+    }
+    -- function and do
+    local s = [[ if then end ]]
+end
+";
+        let mut state = State::default();
+        state.sync(source, Lang::Lua);
+        // the function, the if, the do it holds, the repeat and the table
+        assert_eq!(
+            state.blocks.len(),
+            5,
+            "{:?}",
+            state.blocks.iter().map(|b| b.open).collect::<Vec<_>>()
+        );
+        // the function's fold hides every line of its body, its own `end` kept
+        let function = state.blocks.iter().find(|b| b.open == 6).expect("the function's block");
+        assert_eq!(function.lines, 14, "every line of its body, its own `end` kept");
+        assert_eq!(
+            &source[function.hidden.clone()],
+            &source[source.find("    if x then").unwrap()..source.rfind("\nend").unwrap() + 1]
+        );
+        // colliding ranges fold nothing, as the braces' do
+        state.collapsed.insert(6);
+        let mut job = LayoutJob::simple(source.into(), egui::FontId::monospace(13.0), egui::Color32::WHITE, f32::INFINITY);
+        state.layout(&mut job);
+        assert_eq!(job.text, source);
+        assert!(job.sections.iter().any(|section| section.format.font_id.size == f32::EPSILON));
+        // read as LSL, the same text has no block to fold but the table's
+        let mut lsl = State::default();
+        lsl.sync(source, Lang::Lsl);
+        assert_eq!(lsl.blocks.len(), 1, "a table's braces alone");
+    }
+
     #[test]
     fn hidden_rows_have_zero_height_but_keep_all_source_and_character_indices() {
         let ctx = egui::Context::default();
         let source = "default {\n    event() {\n        // éあ\n        llSay(0, \"{}\");\n    }\n}\n";
         let mut state = State::default();
-        state.sync(source);
+        state.sync(source, Lang::Lsl);
         assert_eq!(state.blocks.len(), 2);
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let job = LayoutJob::simple(source.into(), egui::FontId::monospace(14.0), egui::Color32::WHITE, f32::INFINITY);
@@ -330,6 +396,7 @@ mod tests {
                             &Theme::default().palette(),
                             &mut ScriptSettings::default(),
                             &mut Preferences::default(),
+                            &[],
                         );
                     },
                 );
@@ -367,11 +434,11 @@ mod tests {
     fn fold_positions_follow_edits_and_navigation_reveals_the_destination() {
         let original = "// {\ndefault {\n    event() {\n        code;\n    }\n}";
         let mut state = State::default();
-        state.sync(original);
+        state.sync(original, Lang::Lsl);
         assert_eq!(state.blocks.len(), 2);
         state.collapse_all();
         let updated = format!("// éあ\n{original}");
-        state.sync(&updated);
+        state.sync(&updated, Lang::Lsl);
         assert_eq!(state.collapsed.len(), 2);
         let at = updated[..updated.find("code").expect("code")].chars().count();
         assert!(state.reveal(CCursor::new(at)));
