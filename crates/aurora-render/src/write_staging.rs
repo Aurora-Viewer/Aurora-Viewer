@@ -41,7 +41,10 @@
 //! owners send them again later, at the slot's place and size then (a
 //! write kept for a later frame would land behind the frame's page moves
 //! and newer uploads of the slot, recorded in the upload encoder). Said in
-//! the log; the texture shows what its layer held until then. The buffers
+//! the log. Until then the texture keeps its older texels, or, where the
+//! lost write gave it a new layer, the loading placeholder once the frame
+//! is answered (`TextureTable::lost_in_frame`), not what an earlier
+//! texture left in the layer. The buffers
 //! of their own are kept, up to [`SPARE_BYTES`] and [`MAX_SPARES`] of them,
 //! mapped again for the frames after: wgpu fills a new mapped buffer with
 //! zeros on the CPU, which the queue's own staging buffers skip. These

@@ -1420,8 +1420,12 @@ impl Renderer {
     }
 
     /// The texture slots whose texels were not written: video memory had
-    /// no staging buffer for a texture write (write_staging.rs). The texture
-    /// shows what its layer held before; its owner sends it again, through
+    /// no staging buffer for a texture write (write_staging.rs). A texture
+    /// written over in place keeps its older texels. One the lost write
+    /// gave a new layer shows the loading placeholder again (or the
+    /// reserved texture it showed before) once the frame is answered: until
+    /// then, a frame or two, what an earlier texture left in the layer. Its
+    /// owner sends it again, through
     /// `replace_texture` or as when it was made, after a wait (memory is
     /// short). A slot freed or given to another texture since may be in the
     /// list: sending that one again costs an upload, nothing more.
@@ -1494,6 +1498,13 @@ impl Renderer {
         }
         self.films_answered += r.films.len() as u64;
         self.films.append(&mut r.films);
+        // (before the owners send them again: a texture given a layer of
+        // its own by that frame shows the loading grey meanwhile, not what
+        // an earlier texture left in the layer)
+        let back = self.textures.lost_in_frame(r.index, &r.lost_textures);
+        if back > 0 {
+            log::debug!("{back} textures whose texels were not written show the loading placeholder until sent again");
+        }
         crate::write_staging::merge_slots(&mut self.lost_textures, r.lost_textures.drain(..));
         self.last_stats = r.stats;
         self.rt_made = r.rt;
@@ -1734,6 +1745,7 @@ impl Renderer {
         if self.failed {
             // nobody replays any more
             self.writes.clear();
+            self.textures.writes_dropped();
             self.fail_picks();
             return stats;
         }
@@ -1741,6 +1753,7 @@ impl Renderer {
         // the memory of an earlier frame) takes its place
         let mut spent = self.spare.pop().unwrap_or_default();
         std::mem::swap(&mut self.writes, &mut spent.writes);
+        self.textures.writes_sent(self.frames);
         spent.lists.copy_from(lists);
         // a photo first: the other captures wait for the next frame (and
         // for the answer of a photo still on the GPU)

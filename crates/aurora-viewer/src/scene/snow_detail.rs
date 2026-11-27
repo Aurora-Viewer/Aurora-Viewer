@@ -42,10 +42,10 @@ impl SnowDetail {
     }
 
     /// The renderer could not stage the texels of these slots: each of the
-    /// two that is is sent again into its slot, where its page already is
-    /// (nothing to make, so nothing more to be refused but the staging
-    /// itself, which hands the slot back again); they leave `lost`. Should
-    /// that fail, both are made again at the next use.
+    /// two that is is sent again into its slot (a lost first upload left it
+    /// the loading placeholder, so a layer is taken again, which video
+    /// memory may refuse too); they leave `lost`. Should that fail, both
+    /// are made again at the next use.
     pub fn texture_lost(&mut self, lost: &mut Vec<u32>, renderer: &mut Renderer) {
         if !self.made.iter().any(|(s, ..)| lost.contains(s)) {
             return;

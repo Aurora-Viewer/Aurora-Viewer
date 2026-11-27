@@ -2036,7 +2036,7 @@ impl TextureStreamer {
 
     /// The renderer could not stage the texels of these slots
     /// (`Renderer::take_lost_textures`, video memory full): they still show
-    /// their old texels, or none. The textures holding them keep their slot
+    /// their older texels, or the loading placeholder. The textures holding them keep their slot
     /// and are uploaded again as after a GPU recovery (`gpu_reset_into`):
     /// decoded again from the data in memory, or read again from the cache.
     /// The demo's procedural textures are made again. Returns the slots no
