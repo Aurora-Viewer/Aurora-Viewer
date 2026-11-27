@@ -1740,10 +1740,16 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         // (from a fresh breeze on: a Beaufort 4 sea already shows scattered
         // white horses)
         let cap_start=mix(0.25,0.04,sqrt(rough));
+        // (the veil starts on a real fold, however rough the sea: from
+        // `cap_start - 0.12`, under 0 past a strong breeze, a sea that does
+        // not fold at all, a swell with no chop or a lake's flat water,
+        // took the veil wherever the gusts' patches lay, as large white
+        // blotches)
+        let veil_start=max(cap_start-0.12,0.03);
         // (the veil also takes the foam the crests left in the last
         // seconds, fading and drawn out downwind (water_fft.rs): thinner,
         // from deeper folds only, so a gale's sea is streaked, not grey)
-        if(water_fx_on(8u) && max(swell.breakers,swell.linger-0.14)>cap_start-0.12) {
+        if(water_fx_on(8u) && max(swell.breakers,swell.linger-0.14)>veil_start) {
             let toward=water_fx.sea.wind.xy;
             let along=vec2<f32>(dot(p,toward),dot(p,vec2<f32>(-toward.y,toward.x)));
             let drift=vec2<f32>(frame.camera_pos.w*(0.3+0.04*water_fx.sea.wind.z),0.0);
@@ -1755,7 +1761,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
             let windpatch=0.65*water_fx_noise(w*vec2<f32>(0.11,0.19))+0.35*water_fx_noise(w*vec2<f32>(0.27,0.4)+vec2<f32>(9.0,2.0));
             let gusty=smoothstep(0.3-0.25*rough,0.75-0.25*rough,windpatch);
             let core=smoothstep(cap_start,cap_start+0.35,swell.breakers);
-            let veil=max(smoothstep(cap_start-0.12,cap_start+0.1,swell.breakers),smoothstep(cap_start+0.02,cap_start+0.3,swell.linger)*0.75);
+            let veil=max(smoothstep(veil_start,cap_start+0.1,swell.breakers),smoothstep(cap_start+0.02,cap_start+0.3,swell.linger)*0.75);
             // (the Sea panel's foam: more or less of it)
             // (past 100 %, more of the dense core only: the veil and what
             // lingers, turned up with it, spread the faint foam behind every
