@@ -365,6 +365,8 @@ fn publisher_shares_use_public_pages_and_publisher_images() {
         "https://www.dailymotion.com/video/x84sh87",
         "https://www.arte.tv/en/videos/123456-000-A/example/",
         "https://www.bbc.co.uk/iplayer/episode/m001jjq0/example",
+        "https://www.bbc.co.uk/programmes/m001jjq0",
+        "https://www.ardmediathek.de/video/Y3JpZDovL3RhZ2Vzc2NoYXUuZGUvN2Y0NzZkMDgtNzlhNC00Njk5LWExY2QtYmZhNGEwN2I1ODgxLVNFTkRVTkdTVklERU8",
         "https://tver.jp/episodes/ep12345",
         "https://www.nicovideo.jp/watch/sm9",
         "https://tv.naver.com/v/12345678",
@@ -561,7 +563,12 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
                             .is_some_and(|(programme, part)| digits(programme) && digits(part))
                 })
         }
-        ("bbc.com" | "bbc.co.uk", ["iplayer", "episode", id, ..]) => slug(id),
+        ("bbc.com" | "bbc.co.uk", ["iplayer", "episode", id, ..] | ["programmes", id]) => slug(id),
+        ("ardmediathek.de", ["video", id] | ["video", _, _, _, id]) => {
+            (30..=256).contains(&id.len())
+                && id.starts_with("Y3JpZDovL")
+                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        }
         ("tver.jp", ["episodes", id]) => slug(id),
         ("nicovideo.jp" | "sp.nicovideo.jp", ["watch", id]) | ("nico.ms", [id]) => {
             ["sm", "so", "nm"].iter().any(|prefix| id.strip_prefix(prefix).is_some_and(digits))
@@ -657,6 +664,7 @@ pub(super) fn publisher_poster(page: &str, html: &str) -> Option<String> {
         "snapchat.com" => &["sc-cdn.net", "snapcdn.com"],
         "dailymotion.com" => &["dmcdn.net"],
         "bbc.com" | "bbc.co.uk" => &["bbci.co.uk"],
+        "ardmediathek.de" => &["ardmediathek.de"],
         "tver.jp" => &["tver.jp", "tver-static.com"],
         "nicovideo.jp" => &["nimg.jp", "nicovideo.jp"],
         "tv.naver.com" | "chzzk.naver.com" => &["pstatic.net"],

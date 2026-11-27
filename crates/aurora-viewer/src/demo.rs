@@ -1796,6 +1796,9 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         }
                         "dailymotion" => "https://geo.dailymotion.com/player/x8lr5.html?video=x84sh87",
                         "arte" => "https://www.arte.tv/en/videos/135503-000-A/the-polish-silicon-valley/",
+                        "ard" => {
+                            "https://www.ardmediathek.de/video/Y3JpZDovL3RhZ2Vzc2NoYXUuZGUvN2Y0NzZkMDgtNzlhNC00Njk5LWExY2QtYmZhNGEwN2I1ODgxLVNFTkRVTkdTVklERU8"
+                        }
                         "niconico" => "https://www.nicovideo.jp/watch/sm8628149",
                         "x" => "https://x.com/NASA/status/2042791040516845925",
                         "youtube" => "https://youtu.be/jNQXAC9IVRw",
