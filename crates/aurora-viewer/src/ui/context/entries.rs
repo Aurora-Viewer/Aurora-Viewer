@@ -852,7 +852,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         |ui| {
             ui.item_if(
                 "zoom-scan-filled",
-                aurora_i18n::tr!("ui-context-inspect-all-attachments"),
+                aurora_i18n::tr!("ui-context-inspect-avatar"),
                 f.worn,
                 CtxAction::InspectAvatar(id),
             );
@@ -1791,7 +1791,7 @@ mod tests {
             attachment: None,
         };
         // "Inspect" lists what the avatar wears: greyed when it wears nothing in view
-        let inspect = |f: &Facts| find(world_menu(&on_avatar, f, Vec3::ZERO), "ui-context-inspect-all-attachments", false);
+        let inspect = |f: &Facts| find(world_menu(&on_avatar, f, Vec3::ZERO), "ui-context-inspect-avatar", false);
         assert!(!inspect(&Facts::default()).enabled);
         let wearing = Facts {
             worn: true,

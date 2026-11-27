@@ -85,7 +85,7 @@ pub(super) fn show(
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(Vec2::new(files_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(files_width);
-                queue::show(ui, p, imports, prefs, height, busy, actions);
+                queue::show(ui, p, imports, height, busy, actions);
             });
             let (separator, _) = ui.allocate_exact_size(Vec2::new(1.0, height), egui::Sense::hover());
             let stroke = if resizing_queue {

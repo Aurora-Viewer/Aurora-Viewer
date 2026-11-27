@@ -272,7 +272,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
 }
 
-/// `AURORA_DEMO_CONTENTS_DROP=panelâ€¦` carries inventory onto the list.
+/// `AURORA_DEMO_CONTENTS_DROP=panel…` carries inventory onto the list.
 fn demo_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("AURORA_DEMO").as_deref() == Ok("1") && std::env::var_os("AURORA_DEMO_CONTENTS_DROP").is_some())

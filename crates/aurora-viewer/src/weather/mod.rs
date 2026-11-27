@@ -5,6 +5,9 @@ use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
+pub mod fog;
+pub use fog::{FogDrift, FogTier};
+
 /// What falls from the sky.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Precipitation {
@@ -139,6 +142,25 @@ pub struct WeatherSettings {
     /// How high its foot is seen, 0 (on the horizon) to 1 (overhead).
     pub aurora_height: f32,
     pub aurora_colours: AuroraColours,
+    /// The "Fog" card's switch (weather/fog.rs): fog that pools low,
+    /// drifts with the wind and scatters the light. Off by default.
+    pub fog_on: bool,
+    /// How thick it is, 0 (a light mist) to 1 (a pea-souper).
+    pub fog_density: f32,
+    /// How high it reaches before it thins to a third (m).
+    pub fog_height: f32,
+    /// How much of the wind's speed carries it (0..1).
+    pub fog_drift: f32,
+    /// It takes the sky's light alone, as the haze does; off, `fog_colour`.
+    pub fog_follow_sky: bool,
+    /// Its own colour (sRGB) when it does not follow the sky.
+    pub fog_colour: [f32; 3],
+    /// The region's sky haze scales it: a hazy sky, a thicker fog.
+    pub fog_from_sky: bool,
+    /// How it is drawn: height fog, a volume, a volume lit by the lights.
+    pub fog_tier: FogTier,
+    /// The glow around the lights and the sun (0 even, 0.9 tight).
+    pub fog_anisotropy: f32,
     pub quality: WeatherQuality,
     /// The menu was used this session: `AURORA_RAIN` no longer applies.
     #[serde(skip)]
@@ -183,6 +205,15 @@ impl Default for WeatherSettings {
             aurora_heading: 0.0,
             aurora_height: 0.25,
             aurora_colours: AuroraColours::Green,
+            fog_on: false,
+            fog_density: fog::FOG_DENSITY_DEFAULT,
+            fog_height: fog::FOG_HEIGHT_DEFAULT,
+            fog_drift: fog::FOG_DRIFT_DEFAULT,
+            fog_follow_sky: true,
+            fog_colour: fog::FOG_COLOUR_DEFAULT,
+            fog_from_sky: true,
+            fog_tier: FogTier::VolumetricLights,
+            fog_anisotropy: fog::FOG_ANISOTROPY_DEFAULT,
             quality: WeatherQuality::High,
             touched: false,
             former_region_weather: None,
@@ -217,6 +248,13 @@ impl WeatherSettings {
         if !w.touched && env_northern_lights().is_some() {
             w.enabled = true;
         }
+        if !w.touched && fog::env_fog().is_some() {
+            w.enabled = true;
+            w.fog_on = true;
+        }
+        if !w.touched && fog::env_fog_off() {
+            w.fog_on = false;
+        }
         if !(w.enabled && w.precipitation_on) {
             w.amount = 0.0;
             w.thunder = false;
@@ -227,6 +265,7 @@ impl WeatherSettings {
         }
         if !w.enabled {
             w.aurora = false;
+            w.fog_on = false;
         }
         w
     }
@@ -436,11 +475,17 @@ impl WeatherSettings {
             // button is pressed
             clean: false,
             fill: false,
-            quality: match env_quality().filter(|_| !self.touched).unwrap_or(self.quality) {
-                WeatherQuality::Low => 0,
-                WeatherQuality::Medium => 1,
-                WeatherQuality::High => 2,
-            },
+            quality: self.quality_index(),
+        }
+    }
+
+    /// The weather's quality as the renderer takes it: 0 low, 1 medium, 2
+    /// high (`AURORA_WEATHER_QUALITY` until the window is used).
+    pub fn quality_index(&self) -> u32 {
+        match env_quality().filter(|_| !self.touched).unwrap_or(self.quality) {
+            WeatherQuality::Low => 0,
+            WeatherQuality::Medium => 1,
+            WeatherQuality::High => 2,
         }
     }
 }

@@ -18,6 +18,11 @@
 //!
 //! The frames go to ffmpeg as a live film's do, or to PNG images written by
 //! a few threads (`PngWriter`), no ffmpeg needed.
+//!
+//! With the Director's motion blur on, a frame is drawn as several
+//! sub-frames over the time its shutter stays open, from `n / fps` on
+//! (`RenderJob::with_shutter`): each the world at its own instant, averaged
+//! by the renderer (aurora-render's shutter.rs), only the last read back.
 
 use crate::recorder::{self, Format, Recording};
 use serde::{Deserialize, Serialize};
@@ -111,11 +116,6 @@ impl Schedule {
     /// Seconds of the track frame `n` shows.
     pub fn time(&self, n: u64) -> f32 {
         ((n as f64 / f64::from(self.fps)) as f32).min(self.duration)
-    }
-
-    /// Seconds from a frame to the next.
-    pub fn step(&self) -> f32 {
-        1.0 / self.fps as f32
     }
 }
 
@@ -304,8 +304,13 @@ impl Finishing {
 /// What a frame of the app is, during a render.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Step {
-    /// Frame `n` of the film, the track at `time`.
-    Film { n: u64, time: f32 },
+    /// Frame `n` of the film, the track at `time`; `shutter`: the
+    /// sub-frame of it this one is, when its shutter takes several.
+    Film {
+        n: u64,
+        time: f32,
+        shutter: Option<aurora_render::Shutter>,
+    },
     /// A frame of the window: the world held at the last film frame's time.
     Window { time: f32 },
 }
@@ -319,6 +324,11 @@ pub struct RenderJob {
     base: (Instant, f32),
     /// The next frame to ask for.
     next: u64,
+    /// Its next sub-frame, with a shutter.
+    sub: u32,
+    /// The shutter: seconds it stays open from each frame's instant, and
+    /// the sub-frames drawn over that time (`with_shutter`).
+    shutter: Option<(f32, u32)>,
     /// Frames asked and not back, in order.
     asked: VecDeque<u64>,
     /// Frames back and not taken by the writer yet, in order.
@@ -354,6 +364,8 @@ impl RenderJob {
             schedule,
             base,
             next: 0,
+            sub: 0,
+            shutter: None,
             asked: VecDeque::new(),
             backlog: VecDeque::new(),
             written: 0,
@@ -367,12 +379,35 @@ impl RenderJob {
         }
     }
 
+    /// Each frame drawn as `count` sub-frames over the `open` seconds its
+    /// shutter stays open (none when `count` is below 2 or `open` is not
+    /// above 0).
+    pub fn with_shutter(mut self, open: f32, count: u32) -> RenderJob {
+        self.shutter = (open > 0.0 && open.is_finite() && count >= 2).then_some((open, count));
+        self
+    }
+
+    /// The track's time of sub-frame `sub` of frame `n`: the middle of its
+    /// share of the shutter's time.
+    fn film_time(&self, n: u64, sub: u32) -> f32 {
+        let base = self.schedule.time(n);
+        match self.shutter {
+            Some((open, count)) => base + open * (sub as f32 + 0.5) / count as f32,
+            None => base,
+        }
+    }
+
+    /// The sub-frame `sub` of a frame, with a shutter.
+    fn sub_frame(&self, sub: u32) -> Option<aurora_render::Shutter> {
+        self.shutter.map(|(_, count)| aurora_render::Shutter { index: sub, count })
+    }
+
     /// The frame `now` begins: the film's next frame when it can be asked
     /// (few enough in flight, the writer keeping up, the window drawn
     /// lately, and never ahead of the real clock: the world's events then
     /// come in its past), else a frame of the window.
     pub fn plan(&mut self, now: Instant) -> Step {
-        let time = self.schedule.time(self.next);
+        let time = self.film_time(self.next, self.sub);
         let at = self.base.0 + Duration::from_secs_f32(time);
         let film = self.next < self.schedule.count()
             && self.asked.len() < IN_FLIGHT
@@ -380,7 +415,11 @@ impl RenderJob {
             && now.saturating_duration_since(self.last_window) < WINDOW_EVERY
             && at <= now;
         let step = if film {
-            Step::Film { n: self.next, time }
+            Step::Film {
+                n: self.next,
+                time,
+                shutter: self.sub_frame(self.sub),
+            }
         } else {
             self.last_window = self.last_window.max(now);
             Step::Window { time: self.shown }
@@ -404,21 +443,29 @@ impl RenderJob {
         }
     }
 
-    /// The time stepped by this frame: a film frame's 1 / fps (none for the
-    /// first), none for the window's.
+    /// The time stepped by this frame: from the last film frame (or
+    /// sub-frame) asked to this one, 1 / fps without a shutter (none for
+    /// the first), none for the window's.
     pub fn dt(&self) -> f32 {
         match self.step {
-            Some(Step::Film { n, .. }) if n > 0 => self.schedule.step(),
+            Some(Step::Film { time, .. }) if self.next > 0 || self.sub > 0 => (time - self.shown).max(0.0),
             _ => 0.0,
         }
     }
 
     /// The film frame planned for this frame is asked of the renderer: its
-    /// tag.
+    /// tag. With a shutter, a sub-frame before the last is answered by
+    /// nothing: the frame is waited for once its last is asked.
     pub fn asked(&mut self, n: u64) -> u64 {
-        self.asked.push_back(n);
-        self.next = n + 1;
-        self.shown = self.schedule.time(n);
+        self.shown = self.film_time(n, self.sub);
+        match self.sub_frame(self.sub) {
+            Some(s) if !s.last() => self.sub += 1,
+            _ => {
+                self.asked.push_back(n);
+                self.next = n + 1;
+                self.sub = 0;
+            }
+        }
         n | RENDER_TAG
     }
 
@@ -525,7 +572,7 @@ mod tests {
         // the steps between frames are all one frame long
         let s = Schedule::new(10.0, 60);
         for n in 1..s.count() {
-            assert!((s.time(n) - s.time(n - 1) - s.step()).abs() < 1e-4);
+            assert!((s.time(n) - s.time(n - 1) - 1.0 / 60.0).abs() < 1e-4);
         }
         assert_eq!(Schedule::new(0.0, 30).count(), 1);
         assert_eq!(Schedule::new(f32::NAN, 0).count(), 1);
@@ -560,7 +607,7 @@ mod tests {
         let mut job = png_job(&root, Schedule::new(1.0, 10), base);
         let late = job.started;
         // the first frame of the film: the world at its start, no step
-        let Step::Film { n: 0, time } = job.plan(late) else {
+        let Step::Film { n: 0, time, .. } = job.plan(late) else {
             panic!("the first frame is the film's");
         };
         assert_eq!(time, 0.0);
@@ -569,7 +616,14 @@ mod tests {
         assert!(!hold.later && hold.at == base && hold.clock == 10.0);
         assert_eq!(job.asked(0), RENDER_TAG);
         // the second: one step later
-        assert_eq!(job.plan(late), Step::Film { n: 1, time: 0.1 });
+        assert_eq!(
+            job.plan(late),
+            Step::Film {
+                n: 1,
+                time: 0.1,
+                shutter: None
+            }
+        );
         assert!((job.dt() - 0.1).abs() < 1e-6);
         assert!((job.hold().clock - 10.1).abs() < 1e-5);
         job.asked(1);
@@ -605,6 +659,47 @@ mod tests {
         let image = image::open(root.join("f_00001.png")).expect("a PNG").to_rgba8();
         assert_eq!((image.width(), image.height()), (2, 2));
         assert!(image.pixels().all(|p| p.0 == [2, 2, 2, 2]));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_shutter_draws_each_frame_as_sub_frames_over_its_open_time_and_waits_for_the_last() {
+        let root = std::env::temp_dir().join(format!("aurora-render-shutter-{}", std::process::id()));
+        let base = Instant::now() - Duration::from_secs(60);
+        // 10 frames a second, a 180° shutter (0.05 s) in 4 sub-frames
+        let mut job = png_job(&root, Schedule::new(1.0, 10), base).with_shutter(0.05, 4);
+        let late = job.started;
+        let mut times = Vec::new();
+        for sub in 0..4 {
+            let Step::Film { n: 0, time, shutter } = job.plan(late) else {
+                panic!("sub-frame {sub} of the first frame");
+            };
+            assert_eq!(shutter, Some(aurora_render::Shutter { index: sub, count: 4 }));
+            if sub == 0 {
+                assert_eq!(job.dt(), 0.0, "nothing before the first");
+            } else {
+                assert!((job.dt() - 0.0125).abs() < 1e-6, "{}", job.dt());
+            }
+            times.push(time);
+            assert_eq!(job.asked(0), RENDER_TAG);
+        }
+        // the middles of the four quarters of the open time
+        for (t, want) in times.iter().zip([0.00625, 0.01875, 0.03125, 0.04375]) {
+            assert!((t - want).abs() < 1e-6, "{times:?}");
+        }
+        // one frame waited for, then the next frame from its own instant
+        assert_eq!(job.asked.len(), 1);
+        let Step::Film { n: 1, time, shutter } = job.plan(late) else {
+            panic!("the next frame");
+        };
+        assert!((time - 0.10625).abs() < 1e-6);
+        assert_eq!(shutter.map(|s| s.index), Some(0));
+        assert!((job.dt() - (0.10625 - 0.04375)).abs() < 1e-6);
+        // too few sub-frames or no open time: no shutter
+        let plain = png_job(&root, Schedule::new(1.0, 10), base).with_shutter(0.05, 1);
+        assert_eq!(plain.shutter, None);
+        let plain = png_job(&root, Schedule::new(1.0, 10), base).with_shutter(f32::NAN, 8);
+        assert_eq!(plain.shutter, None);
         let _ = std::fs::remove_dir_all(&root);
     }
 

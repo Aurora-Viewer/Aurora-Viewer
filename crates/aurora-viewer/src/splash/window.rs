@@ -282,7 +282,7 @@ fn background(p: &Palette, ctx: &egui::Context, rect: egui::Rect) -> Vec<egui::e
         ),
     ];
     // the moment of the sky the login screen opens on
-    let mut shapes = aurora_bg::frosted_pane(p, rect, 12.0, rect, lights);
+    let mut shapes = aurora_bg::frosted_pane(p, rect, 12.0, rect, lights, 0.0);
     shapes.push(crate::ui::login::strip(
         egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), 2.0)),
         &[(0.0, p.violet), (1.0, p.teal)],
