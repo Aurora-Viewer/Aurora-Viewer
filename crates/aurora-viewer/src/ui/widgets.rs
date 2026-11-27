@@ -1307,8 +1307,19 @@ impl<'a> Floater<'a> {
                 None => rect,
             }
         });
-        let size = egui::AreaState::load(ctx, window_id)
-            .and_then(|s| s.size)
+        // A reset window is kept in reach with the size it takes this frame,
+        // not the one it had: egui constrains with the last frame's size, and
+        // a window left larger than its default was pushed off its default
+        // place by that excess, a second reset needed to bring it there.
+        let reset_size = reset.then(|| {
+            if restore && !self.auto_height {
+                expanded.min(work.size())
+            } else {
+                self.default_size
+            }
+        });
+        let size = reset_size
+            .or_else(|| egui::AreaState::load(ctx, window_id).and_then(|s| s.size))
             .unwrap_or(self.default_size);
         let edges = super::layout::edges_for(ctx, window_id);
         // While an edge is dragged the drag keeps the window in its bounds
@@ -1317,7 +1328,7 @@ impl<'a> Floater<'a> {
         // quick drag of the left or top edge pushed the whole window back
         // by what that size exceeded, its opposite edge moving for a frame
         // (the human's report of 2026-10-16).
-        w = if resized.is_some() {
+        w = if resized.is_some() || reset_size.is_some() {
             w.constrain(false)
         } else {
             w.constrain_to(slot.limits.unwrap_or_else(|| super::layout::reach(room, size, edges)))
@@ -1339,7 +1350,7 @@ impl<'a> Floater<'a> {
         // Whatever places the window, its title bar stays in reach: egui
         // lets a window larger than its limits slide out of them by what it
         // has in excess, title first.
-        if let Some(pos) = title_in_reach(ctx, window_id, room, asked, resized.map(|r| r.size())) {
+        if let Some(pos) = title_in_reach(ctx, window_id, room, asked, resized.map(|r| r.size()).or(reset_size)) {
             w = w.current_pos(pos);
         }
         // `steady_size`: once shown, the body in the window's exact rect
