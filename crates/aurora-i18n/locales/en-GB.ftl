@@ -548,7 +548,6 @@ script-preferences-colors = Editor colours
 
 script-preferences-reset-colors = Theme colours
 
-script-preferences-optimize = Script optimiser
 
 script-preproc-directive = Invalid or unrecognised preprocessor directive.
 
@@ -853,3 +852,5 @@ notecard-lsl-demo =
     { "    }" }
     { "}" }
     ```
+
+script-preferences-inlays-hint = The parameter's name in the gap before each argument of a call the catalogue knows, as a pill (Aurora's own: the Legacy Viewer writes none).

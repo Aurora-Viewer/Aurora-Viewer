@@ -1,0 +1,4526 @@
+{
+  "source": {
+    "repo": "https://github.com/secondlife/lsl-definitions",
+    "tag": "v0.7.2.1-die-no-rezzer",
+    "commit": "a4be83c390aa60cef5f7066cd2fcb7ee9823eaf6",
+    "file": "lsl_definitions.yaml",
+    "sha256": "c3a8dbfbddd110802996d867db546da1ed5251e5af23c4dfeadf3f6c5a37e917",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2025 Linden Research, Inc."
+  },
+  "deprecated": {
+    "ATTACH_LPEC": "ATTACH_RIGHT_PEC",
+    "ATTACH_RPEC": "ATTACH_LEFT_PEC",
+    "GAME_CONTROL_AXIS_TRIGGERLEFT": "GAME_CONTROL_AXIS_LEFT_TRIGGER",
+    "GAME_CONTROL_AXIS_TRIGGERRIGHT": "GAME_CONTROL_AXIS_RIGHT_TRIGGER",
+    "GAME_CONTROL_BUTTON_A": "GAME_CONTROL_BUTTON_SOUTH",
+    "GAME_CONTROL_BUTTON_B": "GAME_CONTROL_BUTTON_EAST",
+    "GAME_CONTROL_BUTTON_BACK": "GAME_CONTROL_BUTTON_SELECT",
+    "GAME_CONTROL_BUTTON_GUIDE": "GAME_CONTROL_BUTTON_HOME",
+    "GAME_CONTROL_BUTTON_X": "GAME_CONTROL_BUTTON_WEST",
+    "GAME_CONTROL_BUTTON_Y": "GAME_CONTROL_BUTTON_NORTH",
+    "LAND_LARGE_BRUSH": "LAND_BRUSH_LARGE",
+    "LAND_MEDIUM_BRUSH": "LAND_BRUSH_MEDIUM",
+    "LAND_SMALL_BRUSH": "LAND_BRUSH_SMALL",
+    "PERMISSION_CHANGE_JOINTS": null,
+    "PERMISSION_CHANGE_PERMISSIONS": null,
+    "PERMISSION_RELEASE_OWNERSHIP": null,
+    "PERMISSION_REMAP_CONTROLS": null,
+    "PRIM_CAST_SHADOWS": null,
+    "PRIM_MATERIAL_DENSITY": "DENSITY",
+    "PRIM_MATERIAL_FRICTION": "FRICTION",
+    "PRIM_MATERIAL_GRAVITY_MULTIPLIER": "GRAVITY_MULTIPLIER",
+    "PRIM_MATERIAL_LIGHT": "PRIM_FULLBRIGHT",
+    "PRIM_MATERIAL_RESTITUTION": "RESTITUTION",
+    "REMOTE_DATA_CHANNEL": null,
+    "REMOTE_DATA_REPLY": null,
+    "REMOTE_DATA_REQUEST": null,
+    "RemoteDataEventType": null,
+    "STATUS_CAST_SHADOWS": null,
+    "VEHICLE_FLAG_NO_FLY_UP": "VEHICLE_FLAG_NO_DEFLECTION_UP",
+    "event": null,
+    "llClearExperience": null,
+    "llClearExperiencePermissions": null,
+    "llCloseRemoteDataChannel": null,
+    "llCloud": null,
+    "llCollisionSprite": null,
+    "llGetExperienceList": null,
+    "llMakeExplosion": "ll.ParticleSystem",
+    "llMakeFire": "ll.ParticleSystem",
+    "llMakeFountain": "ll.ParticleSystem",
+    "llMakeSmoke": "ll.ParticleSystem",
+    "llOpenRemoteDataChannel": null,
+    "llPointAt": null,
+    "llRefreshPrimURL": "ll.SetPrimMediaParams",
+    "llReleaseCamera": "ll.ClearCameraParams",
+    "llRemoteDataReply": null,
+    "llRemoteDataSetRegion": null,
+    "llRemoteLoadScript": null,
+    "llSendRemoteData": null,
+    "llSetExperienceKey": null,
+    "llSetLinkPrimitiveParams": "ll.SetLinkPrimitiveParamsFast",
+    "llSetPrimURL": "ll.SetPrimMediaParams",
+    "llSetPrimitiveParams": "ll.SetLinkPrimitiveParamsFast",
+    "llSound": "ll.PlaySound",
+    "llSoundPreload": "ll.PreloadSound",
+    "llStopPointAt": null,
+    "llTakeCamera": "ll.SetCameraParams",
+    "llXorBase64Strings": "ll.XorBase64",
+    "llXorBase64StringsCorrect": "ll.XorBase64",
+    "remote_data": null
+  },
+  "arguments": {
+    "at_rot_target": [
+      [
+        "handle",
+        "Integer handle returned by the llRotTarget call."
+      ],
+      [
+        "targetrot",
+        "Target rotation specified in the llRotTarget call."
+      ],
+      [
+        "ourrot",
+        "Current rotation of the object (similar to llGetRot)."
+      ]
+    ],
+    "at_target": [
+      [
+        "tnum",
+        "Integer target handle returned by the llTarget call."
+      ],
+      [
+        "targetpos",
+        "Target position vector specified in the llTarget call."
+      ],
+      [
+        "ourpos",
+        "Current position vector of the object (similar to llGetPos)."
+      ]
+    ],
+    "attach": [
+      [
+        "avatar",
+        "UUID of the avatar the object is attached to, or NULL_KEY if detached."
+      ]
+    ],
+    "changed": [
+      [
+        "changes",
+        "A bitfield of CHANGED_* flags representing what changed."
+      ]
+    ],
+    "collision": [
+      [
+        "num_detected",
+        "Total number of detected colliders (usable with llDetected* functions)."
+      ]
+    ],
+    "collision_end": [
+      [
+        "num_detected",
+        "Total number of detected colliders (usable with llDetected* functions)."
+      ]
+    ],
+    "collision_start": [
+      [
+        "num_detected",
+        "Total number of detected colliders (usable with llDetected* functions)."
+      ]
+    ],
+    "control": [
+      [
+        "id",
+        "UUID of the avatar whose inputs are captured."
+      ],
+      [
+        "level",
+        "A bitfield of CONTROL_* constants representing currently held controls."
+      ],
+      [
+        "edge",
+        "A bitfield of CONTROL_* constants representing controls that just changed state."
+      ]
+    ],
+    "dataserver": [
+      [
+        "queryid",
+        "Key identifying the asynchronous request (matches the handle returned by the requesting function)."
+      ],
+      [
+        "data",
+        "String containing the requested data."
+      ]
+    ],
+    "email": [
+      [
+        "time",
+        "Timestamp of when the email was received, in (string)llGetUnixTime() format."
+      ],
+      [
+        "address",
+        "Email address of the sender."
+      ],
+      [
+        "subject",
+        "Subject of the email."
+      ],
+      [
+        "msg",
+        "Body text of the email."
+      ],
+      [
+        "num_left",
+        "Number of emails still waiting in the queue."
+      ]
+    ],
+    "experience_permissions": [
+      [
+        "agent_id",
+        "UUID of the avatar approving experience permissions."
+      ]
+    ],
+    "experience_permissions_denied": [
+      [
+        "agent_id",
+        "UUID of the avatar who denied or was blocked from granting permissions."
+      ],
+      [
+        "reason",
+        "XP_ERROR_* error constant describing why permissions were denied."
+      ]
+    ],
+    "final_damage": [
+      [
+        "num_detected",
+        "Number of damage events applied to the avatar or task."
+      ]
+    ],
+    "game_control": [
+      [
+        "id",
+        "UUID of the avatar supplying controller input."
+      ],
+      [
+        "button_levels",
+        "A 32-bit mask representing the canonical buttons currently held down on the controller."
+      ],
+      [
+        "axes",
+        "A list of six float values in the range [-1.0, 1.0] representing canonical controller axes."
+      ]
+    ],
+    "http_request": [
+      [
+        "request_id",
+        "Unique key identifying the incoming HTTP request (used with llHTTPResponse)."
+      ],
+      [
+        "method",
+        "HTTP method string ('GET', 'POST', 'PUT', 'DELETE') or URL request status constants."
+      ],
+      [
+        "body",
+        "String payload of the incoming request body."
+      ]
+    ],
+    "http_response": [
+      [
+        "request_id",
+        "Key matching the handle returned by the initiating llHTTPRequest call."
+      ],
+      [
+        "status",
+        "Integer HTTP status code returned (such as 200 or 404)."
+      ],
+      [
+        "metadata",
+        "A list of HTTP_* constants and response headers metadata."
+      ],
+      [
+        "body",
+        "String payload of the received response body."
+      ]
+    ],
+    "land_collision": [
+      [
+        "pos",
+        "Vector position of collision with the ground."
+      ]
+    ],
+    "land_collision_end": [
+      [
+        "pos",
+        "Vector position of the last ground collision."
+      ]
+    ],
+    "land_collision_start": [
+      [
+        "pos",
+        "Vector position of collision with the ground."
+      ]
+    ],
+    "link_message": [
+      [
+        "sender_num",
+        "Link index of the prim containing the script that sent the message."
+      ],
+      [
+        "num",
+        "An integer value passed from the sending script."
+      ],
+      [
+        "str",
+        "A text string value passed from the sending script."
+      ],
+      [
+        "id",
+        "A key value passed from the sending script."
+      ]
+    ],
+    "linkset_data": [
+      [
+        "action",
+        "Action taken (LINKSETDATA_UPDATE, LINKSETDATA_DELETE, LINKSETDATA_MULTIDELETE, or LINKSETDATA_RESET)."
+      ],
+      [
+        "name",
+        "Name of the modified key (a comma-separated list of keys for LINKSETDATA_MULTIDELETE, or empty for LINKSETDATA_RESET)."
+      ],
+      [
+        "value",
+        "New value of the key (empty if the key was deleted or is protected)."
+      ]
+    ],
+    "listen": [
+      [
+        "channel",
+        "Chat channel where the message appeared."
+      ],
+      [
+        "name",
+        "Name of the sending prim or the legacy name of the sending agent."
+      ],
+      [
+        "id",
+        "UUID of the sending agent or prim."
+      ],
+      [
+        "msg",
+        "Spoken text string."
+      ]
+    ],
+    "llAbs": [
+      [
+        "val",
+        "Integer to convert."
+      ]
+    ],
+    "llAcos": [
+      [
+        "val",
+        "A number in the range [-1.0, 1.0]."
+      ]
+    ],
+    "llAddToLandBanList": [
+      [
+        "avatar",
+        "UUID of the avatar to add to the ban list."
+      ],
+      [
+        "hours",
+        "Duration, in hours, to ban the avatar for (0 for indefinite)."
+      ]
+    ],
+    "llAddToLandPassList": [
+      [
+        "avatar",
+        "UUID of the avatar to add to the pass list."
+      ],
+      [
+        "hours",
+        "Duration, in hours, to allow the avatar for (range [0.0, 144.0], 0 for indefinite)."
+      ]
+    ],
+    "llAdjustDamage": [
+      [
+        "number",
+        "Index of the damage event to modify."
+      ],
+      [
+        "new_damage",
+        "New damage value to be applied or distributed after on_damage processing."
+      ]
+    ],
+    "llAdjustSoundVolume": [
+      [
+        "volume",
+        "Volume level to set, between 0.0 (silent) and 1.0 (loud)."
+      ]
+    ],
+    "llAgentInExperience": [
+      [
+        "agent",
+        "UUID of the avatar in the same region to query."
+      ]
+    ],
+    "llAllowInventoryDrop": [
+      [
+        "add",
+        "Boolean. If TRUE, allows anyone to drop inventory items into the prim (even without modify rights). If FALSE, restricts inventory dropping to those with modify permissions."
+      ]
+    ],
+    "llAngleBetween": [
+      [
+        "start_rot",
+        "Starting rotation."
+      ],
+      [
+        "end_rot",
+        "Ending rotation."
+      ]
+    ],
+    "llApplyImpulse": [
+      [
+        "momentum",
+        "Linear impulse vector to apply."
+      ],
+      [
+        "is_local",
+        "Boolean. If TRUE, momentum is treated as a local directional vector; if FALSE, it is treated as a global region vector."
+      ]
+    ],
+    "llApplyRotationalImpulse": [
+      [
+        "force",
+        "Rotational impulse vector to apply."
+      ],
+      [
+        "is_local",
+        "Boolean. If TRUE, the force is treated as a local directional vector; if FALSE, it is treated as a global region vector."
+      ]
+    ],
+    "llAsin": [
+      [
+        "val",
+        "A number in the range [-1.0, 1.0]."
+      ]
+    ],
+    "llAtan2": [
+      [
+        "y",
+        "Y coordinate."
+      ],
+      [
+        "x",
+        "X coordinate."
+      ]
+    ],
+    "llAttachToAvatar": [
+      [
+        "attach_point",
+        "ATTACH_* constant or integer value representing the target attachment point."
+      ]
+    ],
+    "llAttachToAvatarTemp": [
+      [
+        "attach_point",
+        "ATTACH_* constant or integer value representing the target attachment point."
+      ]
+    ],
+    "llAvatarOnLinkSitTarget": [
+      [
+        "link",
+        "Index of the prim in the linkset (1 for root, >1 for children), or a LINK_* flag."
+      ]
+    ],
+    "llAxes2Rot": [
+      [
+        "fwd",
+        "Forward/back directional vector of the rotation."
+      ],
+      [
+        "left",
+        "Left/right directional vector of the rotation."
+      ],
+      [
+        "up",
+        "Up/down directional vector of the rotation."
+      ]
+    ],
+    "llAxisAngle2Rot": [
+      [
+        "axis",
+        "Axis vector to rotate around."
+      ],
+      [
+        "angle",
+        "Angle to rotate, in radians."
+      ]
+    ],
+    "llBase64ToInteger": [
+      [
+        "str",
+        "Base64-encoded string to decode."
+      ]
+    ],
+    "llBase64ToString": [
+      [
+        "str",
+        "Base64-encoded string to decode."
+      ]
+    ],
+    "llBreakLink": [
+      [
+        "link",
+        "The link number (0: unlinked, 1: root prim, >1: child prims and seated avatars) to delink."
+      ]
+    ],
+    "llCSV2List": [
+      [
+        "src",
+        "String of comma-separated values to parse."
+      ]
+    ],
+    "llCastRay": [
+      [
+        "start_pos",
+        "Starting location vector of the ray."
+      ],
+      [
+        "end_pos",
+        "Ending location vector of the ray."
+      ],
+      [
+        "options",
+        "A list of option flags and their parameters to configure the raycast."
+      ]
+    ],
+    "llCeil": [
+      [
+        "val",
+        "Number to round up."
+      ]
+    ],
+    "llChar": [
+      [
+        "val",
+        "Unicode codepoint integer (ordinal) to convert."
+      ]
+    ],
+    "llClearExperience": [
+      [
+        "agentid",
+        ""
+      ],
+      [
+        "experienceid",
+        ""
+      ]
+    ],
+    "llClearExperiencePermissions": [
+      [
+        "agentid",
+        ""
+      ]
+    ],
+    "llClearLinkMedia": [
+      [
+        "link",
+        "The link number (0: unlinked, 1: root prim, >1: child prims) or a LINK_* flag representing the target prim."
+      ],
+      [
+        "face",
+        "Face number to clear."
+      ]
+    ],
+    "llClearPrimMedia": [
+      [
+        "face",
+        "Face number (side) to clear."
+      ]
+    ],
+    "llCloseRemoteDataChannel": [
+      [
+        "channel",
+        "XML-RPC channel ID to close."
+      ]
+    ],
+    "llCloud": [
+      [
+        "offset",
+        "Offset relative to the prim's position, expressed in local coordinates."
+      ]
+    ],
+    "llCollisionFilter": [
+      [
+        "name",
+        "Specific object name or avatar legacy name to filter for."
+      ],
+      [
+        "id",
+        "Group, avatar, or object UUID to filter by."
+      ],
+      [
+        "accept",
+        "Boolean. If TRUE, only collisions matching the name and id filters are processed; if FALSE, matching collisions are excluded."
+      ]
+    ],
+    "llCollisionSound": [
+      [
+        "impact_sound",
+        "UUID of a sound, the name of a sound in the prim's inventory, or an empty string to suppress sounds."
+      ],
+      [
+        "impact_volume",
+        "Volume level to set, between 0.0 (silent) and 1.0 (loud)."
+      ]
+    ],
+    "llCollisionSprite": [
+      [
+        "impact_sprite",
+        "UUID of a texture, the name of a texture in the prim's inventory, or an empty string to suppress sprites."
+      ]
+    ],
+    "llComputeHash": [
+      [
+        "message",
+        "Message string to be hashed."
+      ],
+      [
+        "algorithm",
+        "Cryptographic digest algorithm to use (e.g., md5, sha1, sha224, sha256, sha384, or sha512)."
+      ]
+    ],
+    "llCos": [
+      [
+        "theta",
+        "Angle in radians."
+      ]
+    ],
+    "llCreateCharacter": [
+      [
+        "options",
+        "A list of key-value pairs specifying the character's configuration options."
+      ]
+    ],
+    "llCreateKeyValue": [
+      [
+        "k",
+        "Unique key name for the key-value pair."
+      ],
+      [
+        "v",
+        "Value for the key-value pair (maximum 2047 characters, or 4095 characters if using Mono)."
+      ]
+    ],
+    "llCreateLink": [
+      [
+        "target",
+        "UUID of the target prim/object in the same region."
+      ],
+      [
+        "parent",
+        "Boolean. If TRUE, the script's object becomes the root prim; if FALSE, target becomes the root."
+      ]
+    ],
+    "llDamage": [
+      [
+        "target",
+        "Key of the target avatar or task to receive damage."
+      ],
+      [
+        "damage",
+        "Amount of damage to inflict (can exceed 100, unlike collision-based damage)."
+      ],
+      [
+        "damage_type",
+        "Type of damage to deliver to the target (can correspond to a DAMAGE_TYPE_* constant)."
+      ]
+    ],
+    "llDeleteKeyValue": [
+      [
+        "k",
+        "Key of the key-value pair to delete."
+      ]
+    ],
+    "llDeleteSubList": [
+      [
+        "src",
+        "Source list to copy and modify."
+      ],
+      [
+        "start_index",
+        "Starting index of the slice to remove (inclusive)."
+      ],
+      [
+        "end_index",
+        "Ending index of the slice to remove (inclusive)."
+      ]
+    ],
+    "llDeleteSubString": [
+      [
+        "src",
+        "Source string to modify."
+      ],
+      [
+        "start_index",
+        "Starting codepoint index of the substring to remove (inclusive). Supports negative indexing."
+      ],
+      [
+        "end_index",
+        "Ending codepoint index of the substring to remove (inclusive). Supports negative indexing."
+      ]
+    ],
+    "llDerezObject": [
+      [
+        "id",
+        "UUID of the object in the region to derez."
+      ],
+      [
+        "flags",
+        "Derez behavior flags matching DEREZ_* constants."
+      ]
+    ],
+    "llDetectedDamage": [
+      [
+        "number",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedGrab": [
+      [
+        "number",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedGroup": [
+      [
+        "number",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedKey": [
+      [
+        "number",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedLinkNumber": [
+      [
+        "number",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedName": [
+      [
+        "item",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedOwner": [
+      [
+        "number",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedPos": [
+      [
+        "number",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedRezzer": [
+      [
+        "number",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedRot": [
+      [
+        "number",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedTouchBinormal": [
+      [
+        "index",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedTouchFace": [
+      [
+        "index",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedTouchNormal": [
+      [
+        "index",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedTouchPos": [
+      [
+        "index",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedTouchST": [
+      [
+        "index",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedTouchUV": [
+      [
+        "index",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedType": [
+      [
+        "number",
+        "Index of the detection information."
+      ]
+    ],
+    "llDetectedVel": [
+      [
+        "number",
+        "Index of the detection information."
+      ]
+    ],
+    "llDialog": [
+      [
+        "agent",
+        "UUID of the agent in the same region."
+      ],
+      [
+        "msg",
+        "Text message to display in the dialog box."
+      ],
+      [
+        "buttons",
+        "A list of up to 12 strings representing button labels."
+      ],
+      [
+        "channel",
+        "Output chat channel (any 32-bit signed integer value) where button clicks are chatted."
+      ]
+    ],
+    "llDumpList2String": [
+      [
+        "src",
+        "Source list to convert."
+      ],
+      [
+        "separator",
+        "Separator string to place between list entries."
+      ]
+    ],
+    "llEdgeOfWorld": [
+      [
+        "pos",
+        "Position vector in region coordinates."
+      ],
+      [
+        "dir",
+        "Direction vector."
+      ]
+    ],
+    "llEjectFromLand": [
+      [
+        "avatar",
+        "UUID of the avatar in the same region."
+      ]
+    ],
+    "llEmail": [
+      [
+        "address",
+        "Destination email address."
+      ],
+      [
+        "subject",
+        "Subject of the email."
+      ],
+      [
+        "msg",
+        "Message body of the email."
+      ]
+    ],
+    "llEscapeURL": [
+      [
+        "url",
+        "Unescaped URL string to escape."
+      ]
+    ],
+    "llEuler2Rot": [
+      [
+        "vec",
+        "Vector of Euler angles to convert, in radians."
+      ]
+    ],
+    "llEvade": [
+      [
+        "target",
+        "UUID of the group, avatar, or object to evade."
+      ],
+      [
+        "options",
+        "No options currently available (should be empty list)."
+      ]
+    ],
+    "llExecCharacterCmd": [
+      [
+        "command",
+        "Pathfinding command to execute."
+      ],
+      [
+        "options",
+        "A list of options for the command (e.g., jump height for CHARACTER_CMD_JUMP)."
+      ]
+    ],
+    "llFabs": [
+      [
+        "val",
+        "Number to convert."
+      ]
+    ],
+    "llFindNotecardTextCount": [
+      [
+        "name",
+        "Name of the notecard in the prim's inventory, or a UUID."
+      ],
+      [
+        "pattern",
+        "Regular expression pattern to search for."
+      ],
+      [
+        "options",
+        "A list of options to control the search (currently unused, should be [])."
+      ]
+    ],
+    "llFindNotecardTextSync": [
+      [
+        "name",
+        "Name of the notecard in the prim's inventory, or a UUID."
+      ],
+      [
+        "pattern",
+        "Regular expression pattern to search for."
+      ],
+      [
+        "start",
+        "Index of the first match to return."
+      ],
+      [
+        "count",
+        "Maximum number of matches to return (if 0, returns the first 64 matches)."
+      ],
+      [
+        "options",
+        "A list of options to control the search (currently unused, should be [])."
+      ]
+    ],
+    "llFleeFrom": [
+      [
+        "position",
+        "Position vector in region coordinates from which to flee."
+      ],
+      [
+        "distance",
+        "Distance in meters to keep from the position."
+      ],
+      [
+        "options",
+        "No options currently available (should be empty list)."
+      ]
+    ],
+    "llFloor": [
+      [
+        "val",
+        "Number to round down."
+      ]
+    ],
+    "llForceMouselook": [
+      [
+        "mouselook",
+        "Boolean. If TRUE, forces a sitting avatar into mouselook; if FALSE, allows them to keep their current camera mode."
+      ]
+    ],
+    "llFrand": [
+      [
+        "mag",
+        "Float magnitude of the random range."
+      ]
+    ],
+    "llGetAgentInfo": [
+      [
+        "id",
+        "UUID of the avatar in the same region."
+      ]
+    ],
+    "llGetAgentLanguage": [
+      [
+        "avatar",
+        "UUID of the avatar in the same region."
+      ]
+    ],
+    "llGetAgentList": [
+      [
+        "scope",
+        "Scope flag (AGENT_LIST_PARCEL, AGENT_LIST_PARCEL_OWNER, or AGENT_LIST_REGION) to filter the returned agents."
+      ],
+      [
+        "options",
+        "A list of options to apply (currently unused)."
+      ]
+    ],
+    "llGetAgentSize": [
+      [
+        "avatar",
+        "UUID of the avatar in the same region."
+      ]
+    ],
+    "llGetAlpha": [
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llGetAnimation": [
+      [
+        "avatar",
+        "UUID of the avatar in the same region."
+      ]
+    ],
+    "llGetAnimationList": [
+      [
+        "avatar",
+        "UUID of the avatar in the same region."
+      ]
+    ],
+    "llGetAnimationOverride": [
+      [
+        "anim_state",
+        "Animation state string to query."
+      ]
+    ],
+    "llGetAttachedList": [
+      [
+        "avatar",
+        "UUID of the avatar in the same region."
+      ]
+    ],
+    "llGetAttachedListFiltered": [
+      [
+        "avatar",
+        "UUID of the avatar in the same region."
+      ],
+      [
+        "options",
+        "A list of options to filter the returned attachments."
+      ]
+    ],
+    "llGetBoundingBox": [
+      [
+        "object",
+        "UUID of the avatar or prim in the same region."
+      ]
+    ],
+    "llGetClosestNavPoint": [
+      [
+        "point",
+        "Position vector in region-local coordinates."
+      ],
+      [
+        "options",
+        "A list of GCNP_* flags and parameters to configure the search limits."
+      ]
+    ],
+    "llGetColor": [
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llGetDisplayName": [
+      [
+        "id",
+        "UUID of the avatar in the same region or otherwise known to the region."
+      ]
+    ],
+    "llGetEnv": [
+      [
+        "name",
+        "Name of the regional data to request (unrecognized strings return an empty string)."
+      ]
+    ],
+    "llGetEnvironment": [
+      [
+        "pos",
+        "Position vector in region coordinates (X/Y determine the parcel, or region if X/Y are -1; Z determines the sky track altitude)."
+      ],
+      [
+        "params",
+        "A list of environmental attributes to retrieve."
+      ]
+    ],
+    "llGetExperienceDetails": [
+      [
+        "experience_id",
+        "UUID of the experience to query (can be NULL_KEY to retrieve details for the script's own experience)."
+      ]
+    ],
+    "llGetExperienceErrorMessage": [
+      [
+        "error",
+        "XP_ERROR_* error code constant to translate."
+      ]
+    ],
+    "llGetExperienceList": [
+      [
+        "agentid",
+        ""
+      ]
+    ],
+    "llGetGameControlMode": [
+      [
+        "id",
+        "UUID of the avatar whose game-controller state to query."
+      ]
+    ],
+    "llGetGameControlModeAxes": [
+      [
+        "id",
+        "UUID of the avatar whose game-controller state to query."
+      ]
+    ],
+    "llGetGameControlModeButtons": [
+      [
+        "id",
+        "UUID of the avatar whose game-controller state to query."
+      ]
+    ],
+    "llGetHTTPHeader": [
+      [
+        "request_id",
+        "Unique key of the HTTP request."
+      ],
+      [
+        "header",
+        "Lowercase name of the HTTP header to retrieve."
+      ]
+    ],
+    "llGetHealth": [
+      [
+        "id",
+        "UUID of the agent or object to query."
+      ]
+    ],
+    "llGetInventoryAcquireTime": [
+      [
+        "item",
+        "Name of the item in the prim's inventory."
+      ]
+    ],
+    "llGetInventoryCreator": [
+      [
+        "item",
+        "Name of the item in the prim's inventory."
+      ]
+    ],
+    "llGetInventoryDesc": [
+      [
+        "item",
+        "Name of the item in the prim's inventory."
+      ]
+    ],
+    "llGetInventoryKey": [
+      [
+        "item",
+        "Name of the item in the prim's inventory."
+      ]
+    ],
+    "llGetInventoryName": [
+      [
+        "type",
+        "INVENTORY_* type constant of the item."
+      ],
+      [
+        "index",
+        "Index of the item of that type."
+      ]
+    ],
+    "llGetInventoryNumber": [
+      [
+        "type",
+        "INVENTORY_* type constant to count."
+      ]
+    ],
+    "llGetInventoryPermMask": [
+      [
+        "item",
+        "Name of the item in the prim's inventory."
+      ],
+      [
+        "group",
+        "MASK_* group (e.g., MASK_BASE, MASK_OWNER, MASK_GROUP, MASK_EVERYONE, or MASK_NEXT) to get."
+      ]
+    ],
+    "llGetInventoryType": [
+      [
+        "item",
+        "Name of the item in the prim's inventory."
+      ]
+    ],
+    "llGetLandOwnerAt": [
+      [
+        "pos",
+        "Position vector in region coordinates."
+      ]
+    ],
+    "llGetLinkKey": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ]
+    ],
+    "llGetLinkMedia": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "face",
+        "Face number (side) of the prim."
+      ],
+      [
+        "params",
+        "A list of PRIM_MEDIA_* property constants to retrieve values for."
+      ]
+    ],
+    "llGetLinkName": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ]
+    ],
+    "llGetLinkNumberOfSides": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ]
+    ],
+    "llGetLinkPrimitiveParams": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag to retrieve parameters from."
+      ],
+      [
+        "params",
+        "A list of PRIM_* flags specifying the attributes to retrieve."
+      ]
+    ],
+    "llGetLinkSitFlags": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ]
+    ],
+    "llGetListEntryType": [
+      [
+        "src",
+        "Source list containing the element of interest."
+      ],
+      [
+        "index",
+        "Zero-based index of the entry."
+      ]
+    ],
+    "llGetListLength": [
+      [
+        "src",
+        "List to measure."
+      ]
+    ],
+    "llGetNextEmail": [
+      [
+        "address",
+        "Sender email address filter, or \"\" for any address."
+      ],
+      [
+        "subject",
+        "Email subject filter, or \"\" for any subject."
+      ]
+    ],
+    "llGetNotecardLine": [
+      [
+        "name",
+        "Name of the notecard in the prim's inventory, or a UUID."
+      ],
+      [
+        "line",
+        "Index of the line to read."
+      ]
+    ],
+    "llGetNotecardLineSync": [
+      [
+        "name",
+        "Name of the notecard in the prim's inventory, or a UUID."
+      ],
+      [
+        "line",
+        "Index of the line to read."
+      ]
+    ],
+    "llGetNumberOfNotecardLines": [
+      [
+        "name",
+        "Name of the notecard in the prim's inventory, or a UUID."
+      ]
+    ],
+    "llGetObjectDetails": [
+      [
+        "id",
+        "UUID of the avatar or prim (in the same or adjacent regions) to query."
+      ],
+      [
+        "params",
+        "A list of OBJECT_* flags specifying the attributes to retrieve."
+      ]
+    ],
+    "llGetObjectLinkKey": [
+      [
+        "object_id",
+        "UUID of the target prim or linkset."
+      ],
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag of the prim to retrieve."
+      ]
+    ],
+    "llGetObjectMass": [
+      [
+        "id",
+        "UUID of the avatar or object to query."
+      ]
+    ],
+    "llGetObjectPermMask": [
+      [
+        "group",
+        "MASK_* group (e.g., MASK_BASE, MASK_OWNER, MASK_GROUP, MASK_EVERYONE, or MASK_NEXT) to get."
+      ]
+    ],
+    "llGetObjectPrimCount": [
+      [
+        "prim",
+        "UUID of the prim in the same region."
+      ]
+    ],
+    "llGetOwnerKey": [
+      [
+        "id",
+        "UUID of the prim in the same region."
+      ]
+    ],
+    "llGetParcelDetails": [
+      [
+        "pos",
+        "Position vector in region coordinates (only the X and Y components are used)."
+      ],
+      [
+        "params",
+        "A list of PARCEL_DETAILS_* flags specifying the attributes to retrieve."
+      ]
+    ],
+    "llGetParcelFlags": [
+      [
+        "pos",
+        "Position vector in region coordinates (the Z component is ignored)."
+      ]
+    ],
+    "llGetParcelMaxPrims": [
+      [
+        "pos",
+        "Position vector in region coordinates (the Z component is ignored)."
+      ],
+      [
+        "sim_wide",
+        "Boolean. If TRUE, returns the combined land impact limit for all parcels owned by the parcel owner in the region; if FALSE, returns only the limit for the specified parcel."
+      ]
+    ],
+    "llGetParcelPrimCount": [
+      [
+        "pos",
+        "Position vector in region coordinates (the Z component is ignored)."
+      ],
+      [
+        "category",
+        "PARCEL_COUNT_* category flag."
+      ],
+      [
+        "sim_wide",
+        "Boolean. If TRUE, searches all parcels in the region owned by the targeted parcel's owner; if FALSE, searches only the specified parcel."
+      ]
+    ],
+    "llGetParcelPrimOwners": [
+      [
+        "pos",
+        "Position vector in region coordinates."
+      ]
+    ],
+    "llGetPrimMediaParams": [
+      [
+        "face",
+        "Face number (side) of the prim."
+      ],
+      [
+        "params",
+        "A list of PRIM_MEDIA_* property constants to retrieve values for."
+      ]
+    ],
+    "llGetPrimitiveParams": [
+      [
+        "params",
+        "A list of PRIM_* flags specifying the attributes to retrieve."
+      ]
+    ],
+    "llGetRenderMaterial": [
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llGetScriptState": [
+      [
+        "script",
+        "Name of the script in the prim's inventory."
+      ]
+    ],
+    "llGetSimStats": [
+      [
+        "stat_type",
+        "SIM_STAT_* flag of the statistic to retrieve."
+      ]
+    ],
+    "llGetStaticPath": [
+      [
+        "start_pos",
+        "Starting position vector."
+      ],
+      [
+        "end_pos",
+        "Target end position vector."
+      ],
+      [
+        "radius",
+        "Radius of the character path, between 0.125m and 5.0m."
+      ],
+      [
+        "params",
+        "A list specifying the CHARACTER_TYPE parameter (defaults to CHARACTER_TYPE_NONE)."
+      ]
+    ],
+    "llGetStatus": [
+      [
+        "status",
+        "Single STATUS_* flag to check."
+      ]
+    ],
+    "llGetSubString": [
+      [
+        "src",
+        "Source string to slice."
+      ],
+      [
+        "start_index",
+        "Starting codepoint index (inclusive). Supports negative indexing."
+      ],
+      [
+        "end_index",
+        "Ending codepoint index (inclusive). Supports negative indexing."
+      ]
+    ],
+    "llGetTexture": [
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llGetTextureOffset": [
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llGetTextureRot": [
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llGetTextureScale": [
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llGetUsername": [
+      [
+        "id",
+        "UUID of the avatar in the same region or otherwise known to the region."
+      ]
+    ],
+    "llGetVisualParams": [
+      [
+        "agentid",
+        "UUID of the avatar in the same region."
+      ],
+      [
+        "params",
+        "A list of visual parameter IDs or names to retrieve values for."
+      ]
+    ],
+    "llGiveAgentInventory": [
+      [
+        "agent",
+        "UUID of the target agent in the same region."
+      ],
+      [
+        "folder",
+        "Name of the destination folder to be created"
+      ],
+      [
+        "items",
+        "The names of the items in the prim's inventory to transfer."
+      ],
+      [
+        "options",
+        "A list of options to configure the inventory transfer."
+      ]
+    ],
+    "llGiveInventory": [
+      [
+        "target",
+        "UUID of the target agent or prim."
+      ],
+      [
+        "item",
+        "Name of the item in the prim's inventory to transfer."
+      ]
+    ],
+    "llGiveInventoryList": [
+      [
+        "target",
+        "UUID of the target agent or prim in the same region."
+      ],
+      [
+        "folder",
+        "Name of the destination folder to be created (ignored if the target is an object)."
+      ],
+      [
+        "items",
+        "The names of the items in the prim's inventory to transfer."
+      ]
+    ],
+    "llGiveMoney": [
+      [
+        "destination",
+        "UUID of the destination avatar."
+      ],
+      [
+        "amount",
+        "Number of L$ to transfer (must be greater than 0)."
+      ]
+    ],
+    "llGodLikeRezObject": [
+      [
+        "id",
+        "Asset UUID of the object to rez."
+      ],
+      [
+        "pos",
+        "Position vector in region coordinates where the object will be rezzed."
+      ]
+    ],
+    "llGround": [
+      [
+        "offset",
+        "Offset relative to the prim's position, expressed in local coordinates."
+      ]
+    ],
+    "llGroundContour": [
+      [
+        "offset",
+        "Offset relative to the prim's position, expressed in local coordinates."
+      ]
+    ],
+    "llGroundNormal": [
+      [
+        "offset",
+        "Offset relative to the prim's position, expressed in local coordinates."
+      ]
+    ],
+    "llGroundRepel": [
+      [
+        "height",
+        "Target distance in meters above the ground or water."
+      ],
+      [
+        "water",
+        "Boolean. If TRUE, damp relative to the higher of land and water; if FALSE, damp relative to land only."
+      ],
+      [
+        "tau",
+        "Timescale in seconds to critically damp the movement."
+      ]
+    ],
+    "llGroundSlope": [
+      [
+        "offset",
+        "Offset relative to the prim's position, expressed in local coordinates."
+      ]
+    ],
+    "llHMAC": [
+      [
+        "private_key",
+        "PEM-formatted secret key to use for the HMAC hash."
+      ],
+      [
+        "msg",
+        "Message string to be hashed."
+      ],
+      [
+        "algorithm",
+        "Cryptographic digest algorithm to use."
+      ]
+    ],
+    "llHTTPRequest": [
+      [
+        "url",
+        "Destination HTTP or HTTPS URL."
+      ],
+      [
+        "parameters",
+        "A list of HTTP_* configuration flags and value pairs, or an HTTPRequestParams dictionary."
+      ],
+      [
+        "body",
+        "String contents of the request body."
+      ]
+    ],
+    "llHTTPResponse": [
+      [
+        "request_id",
+        "Unique key identifying the incoming HTTP request."
+      ],
+      [
+        "status",
+        "Integer HTTP status code (such as 200, 400, or 404) to respond with."
+      ],
+      [
+        "body",
+        "String contents of the response body."
+      ]
+    ],
+    "llHash": [
+      [
+        "val",
+        "String to hash."
+      ]
+    ],
+    "llInsertString": [
+      [
+        "dst",
+        "Target destination string."
+      ],
+      [
+        "index",
+        "Codepoint index where insertion starts."
+      ],
+      [
+        "src",
+        "Source string to insert."
+      ]
+    ],
+    "llInstantMessage": [
+      [
+        "agent",
+        "UUID of the destination agent."
+      ],
+      [
+        "msg",
+        "Text message string to send."
+      ]
+    ],
+    "llIntegerToBase64": [
+      [
+        "number",
+        "Integer number to encode."
+      ]
+    ],
+    "llIsFriend": [
+      [
+        "agent_id",
+        "UUID of the agent to check."
+      ]
+    ],
+    "llIsLinkGLTFMaterial": [
+      [
+        "link",
+        "Link number (or LINK_* flag) of the prim to inspect."
+      ],
+      [
+        "face",
+        "Face number (or ALL_SIDES) of the prim to inspect."
+      ]
+    ],
+    "llJson2List": [
+      [
+        "src",
+        "JSON string to parse."
+      ]
+    ],
+    "llJsonGetValue": [
+      [
+        "json",
+        "JSON string to query."
+      ],
+      [
+        "specifiers",
+        "A list of key names or array indices specifying the path to the desired value. # TODO: The specifiers can contain integers, which should be array indices # But we don't support that in the bindgen yet. # index-semantics: true"
+      ]
+    ],
+    "llJsonSetValue": [
+      [
+        "json",
+        "Source JSON string to modify."
+      ],
+      [
+        "specifiers",
+        "A list of key names or array indices specifying the path to add, update, or delete."
+      ],
+      [
+        "value",
+        "New value to set, or the JSON_DELETE constant to delete the targeted element."
+      ]
+    ],
+    "llJsonValueType": [
+      [
+        "json",
+        "JSON string containing the value to query."
+      ],
+      [
+        "specifiers",
+        "A list of key names or array indices specifying the path to the value. # TODO: The specifiers can contain integers, which should be array indices # But we don't support that in the bindgen yet. # index-semantics: true"
+      ]
+    ],
+    "llKey2Name": [
+      [
+        "id",
+        "UUID of the target avatar or prim in the same region."
+      ]
+    ],
+    "llKeysKeyValue": [
+      [
+        "first",
+        "Zero-based start index of the keys to retrieve."
+      ],
+      [
+        "count",
+        "Number of keys to retrieve."
+      ]
+    ],
+    "llLinear2sRGB": [
+      [
+        "color",
+        "Color vector in the linear RGB space to convert."
+      ]
+    ],
+    "llLinkAdjustSoundVolume": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag of the prim to adjust."
+      ],
+      [
+        "volume",
+        "Volume level to set, between 0.0 (silent) and 1.0 (loud)."
+      ]
+    ],
+    "llLinkParticleSystem": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "rules",
+        "A list of particle system rules and data pairs [rule1, data1, ...], or a ParticleParams dictionary."
+      ]
+    ],
+    "llLinkPlaySound": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "sound",
+        "Name of a sound in the prim's inventory, or a UUID."
+      ],
+      [
+        "volume",
+        "Volume level to set, between 0.0 (silent) and 1.0 (loud)."
+      ],
+      [
+        "flags",
+        "Bitwise flags (combination of SOUND_*) controlling the sound playback."
+      ]
+    ],
+    "llLinkSetSoundQueueing": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "queue",
+        "Boolean. If TRUE, sound queuing is enabled; if FALSE, it is disabled."
+      ]
+    ],
+    "llLinkSetSoundRadius": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "radius",
+        "Maximum distance in meters at which the sounds can be heard."
+      ]
+    ],
+    "llLinkSitTarget": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "offset",
+        "Offset position vector in local prim coordinates."
+      ],
+      [
+        "rot",
+        "Rotation relative to the prim's rotation."
+      ]
+    ],
+    "llLinkStopSound": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ]
+    ],
+    "llLinksetDataCountFound": [
+      [
+        "pattern",
+        "Regular expression (regex) matching the keys to count."
+      ]
+    ],
+    "llLinksetDataDelete": [
+      [
+        "name",
+        "Name of the key to delete."
+      ]
+    ],
+    "llLinksetDataDeleteFound": [
+      [
+        "pattern",
+        "Regular expression (regex) matching the keys to delete."
+      ],
+      [
+        "pass",
+        "Optional passphrase required to delete matching protected keys."
+      ]
+    ],
+    "llLinksetDataDeleteProtected": [
+      [
+        "name",
+        "Name of the protected key to delete."
+      ],
+      [
+        "pass",
+        "Passphrase required to delete the protected key."
+      ]
+    ],
+    "llLinksetDataFindKeys": [
+      [
+        "pattern",
+        "Regular expression (regex) matching the keys to return."
+      ],
+      [
+        "start",
+        "Index of the first matching key to return."
+      ],
+      [
+        "count",
+        "Maximum number of keys to return (or less than 1 to retrieve all matching keys)."
+      ]
+    ],
+    "llLinksetDataListKeys": [
+      [
+        "start",
+        "Index of the first key to return."
+      ],
+      [
+        "count",
+        "Maximum number of keys to return (or less than 1 to retrieve all keys)."
+      ]
+    ],
+    "llLinksetDataRead": [
+      [
+        "name",
+        "Name of the key to read."
+      ]
+    ],
+    "llLinksetDataReadProtected": [
+      [
+        "name",
+        "Name of the protected key to read."
+      ],
+      [
+        "pass",
+        "Passphrase required to read the protected key."
+      ]
+    ],
+    "llLinksetDataWrite": [
+      [
+        "name",
+        "Name of the key to write."
+      ],
+      [
+        "value",
+        "Value to write to the key (an empty string deletes the key)."
+      ]
+    ],
+    "llLinksetDataWriteProtected": [
+      [
+        "name",
+        "Name of the protected key to write."
+      ],
+      [
+        "value",
+        "Value to write to the key (an empty string deletes the key)."
+      ],
+      [
+        "pass",
+        "Passphrase used to protect or update the key."
+      ]
+    ],
+    "llList2CSV": [
+      [
+        "src",
+        "Source list to convert."
+      ]
+    ],
+    "llList2Float": [
+      [
+        "src",
+        "Source list containing the element of interest."
+      ],
+      [
+        "index",
+        "Zero-based index of the entry."
+      ]
+    ],
+    "llList2Integer": [
+      [
+        "src",
+        "Source list containing the element of interest."
+      ],
+      [
+        "index",
+        "Zero-based index of the entry."
+      ]
+    ],
+    "llList2Json": [
+      [
+        "type",
+        "JSON target type (JSON_ARRAY or JSON_OBJECT)."
+      ],
+      [
+        "values",
+        "List of values to serialize."
+      ]
+    ],
+    "llList2Key": [
+      [
+        "src",
+        "Source list containing the element of interest."
+      ],
+      [
+        "index",
+        "Zero-based index of the entry."
+      ]
+    ],
+    "llList2List": [
+      [
+        "src",
+        "Source list to slice."
+      ],
+      [
+        "start_index",
+        "Zero-based start index (inclusive)."
+      ],
+      [
+        "end_index",
+        "Zero-based end index (inclusive)."
+      ]
+    ],
+    "llList2ListSlice": [
+      [
+        "src",
+        "Source strided list."
+      ],
+      [
+        "start_index",
+        "Zero-based start index (inclusive)."
+      ],
+      [
+        "end_index",
+        "Zero-based end index (inclusive)."
+      ],
+      [
+        "stride",
+        "Number of entries per stride (defaults to 1 if less than 1)."
+      ],
+      [
+        "slice_index",
+        "Zero-based element index within each stride to extract (negatives count backward from the end of the stride)."
+      ]
+    ],
+    "llList2ListStrided": [
+      [
+        "src",
+        "Source strided list."
+      ],
+      [
+        "start_index",
+        "Zero-based start index (inclusive)."
+      ],
+      [
+        "end_index",
+        "Zero-based end index (inclusive)."
+      ],
+      [
+        "stride",
+        "Number of entries per stride (defaults to 1 if less than 1)."
+      ]
+    ],
+    "llList2Rot": [
+      [
+        "src",
+        "Source list containing the element of interest."
+      ],
+      [
+        "index",
+        "Zero-based index of the entry."
+      ]
+    ],
+    "llList2String": [
+      [
+        "src",
+        "Source list containing the element of interest."
+      ],
+      [
+        "index",
+        "Zero-based index of the entry."
+      ]
+    ],
+    "llList2Vector": [
+      [
+        "src",
+        "Source list containing the element of interest."
+      ],
+      [
+        "index",
+        "Zero-based index of the entry."
+      ]
+    ],
+    "llListFindList": [
+      [
+        "src",
+        "List to search within."
+      ],
+      [
+        "test",
+        "List elements to search for."
+      ]
+    ],
+    "llListFindListNext": [
+      [
+        "src",
+        "List to search within."
+      ],
+      [
+        "test",
+        "List elements to search for."
+      ],
+      [
+        "instance",
+        "Zero-based occurrence index of the match to find."
+      ]
+    ],
+    "llListFindStrided": [
+      [
+        "src",
+        "List to search within."
+      ],
+      [
+        "test",
+        "List elements to search for."
+      ],
+      [
+        "start_index",
+        "Zero-based start index of the range to search."
+      ],
+      [
+        "end_index",
+        "Zero-based end index of the range to search."
+      ],
+      [
+        "stride",
+        "Number of entries per stride in the list."
+      ]
+    ],
+    "llListInsertList": [
+      [
+        "dest",
+        "Target destination list."
+      ],
+      [
+        "src",
+        "Source list to insert."
+      ],
+      [
+        "start",
+        "Zero-based index where insertion begins."
+      ]
+    ],
+    "llListRandomize": [
+      [
+        "src",
+        "Source list to randomize."
+      ],
+      [
+        "stride",
+        "Size of each randomized block (defaults to 1 if less than 1)."
+      ]
+    ],
+    "llListReplaceList": [
+      [
+        "dest",
+        "Target destination list."
+      ],
+      [
+        "src",
+        "Source list to insert."
+      ],
+      [
+        "start_index",
+        "Zero-based start index (inclusive) of the replaced range."
+      ],
+      [
+        "end_index",
+        "Zero-based end index (inclusive) of the replaced range."
+      ]
+    ],
+    "llListSort": [
+      [
+        "src",
+        "List to be sorted."
+      ],
+      [
+        "stride",
+        "Number of entries per block/stride (defaults to 1 if less than 1)."
+      ],
+      [
+        "ascending",
+        "Boolean. If TRUE, sorts in ascending order; if FALSE, sorts in descending order."
+      ]
+    ],
+    "llListSortStrided": [
+      [
+        "src",
+        "List to be sorted."
+      ],
+      [
+        "stride",
+        "Number of entries per block/stride (defaults to 1 if less than 1)."
+      ],
+      [
+        "stride_index",
+        "Zero-based index of the element within each stride to use as the sort key (negatives count backward from the end of the stride)."
+      ],
+      [
+        "ascending",
+        "Boolean. If TRUE, sorts in ascending order; if FALSE, sorts in descending order."
+      ]
+    ],
+    "llListStatistics": [
+      [
+        "operation",
+        "LIST_STAT_* constant of the statistical operation to perform."
+      ],
+      [
+        "src",
+        "List of numbers to analyze."
+      ]
+    ],
+    "llListen": [
+      [
+        "channel",
+        "Chat channel (any 32-bit signed integer value) to listen on. Exact range is -2147483648 to 2147483647."
+      ],
+      [
+        "name",
+        "Specific prim name or agent legacy name to filter by (or empty string for no filter)."
+      ],
+      [
+        "id",
+        "Specific agent or prim UUID to filter by (or NULL_KEY for no filter)."
+      ],
+      [
+        "msg",
+        "Specific chat message string to filter by (or empty string for no filter)."
+      ]
+    ],
+    "llListenControl": [
+      [
+        "handle",
+        "Integer listener handle returned by llListen."
+      ],
+      [
+        "active",
+        "Boolean. If TRUE, activates the listener; if FALSE, deactivates it."
+      ]
+    ],
+    "llListenRemove": [
+      [
+        "handle",
+        "Integer listener handle returned by llListen to remove."
+      ]
+    ],
+    "llLoadURL": [
+      [
+        "avatar",
+        "UUID of the avatar in the same region."
+      ],
+      [
+        "message",
+        "Text message to display in the dialog box."
+      ],
+      [
+        "url",
+        "Web URL to open."
+      ]
+    ],
+    "llLog": [
+      [
+        "val",
+        "Number to compute the logarithm of."
+      ]
+    ],
+    "llLog10": [
+      [
+        "val",
+        "Number to compute the logarithm of."
+      ]
+    ],
+    "llLookAt": [
+      [
+        "target",
+        "Target position vector in region coordinates to look at."
+      ],
+      [
+        "strength",
+        "Force of rotation (0.0 cancels the tracking; values around half the object's mass are typical)."
+      ],
+      [
+        "damping",
+        "Timescale in seconds to critically damp the orientation."
+      ]
+    ],
+    "llLoopSound": [
+      [
+        "sound",
+        "Name of a sound in the prim's inventory, or a UUID."
+      ],
+      [
+        "volume",
+        "Volume level to set, between 0.0 (silent) and 1.0 (loud)."
+      ]
+    ],
+    "llLoopSoundMaster": [
+      [
+        "sound",
+        "Name of a sound in the prim's inventory, or a UUID."
+      ],
+      [
+        "volume",
+        "Volume level to set, between 0.0 (silent) and 1.0 (loud)."
+      ]
+    ],
+    "llLoopSoundSlave": [
+      [
+        "sound",
+        "Name of a sound in the prim's inventory, or a UUID."
+      ],
+      [
+        "volume",
+        "Volume level to set, between 0.0 (silent) and 1.0 (loud)."
+      ]
+    ],
+    "llMD5String": [
+      [
+        "src",
+        "Source string to hash."
+      ],
+      [
+        "nonce",
+        "Nonce string used as a salt."
+      ]
+    ],
+    "llMakeExplosion": [
+      [
+        "particles",
+        ""
+      ],
+      [
+        "scale",
+        ""
+      ],
+      [
+        "vel",
+        ""
+      ],
+      [
+        "lifetime",
+        ""
+      ],
+      [
+        "arc",
+        ""
+      ],
+      [
+        "texture",
+        "Name of a texture in the prim's inventory, or a UUID."
+      ],
+      [
+        "offset",
+        "Offset relative to the prim's position (expressed in local coordinates; completely ignored by the system)."
+      ]
+    ],
+    "llMakeFire": [
+      [
+        "particles",
+        ""
+      ],
+      [
+        "scale",
+        ""
+      ],
+      [
+        "vel",
+        ""
+      ],
+      [
+        "lifetime",
+        ""
+      ],
+      [
+        "arc",
+        ""
+      ],
+      [
+        "texture",
+        "Name of a texture in the prim's inventory, or a UUID."
+      ],
+      [
+        "offset",
+        "Offset relative to the prim's position (expressed in local coordinates; completely ignored by the system)."
+      ]
+    ],
+    "llMakeFountain": [
+      [
+        "particles",
+        ""
+      ],
+      [
+        "scale",
+        ""
+      ],
+      [
+        "vel",
+        ""
+      ],
+      [
+        "lifetime",
+        ""
+      ],
+      [
+        "arc",
+        ""
+      ],
+      [
+        "bounce",
+        ""
+      ],
+      [
+        "texture",
+        "Name of a texture in the prim's inventory, or a UUID."
+      ],
+      [
+        "offset",
+        "Offset relative to the prim's position (expressed in local coordinates; completely ignored by the system)."
+      ],
+      [
+        "bounce_offset",
+        ""
+      ]
+    ],
+    "llMakeSmoke": [
+      [
+        "particles",
+        ""
+      ],
+      [
+        "scale",
+        ""
+      ],
+      [
+        "vel",
+        ""
+      ],
+      [
+        "lifetime",
+        ""
+      ],
+      [
+        "arc",
+        ""
+      ],
+      [
+        "texture",
+        "Name of a texture in the prim's inventory, or a UUID."
+      ],
+      [
+        "offset",
+        "Offset relative to the prim's position (expressed in local coordinates; completely ignored by the system)."
+      ]
+    ],
+    "llManageEstateAccess": [
+      [
+        "action",
+        "An ESTATE_ACCESS_* action flag specifying the operation to perform."
+      ],
+      [
+        "avatar",
+        "UUID of the avatar or group to add or remove."
+      ]
+    ],
+    "llMapBeacon": [
+      [
+        "region_name",
+        "Name of the region where the beacon is displayed."
+      ],
+      [
+        "pos",
+        "Position vector in region coordinates to highlight."
+      ],
+      [
+        "options",
+        "A list of options to configure the map beacon."
+      ]
+    ],
+    "llMapDestination": [
+      [
+        "simname",
+        "Name of the target simulator region."
+      ],
+      [
+        "pos",
+        "Position vector in region coordinates to highlight."
+      ],
+      [
+        "look_at",
+        "Position in local coordinates (currently unused/ignored)."
+      ]
+    ],
+    "llMessageLinked": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag controlling which prim(s) receive the message."
+      ],
+      [
+        "num",
+        "An integer value passed as the second parameter of the link_message event."
+      ],
+      [
+        "str",
+        "A string value passed as the third parameter of the link_message event."
+      ],
+      [
+        "id",
+        "A key value passed as the fourth parameter of the link_message event."
+      ]
+    ],
+    "llMinEventDelay": [
+      [
+        "delay",
+        "Minimum delay duration in seconds."
+      ]
+    ],
+    "llModPow": [
+      [
+        "base",
+        "32-bit unsigned integer base."
+      ],
+      [
+        "exponent",
+        "32-bit unsigned integer exponent."
+      ],
+      [
+        "modulus",
+        "32-bit unsigned integer modulus."
+      ]
+    ],
+    "llModifyLand": [
+      [
+        "action",
+        "LAND_* action flag to perform (e.g., LAND_LEVEL, LAND_RAISE, LAND_LOWER, LAND_SMOOTH, LAND_NOISE, or LAND_REVERT)."
+      ],
+      [
+        "brush",
+        "Brush size (0, 1, or 2, representing 2m x 2m, 4m x 4m, or 8m x 8m)."
+      ]
+    ],
+    "llMoveToTarget": [
+      [
+        "target",
+        "Target position vector in region coordinates."
+      ],
+      [
+        "tau",
+        "Timescale in seconds to critically damp the movement."
+      ]
+    ],
+    "llName2Key": [
+      [
+        "name",
+        "Name of the avatar (e.g., 'First Last' or 'first.last')."
+      ]
+    ],
+    "llNavigateTo": [
+      [
+        "pos",
+        "Destination position vector in region coordinates."
+      ],
+      [
+        "options",
+        "A list of parameters to configure pathfinding behavior (currently only FORCE_DIRECT_PATH is supported)."
+      ]
+    ],
+    "llOffsetTexture": [
+      [
+        "u",
+        "Horizontal (U) offset, typically in the interval [-1.0, 1.0]."
+      ],
+      [
+        "v",
+        "Vertical (V) offset, typically in the interval [-1.0, 1.0]."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llOpenFloater": [
+      [
+        "floater_name",
+        "Identifier string of the viewer floater to open."
+      ],
+      [
+        "url",
+        "URL to load within the opened floater."
+      ],
+      [
+        "params",
+        "Options or parameters to apply to the opened floater."
+      ]
+    ],
+    "llOrd": [
+      [
+        "val",
+        "Source string."
+      ],
+      [
+        "index",
+        "Codepoint index of the character to convert. Supports negative indexing."
+      ]
+    ],
+    "llOverMyLand": [
+      [
+        "id",
+        "UUID of the group, avatar, or object to check."
+      ]
+    ],
+    "llOwnerSay": [
+      [
+        "msg",
+        "Text message string to send to the object owner."
+      ]
+    ],
+    "llParcelMediaCommandList": [
+      [
+        "commandList",
+        "A list containing integer PARCEL_MEDIA_COMMAND_* flags and their corresponding parameters."
+      ]
+    ],
+    "llParcelMediaQuery": [
+      [
+        "query",
+        "A list of PARCEL_MEDIA_COMMAND_* attributes to query."
+      ]
+    ],
+    "llParseString2List": [
+      [
+        "src",
+        "Source string to parse."
+      ],
+      [
+        "separators",
+        "A list of up to 8 strings representing separators to be discarded."
+      ],
+      [
+        "spacers",
+        "A list of up to 8 strings representing spacers to be preserved in the list."
+      ]
+    ],
+    "llParseStringKeepNulls": [
+      [
+        "src",
+        "Source string to parse."
+      ],
+      [
+        "separators",
+        "A list of up to 8 strings representing separators to be discarded."
+      ],
+      [
+        "spacers",
+        "A list of up to 8 strings representing spacers to be preserved in the list."
+      ]
+    ],
+    "llParticleSystem": [
+      [
+        "rules",
+        "A list of particle system rules and data pairs [rule1, data1, ...]."
+      ]
+    ],
+    "llPassCollisions": [
+      [
+        "pass",
+        "A PASS_* flag (e.g., PASS_ALWAYS, PASS_IF_NOT_HANDLED, or PASS_NEVER)."
+      ]
+    ],
+    "llPassTouches": [
+      [
+        "pass",
+        "A PASS_* flag (e.g., PASS_ALWAYS, PASS_IF_NOT_HANDLED, or PASS_NEVER)."
+      ]
+    ],
+    "llPatrolPoints": [
+      [
+        "patrolPoints",
+        "A list of at least two position vectors representing the patrol path."
+      ],
+      [
+        "options",
+        "A list of PATROL_* flags and parameters to configure the patrol behavior."
+      ]
+    ],
+    "llPlaySound": [
+      [
+        "sound",
+        "Name of a sound in the prim's inventory, or a UUID."
+      ],
+      [
+        "volume",
+        "Volume level to set, between 0.0 (silent) and 1.0 (loud)."
+      ]
+    ],
+    "llPlaySoundSlave": [
+      [
+        "sound",
+        "Name of a sound in the prim's inventory, or a UUID."
+      ],
+      [
+        "volume",
+        "Volume level to set, between 0.0 (silent) and 1.0 (loud)."
+      ]
+    ],
+    "llPointAt": [
+      [
+        "pos",
+        "Position vector to point at."
+      ]
+    ],
+    "llPow": [
+      [
+        "base",
+        "Base number."
+      ],
+      [
+        "exponent",
+        "Exponent number."
+      ]
+    ],
+    "llPreloadSound": [
+      [
+        "sound",
+        "Name of the sound in the prim's inventory, or a UUID."
+      ]
+    ],
+    "llPursue": [
+      [
+        "target",
+        "UUID of the group, avatar, or object to pursue."
+      ],
+      [
+        "options",
+        "A list of options to configure pursuit behavior."
+      ]
+    ],
+    "llPushObject": [
+      [
+        "target",
+        "UUID of the target avatar or object in the same region."
+      ],
+      [
+        "impulse",
+        "Linear impulse vector representing the direction and force of the push."
+      ],
+      [
+        "ang_impulse",
+        "Angular impulse vector representing the rotational force."
+      ],
+      [
+        "is_local",
+        "Boolean. If TRUE, forces are applied relative to the target's local axes; if FALSE, relative to region axes."
+      ]
+    ],
+    "llReadKeyValue": [
+      [
+        "k",
+        "Key of the key-value pair to read."
+      ]
+    ],
+    "llRegionSay": [
+      [
+        "channel",
+        "Chat channel (any 32-bit signed integer value except zero) to chat the message on."
+      ],
+      [
+        "msg",
+        "Text message string to broadcast."
+      ]
+    ],
+    "llRegionSayTo": [
+      [
+        "target",
+        "UUID of the target agent or prim in the same region."
+      ],
+      [
+        "channel",
+        "Chat channel (any 32-bit signed integer value) to chat the message on."
+      ],
+      [
+        "msg",
+        "Text message string to send."
+      ]
+    ],
+    "llReleaseCamera": [
+      [
+        "avatar",
+        "UUID of the avatar in the same region."
+      ]
+    ],
+    "llReleaseURL": [
+      [
+        "url",
+        "URL string to release."
+      ]
+    ],
+    "llRemoteDataReply": [
+      [
+        "channel",
+        "XML-RPC channel ID."
+      ],
+      [
+        "message_id",
+        "XML-RPC message ID."
+      ],
+      [
+        "sdata",
+        "String payload data to reply with."
+      ],
+      [
+        "idata",
+        "Integer payload data to reply with."
+      ]
+    ],
+    "llRemoteLoadScript": [
+      [
+        "target",
+        "UUID of the target prim."
+      ],
+      [
+        "script",
+        "Name of the script in the prim's inventory."
+      ],
+      [
+        "running",
+        "Boolean. If TRUE, sets the copied script to run immediately; if FALSE, leaves it stopped."
+      ],
+      [
+        "start_param",
+        "Integer start parameter passed to the copied script (readable via llGetStartParameter)."
+      ]
+    ],
+    "llRemoteLoadScriptPin": [
+      [
+        "target",
+        "UUID of the target prim in the same region."
+      ],
+      [
+        "script",
+        "Name of the script in the prim's inventory."
+      ],
+      [
+        "pin",
+        "Integer PIN code (must match the PIN set on the ObjectID via llSetRemoteScriptAccessPin)."
+      ],
+      [
+        "running",
+        "Boolean. If TRUE, sets the copied script to run immediately; if FALSE, leaves it stopped."
+      ],
+      [
+        "start_param",
+        "Integer start parameter passed to the copied script (readable via llGetStartParameter)."
+      ]
+    ],
+    "llRemoveFromLandBanList": [
+      [
+        "avatar",
+        "UUID of the avatar to remove."
+      ]
+    ],
+    "llRemoveFromLandPassList": [
+      [
+        "avatar",
+        "UUID of the avatar to remove."
+      ]
+    ],
+    "llRemoveInventory": [
+      [
+        "item",
+        "Name of the item in the prim's inventory to remove."
+      ]
+    ],
+    "llRemoveVehicleFlags": [
+      [
+        "flags",
+        "A bitwise mask of VEHICLE_FLAG_* constants to disable."
+      ]
+    ],
+    "llReplaceAgentEnvironment": [
+      [
+        "agent_id",
+        "UUID of an agent in the region participating in the experience."
+      ],
+      [
+        "transition",
+        "Duration in seconds over which to transition to the new environment."
+      ],
+      [
+        "environment",
+        "Name of an environmental setting in inventory, or its asset UUID (or empty string/NULL_KEY to clear)."
+      ]
+    ],
+    "llReplaceEnvironment": [
+      [
+        "position",
+        "Position vector of the target parcel (the Z component is ignored; use <-1.0, -1.0, -1.0> for the entire region)."
+      ],
+      [
+        "environment",
+        "Name of an environmental setting in inventory, or its asset UUID (or empty string/NULL_KEY to clear)."
+      ],
+      [
+        "track_no",
+        "The elevation track to change (0: water, 1: ground, 2: 1000m, 3: 2000m, 4: 3000m, -1: all tracks)."
+      ],
+      [
+        "day_length",
+        "Day cycle length in seconds (-1 to leave unchanged)."
+      ],
+      [
+        "day_offset",
+        "Day cycle offset in seconds from UTC (-1 to leave unchanged)."
+      ]
+    ],
+    "llReplaceSubString": [
+      [
+        "src",
+        "Original source string to search."
+      ],
+      [
+        "pattern",
+        "Substring pattern to find and replace."
+      ],
+      [
+        "replacement_pattern",
+        "New substring that replaces the pattern."
+      ],
+      [
+        "count",
+        "Maximum number of replacements to make (0 for all, positive for left-to-right, negative for right-to-left)."
+      ]
+    ],
+    "llRequestAgentData": [
+      [
+        "id",
+        "UUID of the agent."
+      ],
+      [
+        "data",
+        "DATA_* category flag of the requested information."
+      ]
+    ],
+    "llRequestDisplayName": [
+      [
+        "id",
+        "UUID of the avatar to query."
+      ]
+    ],
+    "llRequestExperiencePermissions": [
+      [
+        "agent",
+        "UUID of the agent to request permissions from."
+      ],
+      [
+        "name",
+        "Deprecated parameter (no longer used)."
+      ]
+    ],
+    "llRequestInventoryData": [
+      [
+        "item",
+        "Name of the item in the prim's inventory."
+      ]
+    ],
+    "llRequestPermissions": [
+      [
+        "agent",
+        "UUID of the agent in the same region."
+      ],
+      [
+        "permissions",
+        "Bitfield containing the PERMISSION_* constants to request."
+      ]
+    ],
+    "llRequestSimulatorData": [
+      [
+        "region",
+        "Case-sensitive region name."
+      ],
+      [
+        "data",
+        "DATA_SIM_* flag of the requested simulator data."
+      ]
+    ],
+    "llRequestUserKey": [
+      [
+        "username",
+        "Current or historical username of the avatar to resolve."
+      ]
+    ],
+    "llRequestUsername": [
+      [
+        "id",
+        "UUID of the avatar to query."
+      ]
+    ],
+    "llResetAnimationOverride": [
+      [
+        "anim_state",
+        "Animation state string (or 'ALL') to reset."
+      ]
+    ],
+    "llResetOtherScript": [
+      [
+        "script",
+        "Name of the target script in the prim's inventory."
+      ]
+    ],
+    "llReturnObjectsByID": [
+      [
+        "objects",
+        "A list of object UUID keys to return."
+      ]
+    ],
+    "llReturnObjectsByOwner": [
+      [
+        "owner",
+        "UUID of the avatar or group whose objects will be returned."
+      ],
+      [
+        "scope",
+        "OBJECT_RETURN_* scope flag (such as OBJECT_RETURN_PARCEL, OBJECT_RETURN_PARCEL_OWNER, or OBJECT_RETURN_REGION)."
+      ]
+    ],
+    "llRezAtRoot": [
+      [
+        "item",
+        "Name of the object in the prim's inventory to rez."
+      ],
+      [
+        "pos",
+        "Position vector in region coordinates where the root of the object will be placed."
+      ],
+      [
+        "vel",
+        "Initial velocity vector for the rezzed object."
+      ],
+      [
+        "rot",
+        "Initial rotation of the rezzed object."
+      ],
+      [
+        "start_param",
+        "Start parameter passed to the rezzed object's on_rez event (accessible via llGetStartParameter)."
+      ]
+    ],
+    "llRezObject": [
+      [
+        "item",
+        "Name of the object in the prim's inventory to rez."
+      ],
+      [
+        "pos",
+        "Position vector in region coordinates where the center of the object will be placed."
+      ],
+      [
+        "vel",
+        "Initial velocity vector (maximum magnitude ~200m/s)."
+      ],
+      [
+        "rot",
+        "Initial rotation of the rezzed object."
+      ],
+      [
+        "start_param",
+        "Start parameter passed to the rezzed object's on_rez event (accessible via llGetStartParameter)."
+      ]
+    ],
+    "llRezObjectWithParams": [
+      [
+        "item",
+        "Name of the object in the prim's inventory to rez."
+      ],
+      [
+        "options",
+        "A list of REZ_* options to configure the rezzed object's attributes."
+      ]
+    ],
+    "llRot2Angle": [
+      [
+        "q",
+        "Rotation to evaluate."
+      ]
+    ],
+    "llRot2Axis": [
+      [
+        "q",
+        "Rotation to evaluate."
+      ]
+    ],
+    "llRot2Euler": [
+      [
+        "q",
+        "Rotation to convert."
+      ]
+    ],
+    "llRot2Fwd": [
+      [
+        "q",
+        "Rotation to convert."
+      ]
+    ],
+    "llRot2Left": [
+      [
+        "q",
+        "Rotation to convert."
+      ]
+    ],
+    "llRot2Up": [
+      [
+        "q",
+        "Rotation to convert."
+      ]
+    ],
+    "llRotBetween": [
+      [
+        "start_vec",
+        "Starting vector."
+      ],
+      [
+        "end_vec",
+        "Ending vector."
+      ]
+    ],
+    "llRotLookAt": [
+      [
+        "target_direction",
+        "Target rotation to align the object with."
+      ],
+      [
+        "strength",
+        "Force of rotation (0.0 cancels the tracking; values around half the object's mass are typical)."
+      ],
+      [
+        "damping",
+        "Timescale in seconds to critically damp the rotation."
+      ]
+    ],
+    "llRotTarget": [
+      [
+        "rot",
+        "Target rotation to track."
+      ],
+      [
+        "error",
+        "Tolerance angle in radians defining when the target rotation is considered reached."
+      ]
+    ],
+    "llRotTargetRemove": [
+      [
+        "handle",
+        "Integer target handle returned by llRotTarget to remove."
+      ]
+    ],
+    "llRotateTexture": [
+      [
+        "angle",
+        "Rotation angle expressed in radians."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llRound": [
+      [
+        "val",
+        "Number to round."
+      ]
+    ],
+    "llSHA1String": [
+      [
+        "src",
+        "Source string to hash."
+      ]
+    ],
+    "llSHA256String": [
+      [
+        "src",
+        "Source string to hash."
+      ]
+    ],
+    "llSameGroup": [
+      [
+        "uuid",
+        "UUID of the group, avatar, or prim to check."
+      ]
+    ],
+    "llSay": [
+      [
+        "channel",
+        "Chat channel (any 32-bit signed integer value) to chat the message on."
+      ],
+      [
+        "msg",
+        "Text message string to broadcast."
+      ]
+    ],
+    "llScaleByFactor": [
+      [
+        "scaling_factor",
+        "Multiplier scale factor to apply to the prim sizes and their local positions."
+      ]
+    ],
+    "llScaleTexture": [
+      [
+        "u",
+        "Horizontal (U) texture repeats scale value, in the interval [-100.0, 100.0]."
+      ],
+      [
+        "v",
+        "Vertical (V) texture repeats scale value, in the interval [-100.0, 100.0]."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llScriptDanger": [
+      [
+        "pos",
+        "Position vector in region coordinates to check."
+      ]
+    ],
+    "llScriptProfiler": [
+      [
+        "flags",
+        "PROFILE_* flag (such as PROFILE_NONE or PROFILE_SCRIPT_MEMORY) to set the profiling state."
+      ]
+    ],
+    "llSendRemoteData": [
+      [
+        "channel",
+        "XML-RPC channel ID."
+      ],
+      [
+        "dest",
+        "Destination XML-RPC URL or server."
+      ],
+      [
+        "idata",
+        "Integer payload data."
+      ],
+      [
+        "sdata",
+        "String payload data."
+      ]
+    ],
+    "llSensor": [
+      [
+        "name",
+        "Specific object or avatar name to filter for (or empty string for no filter)."
+      ],
+      [
+        "id",
+        "UUID of the group, avatar, or object to filter by (or NULL_KEY for no filter)."
+      ],
+      [
+        "type",
+        "Integer bitfield type mask containing AGENT, AGENT_BY_LEGACY_NAME, AGENT_BY_USERNAME, ACTIVE, PASSIVE, or SCRIPTED (0 for no filter)."
+      ],
+      [
+        "radius",
+        "Maximum distance in meters to scan (range [0.0, 96.0])."
+      ],
+      [
+        "arc",
+        "Maximum angle in radians relative to the local X-axis to scan (range [0.0, PI])."
+      ]
+    ],
+    "llSensorRepeat": [
+      [
+        "name",
+        "Specific object or avatar name to filter for (or empty string for no filter)."
+      ],
+      [
+        "id",
+        "UUID of the group, avatar, or object to filter by (or NULL_KEY for no filter)."
+      ],
+      [
+        "type",
+        "Integer bitfield type mask containing AGENT, AGENT_BY_LEGACY_NAME, AGENT_BY_USERNAME, ACTIVE, PASSIVE, or SCRIPTED (0 for no filter)."
+      ],
+      [
+        "radius",
+        "Maximum distance in meters to scan (range [0.0, 96.0])."
+      ],
+      [
+        "arc",
+        "Maximum angle in radians relative to the local X-axis to scan (range [0.0, PI])."
+      ],
+      [
+        "rate",
+        "Interval in seconds between repeated scans."
+      ]
+    ],
+    "llSetAgentEnvironment": [
+      [
+        "agent_id",
+        "UUID of the agent participating in the experience."
+      ],
+      [
+        "transition",
+        "Transition duration in seconds."
+      ],
+      [
+        "params",
+        "A list of environmental parameters to apply."
+      ]
+    ],
+    "llSetAgentRot": [
+      [
+        "rot",
+        "Target rotation to turn the avatar to face."
+      ],
+      [
+        "flags",
+        "Flags to configure the rotation behavior."
+      ]
+    ],
+    "llSetAlpha": [
+      [
+        "alpha",
+        "Transparency value to set, from 0.0 (clear) to 1.0 (solid; clamped to a minimum of 0.1)."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llSetAngularVelocity": [
+      [
+        "initial_omega",
+        "Angular velocity vector to apply (in radians per second)."
+      ],
+      [
+        "is_local",
+        "Boolean. If TRUE, initial_omega is treated as a local vector; if FALSE, as a global region vector."
+      ]
+    ],
+    "llSetAnimationOverride": [
+      [
+        "anim_state",
+        "Animation state to override."
+      ],
+      [
+        "anim",
+        "Name of an animation in the prim's inventory, or a built-in animation name."
+      ]
+    ],
+    "llSetBuoyancy": [
+      [
+        "buoyancy",
+        "Float buoyancy value to set."
+      ]
+    ],
+    "llSetCameraAtOffset": [
+      [
+        "offset",
+        "Offset position vector in local coordinates relative to the prim."
+      ]
+    ],
+    "llSetCameraEyeOffset": [
+      [
+        "offset",
+        "Offset position vector in local coordinates relative to the prim."
+      ]
+    ],
+    "llSetCameraParams": [
+      [
+        "rules",
+        "A strided list of rules and data pairs configuring the camera."
+      ]
+    ],
+    "llSetClickAction": [
+      [
+        "action",
+        "CLICK_ACTION_* flag representing the action to apply."
+      ]
+    ],
+    "llSetColor": [
+      [
+        "color",
+        "Color vector in RGB <R, G, B> (values from 0.0 to 1.0)."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llSetContentType": [
+      [
+        "request_id",
+        "Unique key identifying the incoming HTTP request."
+      ],
+      [
+        "content_type",
+        "CONTENT_TYPE_* constant representing the Internet media type to use."
+      ]
+    ],
+    "llSetDamage": [
+      [
+        "damage",
+        "Float damage value to set (range -100.0 for full heal to 100.0 for instant kill)."
+      ]
+    ],
+    "llSetEnvironment": [
+      [
+        "position",
+        "Position vector in region coordinates to specify the target parcel, or <-1.0, -1.0, z> for the entire region (where z specifies the sky track, or -1 for all tracks)."
+      ],
+      [
+        "params",
+        "A list of environmental attributes and values to apply (or empty to clear)."
+      ]
+    ],
+    "llSetExperienceKey": [
+      [
+        "experienceid",
+        ""
+      ]
+    ],
+    "llSetForce": [
+      [
+        "force",
+        "Directional force vector to apply."
+      ],
+      [
+        "is_local",
+        "Boolean. If TRUE, force is treated as a local vector; if FALSE, as a global region vector."
+      ]
+    ],
+    "llSetForceAndTorque": [
+      [
+        "force",
+        "Directional linear force vector."
+      ],
+      [
+        "torque",
+        "Torque rotational force vector."
+      ],
+      [
+        "is_local",
+        "Boolean. If TRUE, force and torque are treated as local vectors; if FALSE, as global region vectors."
+      ]
+    ],
+    "llSetGroundTexture": [
+      [
+        "changes",
+        "A list of terrain detail properties and values to change."
+      ]
+    ],
+    "llSetHoverHeight": [
+      [
+        "height",
+        "Distance to hover above the ground or water."
+      ],
+      [
+        "water",
+        "Boolean. If TRUE, hovers above water too; if FALSE, water is ignored."
+      ],
+      [
+        "tau",
+        "Timescale in seconds to critically damp the movement."
+      ]
+    ],
+    "llSetInventoryPermMask": [
+      [
+        "item",
+        "Name of the item in the prim's inventory."
+      ],
+      [
+        "group",
+        "MASK_* group (e.g., MASK_BASE, MASK_OWNER, MASK_GROUP, MASK_EVERYONE, or MASK_NEXT) to set."
+      ],
+      [
+        "flags",
+        "Bitfield of permissions (PERM_* flags) to set."
+      ]
+    ],
+    "llSetKeyframedMotion": [
+      [
+        "keyframes",
+        "A strided list of the form [vector position, rotation orientation, float time] representing sequential relative keyframes (minimum time is 1/9s)."
+      ],
+      [
+        "options",
+        "A list of options (KFM_* constants) to modify playback behavior."
+      ]
+    ],
+    "llSetLinkAlpha": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "alpha",
+        "Transparency value to set, from 0.0 (clear) to 1.0 (solid)."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llSetLinkCamera": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "eye",
+        "Eye offset position vector in local coordinates relative to the prim."
+      ],
+      [
+        "at",
+        "Look-at offset position vector in local coordinates relative to the prim."
+      ]
+    ],
+    "llSetLinkColor": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "color",
+        "Color vector in RGB <R, G, B> (values from 0.0 to 1.0)."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llSetLinkGLTFOverrides": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ],
+      [
+        "params",
+        "A list of overrides and their corresponding values to set."
+      ]
+    ],
+    "llSetLinkMedia": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "face",
+        "Face number (side) of the prim."
+      ],
+      [
+        "params",
+        "A set of property-value pairs (in no particular order) specifying media parameters, or a PrimMediaParams dictionary."
+      ]
+    ],
+    "llSetLinkPrimitiveParams": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "rules",
+        "A list of PRIM_* rules and data to apply."
+      ]
+    ],
+    "llSetLinkPrimitiveParamsFast": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "rules",
+        "A list of PRIM_* rules and data to apply."
+      ]
+    ],
+    "llSetLinkRenderMaterial": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "material",
+        "Name of a material in the prim's inventory, or a UUID."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llSetLinkSitFlags": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "flags",
+        "A bitfield of sit flags (SIT_FLAG_*) to apply."
+      ]
+    ],
+    "llSetLinkTexture": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag."
+      ],
+      [
+        "texture",
+        "Name of a texture in the prim's inventory, or a UUID."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llSetLinkTextureAnim": [
+      [
+        "link",
+        "Link number (1 for root, >1 for children) or a LINK_* flag to animate."
+      ],
+      [
+        "mode",
+        "Bitfield of texture animation mode flags (ANIM_ON, LOOP, etc.)."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ],
+      [
+        "sizex",
+        "Number of horizontal frames (ignored for ROTATE and SCALE)."
+      ],
+      [
+        "sizey",
+        "Number of vertical frames (ignored for ROTATE and SCALE)."
+      ],
+      [
+        "start",
+        "Start frame number (or radians for ROTATE)."
+      ],
+      [
+        "length",
+        "Number of frames to display (or radians for ROTATE)."
+      ],
+      [
+        "rate",
+        "Playback rate in frames per second (or radians/sec for ROTATE, UV coords/sec for SMOOTH). Must not be zero."
+      ]
+    ],
+    "llSetLocalRot": [
+      [
+        "rot",
+        "Local rotation to set."
+      ]
+    ],
+    "llSetMemoryLimit": [
+      [
+        "limit",
+        "Integer memory limit in bytes to reserve (must be less than the 64KB maximum)."
+      ]
+    ],
+    "llSetObjectDesc": [
+      [
+        "description",
+        "New description string (up to 127 characters)."
+      ]
+    ],
+    "llSetObjectName": [
+      [
+        "name",
+        "New name string."
+      ]
+    ],
+    "llSetObjectPermMask": [
+      [
+        "group",
+        "MASK_* group (e.g., MASK_BASE, MASK_OWNER, MASK_GROUP, MASK_EVERYONE, or MASK_NEXT) to set."
+      ],
+      [
+        "flags",
+        "Bitfield of permissions (PERM_* flags) to set."
+      ]
+    ],
+    "llSetParcelForSale": [
+      [
+        "ForSale",
+        "Boolean. If TRUE, puts the parcel up for sale; if FALSE, removes it from sale."
+      ],
+      [
+        "Options",
+        "A list of options to configure the sale (e.g., price, authorized buyer, and object inclusion)."
+      ]
+    ],
+    "llSetParcelMusicURL": [
+      [
+        "url",
+        "Streaming audio URL string."
+      ]
+    ],
+    "llSetPayPrice": [
+      [
+        "price",
+        "Default price integer shown in the text field (can accept PAY_* constants or positive values)."
+      ],
+      [
+        "quick_pay_buttons",
+        "A list of four integer values or PAY_* constants specifying the button payment choices."
+      ]
+    ],
+    "llSetPhysicsMaterial": [
+      [
+        "mask",
+        "Bitwise mask combination specifying which of the floats (DENSITY, FRICTION, RESTITUTION, or GRAVITY_MULTIPLIER) to apply."
+      ],
+      [
+        "gravity_multiplier",
+        "Gravity multiplier float value (range [-1.0, +28.0], default is 1.0)."
+      ],
+      [
+        "restitution",
+        "Elasticity restitution float value (range [0.0, 1.0])."
+      ],
+      [
+        "friction",
+        "Friction coefficient float value (range [0.0, 255.0])."
+      ],
+      [
+        "density",
+        "Density float value in kg/m³ (range [1.0, 22587.0])."
+      ]
+    ],
+    "llSetPos": [
+      [
+        "pos",
+        "Position vector to move to (in region coordinates, or local coordinates if in a child prim)."
+      ]
+    ],
+    "llSetPrimMediaParams": [
+      [
+        "face",
+        "Face number (side) of the prim."
+      ],
+      [
+        "params",
+        "A set of property-value pairs (in no particular order) specifying media parameters."
+      ]
+    ],
+    "llSetPrimURL": [
+      [
+        "url",
+        "Web URL to display."
+      ]
+    ],
+    "llSetPrimitiveParams": [
+      [
+        "rules",
+        "A list of PRIM_* rules and data to apply."
+      ]
+    ],
+    "llSetRegionPos": [
+      [
+        "position",
+        "Target position vector in region coordinates (can cross up to 10m over a region border)."
+      ]
+    ],
+    "llSetRemoteScriptAccessPin": [
+      [
+        "pin",
+        "Integer PIN code (non-zero enables, zero disables)."
+      ]
+    ],
+    "llSetRenderMaterial": [
+      [
+        "material",
+        "Name of a material in the prim's inventory, or a UUID."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llSetRot": [
+      [
+        "rot",
+        "Target rotation."
+      ]
+    ],
+    "llSetScale": [
+      [
+        "size",
+        "Target size vector."
+      ]
+    ],
+    "llSetScriptState": [
+      [
+        "script",
+        "Name of the script in the prim's inventory."
+      ],
+      [
+        "running",
+        "Boolean. If TRUE, enables the script; if FALSE, disables it."
+      ]
+    ],
+    "llSetSitText": [
+      [
+        "text",
+        "Context menu text to display."
+      ]
+    ],
+    "llSetSoundQueueing": [
+      [
+        "queue",
+        "Boolean. If TRUE, sound queuing is enabled; if FALSE, it is disabled."
+      ]
+    ],
+    "llSetSoundRadius": [
+      [
+        "radius",
+        "Maximum distance in meters at which the sounds can be heard."
+      ]
+    ],
+    "llSetStatus": [
+      [
+        "status",
+        "Bitmask representing the STATUS_* flag(s) to change."
+      ],
+      [
+        "value",
+        "Boolean. If TRUE, enables the status; if FALSE, disables it."
+      ]
+    ],
+    "llSetText": [
+      [
+        "text",
+        "Floating text string to display."
+      ],
+      [
+        "color",
+        "Color vector in RGB <R, G, B> (values from 0.0 to 1.0)."
+      ],
+      [
+        "alpha",
+        "Transparency value to set, from 0.0 (clear) to 1.0 (solid)."
+      ]
+    ],
+    "llSetTexture": [
+      [
+        "texture",
+        "Name of a texture in the prim's inventory, or a UUID."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ]
+    ],
+    "llSetTextureAnim": [
+      [
+        "mode",
+        "Bitfield of texture animation mode flags (ANIM_ON, LOOP, etc.)."
+      ],
+      [
+        "face",
+        "Face number or ALL_SIDES."
+      ],
+      [
+        "sizex",
+        "Number of horizontal frames (ignored for ROTATE and SCALE)."
+      ],
+      [
+        "sizey",
+        "Number of vertical frames (ignored for ROTATE and SCALE)."
+      ],
+      [
+        "start",
+        "Start frame number (or radians for ROTATE)."
+      ],
+      [
+        "length",
+        "Number of frames to display (or radians for ROTATE)."
+      ],
+      [
+        "rate",
+        "Playback rate in frames per second (or radians/sec for ROTATE, UV coords/sec for SMOOTH). Must not be zero."
+      ]
+    ],
+    "llSetTimerEvent": [
+      [
+        "sec",
+        "Interval in seconds between timer events (0.0 to disable)."
+      ]
+    ],
+    "llSetTorque": [
+      [
+        "torque",
+        "Torque rotational force vector."
+      ],
+      [
+        "is_local",
+        "Boolean. If TRUE, torque is treated as a local vector; if FALSE, as a global region vector."
+      ]
+    ],
+    "llSetTouchText": [
+      [
+        "text",
+        "Context menu text to display."
+      ]
+    ],
+    "llSetVehicleFlags": [
+      [
+        "flags",
+        "A bitwise mask of VEHICLE_FLAG_* constants to enable."
+      ]
+    ],
+    "llSetVehicleFloatParam": [
+      [
+        "param",
+        "VEHICLE_* float parameter constant to set."
+      ],
+      [
+        "value",
+        "Float value to set."
+      ]
+    ],
+    "llSetVehicleRotationParam": [
+      [
+        "param",
+        "VEHICLE_* rotation parameter constant to set."
+      ],
+      [
+        "rot",
+        "Rotation value to set."
+      ]
+    ],
+    "llSetVehicleType": [
+      [
+        "type",
+        "VEHICLE_TYPE_* constant to set."
+      ]
+    ],
+    "llSetVehicleVectorParam": [
+      [
+        "param",
+        "VEHICLE_* vector parameter constant to set."
+      ],
+      [
+        "vec",
+        "Vector value to set."
+      ]
+    ],
+    "llSetVelocity": [
+      [
+        "velocity",
+        "Linear velocity vector to apply (in meters per second)."
+      ],
+      [
+        "is_local",
+        "Boolean. If TRUE, velocity is treated as a local directional vector; if FALSE, as a global region vector."
+      ]
+    ],
+    "llShout": [
+      [
+        "channel",
+        "Chat channel (any 32-bit signed integer value) to shout the message on."
+      ],
+      [
+        "msg",
+        "Text message string to broadcast."
+      ]
+    ],
+    "llSignRSA": [
+      [
+        "private_key",
+        "PEM-formatted private key."
+      ],
+      [
+        "msg",
+        "Message contents to sign."
+      ],
+      [
+        "algorithm",
+        "Digest algorithm to use (sha1, sha224, sha256, sha384, or sha512)."
+      ]
+    ],
+    "llSin": [
+      [
+        "theta",
+        "Angle in radians."
+      ]
+    ],
+    "llSitOnLink": [
+      [
+        "agent_id",
+        "UUID of the avatar being forced to sit."
+      ],
+      [
+        "link",
+        "Link number for the prim containing the desired sit target."
+      ]
+    ],
+    "llSitTarget": [
+      [
+        "offset",
+        "Target position vector in local prim coordinates."
+      ],
+      [
+        "rot",
+        "Target rotation relative to the prim's rotation."
+      ]
+    ],
+    "llSleep": [
+      [
+        "sec",
+        "Duration in seconds to put the script to sleep."
+      ]
+    ],
+    "llSound": [
+      [
+        "sound",
+        "Name of a sound in the prim's inventory, or a UUID."
+      ],
+      [
+        "volume",
+        "Volume level to set, between 0.0 (silent) and 1.0 (loud)."
+      ],
+      [
+        "queue",
+        "Boolean. If TRUE, queues the sound; if FALSE, interrupts the currently playing sound."
+      ],
+      [
+        "loop",
+        "Boolean. If TRUE, loops the sound."
+      ]
+    ],
+    "llSoundPreload": [
+      [
+        "sound",
+        "Name of a sound in the prim's inventory, or a UUID."
+      ]
+    ],
+    "llSqrt": [
+      [
+        "val",
+        "Positive float value (must be >= 0.0)."
+      ]
+    ],
+    "llStartAnimation": [
+      [
+        "anim",
+        "Name of the animation in the prim's inventory, or the built-in animation name."
+      ]
+    ],
+    "llStartObjectAnimation": [
+      [
+        "anim",
+        "Name of the animation in the prim's inventory, or the built-in animation name."
+      ]
+    ],
+    "llStopAnimation": [
+      [
+        "anim",
+        "Name of the animation in the prim's inventory, the UUID of the animation, or the built-in animation name."
+      ]
+    ],
+    "llStopObjectAnimation": [
+      [
+        "anim",
+        "Name of the animation in the prim's inventory, the UUID of the animation, or the built-in animation name."
+      ]
+    ],
+    "llStringLength": [
+      [
+        "str",
+        "String to measure."
+      ]
+    ],
+    "llStringToBase64": [
+      [
+        "str",
+        "Source string to encode."
+      ]
+    ],
+    "llStringTrim": [
+      [
+        "src",
+        "String to trim."
+      ],
+      [
+        "type",
+        "Trim type flag (STRING_TRIM_HEAD, STRING_TRIM_TAIL, or STRING_TRIM)."
+      ]
+    ],
+    "llSubStringIndex": [
+      [
+        "source",
+        "Source string to search within."
+      ],
+      [
+        "pattern",
+        "Substring pattern to search for."
+      ]
+    ],
+    "llTakeCamera": [
+      [
+        "avatar",
+        "UUID of the avatar in the same region."
+      ]
+    ],
+    "llTakeControls": [
+      [
+        "controls",
+        "Bitfield of CONTROL_* flags to intercept."
+      ],
+      [
+        "accept",
+        "Boolean. Determines whether control events are generated to trigger script handlers."
+      ],
+      [
+        "pass_on",
+        "Boolean. If TRUE, the keys also perform their default functions; if FALSE, default actions are suppressed."
+      ]
+    ],
+    "llTan": [
+      [
+        "theta",
+        "Angle in radians."
+      ]
+    ],
+    "llTarget": [
+      [
+        "position",
+        "Target position vector in region coordinates."
+      ],
+      [
+        "range",
+        "Radius tolerance in meters surrounding the target position."
+      ]
+    ],
+    "llTargetOmega": [
+      [
+        "axis",
+        "Local axis vector around which the object rotates."
+      ],
+      [
+        "spinrate",
+        "Rotation rate multiplier in radians per second."
+      ],
+      [
+        "gain",
+        "A float modulating the rotational strength (disables the rotation if set to 0.0)."
+      ]
+    ],
+    "llTargetRemove": [
+      [
+        "handle",
+        "Integer target handle returned by llTarget to remove."
+      ]
+    ],
+    "llTargetedEmail": [
+      [
+        "target",
+        "Target constant (e.g., TARGETED_EMAIL_OBJECT_OWNER or TARGETED_EMAIL_ROOT_CREATOR)."
+      ],
+      [
+        "subject",
+        "Subject of the email."
+      ],
+      [
+        "msg",
+        "Email message body."
+      ]
+    ],
+    "llTeleportAgent": [
+      [
+        "agent",
+        "UUID of the owning avatar to teleport."
+      ],
+      [
+        "landmark",
+        "Name of the landmark in the prim's inventory, or an empty string to teleport locally."
+      ],
+      [
+        "position",
+        "Position vector in local region coordinates to teleport to if landmark is empty."
+      ],
+      [
+        "look_at",
+        "Position vector (or direction unit vector if teleporting out of region) the agent faces upon landing."
+      ]
+    ],
+    "llTeleportAgentGlobalCoords": [
+      [
+        "agent",
+        "UUID of the owning avatar to teleport."
+      ],
+      [
+        "global_coordinates",
+        "Global coordinates vector of the target region (obtained via llRequestSimulatorData)."
+      ],
+      [
+        "region_coordinates",
+        "Target coordinates vector within the destination region."
+      ],
+      [
+        "look_at",
+        "Position vector within the region (or unit direction vector if out of region) that the agent faces upon landing."
+      ]
+    ],
+    "llTeleportAgentHome": [
+      [
+        "avatar",
+        "UUID of the avatar to teleport."
+      ]
+    ],
+    "llTextBox": [
+      [
+        "agent",
+        "UUID of the agent in the same region."
+      ],
+      [
+        "msg",
+        "Text message to display in the text box."
+      ],
+      [
+        "channel",
+        "Output chat channel (any 32-bit signed integer value) where the input text is chatted."
+      ]
+    ],
+    "llToLower": [
+      [
+        "src",
+        "Source string to convert."
+      ]
+    ],
+    "llToUpper": [
+      [
+        "src",
+        "Source string to convert."
+      ]
+    ],
+    "llTransferLindenDollars": [
+      [
+        "destination",
+        "UUID of the destination avatar."
+      ],
+      [
+        "amount",
+        "Quantity of L$ to transfer (must be greater than 0)."
+      ]
+    ],
+    "llTransferOwnership": [
+      [
+        "agent",
+        "UUID of the agent to receive ownership of the object."
+      ],
+      [
+        "flags",
+        "Flags controlling the transfer type (such as TRANSFER_FLAG_COPY or TRANSFER_FLAG_TAKE)."
+      ],
+      [
+        "options",
+        "Extra options applied to the transfer (currently unused)."
+      ]
+    ],
+    "llTriggerSound": [
+      [
+        "sound",
+        "Name of a sound in the prim's inventory, or a UUID."
+      ],
+      [
+        "volume",
+        "Volume level to set, between 0.0 (silent) and 1.0 (loud)."
+      ]
+    ],
+    "llTriggerSoundLimited": [
+      [
+        "sound",
+        "Name of a sound in the prim's inventory, or a UUID."
+      ],
+      [
+        "volume",
+        "Volume level to set, between 0.0 (silent) and 1.0 (loud)."
+      ],
+      [
+        "top_north_east",
+        "Top-north-east boundary position vector in region coordinates."
+      ],
+      [
+        "bottom_south_west",
+        "Bottom-south-west boundary position vector in region coordinates."
+      ]
+    ],
+    "llUnSit": [
+      [
+        "id",
+        "UUID of the avatar to unsit."
+      ]
+    ],
+    "llUnescapeURL": [
+      [
+        "url",
+        "Escaped URL string to decode."
+      ]
+    ],
+    "llUpdateCharacter": [
+      [
+        "options",
+        "A list of key-value pairs specifying the character's new configuration options (takes same constants as llCreateCharacter)."
+      ]
+    ],
+    "llUpdateKeyValue": [
+      [
+        "k",
+        "Key of the key-value pair to update."
+      ],
+      [
+        "v",
+        "New value for the key-value pair."
+      ],
+      [
+        "checked",
+        "Boolean. If TRUE, requires the existing value to match original_value to complete the update; if FALSE, creates the key if needed."
+      ],
+      [
+        "original_value",
+        "String value to compare against the existing value in the datastore."
+      ]
+    ],
+    "llVecDist": [
+      [
+        "vec_a",
+        "First vector."
+      ],
+      [
+        "vec_b",
+        "Second vector."
+      ]
+    ],
+    "llVecMag": [
+      [
+        "vec",
+        "Vector to evaluate."
+      ]
+    ],
+    "llVecNorm": [
+      [
+        "vec",
+        "Vector to normalize."
+      ]
+    ],
+    "llVerifyRSA": [
+      [
+        "public_key",
+        "PEM-formatted public key to use for signature verification."
+      ],
+      [
+        "msg",
+        "Message string that was signed."
+      ],
+      [
+        "signature",
+        "Base64-encoded signature to verify."
+      ],
+      [
+        "algorithm",
+        "Cryptographic digest algorithm to use."
+      ]
+    ],
+    "llVolumeDetect": [
+      [
+        "detect",
+        "Boolean. If TRUE, enables VolumeDetect; if FALSE (default), disables it."
+      ]
+    ],
+    "llWanderWithin": [
+      [
+        "origin",
+        "Center coordinate position vector to wander about."
+      ],
+      [
+        "dist",
+        "A vector specifying the maximum distance limits (half-extents) along each world-aligned axis from the origin."
+      ],
+      [
+        "options",
+        "A list of WANDER_* flags and parameters to configure the wander behavior."
+      ]
+    ],
+    "llWater": [
+      [
+        "offset",
+        "Offset relative to the prim's position, expressed in local coordinates."
+      ]
+    ],
+    "llWhisper": [
+      [
+        "channel",
+        "Chat channel (any 32-bit signed integer value) to whisper the message on."
+      ],
+      [
+        "msg",
+        "Text message string to broadcast."
+      ]
+    ],
+    "llWind": [
+      [
+        "offset",
+        "Offset relative to the prim's position, expressed in local coordinates."
+      ]
+    ],
+    "llWorldPosToHUD": [
+      [
+        "world_pos",
+        "World-frame position vector to project into HUD space."
+      ]
+    ],
+    "llXorBase64": [
+      [
+        "str1",
+        "First Base64 string."
+      ],
+      [
+        "str2",
+        "Second Base64 string (will repeat if shorter than str1)."
+      ]
+    ],
+    "llXorBase64Strings": [
+      [
+        "str1",
+        "First Base64 string."
+      ],
+      [
+        "str2",
+        "Second Base64 string (will repeat if shorter than str1)."
+      ]
+    ],
+    "llXorBase64StringsCorrect": [
+      [
+        "str1",
+        "First Base64 string."
+      ],
+      [
+        "str2",
+        "Second Base64 string (will repeat if shorter than str1)."
+      ]
+    ],
+    "llsRGB2Linear": [
+      [
+        "color",
+        "Color vector in the sRGB colorspace to convert."
+      ]
+    ],
+    "money": [
+      [
+        "id",
+        "UUID of the paying resident."
+      ],
+      [
+        "amount",
+        "Quantity of L$ paid to the prim."
+      ]
+    ],
+    "object_rez": [
+      [
+        "id",
+        "UUID of the newly rezzed object."
+      ]
+    ],
+    "on_damage": [
+      [
+        "num_detected",
+        "Number of pending damage events."
+      ]
+    ],
+    "on_rez": [
+      [
+        "start_param",
+        "Integer start parameter passed from the rezzing call."
+      ]
+    ],
+    "path_update": [
+      [
+        "type",
+        "Path update status or failure code constant (PU_* flag)."
+      ],
+      [
+        "reserved",
+        "Reserved parameter (currently unused)."
+      ]
+    ],
+    "remote_data": [
+      [
+        "event_type",
+        "Integer constant representing the type of XML-RPC event."
+      ],
+      [
+        "channel",
+        "XML-RPC channel ID key."
+      ],
+      [
+        "message_id",
+        "XML-RPC message ID key."
+      ],
+      [
+        "sender",
+        "XML-RPC sender string."
+      ],
+      [
+        "idata",
+        "Payload integer data."
+      ],
+      [
+        "sdata",
+        "Payload string data."
+      ]
+    ],
+    "run_time_permissions": [
+      [
+        "perm",
+        "Bitfield of currently granted permissions (PERMISSION_* flags)."
+      ]
+    ],
+    "sensor": [
+      [
+        "num_detected",
+        "Total number of detected targets found (usable with llDetected* functions)."
+      ]
+    ],
+    "touch": [
+      [
+        "num_detected",
+        "Total number of touching agents detected (usable with llDetected* functions)."
+      ]
+    ],
+    "touch_end": [
+      [
+        "num_detected",
+        "Total number of touching agents detected (usable with llDetected* functions)."
+      ]
+    ],
+    "touch_start": [
+      [
+        "num_detected",
+        "Total number of touching agents detected (usable with llDetected* functions)."
+      ]
+    ],
+    "transaction_result": [
+      [
+        "id",
+        "Key matching the handle returned by the initiating llTransfer* function."
+      ],
+      [
+        "success",
+        "Boolean. TRUE if the L$ transfer succeeded, FALSE otherwise."
+      ],
+      [
+        "data",
+        "Contains a CSV string of transaction info on success, or an error string on failure."
+      ]
+    ]
+  }
+}
