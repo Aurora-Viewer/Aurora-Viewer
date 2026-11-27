@@ -397,10 +397,15 @@ impl AppearanceUi {
         }
         let mut items = HashSet::new();
         let mut ready = !ids.is_empty();
+        let mut skipped = false;
         for id in &ids {
             ready &= model::loaded(inv, *id);
             for link in model::folder_links(inv, *id).into_iter().filter(|link| !link.folder) {
                 if inv.broken(&link.target) {
+                    continue;
+                }
+                if inv.can_skip_wear_original(&link.target) {
+                    skipped = true;
                     continue;
                 }
                 ready &= inv.items.contains_key(&link.target);
@@ -408,6 +413,7 @@ impl AppearanceUi {
             }
         }
         let count = items.len();
+        ready &= !skipped || count > 0;
         self.selection_info = Some(SelectionInfo {
             generation: inv.generation,
             ids,
@@ -470,10 +476,6 @@ impl AppearanceUi {
         agent: Uuid,
         worn: &HashSet<Uuid>,
     ) -> Vec<aurora_net::NetCommand> {
-        // a failed read is asked again (`Inventory::items_failed` counts them)
-        for id in inv.take_item_retries() {
-            self.requested_items.remove(&id);
-        }
         let filtering_contents = self.tab < 2 && !self.search.trim().is_empty();
         let scope_changed = self.prepared.as_ref().is_none_or(|p| p.filtering_contents != filtering_contents);
         let changed = scope_changed || self.prepared.as_ref().is_none_or(|p| p.generation != inv.generation);
@@ -541,8 +543,14 @@ impl AppearanceUi {
                     .missing
                     .values()
                     .flat_map(|(_, targets)| targets)
-                    .filter(|id| !inv.items.contains_key(id) && !inv.missing_items.contains(id)),
+                    .filter(|id| !inv.items.contains_key(id)),
             );
+        }
+        missing.retain(|id| !inv.broken(id) && !inv.read_exhausted(id));
+        for id in &missing {
+            if inv.take_item_retry(id) {
+                self.requested_items.remove(id);
+            }
         }
         self.filter_requests(model::fetch_items(missing, agent))
     }
@@ -704,6 +712,9 @@ impl AppearanceUi {
     ) -> Vec<aurora_net::NetCommand> {
         self.requested_items.clear();
         self.prepared = None;
+        for id in model::prepare_folders(inv) {
+            inv.retry(id);
+        }
         self.prepare(inv, agent, worn)
     }
 }
@@ -1301,7 +1312,7 @@ fn outfit_list(
                                     st.outfit_selection.single(*id);
                                 }
                                 st.select_item(&response, *id, it.id, &order);
-                                items::double_click(&response, world, it, worn.contains_key(&it.id), actions);
+                                items::double_click(&response, world, it, worn.contains_key(&it.id), Some(*id), actions);
                                 let selected = st.selected_items(*id, it.id, &order);
                                 items::context_menu(&response, p, world, st, items::List::Outfit(*id), it, &selected, actions);
                             });
@@ -1482,7 +1493,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                 st.layers.row(it.id, it.flags & 0xff, &resp);
             }
             let removable = locks.can_remove(it.id);
-            items::double_click(&resp, world, it, true, actions);
+            items::double_click(&resp, world, it, true, None, actions);
             if edit {
                 if resp.clicked() {
                     clipboard::request_focus(ui.ctx());
@@ -1745,14 +1756,15 @@ fn add_folder(
             if !matches!(it.asset_type, 5 | 6 | 13) || worn.contains(&it.id) {
                 continue;
             }
-            let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
-            widgets::reveal_search_selection(ui, &response, st.selected_item == Some(it.id));
+            let entry = model::wear_entry(inv, id, it.id);
+            let response = row(ui, p, it, "", st.selected_item == Some(entry), None);
+            widgets::reveal_search_selection(ui, &response, st.selected_item == Some(entry));
             row_gap(ui);
             if response.clicked() {
-                st.selected_item = Some(it.id);
+                st.selected_item = Some(entry);
             }
-            if response.double_clicked() && locks.wear(inv, it.id, 0).add {
-                actions.push(Action::Add(it.id));
+            if response.double_clicked() && locks.wear(inv, entry, 0).add {
+                actions.push(Action::Add(entry));
                 st.adding = false;
             }
         }
@@ -2194,7 +2206,9 @@ pub fn show(
                 // add lock on its folder.
                 let locks = world.rlva_wear_locks();
                 let unlocked = selection.iter().all(|id| locks.folder_allows(*id, true));
-                let ready = available && unlocked && st.selection_info(&world.inventory, selection).1;
+                let wear_ready =
+                    st.pending.is_none() && model::cof(&world.inventory).is_some_and(|cof| model::complete_for_wear(&world.inventory, cof));
+                let ready = wear_ready && unlocked && st.selection_info(&world.inventory, selection).1;
                 for (icon, label, kind, append) in [
                     ("plus", aurora_i18n::tr!("common-add"), ActionKind::Flat, true),
                     ("shirt-filled", aurora_i18n::tr!("common-wear"), ActionKind::Primary, false),
@@ -3605,8 +3619,13 @@ mod tests {
                     actions.extend(draw(&ctx, &mut world, &mut st, None));
                 }
             }
+            let entry = if world.inventory.items[&item].asset_type == 5 {
+                second
+            } else {
+                item
+            };
             assert!(
-                matches!(&actions[..], [Action::WearItem { item: id, replace: false, point: 0 }] if *id == item),
+                matches!(&actions[..], [Action::WearItem { item: id, replace: false, point: 0 }] if *id == entry),
                 "{actions:?}"
             );
         }
@@ -3958,7 +3977,10 @@ mod tests {
         else {
             panic!("{actions:?}");
         };
-        assert_eq!(items.iter().copied().collect::<HashSet<_>>(), HashSet::from(targets));
+        assert_eq!(
+            items.iter().copied().collect::<HashSet<_>>(),
+            HashSet::from([Uuid::from_u128(990), targets[1]])
+        );
         assert!(model::plan(&world.inventory, actions[0].clone(), &HashMap::new()).is_ok());
         click_row(
             &ctx,
@@ -4404,6 +4426,26 @@ mod tests {
         inv.folders.get_mut(&outfit).expect("outfit").state = crate::world::inventory::FetchState::Unknown;
         st.prepare(inv, agent, &HashSet::new());
         assert!(inv.queue.contains(&(outfit, false)));
+    }
+
+    #[test]
+    fn a_view_opened_during_cooldown_can_retry_without_a_new_folder_version() {
+        let mut world = wardrobe(0);
+        let agent = world.agent_id;
+        let inv = &mut world.inventory;
+        let target = Uuid::from_u128(723);
+        let unrelated = Uuid::from_u128(900);
+        assert!(inv.items.remove(&target).is_some());
+        inv.items_failed(&[unrelated]);
+        for _ in 0..crate::world::inventory::ITEM_FETCH_ATTEMPTS {
+            inv.items_failed(&[target]);
+        }
+
+        let mut st = AppearanceUi::default();
+        assert!(!fetched(&st.prepare(inv, agent, &HashSet::new())).contains(&target));
+        inv.expire_given_up(std::time::Instant::now() + crate::world::inventory::ITEM_GIVE_UP);
+        assert!(fetched(&st.prepare(inv, agent, &HashSet::new())).contains(&target));
+        assert!(inv.take_item_retry(&unrelated));
     }
 
     #[test]
@@ -4981,7 +5023,6 @@ mod tests {
             model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
             let id = Uuid::from_u128(target);
             let name = world.inventory.items[&id].name.clone();
-            let before = world.inventory.generation;
             let mut st = AppearanceUi::default();
             st.open(2, false);
             for _ in 0..5 {
@@ -4995,6 +5036,9 @@ mod tests {
                 egui::Modifiers::NONE,
                 egui::PointerButton::Secondary,
             );
+            // Read after the draws: opening the window asks for its folders,
+            // and each folder read changes the generation.
+            let before = world.inventory.generation;
             let actions = click_menu(&ctx, &mut world, &mut st, aurora_i18n::tr!("ui-appearance-items-show-original"));
             assert!(
                 matches!(actions.as_slice(), [Action::ShowOriginal(actual)] if *actual == id),

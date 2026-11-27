@@ -487,3 +487,64 @@ fn a_scripted_window_kept_in_comes_out_afterwards() {
         assert_eq!(c.peek.iter().map(|p| p.id).collect::<Vec<_>>(), windows);
     }
 }
+
+#[test]
+fn notification_list_closes_only_after_becoming_empty() {
+    use super::super::notifications::list_emptied;
+
+    assert!(list_emptied(true, false, Tab::ToDo));
+    assert!(!list_emptied(true, true, Tab::ToDo));
+    assert!(!list_emptied(false, false, Tab::ToDo));
+    assert!(!list_emptied(false, true, Tab::ToDo));
+    assert!(!list_emptied(true, false, Tab::History));
+}
+
+#[test]
+fn the_center_widens_to_the_left_up_to_the_screen_and_never_narrows() {
+    let screen = Rangef::new(0.0, 1920.0);
+    let base = Rangef::new(1500.0, 1860.0);
+    // the default (0), a narrower or a non-finite wish: the column itself
+    for wanted in [0.0, -5.0, 200.0, 360.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert_eq!(widened(base, wanted, screen, 6.0), base, "{wanted}");
+    }
+    // wider: its right edge stays under the bell
+    assert_eq!(widened(base, 520.0, screen, 6.0), Rangef::new(1340.0, 1860.0));
+    // wider than the screen: the screen less its insets
+    assert_eq!(widened(base, 5000.0, screen, 6.0), Rangef::new(6.0, 1914.0));
+    // the bell near the left side: out of room there, it grows to the right
+    let left = Rangef::new(10.0, 370.0);
+    assert_eq!(widened(left, 500.0, screen, 6.0), Rangef::new(6.0, 506.0));
+    // a window narrower than the column keeps the column
+    assert_eq!(widened(base, 900.0, Rangef::new(1400.0, 1700.0), 6.0), base);
+}
+
+#[test]
+fn a_drag_of_the_grip_widens_and_back_to_the_default_saves_zero() {
+    // to the left widens, to the right narrows
+    assert_eq!(dragged_width(360.0, -40.0, 360.0), 400.0);
+    assert_eq!(dragged_width(500.0, 60.0, 360.0), 440.0);
+    // back to the default width or past it: the default again (0), which
+    // follows the islands if they change
+    assert_eq!(dragged_width(400.0, 40.0, 360.0), 0.0);
+    assert_eq!(dragged_width(400.0, 90.0, 360.0), 0.0);
+    assert_eq!(dragged_width(400.0, f32::NAN, 360.0), 0.0);
+    assert_eq!(dragged_width(f32::INFINITY, -1.0, 360.0), 0.0);
+}
+
+#[test]
+fn a_broken_saved_center_width_comes_back_to_the_default() {
+    for bad in [f32::NAN, f32::INFINITY, -20.0] {
+        let s = crate::settings::Settings {
+            notification_width: bad,
+            ..Default::default()
+        }
+        .sanitized();
+        assert_eq!(s.notification_width, 0.0, "{bad}");
+    }
+    let s = crate::settings::Settings {
+        notification_width: 540.0,
+        ..Default::default()
+    }
+    .sanitized();
+    assert_eq!(s.notification_width, 540.0);
+}

@@ -1,9 +1,12 @@
 <#
 .SYNOPSIS
     Tests the last build date of a task's target\ (Get-LastBuildTime and
-    Set-LastBuildMarker, common.ps1), which the housekeeping of new-task.ps1
-    and the task list of aurora-tools.cmd read. Fixture folders only, in
-    .scratch\: no real task, build or setting is touched.
+    Set-LastBuildMarker, common.ps1) and the lookup of a task's PR, its head
+    on origin or on a fork (Get-BranchPr, gh replaced by a function), which the
+    housekeeping of new-task.ps1, end-task.ps1 and the task list of
+    aurora-tools.cmd read, and the main repository's remote (Get-MainRepo),
+    which those and the scripts that work on GitHub read. Fixture folders and a fixture repository only, in
+    .scratch\: no real task, build, setting or GitHub call is touched.
 #>
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
@@ -43,6 +46,31 @@ function Get-AgeHours([string]$Target) {
 }
 
 function Test-Near($Hours, [double]$Expected) { $null -ne $Hours -and [math]::Abs($Hours - $Expected) -lt 0.1 }
+
+# Get-BranchPr -AllCommits the way end-task.ps1 and new-task.ps1 reach it:
+# common.ps1 dot-sourced by a script that was called, so its functions live
+# in that script's scope and not in the global one. A new runspace gives
+# that however this test was started: `pwsh -File` runs a script in the
+# global scope, where a function is found from anywhere. gh is a function
+# there that answers $Json: no GitHub call.
+function Get-FixtureBranchPr([string]$Repo, [string]$Branch, [string]$Json) {
+    $probe = [powershell]::Create()
+    try {
+        $script = {
+            param($Common, $Repo, $Branch, $Json)
+            & {
+                . $Common
+                function gh { $global:LASTEXITCODE = 0; $Json }
+                Get-BranchPr $Repo $Branch -AllCommits
+            }
+        }.ToString()
+        $found = $probe.AddScript($script).AddArgument("$PSScriptRoot\common.ps1").AddArgument($Repo).AddArgument($Branch).AddArgument($Json).Invoke()
+        if ($probe.Streams.Error.Count) { throw "Get-BranchPr -AllCommits of ${Branch}: $($probe.Streams.Error[0])" }
+        $found
+    } finally {
+        $probe.Dispose()
+    }
+}
 
 $scratch = Join-Path (Split-Path $PSScriptRoot -Parent) '.scratch'
 $fixture = Join-Path $scratch "cleanup-test-$([Guid]::NewGuid().ToString('N'))"
@@ -88,7 +116,125 @@ try {
     Assert-CleanupTest ($null -eq (Get-LastBuildTime $empty)) 'A target with no build entry has no date.'
     Assert-CleanupTest ($null -eq (Get-LastBuildTime (Join-Path $fixture 'missing'))) 'A missing target has no date.'
 
-    Write-Output 'Task cleanup: new and older Cargo layouts, trim marker, later build and unknown date passed.'
+    # The PR of a task branch (Get-BranchPr): the GitHub slug of a remote.
+    Assert-CleanupTest ((Get-GitHubSlug 'https://github.com/Upstream/Aurora-Viewer.git') -eq 'Upstream/Aurora-Viewer') 'Slug of an https remote.'
+    Assert-CleanupTest ((Get-GitHubSlug 'git@github.com:Me/Aurora-Viewer.git') -eq 'Me/Aurora-Viewer') 'Slug of an ssh remote.'
+    Assert-CleanupTest ((Get-GitHubSlug 'https://github.com/Me/Aurora-Viewer/') -eq 'Me/Aurora-Viewer') 'Slug without .git.'
+    Assert-CleanupTest ($null -eq (Get-GitHubSlug 'https://gitlab.com/Me/Aurora-Viewer.git')) 'Another host has no GitHub slug.'
+
+    # The PRs gh lists for a branch name, newest first: another contributor's
+    # PR from a branch of the same name is never ours.
+    $prs = '[{"number":3,"state":"OPEN","headRefOid":"c3","headRepositoryOwner":{"login":"someone"}},' +
+        '{"number":4,"state":"CLOSED","headRefOid":"c4","headRepositoryOwner":null},' +
+        '{"number":2,"state":"MERGED","headRefOid":"c2","headRepositoryOwner":{"login":"me"}},' +
+        '{"number":1,"state":"CLOSED","headRefOid":"c1","headRepositoryOwner":{"login":"Upstream"}}]' | ConvertFrom-Json
+    Assert-CleanupTest ((Select-BranchPr $prs @('Me')).number -eq 2) 'A fork PR is found by its head owner, case ignored.'
+    Assert-CleanupTest ((Select-BranchPr $prs @('Upstream')).number -eq 1) 'A PR from a branch of origin is found.'
+    Assert-CleanupTest ((Select-BranchPr $prs @('Upstream', 'Me')).number -eq 2) 'The newest of our PRs wins.'
+    Assert-CleanupTest ($null -eq (Select-BranchPr $prs @('nobody'))) 'Only other contributors: no PR.'
+    Assert-CleanupTest ($null -eq (Select-BranchPr ('[]' | ConvertFrom-Json) @('Me'))) 'No PR at all.'
+
+    # Where a branch was pushed, in a fixture repository whose git reads no
+    # global or system setting (a pushDefault of the PC would change it).
+    $repo = Join-Path $fixture 'repo'
+    $savedGlobal = $env:GIT_CONFIG_GLOBAL; $savedNoSystem = $env:GIT_CONFIG_NOSYSTEM
+    $env:GIT_CONFIG_GLOBAL = Join-Path $fixture 'empty.gitconfig'; $env:GIT_CONFIG_NOSYSTEM = '1'
+    [IO.File]::WriteAllText($env:GIT_CONFIG_GLOBAL, '')
+    try {
+        git init -q $repo
+        git -C $repo -c user.name=fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m fixture
+        git -C $repo remote add origin https://github.com/Upstream/Aurora-Viewer.git
+        git -C $repo remote add fork git@github.com:Me/Aurora-Viewer.git
+        git -C $repo remote add mirror https://gitlab.com/Me/Aurora-Viewer.git
+        $head = (git -C $repo rev-parse HEAD).Trim()
+        # new-task.ps1's tracking of origin/main says nothing: every GitHub owner
+        git -C $repo config branch.feat/new.remote origin
+        git -C $repo config branch.feat/new.merge refs/heads/main
+        $all = @(Get-BranchHeadOwners $repo 'feat/new' | Sort-Object)
+        Assert-CleanupTest (($all -join ',') -eq 'Me,Upstream') "Unpushed branch: every GitHub owner (got '$($all -join ',')')."
+        # pushed to the fork without -u: the remote-tracking ref tells
+        git -C $repo update-ref refs/remotes/fork/fix/pushed $head
+        Assert-CleanupTest ((@(Get-BranchHeadOwners $repo 'fix/pushed') -join ',') -eq 'Me') 'Branch pushed to the fork.'
+        # pushed with -u: it tracks the branch of the same name on the fork
+        git -C $repo config branch.fix/tracked.remote fork
+        git -C $repo config branch.fix/tracked.merge refs/heads/fix/tracked
+        Assert-CleanupTest ((@(Get-BranchHeadOwners $repo 'fix/tracked') -join ',') -eq 'Me') 'Branch tracking the fork.'
+        # pushed to origin itself
+        git -C $repo update-ref refs/remotes/origin/fix/upstream $head
+        Assert-CleanupTest ((@(Get-BranchHeadOwners $repo 'fix/upstream') -join ',') -eq 'Upstream') 'Branch pushed to origin.'
+        git -C $repo config branch.fix/push-remote.pushRemote fork
+        Assert-CleanupTest ((@(Get-BranchHeadOwners $repo 'fix/push-remote') -join ',') -eq 'Me') 'Branch with a push remote.'
+        # a contributor's fork fetched for a review holds a branch of the
+        # same name: the branch's own push settings win over it
+        git -C $repo remote add review https://github.com/Other/Aurora-Viewer.git
+        git -C $repo update-ref refs/remotes/review/fix/tracked $head
+        Assert-CleanupTest ((@(Get-BranchHeadOwners $repo 'fix/tracked') -join ',') -eq 'Me') 'Push settings win over a fetched ref.'
+
+        # the main repository: origin here, whatever the other remotes
+        Assert-CleanupTest ((Get-MainRepo $repo) -eq 'Upstream/Aurora-Viewer') 'Clone of the main repository: origin.'
+        # a clone of a personal fork: origin is the fork, upstream the main one
+        $forkClone = Join-Path $fixture 'fork-clone'
+        git init -q $forkClone
+        git -C $forkClone remote add origin git@github.com:Me/Aurora-Viewer.git
+        Assert-CleanupTest ((Get-MainRepo $forkClone) -eq 'Me/Aurora-Viewer') 'Only origin: origin.'
+        # gh repo set-default with no remote for the chosen repository writes
+        # its owner/name on origin
+        git -C $forkClone config remote.origin.gh-resolved Upstream/Aurora-Viewer
+        Assert-CleanupTest ((Get-MainRepo $forkClone) -eq 'Upstream/Aurora-Viewer') 'Only origin, gh repo set-default chose the main repository.'
+        git -C $forkClone config --unset remote.origin.gh-resolved
+        git -C $forkClone remote add upstream https://github.com/Upstream/Aurora-Viewer.git
+        Assert-CleanupTest ((Get-MainRepo $forkClone) -eq 'Upstream/Aurora-Viewer') 'Clone of a fork: upstream.'
+        # gh repo set-default marks its choice, which wins over the names
+        git -C $forkClone remote add team https://github.com/Team/Aurora-Viewer.git
+        git -C $forkClone config remote.team.gh-resolved base
+        Assert-CleanupTest ((Get-MainRepo $forkClone) -eq 'Team/Aurora-Viewer') 'The remote gh repo set-default chose wins.'
+        # a remote off GitHub is skipped, the next one taken
+        git -C $forkClone config --unset remote.team.gh-resolved
+        git -C $forkClone remote set-url upstream https://gitlab.com/Upstream/Aurora-Viewer.git
+        Assert-CleanupTest ((Get-MainRepo $forkClone) -eq 'Me/Aurora-Viewer') 'An upstream off GitHub is skipped.'
+        git -C $forkClone remote set-url origin https://gitlab.com/Me/Aurora-Viewer.git
+        Assert-CleanupTest ($null -eq (Get-MainRepo $forkClone)) 'No main repository on GitHub: nothing.'
+
+        # every commit of the local branch must be in the PR's head
+        git -C $repo -c user.name=fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m later
+        $later = (git -C $repo rev-parse HEAD).Trim()
+        Assert-CleanupTest (Test-CommitIn $repo $head $later) 'An older commit is in a later head.'
+        Assert-CleanupTest (Test-CommitIn $repo $later $later) 'A commit is in itself.'
+        Assert-CleanupTest (-not (Test-CommitIn $repo $later $head)) 'A local commit made after the head is not in it.'
+        Assert-CleanupTest (-not (Test-CommitIn $repo $head ('0' * 40))) 'A head missing here holds nothing.'
+
+        # -AllCommits, whole: what end-task.ps1 asks before it deletes a
+        # task. The branch stops at $head; the default branch is at $later.
+        git -C $repo branch fix/merged $head
+        $listed = '[{{"number":9,"state":"OPEN","headRefOid":"{0}","headRepositoryOwner":{{"login":"someone"}}}},' +
+            '{{"number":7,"state":"MERGED","headRefOid":"{1}","headRepositoryOwner":{{"login":"Me"}}}}]'
+        $found = Get-FixtureBranchPr $repo 'fix/merged' ($listed -f $later, $head)
+        Assert-CleanupTest ($found.number -eq 7 -and $found.state -eq 'MERGED') "A merged PR whose head is the branch is found (got '$($found.number)')."
+        $found = Get-FixtureBranchPr $repo 'fix/merged' ($listed -f $head, $later)
+        Assert-CleanupTest ($found.number -eq 7) 'A head with commits after the branch still holds all of it.'
+        $found = Get-FixtureBranchPr $repo 'fix/merged' ($listed -f $head, ('0' * 40))
+        Assert-CleanupTest ($null -eq $found) 'A head missing here is not taken for the branch.'
+        # commits made since the merge are not in the PR: nothing to delete on
+        git -C $repo branch fix/commits-since $later
+        $found = Get-FixtureBranchPr $repo 'fix/commits-since' ($listed -f $later, $head)
+        Assert-CleanupTest ($null -eq $found) 'A PR merged before later commits of the branch is skipped.'
+        Assert-CleanupTest ($null -eq (Get-FixtureBranchPr $repo 'fix/no-such-branch' ($listed -f $later, $head))) 'No local branch: no PR.'
+
+        # the same choice, PR by PR: owner first, then the commits
+        $ours = '[{{"number":6,"state":"OPEN","headRefOid":"{0}","headRepositoryOwner":{{"login":"Me"}}}},' +
+            '{{"number":5,"state":"MERGED","headRefOid":"{1}","headRepositoryOwner":{{"login":"Upstream"}}}}]'
+        $ours = ($ours -f $head, $later) | ConvertFrom-Json
+        Assert-CleanupTest ((Select-BranchPr $ours @('Upstream', 'Me') $repo $later).number -eq 5) 'A head without the local commits is skipped.'
+        Assert-CleanupTest ($null -eq (Select-BranchPr $ours @('Me') $repo $later)) 'No head with the local commits: no PR.'
+        Assert-CleanupTest ((Select-BranchPr $ours @('Upstream', 'Me') $repo $head).number -eq 6) 'Every head holds an older branch: the newest PR.'
+    } finally {
+        $env:GIT_CONFIG_GLOBAL = $savedGlobal; $env:GIT_CONFIG_NOSYSTEM = $savedNoSystem
+    }
+
+    # git config of an unset key and show-ref of a missing ref exit with 1:
+    # expected above, but check.ps1 judges the step by the last exit code
+    $global:LASTEXITCODE = 0
+    Write-Output 'Task cleanup: new and older Cargo layouts, trim marker, later build, unknown date, fork PR lookup and main repository passed.'
 } finally {
     $resolved = [IO.Path]::GetFullPath($fixture)
     if ((Split-Path $resolved -Parent) -ne [IO.Path]::GetFullPath($scratch) -or (Split-Path $resolved -Leaf) -notlike 'cleanup-test-*') { throw 'Cleanup outside fixture refused.' }

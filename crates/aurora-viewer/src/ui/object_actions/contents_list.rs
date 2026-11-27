@@ -138,7 +138,7 @@ fn root_row(ui: &mut egui::Ui, p: &Palette, icons: &Icons, object: Uuid, items: 
     let r = ui
         .interact(row.response.rect, root_id().with(object), egui::Sense::click_and_drag())
         .on_hover_text(aurora_i18n::tr!("contents-root-drag-tip"));
-    if r.hovered() || r.drag_started() || r.dragged() {
+    if r.hovered() || r.is_pointer_button_down_on() {
         let all: Vec<_> = items.iter().map(|item| task_inventory::from_inventory(object, item)).collect();
         inventory::task_drop::root_source(
             ui,
@@ -177,7 +177,11 @@ pub(super) fn show(
         .inner_margin(4)
         .show(ui, |ui| {
             widgets::inventory_spacing(ui);
-            let height = (ui.available_height() - 8.0).clamp(80.0, 200.0);
+            // the list follows the window's height, as the Legacy Viewer's
+            // object_contents panel does (follows="all",
+            // floater_openobject.xml); it was held at 200 px, about eight
+            // rows, however tall the window was made (#4844)
+            let height = (ui.available_height() - 8.0).max(80.0);
             let background = ui.interact(
                 egui::Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), height)),
                 focus_id(object),
@@ -233,7 +237,7 @@ pub(super) fn show(
                             } else {
                                 std::slice::from_ref(&single)
                             };
-                            if response.hovered() || response.dragged() || response.drag_started() {
+                            if response.hovered() || response.is_pointer_button_down_on() {
                                 inventory::task_drop::source(
                                     ui,
                                     &response,

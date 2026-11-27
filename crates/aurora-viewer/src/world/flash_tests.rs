@@ -69,6 +69,7 @@ fn residents_messages_flash_the_button_except_in_do_not_disturb() {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             },
             true,
         );
@@ -96,6 +97,7 @@ fn residents_messages_flash_the_button_except_in_do_not_disturb() {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         },
         true,
     );

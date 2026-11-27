@@ -225,6 +225,7 @@ pub(super) fn show(
         st.showcase_state = state;
         out
     };
+    let filter = st.showcase_state.filter;
     if let Some(rail) = rail {
         ui.painter().rect_filled(rail, radius, face);
         let mut r = ui.new_child(egui::UiBuilder::new().max_rect(rail.shrink(6.0)).id_salt("showcase_rail"));
@@ -239,7 +240,31 @@ pub(super) fn show(
         collection_menu(&mut g, p, world, st, entries, shown.len(), favorites, no_picture);
         g.add_space(6.0);
     }
-    let scope = banner_scope(st.showcase_state.filter, shown, &outfits, no_picture, no_picture_here);
+    // The batch portraits' window at any time (#5025): the banner below
+    // goes once no outfit lacks a picture or its cross is clicked, and the
+    // window takes pictures again too. Over our own outfits of the
+    // collection shown; a folder of My Outfits is named in the window.
+    let folder = match filter {
+        Filter::Folder(id) => Some(id),
+        _ => None,
+    };
+    g.horizontal(|ui| {
+        if widgets::action_button(
+            ui,
+            p,
+            "camera-filled",
+            aurora_i18n::tr!("ui-appearance-batch-title"),
+            widgets::ActionKind::Flat,
+            Vec2::new(ui.available_width(), 28.0),
+        )
+        .clicked()
+        {
+            let own = outfits.iter().copied().filter(|id| own_outfit(world, *id)).collect();
+            actions.push(Action::OutfitBatch(own, folder));
+        }
+    });
+    g.add_space(6.0);
+    let scope = banner_scope(filter, shown, &outfits, no_picture, no_picture_here);
     banner(&mut g, p, world, st, scope, actions);
     egui::ScrollArea::vertical()
         .id_salt("appearance_showcase")
@@ -985,14 +1010,14 @@ fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi
                     st.outfit_selection.single(id);
                 }
                 st.select_item(&response, id, it.id, &order);
-                items::double_click(&response, world, it, label.is_some(), actions);
+                items::double_click(&response, world, it, label.is_some(), Some(id), actions);
                 let selected = st.selected_items(id, it.id, &order);
                 items::context_menu(&response, p, world, st, items::List::Outfit(id), it, &selected, actions);
                 // the menu's Wear, for this item alone (wear_action, replace)
                 if label.is_none()
                     && matches!(it.asset_type, 5 | 6 | 13)
                     && ui.rect_contains_pointer(response.rect)
-                    && locks.wear(inv, it.id, 0).replace
+                    && locks.wear(inv, items::outfit_wear_entry(inv, id, it.id), 0).replace
                 {
                     let wear = aurora_i18n::tr!("common-wear");
                     let width = widgets::action_button_fit(ui, "", wear);
@@ -1006,7 +1031,7 @@ fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi
                         .clicked()
                     {
                         actions.push(Action::WearItem {
-                            item: it.id,
+                            item: items::outfit_wear_entry(inv, id, it.id),
                             replace: true,
                             point: 0,
                         });
@@ -1163,6 +1188,88 @@ mod tests {
             actions.extend(frame(ctx, world, st, vec![button]).0);
         }
         actions
+    }
+
+    /// The Outfit portraits button stays over the cards once every outfit
+    /// has a picture and the banner is closed (#5025), and opens the batch
+    /// over every outfit shown.
+    #[test]
+    fn batch_portraits_can_be_reopened_when_all_outfits_have_pictures() {
+        let (mut world, mut st) = grouped();
+        let (outfits, _, _) = collection(&world, &mut st, Filter::All);
+
+        for (index, id) in outfits.iter().enumerate() {
+            world.inventory.folders.get_mut(id).expect("outfit").info.thumbnail = Uuid::from_u128(9000 + index as u128);
+        }
+        world.inventory.generation += 1;
+
+        assert_eq!(collection(&world, &mut st, Filter::All).2, 0);
+        st.showcase_state.banner_hidden = true;
+
+        let ctx = egui::Context::default();
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+
+        let (_, shown) = frame(&ctx, &mut world, &mut st, Vec::new());
+        let label = aurora_i18n::tr!("ui-appearance-batch-title");
+        let at = shown
+            .iter()
+            .find(|(text, _)| text == label)
+            .map(|(_, pos)| *pos + Vec2::new(4.0, 4.0))
+            .expect("permanent outfit portraits button");
+
+        let actions = click(&ctx, &mut world, &mut st, at);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            Action::OutfitBatch(ids, None)
+                if ids.len() == outfits.len()
+                    && outfits.iter().all(|id| ids.contains(id))
+        )));
+    }
+
+    /// The button hands the batch the outfits of the collection shown:
+    /// all, the favorites, those without a picture, or a folder of My
+    /// Outfits with its id.
+    #[test]
+    fn batch_portraits_respect_the_selected_collection() {
+        let (mut world, mut st) = grouped();
+        let ctx = egui::Context::default();
+        let folder = Uuid::from_u128(741);
+
+        let club_red = Uuid::from_u128(744);
+        world.inventory.folders.get_mut(&club_red).expect("Club Red").info.favorite = true;
+        world.inventory.folders.get_mut(&club_red).expect("Club Red").info.thumbnail = Uuid::from_u128(9000);
+        world.inventory.generation += 1;
+
+        for filter in [Filter::All, Filter::Favorites, Filter::Folder(folder), Filter::NoPicture] {
+            let (expected, _, _) = collection(&world, &mut st, filter);
+            let expected_folder = match filter {
+                Filter::Folder(id) => Some(id),
+                _ => None,
+            };
+
+            for _ in 0..4 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+
+            let (_, shown) = frame(&ctx, &mut world, &mut st, Vec::new());
+            let label = aurora_i18n::tr!("ui-appearance-batch-title");
+            let at = shown
+                .iter()
+                .find(|(text, _)| text == label)
+                .map(|(_, pos)| *pos + Vec2::new(4.0, 4.0))
+                .expect("permanent outfit portraits button");
+
+            let actions = click(&ctx, &mut world, &mut st, at);
+            assert!(actions.iter().any(|action| matches!(
+                action,
+                Action::OutfitBatch(ids, target)
+                    if *target == expected_folder
+                        && ids.len() == expected.len()
+                        && expected.iter().all(|id| ids.contains(id))
+            )));
+        }
     }
 
     /// The first time it shows, the showcase widens the window to its rail,

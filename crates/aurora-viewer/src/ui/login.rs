@@ -76,6 +76,14 @@ pub struct LoginForm {
     /// The other servers agreed to for this account and grid, named in
     /// every attempt (`LoginRequest::accepted_next_servers`).
     pub accepted_next_servers: Vec<String>,
+    /// The login server the login would reach over plain http
+    /// (`NetEvent::LoginFailed::unencrypted_server`), until the next
+    /// attempt; `accept_unencrypted` is its own checkbox.
+    pub unencrypted_server: Option<String>,
+    pub accept_unencrypted: bool,
+    /// The plain http servers agreed to since the viewer started; the app
+    /// keeps them in `Settings::unencrypted_logins` outside demo mode.
+    pub accepted_unencrypted: Vec<String>,
     pub error: Option<String>,
     /// The session ended with its region's restart: the login button reads
     /// "Reconnect" (region_restart.rs).
@@ -118,11 +126,15 @@ pub struct LoginForm {
 }
 
 impl LoginForm {
-    /// Another account or grid: no other login server is agreed to any more.
+    /// Another account or grid: no other login server is agreed to any more,
+    /// and the unencrypted login step of the previous one goes (the servers
+    /// agreed to over plain http stay agreed to).
     pub fn forget_next_server(&mut self) {
         self.next_server = None;
         self.accept_next_server = false;
         self.accepted_next_servers.clear();
+        self.unencrypted_server = None;
+        self.accept_unencrypted = false;
     }
 }
 
@@ -254,7 +266,7 @@ pub fn draw_background(ui: &egui::Ui, p: &Palette) {
     let rect = ctx.content_rect();
     let painter = ctx.layer_painter(egui::LayerId::background());
     let t = ctx.input(|i| i.time) as f32;
-    super::aurora_bg::paint(&painter, p, rect, t, 1.0);
+    super::aurora_bg::paint(&painter, p, rect, t, 1.0, super::aurora_bg::snow::amount(ctx));
     // slow animation: ~30 images/s are plenty
     ctx.request_repaint_after(std::time::Duration::from_millis(33));
 }
@@ -419,7 +431,7 @@ pub(super) fn demo_open_start_menu(ui: &egui::Ui, salt: &str, favorites: &StartF
     static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !favorites.list.is_empty()
         && crate::login_favorites::demo() == Some(crate::login_favorites::Demo::Open)
-        && ui.ctx().cumulative_frame_nr() >= 30
+        && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 30
         && !OPENED.swap(true, std::sync::atomic::Ordering::Relaxed)
     {
         egui::Popup::open_id(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup"));
@@ -606,8 +618,20 @@ fn glass_card<R>(
                 0.13 * strength,
             ),
         ];
-        behind.0.set(behind.1, egui::Shape::Vec(lights.clone()));
-        let mut shapes = super::aurora_bg::frosted_pane(p, ctx.content_rect(), ctx.input(|i| i.time) as f32, rect, lights);
+        // The spill fades out on its own: clipped to the card's area (the
+        // sidebar's column), it ended in a straight edge above the cards.
+        // `set_clip_rect`, not `with_clip_rect`, which only narrows the clip.
+        let mut spill = behind.0;
+        spill.set_clip_rect(ctx.content_rect());
+        spill.set(behind.1, egui::Shape::Vec(lights.clone()));
+        let mut shapes = super::aurora_bg::frosted_pane(
+            p,
+            ctx.content_rect(),
+            ctx.input(|i| i.time) as f32,
+            rect,
+            lights,
+            super::aurora_bg::snow::amount(ctx),
+        );
         let top = |height: f32| egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), height));
         if accent {
             shapes.push(strip(top(2.0), &[(0.0, p.violet), (1.0, p.teal)]));
@@ -1068,6 +1092,28 @@ pub fn show(
                         action = LoginAction::Login;
                     }
                 }
+                // the login would travel unencrypted: the user decides
+                if let Some(server) = form.unencrypted_server.clone() {
+                    ui.add_space(8.0);
+                    widgets::divider(ui, p);
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-login-unencrypted")).strong().color(p.amber));
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-login-unencrypted-body", server = server.as_str()))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
+                    if ui
+                        .add_enabled(
+                            form.block_reason.is_none() && !form.busy,
+                            egui::Button::new(aurora_i18n::tr!("ui-login-unencrypted-accept")),
+                        )
+                        .clicked()
+                    {
+                        form.accepted_unencrypted.push(server);
+                        form.unencrypted_server = None;
+                        action = LoginAction::Login;
+                    }
+                }
                 if let Some((msg, frac)) = progress {
                     ui.add_space(10.0);
                     widgets::progress(ui, p, "login_progress", frac, ui.available_width(), "", None);
@@ -1422,6 +1468,85 @@ mod tests {
         assert!(form.accepted_next_servers.is_empty());
     }
 
+    /// A plain http login address is a step of its own: agreeing names that
+    /// server in the next attempt, and nothing else; another account keeps
+    /// the agreement but not a pending step.
+    #[test]
+    fn an_unencrypted_login_is_agreed_to_in_its_own_step() {
+        fn position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + egui::vec2(3.0, 5.0)),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| position(s, label)),
+                _ => None,
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut settings = Settings {
+            username: "Demo Resident".into(),
+            ..Default::default()
+        };
+        let mut form = LoginForm {
+            password: "synthetic".into(),
+            unencrypted_server: Some("grid.example:8002".into()),
+            ..Default::default()
+        };
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let mut draw = |events, form: &mut LoginForm| {
+            let mut action = LoginAction::None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    action = show(ui, &p, &icons, None, &mut settings, form, &info, None);
+                },
+            );
+            output.textures_delta.clear();
+            (action, output)
+        };
+        draw(vec![], &mut form);
+        let (_, output) = draw(vec![], &mut form);
+        let body = aurora_i18n::tr!("ui-login-unencrypted-body", server = "grid.example:8002");
+        assert!(
+            output.shapes.iter().any(|s| position(&s.shape, &body).is_some()),
+            "the server is named"
+        );
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-unencrypted-accept")))
+            .expect("the unencrypted login's button");
+        let mut last = LoginAction::None;
+        for pressed in [true, false] {
+            last = draw(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                &mut form,
+            )
+            .0;
+        }
+        assert!(matches!(last, LoginAction::Login));
+        assert_eq!(form.accepted_unencrypted, ["grid.example:8002"]);
+        assert!(form.unencrypted_server.is_none());
+        assert!(form.accepted_next_servers.is_empty() && !form.agree_tos && !form.read_critical);
+        form.unencrypted_server = Some("other.example".into());
+        form.accept_unencrypted = true;
+        form.forget_next_server();
+        assert!(form.unencrypted_server.is_none() && !form.accept_unencrypted);
+        assert_eq!(form.accepted_unencrypted, ["grid.example:8002"]);
+    }
+
     /// At 1280 × 720 the news, as tall as the login card, stood over the
     /// version and the Quit button of the line along the bottom.
     #[test]
@@ -1697,5 +1822,44 @@ mod tests {
             ("synthetic.resident", "synthetic-input")
         );
         assert!(settings.remember_password);
+    }
+    /// The two lights of a login card spill around it and fade out on their
+    /// own: clipped to the sidebar's column, they ended in a straight edge
+    /// above the Version card.
+    #[test]
+    fn the_cards_light_spill_is_not_cut_at_the_sidebar_column() {
+        let ctx = egui::Context::default();
+        let mut settings = Settings::default();
+        let mut form = LoginForm::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(2006.0, 1106.0));
+        let mut output = None;
+        for _ in 0..3 {
+            output = Some(test_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui, &p, &icons, None, &mut settings, &mut form, &info, None);
+                },
+            )));
+        }
+        let output = output.expect("three frames");
+        // the lights: wider than the sidebar, reaching above its top
+        let lights: Vec<_> = output
+            .shapes
+            .iter()
+            .filter(|s| {
+                let b = s.shape.visual_bounding_rect();
+                b.left() < screen.right() - 400.0 && b.right() > screen.right() && b.top() < 0.0 && b.width() < screen.width()
+            })
+            .collect();
+        assert!(!lights.is_empty(), "the Version card's lights");
+        for light in lights {
+            assert_eq!(light.clip_rect, screen, "a card's light is clipped short of the screen");
+        }
     }
 }

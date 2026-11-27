@@ -21,8 +21,11 @@
 use super::{BuildSettings, BuildTool, FLAGS_CREATE_SELECTED};
 use crate::ui::context::flags::{OBJECT_COPY, OBJECT_MODIFY, OBJECT_TRANSFER, OBJECT_YOU_OWNER};
 use crate::world::World;
+use aurora_net::RegionHandle;
 use aurora_net::build::BuildCmd;
+use aurora_net::build::TransformUpdate;
 use aurora_prim::te::TextureFace;
+use glam::{Quat, Vec3};
 use std::sync::Arc;
 
 /// TEM_FULLBRIGHT_MASK and the shininess bits of a face's bump / shiny /
@@ -51,9 +54,12 @@ pub fn styled_face(face: &TextureFace, s: &BuildSettings) -> TextureFace {
 
 impl BuildTool {
     /// The Create tool asked the region for one more prim
-    /// (LLToolPlacer::addObject, `sObjectAddMsg++`).
-    pub(super) fn expect_new_defaults(&mut self) {
+    /// (LLToolPlacer::addObject, `sObjectAddMsg++`), with the place and
+    /// rotation it is put at once it arrives (`exact`: the Aurora window's
+    /// Center and Rotate).
+    pub(super) fn expect_new_defaults(&mut self, exact: Option<(RegionHandle, Vec3, Quat)>) {
         self.new_defaults_pending = self.new_defaults_pending.saturating_add(1);
+        self.new_poses.push_back(exact);
     }
 
     /// An object rezzed from inventory: nothing the Create tool asked for is
@@ -61,6 +67,7 @@ impl BuildTool {
     /// parms from being applied due to lost packet").
     pub fn forget_new_defaults(&mut self) {
         self.new_defaults_pending = 0;
+        self.new_poses.clear();
     }
 
     /// Gives a newly arrived object `idx` the new objects' look and flags,
@@ -76,6 +83,27 @@ impl BuildTool {
         }
         self.new_defaults_pending -= 1;
         let (handle, local_id) = (o.key.region, o.key.local_id);
+        // the place Center or Rotate chose, in the region it was asked of
+        if let Some(Some((region, position, rotation))) = self.new_poses.pop_front()
+            && region == handle
+            && position.is_finite()
+            && rotation.is_finite()
+        {
+            o.position = position;
+            o.rotation = rotation;
+            self.send(BuildCmd::Transform {
+                handle,
+                updates: vec![TransformUpdate {
+                    local_id,
+                    position: Some(position),
+                    rotation: Some(rotation),
+                    scale: None,
+                    linked: true,
+                    uniform: false,
+                }],
+            });
+        }
+        let Some(o) = world.objects.get_mut(idx) else { return };
         if let Some(te) = o.te.as_deref() {
             let mut styled = te.clone();
             for face in styled.faces.iter_mut() {

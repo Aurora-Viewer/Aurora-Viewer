@@ -216,15 +216,51 @@ pub(crate) fn reset_windows(ctx: &egui::Context) {
     });
 }
 
-/// True once per window after a "Reset window positions and sizes": the
-/// window then takes its default place, size and expanded state.
-pub(crate) fn take_reset(ctx: &egui::Context, id: Id) -> bool {
-    windows(ctx, |w| w.resets > 0 && w.reset_done.insert(id.value()))
+/// The reset button of one window's title bar (#4756): `reset_windows` for
+/// that window alone. It forgets where the window stood, leaves the group it
+/// was glued to (the rest of the group stays glued and keeps its place), and
+/// takes its default place, size and expanded state at its next frame
+/// (`take_reset`). The other windows and the settings are left as they are.
+/// An Aurora addition: the Legacy Viewer has no per-floater reset.
+pub(crate) fn reset_window(ctx: &egui::Context, id: Id) {
+    let key = id.value();
+    windows(ctx, |w| {
+        let neighbours: Vec<u64> = w
+            .links
+            .iter()
+            .filter_map(|&(a, b)| (a == key).then_some(b).or((b == key).then_some(a)))
+            .collect();
+        w.links.retain(|&(a, b)| a != key && b != key);
+        // what is left of its group is anchored again as a block of its own
+        w.live.reanchor.extend(neighbours);
+        w.placed.remove(&key);
+        w.parked_moves.remove(&key);
+        w.live.follow.remove(&key);
+        w.live.settle.remove(&key);
+        w.live.places.remove(&key);
+        w.live.reset_one.insert(key);
+    });
+    ctx.request_repaint();
 }
 
-/// `take_reset` would answer true for `id`, without taking it.
+/// True once per window after a "Reset window positions and sizes", or
+/// after its own reset button (`reset_window`): the window then takes its
+/// default place, size and expanded state.
+pub(crate) fn take_reset(ctx: &egui::Context, id: Id) -> bool {
+    windows(ctx, |w| {
+        let one = w.live.reset_one.remove(&id.value());
+        let all = w.resets > 0 && w.reset_done.insert(id.value());
+        one || all
+    })
+}
+
+/// `take_reset` would answer true for `id`, without taking it: a window
+/// outside the viewer's comes back inside before it takes its default
+/// place.
 pub(crate) fn reset_pending(ctx: &egui::Context, id: Id) -> bool {
-    windows(ctx, |w| w.resets > 0 && !w.reset_done.contains(&id.value()))
+    windows(ctx, |w| {
+        w.live.reset_one.contains(&id.value()) || (w.resets > 0 && !w.reset_done.contains(&id.value()))
+    })
 }
 
 /// Remove the file; a background save still on its way, older than
@@ -397,7 +433,7 @@ fn islands_id() -> Id {
 /// An island of the bars was drawn this frame at `rect` (`bars::islands`):
 /// the windows keep their title clear of them (`clear_of_islands`).
 pub(crate) fn island_drawn(ctx: &egui::Context, rect: Rect) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let islands = d.get_temp_mut_or_default::<(u64, Vec<Rect>)>(islands_id());
         if islands.0 != frame {
@@ -409,7 +445,7 @@ pub(crate) fn island_drawn(ctx: &egui::Context, rect: Rect) {
 
 /// The islands drawn this frame.
 pub(crate) fn islands(ctx: &egui::Context) -> Vec<Rect> {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data(|d| d.get_temp::<(u64, Vec<Rect>)>(islands_id()))
         .filter(|(drawn, _)| *drawn == frame)
         .map(|(_, rects)| rects)
@@ -534,6 +570,10 @@ struct Live {
     /// Explicit placements may be requested before layout::frame runs;
     /// wait until Slot::shown has recorded their actual result.
     reanchor_after_show: BTreeSet<u64>,
+    /// Windows whose own reset button was pressed (`reset_window`), until
+    /// their next frame takes it: the window is open at the press, so the
+    /// session is enough.
+    reset_one: BTreeSet<u64>,
 }
 
 /// The windows the user places, by `Id::value`; persisted with egui's
@@ -1287,6 +1327,73 @@ mod tests {
         crate::ui::widgets::place_floater(&ctx, WINDOW, moved.min, moved.size());
         frames(&ctx, true);
         assert_eq!(rect(&ctx), placed);
+    }
+
+    /// The reset button of one window's title bar (#4756): that window takes
+    /// the rect of its first opening again, expanded, and leaves its group;
+    /// the other window keeps where it was put, and a later "Reset windows…"
+    /// still reaches both.
+    #[test]
+    fn reset_window_brings_only_that_window_back() {
+        const ONE: &str = "layout_reset_one";
+        const OTHER: &str = "layout_reset_other";
+        let ctx = egui::Context::default();
+        let palette = crate::theme::Theme::default().palette();
+        let mut time = 0.0;
+        let mut frames = |ctx: &egui::Context| {
+            for _ in 0..3 {
+                time += 1.0 / 60.0;
+                let input = egui::RawInput {
+                    screen_rect: Some(screen(1280.0, 720.0)),
+                    time: Some(time),
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    for (id, pos) in [(ONE, Pos2::new(200.0, 150.0)), (OTHER, Pos2::new(700.0, 150.0))] {
+                        crate::ui::widgets::Floater::new(id, "Window", pos, Vec2::new(300.0, 200.0))
+                            .silent()
+                            .show(ui.ctx(), &palette, &mut true, |ui| {
+                                ui.label("content");
+                            });
+                    }
+                });
+                output.textures_delta.clear();
+            }
+        };
+        let rect = |ctx: &egui::Context, id: &str| ctx.memory(|m| m.area_rect(Id::unique(id))).expect("shown");
+        frames(&ctx);
+        let first = rect(&ctx, ONE);
+        let one = Rect::from_min_size(Pos2::new(640.0, 320.0), Vec2::new(420.0, 260.0));
+        let other = Rect::from_min_size(Pos2::new(100.0, 400.0), Vec2::new(360.0, 240.0));
+        crate::ui::widgets::place_floater(&ctx, ONE, one.min, one.size());
+        crate::ui::widgets::place_floater(&ctx, OTHER, other.min, other.size());
+        frames(&ctx);
+        crate::ui::widgets::minimize_floater(&ctx, ONE);
+        frames(&ctx);
+        let other_placed = rect(&ctx, OTHER);
+        assert_eq!(other_placed.min, other.min);
+        let (a, b) = (Id::unique(ONE).value(), Id::unique(OTHER).value());
+        windows(&ctx, |w| w.links.insert(snap::link(a, b)));
+
+        crate::ui::widgets::reset_window(&ctx, ONE);
+        assert!(reset_pending(&ctx, Id::unique(ONE)));
+        assert!(!reset_pending(&ctx, Id::unique(OTHER)));
+        frames(&ctx);
+        assert!(!crate::ui::widgets::floater_minimized(&ctx, ONE));
+        assert_eq!(rect(&ctx, ONE), first);
+        assert_eq!(rect(&ctx, OTHER), other_placed, "the other window is left alone");
+        assert!(windows(&ctx, |w| w.links.is_empty()), "it leaves its group");
+        assert!(!reset_pending(&ctx, Id::unique(ONE)), "taken once");
+
+        // once only: moved after its reset, it stays where it is put
+        crate::ui::widgets::place_floater(&ctx, ONE, one.min, one.size());
+        frames(&ctx);
+        assert_eq!(rect(&ctx, ONE).min, one.min);
+        // and "Reset windows…" afterwards still reaches every window
+        crate::ui::widgets::reset_windows(&ctx);
+        frames(&ctx);
+        assert_eq!(rect(&ctx, ONE), first);
+        assert_ne!(rect(&ctx, OTHER).min, other.min);
     }
 
     #[test]

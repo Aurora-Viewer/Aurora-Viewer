@@ -20,7 +20,7 @@ use egui::{Id, Pos2, Rect, RichText, Sense, Vec2};
 /// Room between an island's edge and its buttons, above and below.
 const V_PAD: f32 = 4.0;
 /// Icons of the dock's buttons (smaller in the reduced buttons).
-pub(super) const BUTTON_ICON: f32 = 18.0;
+pub(crate) const BUTTON_ICON: f32 = 18.0;
 /// The reduced buttons, when the others do not fit in the screen's width.
 pub(super) const MIN_BUTTON: f32 = 24.0;
 /// Room between the chat island and the dock, at the least.
@@ -30,6 +30,11 @@ const MIN_CHAT: f32 = 200.0;
 /// Room in the chat field before the text and after the emoji.
 const FIELD_PAD: f32 = 9.0;
 const EMOJI_ICON: f32 = 15.0;
+
+/// The dock's buttons, smaller on a narrow screen (a floating block's too).
+pub(crate) fn button_size(screen: Rect) -> f32 {
+    if narrow(screen) { 32.0 } else { 34.0 }
+}
 
 /// A screen under 1408 px wide (the mockup's 1280) takes the narrower
 /// chat island and buttons.
@@ -101,6 +106,7 @@ pub fn geometry(screen: Rect, chat_width: f32, buttons: usize, mic: bool) -> Geo
 /// `thumbs(room, button, height)` after the chat island, within the room
 /// the dock leaves at its size: the dock keeps its place unless it would
 /// cover them, then stands right after them.
+#[cfg(test)]
 pub fn geometry_styled(
     screen: Rect,
     chat_width: f32,
@@ -108,34 +114,87 @@ pub fn geometry_styled(
     natural: impl Fn(f32) -> Vec<f32>,
     thumbs: impl Fn(f32, f32, f32) -> f32,
 ) -> Geometry {
+    geometry_fixed(screen, chat_width, style, natural, thumbs, &[], &[], false, &[], true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn geometry_fixed(
+    screen: Rect,
+    chat_width: f32,
+    style: Style,
+    natural: impl Fn(f32) -> Vec<f32>,
+    thumbs: impl Fn(f32, f32, f32) -> f32,
+    fixed: &[bool],
+    stretch: &[bool],
+    blocks: bool,
+    scopes: &[sizing::BlockSizing],
+    chat_space: bool,
+) -> Geometry {
     let bottom = screen.bottom() - MARGIN;
     let left = screen.left() + MARGIN;
     let right = screen.right() - MARGIN;
-    let labelled = style.mode != ButtonMode::IconsOnly;
+    let labelled = if scopes.is_empty() {
+        style.mode != ButtonMode::IconsOnly
+    } else {
+        scopes.iter().any(|scope| scope.labelled)
+    };
     let least = natural(MIN_BUTTON);
-    let least = if labelled { vec![MIN_BUTTON; least.len()] } else { least };
+    let least = if labelled {
+        least
+            .iter()
+            .enumerate()
+            .map(|(i, width)| {
+                if fixed.get(i).copied().unwrap_or(false) {
+                    *width
+                } else {
+                    MIN_BUTTON
+                }
+            })
+            .collect()
+    } else {
+        least
+    };
     let wanted = if chat_width > 0.0 { chat_width } else { default_chat_width(screen) };
     let max_chat = (right - left - AFTER_CHAT - row_width(&least, MIN_BUTTON)).max(MIN_CHAT);
-    let chat_w = wanted.clamp(MIN_CHAT, max_chat);
+    let chat_w = if chat_space { wanted.clamp(MIN_CHAT, max_chat) } else { 0.0 };
     let chat_right = left + chat_w;
-    let start = chat_right + AFTER_CHAT;
+    let start = chat_right + if chat_space { AFTER_CHAT } else { 0.0 };
     let room = right - start;
-    let row = |button: f32| sizing::fit(&natural(button), style.sizing, labelled, room - PAD * 2.0, GAP, MIN_BUTTON);
-    let mut button = if narrow(screen) { 32.0 } else { 34.0 };
+    let sizing = if style.sizing == crate::ui::toolbar::Sizing::Fill && stretch.iter().any(|flag| *flag) {
+        crate::ui::toolbar::Sizing::Auto
+    } else {
+        style.sizing
+    };
+    let row = |button: f32| {
+        let natural = natural(button);
+        if scopes.is_empty() {
+            sizing::fit_fixed(&natural, fixed, sizing, labelled, room - PAD * 2.0, GAP, MIN_BUTTON)
+        } else {
+            sizing::fit_blocks(&natural, fixed, scopes, stretch, room - PAD * 2.0, GAP, MIN_BUTTON)
+        }
+    };
+    let mut button = button_size(screen);
     let mut widths = row(button);
     if row_width(&widths, button) > room {
         button = MIN_BUTTON;
         widths = row(button);
     }
     let width = row_width(&widths, button);
-    let height = button + V_PAD * 2.0;
+    let height = button.max(if blocks { super::islands::HEIGHT } else { 0.0 }) + V_PAD * 2.0;
     let thumbs_w = thumbs(right - start - width - AFTER_CHAT, button, height).max(0.0);
+    let available = room - if thumbs_w > 0.0 { thumbs_w + AFTER_CHAT } else { 0.0 };
+    crate::ui::toolbar::structure::distribute(&mut widths, stretch, available - PAD * 2.0, GAP);
+    let aligned = sizing::align_blocks(&mut widths, scopes, available - PAD * 2.0, GAP, style.align);
+    let width = row_width(&widths, button);
     let dock_start = if thumbs_w > 0.0 { start + thumbs_w + AFTER_CHAT } else { start };
-    let x = match style.align {
-        // centred on the screen, as the mockup's dock
-        Align::Center => (left + ((right - left - width) / 2.0).round()).max(dock_start),
-        align => sizing::place(align, dock_start, right, width),
-    };
+    let x = aligned.map_or_else(
+        || match style.align {
+            // centred on the screen, as the mockup's dock
+            Align::Center => (left + ((right - left - width) / 2.0).round()).max(dock_start),
+            align => sizing::place(align, dock_start, right, width),
+        },
+        |lead| dock_start + lead,
+    );
     let chat = Rect::from_min_max(Pos2::new(left, bottom - height), Pos2::new(chat_right, bottom));
     let dock = Rect::from_min_max(Pos2::new(x, bottom - height), Pos2::new(x + width, bottom));
     Geometry {
@@ -170,11 +229,21 @@ pub fn bottom(
 ) -> (Option<crate::ui::chat::OutgoingChat>, BarAction, f32, bool) {
     let ctx = ui.ctx().clone();
     let screen = ui.max_rect();
-    let buttons = toolbar_settings.buttons(layout);
+    let display = crate::ui::toolbar::structure::Display::for_bar(&ctx, row.bar, toolbar_settings.buttons(layout), row.editing);
+    let buttons = display.buttons();
+    let legacy_chat = !toolbar_settings.chat_composed;
+    let chat_space = legacy_chat;
     let style = row.style;
     // the conversations' thumbnails as high as the chat island's button
     let thumb = |button: f32| button - 4.0;
-    let mut geo = geometry_styled(
+    let fixed: Vec<_> = buttons
+        .iter()
+        .map(|button| crate::ui::toolbar::structure::fixed_width(&button.command))
+        .collect();
+    let blocks = buttons
+        .iter()
+        .any(|button| crate::ui::toolbar::structure::is_block(&button.command));
+    let mut geo = geometry_fixed(
         screen,
         *chat_width,
         style,
@@ -185,8 +254,34 @@ pub fn bottom(
                 .collect()
         },
         |room, button, height| chat.thumbnails.bar_width(thumb(button), (height - thumb(button)) / 2.0, room),
+        &fixed,
+        &crate::ui::toolbar::structure::stretch(&ctx, buttons),
+        blocks,
+        &sizing::block_styles(&ctx, buttons, style.sizing, style.mode != ButtonMode::IconsOnly),
+        chat_space,
     );
     let mut action = BarAction::None;
+    let split = buttons
+        .iter()
+        .any(|button| crate::ui::toolbar::structure::is_separator(&button.command))
+        || sizing::has_alignment(&ctx, buttons);
+    if buttons.iter().any(|button| button.command == "bar_chat") {
+        // The chat block's island alone rises for the recent emojis' row
+        // and for a paragraph, as the chat island did before the field
+        // became a block: the dock's other islands keep their height. A
+        // dock in one piece has no island of the chat's to raise, and is
+        // as high as its chat block.
+        let lift = if toolbar.islands && split && !row.editing && !row.floating {
+            super::chrome::lift_chat(&ctx)
+        } else {
+            0.0
+        };
+        let height = super::chrome::height(&ctx, "bar_chat") + V_PAD * 2.0;
+        geo.height = geo.height.max(height);
+        geo.dock.min.y = geo.dock.bottom() - geo.height;
+        // (what the islands keep of the screen: `Geometry::reserved`)
+        geo.chat.min.y = geo.chat.bottom() - geo.height - lift;
+    }
     let mut committed = false;
 
     // the conversations' thumbnails between the chat island and the dock
@@ -201,7 +296,7 @@ pub fn bottom(
     // shown, the same rule hides the island's button so a side toolbar cannot
     // resurrect the "Nearby chat and Conversations" control.
     let shown = chat.bar_shown();
-    if shown {
+    if shown && chat_space {
         let slot = geo.button - 4.0;
         let editor = crate::ui::chat::input::height(&ctx, crate::ui::chat::bar_input_id(), slot);
         geo.chat.min.y -= editor - slot;
@@ -211,7 +306,7 @@ pub fn bottom(
     }
     chat.bar_hovered = false;
     let docked = toolbar_settings.location("conversations", layout).is_some();
-    let out = if shown {
+    let out = if legacy_chat && shown {
         area(&ctx, p, "chat", geo.chat, |ui| {
             let out = chat_island(
                 ui,
@@ -231,7 +326,7 @@ pub fn bottom(
             out
         })
     } else {
-        if !docked {
+        if !shown && chat_space && !docked {
             let alone = Rect::from_min_size(geo.chat.min, Vec2::new(PAD * 2.0 + geo.button - 4.0, geo.height));
             area(&ctx, p, "chat_button", alone, |ui| {
                 let slot = geo.button - 4.0;
@@ -244,14 +339,25 @@ pub fn bottom(
 
     // Empty toolbars only expose their drop zone during a toolbar drag
     // (LLToolBarView::draw), just like the side islands.
-    if buttons.is_empty() && (!crate::ui::toolbar::ToolbarUi::dragging(&ctx) || row.locked) {
+    if buttons.is_empty() && !crate::ui::toolbar::ToolbarUi::editing(&ctx) && (!crate::ui::toolbar::ToolbarUi::dragging(&ctx) || row.locked)
+    {
         return (out, action, screen.bottom() - geo.reserved(), committed);
     }
-    area(&ctx, p, "dock", geo.dock, |ui| {
+    let contents = geo.dock;
+    if crate::ui::toolbar::ToolbarUi::editing(&ctx) {
+        geo.dock.min.x = if chat_space {
+            geo.chat.right() + AFTER_CHAT
+        } else {
+            screen.left() + MARGIN
+        };
+        geo.dock.max.x = screen.right() - MARGIN;
+    }
+    super::islands::area_surface(&ctx, p, "dock", geo.dock, !split && !row.editing, |ui| {
+        crate::ui::toolbar::edit_mode::region(ui, p, row.bar, geo.dock, buttons.is_empty());
         // the dock's background: its right-click menu and the drop target
         let target = ui.interact(geo.dock, Id::unique("toolbar_background"), Sense::click());
         toolbar.context(&target, p, row.bar, style, None, row.locked);
-        let inner = geo.dock.shrink2(Vec2::new(PAD, V_PAD));
+        let inner = contents.shrink2(Vec2::new(PAD, V_PAD));
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(inner)
@@ -262,7 +368,7 @@ pub fn bottom(
         let look = |b: &crate::ui::skin::ToolButton| {
             let at = buttons.iter().position(|x| x.command == b.command).unwrap_or(0);
             ButtonLook {
-                size: Vec2::new(geo.widths.get(at).copied().unwrap_or(geo.button), geo.button),
+                size: Vec2::new(geo.widths.get(at).copied().unwrap_or(geo.button), geo.height - V_PAD * 2.0),
                 icon: BUTTON_ICON.min(geo.button - 6.0),
                 dock: true,
                 mode: style.mode,
@@ -281,15 +387,21 @@ pub fn bottom(
         // the marker spans the buttons' row less 2 px at each end, the
         // mockup's 28 px `.dropguide`
         let mut drop_rect = inner.expand2(Vec2::new(geo.button + PAD, 0.0));
+        if row.editing {
+            drop_rect = geo.dock;
+        }
         // A wider toolbar must not cover the chat's resize handle with a
         // hover-only drop target on the dock's higher layer.
-        drop_rect.min.x = drop_rect.min.x.max(geo.chat.right() + AFTER_CHAT);
+        if legacy_chat {
+            drop_rect.min.x = drop_rect.min.x.max(geo.chat.right() + AFTER_CHAT);
+        }
         // nor the conversations' thumbnails
         if geo.thumbs.width() > 0.0 {
             drop_rect.min.x = drop_rect.min.x.max(geo.thumbs.right());
         }
         let drop = ui.interact(drop_rect, Id::unique("dock_drop"), Sense::hover());
-        toolbar.drop_bar(&drop, row.bar, &rects, p, row.locked);
+        let full = display.full_rects(&rects);
+        toolbar.drop_bar(&drop, row.bar, display.original(), &full, row.locked);
     });
     (out, action, screen.bottom() - geo.reserved(), committed)
 }
@@ -299,7 +411,7 @@ pub fn bottom(
 /// conversations (`with_button`: else the field takes its room), and the
 /// width handle on the island's right edge (double click: the default).
 #[allow(clippy::too_many_arguments)]
-fn chat_island(
+pub(super) fn chat_island(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
@@ -317,17 +429,17 @@ fn chat_island(
     // the field and the button, centred in the islands' common height
     let slot = geo.button - 4.0;
     let inset = (geo.height - slot) / 2.0;
-    // the recent emojis over the field, or at the island's foot with the
-    // Legacy chat style
+    // the recent emojis over the field, with every chat style: the bar's
+    // field stays at the foot of its island (the human's choice,
+    // 2026-11-27; the Legacy style keeps them under the field in
+    // Conversations alone, `Recent::above`)
     let recent = if emoji.is_some() { chat.recent_emojis.height() } else { 0.0 };
-    let above = chat.recent_emojis.above;
-    let (over, under) = if above { (recent, 0.0) } else { (0.0, recent) };
-    let bottom = island.bottom() - under;
+    let bottom = island.bottom();
     let top = bottom - inset - slot;
     let button = Rect::from_min_size(Pos2::new(island.right() - PAD - slot, top), Vec2::splat(slot));
     let field_right = if with_button { button.left() - GAP } else { island.right() - PAD };
     let field = Rect::from_min_max(
-        Pos2::new(island.left() + PAD, island.top() + inset + over),
+        Pos2::new(island.left() + PAD, island.top() + inset + recent),
         Pos2::new(field_right, bottom - inset),
     );
     let radius = ui.visuals().window_corner_radius;
@@ -339,12 +451,16 @@ fn chat_island(
         Vec2::splat(EMOJI_ICON),
     );
     let smile_resp = ui.interact(smile.expand(4.0), Id::unique("chat_island_emoji"), Sense::click());
+    // (the button's own reading, not the layer's under the pointer: the
+    // dock's chat block stands on a layer over the dock's, whose area is
+    // only what stands out of the dock, `chrome::show_lifted_chat`)
+    let on_smile = smile_resp.contains_pointer();
     let hot = smile_resp.hovered() || chat.bar_emoji_open;
     paint_icon(ui, icons, "mood-smile-filled", smile, EMOJI_ICON, slot_ink(p, hot, true));
     if smile_resp.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
         chat.bar_emoji_open = !chat.bar_emoji_open;
     }
-    if super::demo::get().open == Some(super::demo::Open::Emoji) && ui.ctx().cumulative_frame_nr() == 300 {
+    if super::demo::get().open == Some(super::demo::Open::Emoji) && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 {
         chat.bar_emoji_open = true;
     }
 
@@ -375,24 +491,17 @@ fn chat_island(
     if recent > 0.0
         && let Some(emoji) = emoji.as_deref_mut()
     {
-        let row = if above {
-            Rect::from_min_max(
-                Pos2::new(field.left(), island.top() + inset),
-                Pos2::new(field.right(), island.top() + inset + recent - 2.0),
-            )
-        } else {
-            Rect::from_min_max(
-                Pos2::new(field.left(), island.bottom() - inset - (recent - 2.0)),
-                Pos2::new(field.right(), island.bottom() - inset),
-            )
-        };
+        let row = Rect::from_min_max(
+            Pos2::new(field.left(), island.top() + inset),
+            Pos2::new(field.right(), island.top() + inset + recent - 2.0),
+        );
         let id = crate::ui::chat::bar_input_id();
         if let Some(c) = chat.recent_emojis.row(ui, p, emoji, row, id) {
             crate::ui::emoji::recent::insert(ui.ctx(), id, &mut chat.input, c);
         }
     }
     if chat.bar_emoji_open {
-        emoji_picker(ui, p, icons, chat, emoji, smile, Pos2::new(field.right(), island.top() - 6.0));
+        emoji_picker(ui, p, icons, chat, emoji, on_smile, island, row.bar);
     }
 
     if with_button {
@@ -425,15 +534,17 @@ fn chat_island(
 /// The emoji picker of the chat field (the one of the Conversations
 /// window), its bottom right corner at `corner`, above the island; a pick
 /// goes at the end of the field, Shift keeps the picker open, a click away
-/// from it and from its `button` closes it.
+/// from it and from its button (`on_button`: the pointer is on it) closes
+/// it.
 fn emoji_picker(
     ui: &egui::Ui,
     p: &Palette,
     icons: &Icons,
     chat: &mut crate::ui::chat::ChatUi,
     emoji: Option<&mut crate::ui::emoji::Emoji>,
-    button: Rect,
-    corner: Pos2,
+    on_button: bool,
+    island: Rect,
+    bar: crate::ui::toolbar::Bar,
 ) {
     let Some(emoji) = emoji else {
         chat.bar_emoji_open = false;
@@ -445,8 +556,18 @@ fn emoji_picker(
     let shown = egui::Area::new(Id::unique("chat_island_emoji_picker"))
         .fade_in(false)
         .order(egui::Order::Foreground)
-        .pivot(egui::Align2::RIGHT_BOTTOM)
-        .fixed_pos(corner)
+        .pivot(match bar {
+            crate::ui::toolbar::Bar::Top => egui::Align2::RIGHT_TOP,
+            crate::ui::toolbar::Bar::Left => egui::Align2::LEFT_CENTER,
+            crate::ui::toolbar::Bar::Right => egui::Align2::RIGHT_CENTER,
+            crate::ui::toolbar::Bar::Bottom => egui::Align2::RIGHT_BOTTOM,
+        })
+        .fixed_pos(match bar {
+            crate::ui::toolbar::Bar::Top => island.right_bottom() + egui::vec2(0.0, 6.0),
+            crate::ui::toolbar::Bar::Left => island.right_center() + egui::vec2(6.0, 0.0),
+            crate::ui::toolbar::Bar::Right => island.left_center() - egui::vec2(6.0, 0.0),
+            crate::ui::toolbar::Bar::Bottom => island.right_top() - egui::vec2(0.0, 6.0),
+        })
         .show(ui.ctx(), |ui| {
             crate::ui::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                 ui.set_width(300.0);
@@ -463,7 +584,7 @@ fn emoji_picker(
             });
         });
     // the emoji's menu can hang outside the picker: its click stays in it
-    let away = shown.response.clicked_elsewhere() && !starred && !ui.rect_contains_pointer(button.expand(4.0));
+    let away = shown.response.clicked_elsewhere() && !starred && !on_button;
     if escape {
         // the field gets the keyboard back, its caret where it was
         chat.bar_emoji_open = false;
@@ -482,7 +603,7 @@ fn emoji_picker(
 /// else the local chat; on that conversation already, it closes the window.
 /// With the nearby chat in its own window and nothing unread, it shows and
 /// hides that window alone (#910).
-fn conversations_button(
+pub(super) fn conversations_button(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
@@ -491,6 +612,7 @@ fn conversations_button(
     row: &Row,
     button: Rect,
 ) {
+    let _context = crate::ui::toolbar::native_context::Scope::new(ui.ctx(), "bar_chat");
     let minimized = crate::ui::widgets::floater_minimized(ui.ctx(), "conversations");
     let target = row.latest_unread.filter(|_| row.unread > 0);
     let apart = chat.nearby_apart() && target.is_none();
@@ -514,7 +636,7 @@ fn conversations_button(
     // its right click: nearby chat left out of the flash
     let flash_nearby = chat.flash_nearby;
     crate::ui::menu::context_menu(&resp, p, |ui| {
-        if let Some(choice) = crate::ui::chat::button_menu(ui, p, flash_nearby) {
+        if let Some(choice) = crate::ui::chat::button_menu(ui, p, flash_nearby, chat.has_open_ims) {
             chat.button_menu = Some(choice);
         }
     });
@@ -604,6 +726,27 @@ impl DockLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn elastic_separators_leave_the_conversation_thumbnails_their_room() {
+        let screen = screen(1600.0);
+        let geo = geometry_fixed(
+            screen,
+            0.0,
+            Style::default(),
+            |_| vec![34.0, 12.0, 34.0],
+            |room, _, _| room.clamp(0.0, 80.0),
+            &[false, true, false],
+            &[false, true, false],
+            false,
+            &[],
+            true,
+        );
+        assert_eq!(geo.thumbs.width(), 80.0);
+        assert!(geo.widths[1] > 12.0);
+        assert!(geo.dock.left() >= geo.thumbs.right() + AFTER_CHAT);
+        assert!((geo.dock.right() - (screen.right() - MARGIN)).abs() < 0.5);
+    }
 
     fn screen(w: f32) -> Rect {
         Rect::from_min_size(Pos2::ZERO, Vec2::new(w, w * 9.0 / 16.0))
@@ -801,6 +944,7 @@ mod tests {
                 bar: crate::ui::toolbar::Bar::Bottom,
                 style: Style::default(),
                 editing: false,
+                floating: false,
             };
             let mut result = (None, 0.0, false);
             let mut output = self.ctx.run_ui(
@@ -884,6 +1028,14 @@ mod tests {
         bench.click(off.center(), egui::PointerButton::Primary);
         assert_eq!(bench.chat.button_menu.take(), Some(crate::ui::chat::ButtonMenu::NearbyFlash(false)));
         assert!(!bench.panels.chat);
+        bench.chat.has_open_ims = true;
+        bench.click(button.center(), egui::PointerButton::Secondary);
+        let close_all = bench
+            .text_rect(aurora_i18n::tr!("ui-chat-close-all-ims"))
+            .expect("the close all row");
+        bench.click(close_all.center(), egui::PointerButton::Primary);
+        assert_eq!(bench.chat.button_menu.take(), Some(crate::ui::chat::ButtonMenu::CloseAll));
+        assert!(!bench.panels.chat, "closing IMs does not open their window");
         bench.click(button.center(), egui::PointerButton::Secondary);
         let open = bench
             .text_rect(aurora_i18n::tr!("ui-bars-conversations-open"))
@@ -1293,7 +1445,7 @@ mod tests {
             match side {
                 Bar::Left => bench.left = vec![conv.clone()],
                 Bar::Right => bench.right = vec![conv.clone()],
-                Bar::Bottom => unreachable!(),
+                Bar::Bottom | Bar::Top => unreachable!(),
             }
             bench.chat.focus_request = bar_mode == ChatBar::Always;
             bench.frame(vec![]);

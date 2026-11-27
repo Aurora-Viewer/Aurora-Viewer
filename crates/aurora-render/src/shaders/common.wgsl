@@ -131,10 +131,20 @@ struct Frame {
     aurora: vec4<f32>,          // the aurora: x how bright (0: none), y its heading (rad, clockwise from north), z its foot's height (0..1), w colours (0 green, 1 violet, 2 red)
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
     tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
-    soft: vec4<f32>,            // x: 1 = the soft shadows' mask is read (main view), y: share of the light the sun's shadows let through (1 - intensity), z: projectors' light size in metres (0: the 5-tap filter), main view only
+    soft: vec4<f32>,            // x: 1 = the soft shadows' mask is read (main view), y: share of the light the sun's shadows let through (1 - intensity), z: projectors' light size in metres (0: the 5-tap filter), main view only; w: skip Ignore Object in the narrowed pick view
     snow_stamp_z: array<vec4<f32>, 4>, // the soles' heights of snow_stamps (m), four to a vec4
     snow_far: vec4<f32>,        // x how far the snow lying is drawn (m), whatever falls (while it snows and while it melts); yzw unused
     curvature: vec4<f32>,       // planet curvature (apply_curvature): xy the main camera (region m), z 1 / 2R (0: flat), w unused
+    // Aurora Weather's fog (fog.rs frame_terms; weather_fog): [0] x extinction
+    // at the ground (1/m), y the height it thins over (m), z the ground level
+    // away from the volume (m), w the share left high up; [1] rgb its colour
+    // (the light it scatters), w the scattering's lean (Henyey-Greenstein g);
+    // [2] x the volume's nearest depth, y its farthest (m), z its slices, w
+    // FOG_MODE_*; [3] x 1 / ln(far / near), yzw the camera's axis (depths);
+    // [4] the flow grid's corner (xyz, m) and a cell's side (w; 0: none),
+    // [5] its cells (main view); [6] the ground map's corner (xy, m) and
+    // side (z; 0: none)
+    fog_look: array<vec4<f32>, 7>,
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -221,11 +231,13 @@ const FLAG_PORTAL_CLIP: u32 = 16384u;
 const FLAG_PORTAL_EFFECT: u32 = 32768u;
 const FLAG_WORLD_BLEND_PICK: u32 = 2147483648u; // flags.w, above texture animation
 const FLAG_OBJECT_MASK_PICK: u32 = 1073741824u; // flags.w, world/worn objects only
+const FLAG_IGNORE_OBJECT_PICK: u32 = 134217728u; // flags.w bit 27, Ignore Object click action
 // flags.w bits 24..26: layer rank of a rigged face (types.rs flags, object.wgsl eye_clip)
 const LAYER_RANK_SHIFT: u32 = 24u;
 const LAYER_RANK_MAX: u32 = 7u;
 const LAYER_DEPTH_STEP: f32 = 9.5367431640625e-7; // 2^-20
 const FLAG_STUDIO_STAGE: u32 = 536870912u; // flags.w bit 29, local scenery, not the avatar reveal
+const FLAG_PICK_IGNORES_ALPHA: u32 = 268435456u; // flags.w bit 28, Alt-focus keeps clear texels (emissive mask mode)
 const PORTAL_HALF_WIDTH: f32 = 1.0;
 const PORTAL_HALF_HEIGHT: f32 = 1.5;
 const PORTAL_SURFACE_SCALE: f32 = 1.16;
@@ -284,6 +296,9 @@ const PALETTE_STRIDE: u32 = 261u;
 @group(0) @binding(23) var water_exclusion_mask: texture_2d<f32>;
 // GTAO's screen-space indirect light (gtao.rs), when SCREEN_INDIRECT
 @group(0) @binding(14) var il_tex: texture_2d<f32>;
+// The traced probes' sight of the sky at half resolution (rt_gi.wgsl
+// `cs_gi_sky`): in g how open each place is (`screen_open`).
+@group(0) @binding(32) var gi_open_tex: texture_2d<f32>;
 
 // Reflection probes (probes.rs, reflectionProbeF.glsl).
 // The probes of the frame's list at most (probes::MAX_PROBES).
@@ -323,9 +338,21 @@ struct ProbeSet {
 @group(0) @binding(12) var probe_irr_tex: texture_cube_array<f32>;
 // the sun's contact shadows (contact_shadows.wgsl): 0 lit, 1 in shadow
 @group(0) @binding(13) var contact_tex: texture_2d<f32>;
+// What the glass leaves of the traced sun's red, green and blue
+// (rt_shadows.wgsl `out_glass`; white without ray tracing): `sun_glass`.
+@group(0) @binding(31) var sun_glass_tex: texture_2d<f32>;
 // the sun's soft shadows (soft_shadows.wgsl): per pixel, the light let
 // through (10 bits) and the distance of the surface it was made for (an f16)
 @group(0) @binding(30) var soft_tex: texture_2d<u32>;
+// Aurora Weather's fog volume (fog.rs): per froxel, the light it scattered
+// toward the camera up to there (rgb) and what it lets through (a). A 1^3
+// texture of (0, 0, 0, 1) in the passes without one.
+@group(0) @binding(33) var fog_volume: texture_3d<f32>;
+// Its flow grid (fog.rs `Flow`): how open the air is, 0 sealed to 1 open.
+@group(0) @binding(34) var fog_flow_air: texture_3d<f32>;
+// The ground it lies on (fog_ground.rs): per cell x the terrain or the water,
+// y that smoothed (the level it pools on); 1 km around the camera.
+@group(0) @binding(35) var fog_land: texture_2d<f32>;
 
 @group(1) @binding(0) var<storage, read> records: array<DrawRecord>;
 @group(1) @binding(1) var<storage, read> palettes: array<mat4x4<f32>>;
@@ -652,7 +679,7 @@ fn probe_tiles_miss(pos: vec3<f32>, frag: vec2<f32>) -> bool {
     return count > 0u && (probe_word(0u, count, tiles, cell) & 1u) == 0u;
 }
 
-fn sample_probes_ex(pos: vec3<f32>, dir: vec3<f32>, lod: f32, irradiance: bool, amblit: vec3<f32>, water: bool) -> vec4<f32> {
+fn sample_probes_ex(pos: vec3<f32>, dir: vec3<f32>, lod: f32, irradiance: bool, amblit: vec3<f32>, water: bool, outside: vec4<f32>) -> vec4<f32> {
     let count = min(probe_set.count, MAX_PROBES);
     // never let automatic probes encroach on box probes
     var sample_automatic = true;
@@ -725,6 +752,9 @@ fn sample_probes_ex(pos: vec3<f32>, dir: vec3<f32>, lod: f32, irradiance: bool, 
             refcol = mix(amblit, irr, min(p.params.x, 1.0));
         } else {
             refcol = textureSampleLevel(probe_tex, probe_sampler, v, i32(p.slot.x), lod).rgb * p.params.y;
+            if (i == 0u) {
+                refcol = mix(outside.rgb, refcol, outside.a);
+            }
         }
         if (manual) {
             col1 += refcol * w;
@@ -763,15 +793,42 @@ struct ProbePair {
 }
 
 // A probe's contribution to a lookup, along `v` in its cube (tapRefMap,
-// tapIrradianceMap).
-fn probe_tap(i: u32, v: vec3<f32>, lookup: ProbeLookup, amblit: vec3<f32>) -> vec3<f32> {
+// tapIrradianceMap); `outside` as `default_probe_outside`'s.
+fn probe_tap(i: u32, v: vec3<f32>, lookup: ProbeLookup, amblit: vec3<f32>, outside: vec4<f32>) -> vec3<f32> {
     let slot = i32(probe_set.probes[i].slot.x);
     let scale = probe_set.probes[i].params;
     if (lookup.irradiance) {
         let irr = textureSampleLevel(probe_irr_tex, probe_sampler, v, slot, 0.0).rgb * scale.x;
         return mix(amblit, irr, min(scale.x, 1.0));
     }
-    return textureSampleLevel(probe_tex, probe_sampler, v, slot, lookup.lod).rgb * scale.y;
+    let rad = textureSampleLevel(probe_tex, probe_sampler, v, slot, lookup.lod).rgb * scale.y;
+    if (i == 0u) {
+        return mix(outside.rgb, rad, outside.a);
+    }
+    return rad;
+}
+
+// What the default probe's reflection becomes at the fragment at `frag`:
+// in a the share of it that stays (how open the place is, `screen_open`),
+// in rgb what takes the rest (the light the faces around bounce there, the
+// traced indirect light's). The default probe sees only the sky, the
+// water, the terrain and the clouds (LLReflectionMapManager::
+// updateProbeFace), from wherever the camera is, so a shiny face in a
+// closed room without a probe of its own reflected the world outside it,
+// its sky and its sunlit water; it now reflects the room's own light,
+// blurred (the probes keep no direction finer than a face's hemisphere).
+// The place's openness and not the sky's share along the normal: out in
+// the open a shiny face turned to the ground sees no sky, and the ground
+// the probe shows it is right. Aurora's own, with the traced indirect light
+// only: the Legacy Viewer's rooms reflect the outside. The probes residents
+// place, which see the place, are left as they are; (0, 1) without the
+// traced indirect light and in reflection passes.
+fn default_probe_outside(frag: vec2<f32>) -> vec4<f32> {
+    let open = screen_open(frag);
+    if (open >= 1.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    return vec4<f32>(textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb, open);
 }
 
 // Where a lookup leaves a box probe, from `lp` inside it (boxIntersect; the
@@ -831,11 +888,12 @@ fn probe_mix(col0_in: vec3<f32>, col1_in: vec3<f32>, w0: f32, w1: f32, dw1: f32,
 fn sample_probes_pair(pos: vec3<f32>, frag: vec2<f32>, a: ProbeLookup, b: ProbeLookup, want_b: bool, automatic: bool, amblit: vec3<f32>) -> ProbePair {
     var out: ProbePair;
     out.b = vec4<f32>(0.0);
-    let walk = frame.light_mode.w;
+    let walk = frame.light_mode.w & 0xffu;
+    let outside = default_probe_outside(frag);
     if (walk == PROBE_WALK_PER_LOOKUP) {
-        out.a = sample_probes_ex(pos, a.dir, a.lod, a.irradiance, amblit, !automatic);
+        out.a = sample_probes_ex(pos, a.dir, a.lod, a.irradiance, amblit, !automatic, outside);
         if (want_b) {
-            out.b = sample_probes_ex(pos, b.dir, b.lod, b.irradiance, amblit, !automatic);
+            out.b = sample_probes_ex(pos, b.dir, b.lod, b.irradiance, amblit, !automatic, outside);
         }
         return out;
     }
@@ -922,10 +980,10 @@ fn sample_probes_pair(pos: vec3<f32>, frag: vec2<f32>, a: ProbeLookup, b: ProbeL
                 dw = base * atten * max(r, 1.0) * 4.0;
                 w = base * atten;
             }
-            let ca = probe_tap(i, va, a, amblit) * w;
+            let ca = probe_tap(i, va, a, amblit, outside) * w;
             var cb = vec3<f32>(0.0);
             if (want_b) {
-                cb = probe_tap(i, vb, b, amblit) * w;
+                cb = probe_tap(i, vb, b, amblit, outside) * w;
             }
             if (manual) {
                 a1 += ca;
@@ -1359,12 +1417,269 @@ fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
     if (frame.sky_ll.x < 0.5) {
         // a sky with a reflection probe ambiance: hazeF.glsl, as its surfaces
         // are lit by softenLightF's non-classic branch (env.rs)
-        return ll_haze(col, ll_atmos(world_pos - frame.camera_pos.xyz));
+        return weather_fog(ll_haze(col, ll_atmos(world_pos - frame.camera_pos.xyz)), world_pos);
     }
     let dist = distance(world_pos, frame.camera_pos.xyz);
     let height_factor = exp(-max(world_pos.z - frame.params.y, 0.0) * 0.004);
     let f = 1.0 - exp(-dist * frame.fog.w * height_factor);
-    return mix(col, frame.fog.rgb, clamp(f, 0.0, 1.0));
+    return weather_fog(mix(col, frame.fog.rgb, clamp(f, 0.0, 1.0)), world_pos);
+}
+
+// ------------------------------------------------- Aurora Weather's fog
+// Fog that pools low, drifts and scatters the light (fog.rs, fog.wgsl): over
+// what the haze left, between the camera and a surface. FOG_MODE_HEIGHT
+// works it out here from its height alone; FOG_MODE_VOLUME (the main view)
+// reads the froxel volume fog.wgsl lit and integrated, then the height fog
+// past the volume's far end. Off, nothing: the image of before.
+const FOG_MODE_OFF: u32 = 0u;
+const FOG_MODE_HEIGHT: u32 = 1u;
+const FOG_MODE_VOLUME: u32 = 2u;
+
+// fog_look[2].w bit: the weather's shelter map is drawn and this view's
+// height fog reads it (the main view; the others' shadow atlas may lack it).
+const FOG_MODE_SHELTER: u32 = 4u;
+// What the fog keeps of its density under cover, and of the sky's light.
+// None of its density: a share of it showed in closed rooms under a thick
+// fog (8 % of a fog thick enough outside veiled a theater 10 m deep, on the
+// grid, 2026-11-22); a room is clear whatever the weather outside.
+const FOG_SHELTERED_DENSITY: f32 = 0.0;
+const FOG_SHELTERED_SKY: f32 = 0.25;
+
+fn fog_mode() -> u32 {
+    return u32(frame.fog_look[2].w) & 3u;
+}
+
+fn fog_shelter_on() -> bool {
+    return (u32(frame.fog_look[2].w) & FOG_MODE_SHELTER) != 0u;
+}
+
+// How much a point is under cover (1 under a roof, 0 in the open), from the
+// weather's shelter map (env.wgsl `rain_sheltered`, one tap): fog does not
+// fill the houses, and the sky does not light it there. 0 where the map is
+// not drawn or does not reach.
+fn fog_sheltered(p: vec3<f32>) -> f32 {
+    if (frame.features.y == 0u) { return 0.0; }
+    let slot = frame.features.y - 1u;
+    let lp = frame.spot_vp[min(slot, 15u)] * vec4<f32>(p, 1.0);
+    if (lp.w < 0.5) { return 0.0; }
+    let ndc = lp.xyz / lp.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || ndc.z < 0.0 || ndc.z > 1.0) { return 0.0; }
+    // its square in the atlas: projector_shadows.rs `map_origin`, as
+    // env.wgsl `rain_shelter_tile`
+    let size = f32(textureDimensions(shadow_map).x) * 0.5;
+    let half = size * 0.5;
+    var tile: vec2<f32>;
+    if (slot < 4u) {
+        tile = vec2<f32>(size + f32(slot % 2u) * half, size + f32(slot / 2u) * half);
+    } else {
+        let k = slot - 4u;
+        tile = vec2<f32>(f32(k % 4u) * half, size * 2.0 + f32(k / 4u) * half);
+    }
+    let dims = vec2<f32>(textureDimensions(shadow_map));
+    let at = clamp(uv, vec2<f32>(0.5 / half), vec2<f32>(1.0 - 0.5 / half));
+    return 1.0 - textureSampleCompareLevel(shadow_map, shadow_sampler, (tile + at * half) / dims, ndc.z - 0.0005);
+}
+
+// The sky's light on the fog, from all around: the horizon's. Under a
+// classic sky, in the haze's own hue (calcAtmosphericVars' additive, its
+// sunlit part with an even glow), at the horizon's brightness: the fog and
+// the haze beyond it meet without a change of tint. (The haze's additive at
+// its own scale, its sunlit part left out for the volume to shadow, left
+// the fog nearly black: that sunlit part is most of the haze's light.)
+fn fog_sky_light() -> vec3<f32> {
+    let horizon = frame.sky_horizon.rgb;
+    if (!is_classic_sky()) { return horizon; }
+    let blue_density = frame.sky_blue_density.rgb;
+    let haze_density = frame.sky_blue_density.w;
+    let combined = max(blue_density + vec3<f32>(haze_density), vec3<f32>(1e-6));
+    let amb = frame.sky_ambient.rgb;
+    let cloud_shadow = frame.sky_sunlight.w;
+    let tmp_ambient = amb + (vec3<f32>(1.0) - amb) * cloud_shadow * 0.5;
+    let lit = frame.sky_obj_light.rgb * (1.0 - cloud_shadow) + tmp_ambient;
+    let additive = (frame.sky_blue_horizon.rgb * blue_density + vec3<f32>(frame.sky_blue_horizon.w * haze_density)) / combined * lit;
+    let hue = srgb_to_linear(clamp(additive, vec3<f32>(0.0), vec3<f32>(10.0)) * 2.0);
+    let luma = vec3<f32>(0.2126, 0.7152, 0.0722);
+    return hue * (dot(horizon, luma) / max(dot(hue, luma), 1e-4));
+}
+
+// Henyey-Greenstein's phase function: the share of light scattered at an
+// angle of cosine `c` from where it was going, `g` its lean forward.
+fn fog_phase(c: f32, g: f32) -> f32 {
+    let g2 = g * g;
+    return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
+}
+
+// What the fog's height leaves of its ground density at `z`, over ground
+// level `base` (1 at and below it, toward the high share far above).
+fn fog_height_share(z: f32, base: f32) -> f32 {
+    let high = frame.fog_look[0].w;
+    return high + (1.0 - high) * exp(-max(z - base, 0.0) / max(frame.fog_look[0].y, 0.1));
+}
+
+// The fog's optical depth along a straight segment of length `len` from
+// height `za` to `zb`, on ground level `base`: the share left high up all
+// along, plus the exponential's exact integral above the ground (and its
+// full value below it).
+fn fog_optical_depth(za: f32, zb: f32, len: f32, base: f32) -> f32 {
+    let f = frame.fog_look[0];
+    let lo = min(za, zb);
+    let hi = max(za, zb);
+    let dz = hi - lo;
+    var mean_exp: f32;
+    if (dz < 1e-3) {
+        mean_exp = exp(-max(lo - base, 0.0) / max(f.y, 0.1));
+    } else {
+        // the share below the ground (full density), then the exponential
+        // from where the segment leaves it (none when it never does)
+        let below = clamp((base - lo) / dz, 0.0, 1.0);
+        let a = max(lo, base);
+        let b = max(hi, base);
+        let h = max(f.y, 0.1);
+        mean_exp = below + h * (exp(-(a - base) / h) - exp(-(b - base) / h)) / dz;
+    }
+    return f.x * len * (f.w + (1.0 - f.w) * mean_exp);
+}
+
+// The sun's light on the fog `rel` metres from the camera, as the surfaces
+// there take it: a classic sky's is the Legacy sunlight (ll_sun_linear,
+// the radiance of a white face turned to it: pi times that is the
+// irradiance the others' sun_color is), the others' sun_color.
+fn fog_sun(rel: vec3<f32>) -> vec3<f32> {
+    if (is_classic_sky()) {
+        return ll_sun_linear(ll_atmos(rel)) * PI;
+    }
+    return frame.sun_color.rgb * max(frame.sun_dir.w, 0.0);
+}
+
+// The light the fog scatters toward the camera, per unit of it, looking
+// along `dir`: the sky's (all around; less of it the more `cover`, the share
+// of the way under cover) and the sun's, leaning toward it; unshadowed (the
+// volume shadows it).
+fn fog_light(dir: vec3<f32>, cover: f32) -> vec3<f32> {
+    let sun = fog_sun(dir * 100.0) * fog_phase(dot(dir, frame.sun_dir.xyz), frame.fog_look[1].w);
+    let sky = fog_sky_light() * mix(1.0, FOG_SHELTERED_SKY, cover);
+    return frame.fog_look[1].rgb * max(sky + sun, vec3<f32>(0.0));
+}
+
+// The smoothed ground the fog lies on under `xy` (bilinear between the map's
+// 4 m cells), or the camera's past the map.
+fn fog_ground_at(xy: vec2<f32>) -> f32 {
+    let r = frame.fog_look[6];
+    if (r.z <= 0.0) { return frame.fog_look[0].z; }
+    let uv = (xy - r.xy) / r.z;
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) { return frame.fog_look[0].z; }
+    let size = i32(textureDimensions(fog_land).x);
+    let pos = clamp(uv * f32(size) - 0.5, vec2<f32>(0.0), vec2<f32>(f32(size - 1)));
+    let i = vec2<i32>(floor(pos));
+    let j = min(i + vec2<i32>(1), vec2<i32>(size - 1));
+    let f = fract(pos);
+    let a = textureLoad(fog_land, i, 0).y;
+    let b = textureLoad(fog_land, vec2<i32>(j.x, i.y), 0).y;
+    let c = textureLoad(fog_land, vec2<i32>(i.x, j.y), 0).y;
+    let d = textureLoad(fog_land, j, 0).y;
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// `col` seen through the height fog from `start` to `end`, `cover` the share
+// of the way under cover (its density thinned there). Each half of the way
+// lies on the ground under it (its ends' mean): far off, the fog climbs the
+// hills and fills the valleys as the volume does near, and seen from high
+// up it does not stop where the volume does.
+fn fog_segment(col: vec3<f32>, start: vec3<f32>, end: vec3<f32>, cover: f32) -> vec3<f32> {
+    let rel = end - start;
+    let len = length(rel);
+    if (len < 1e-3) { return col; }
+    let mid = (start + end) * 0.5;
+    let b0 = fog_ground_at(start.xy);
+    let bm = fog_ground_at(mid.xy);
+    let b1 = fog_ground_at(end.xy);
+    let od = fog_optical_depth(start.z, mid.z, len * 0.5, (b0 + bm) * 0.5)
+        + fog_optical_depth(mid.z, end.z, len * 0.5, (bm + b1) * 0.5);
+    let depth = od * mix(1.0, FOG_SHELTERED_DENSITY, cover);
+    let t = exp(-depth);
+    return col * t + fog_light(rel / len, cover) * (1.0 - t);
+}
+
+// The share of the way from the camera to `p` under cover, from three taps
+// of the shelter map (the camera, the middle, the point): a room keeps its
+// fog out, the open seen from it keeps its own. 0 without the map.
+fn fog_cover(p: vec3<f32>) -> f32 {
+    if (!fog_shelter_on()) { return 0.0; }
+    let cam = frame.camera_pos.xyz;
+    return (fog_sheltered(cam) + fog_sheltered(mix(cam, p, 0.5)) + fog_sheltered(p)) / 3.0;
+}
+
+// Where the volume holds a point: its uvw (w the slice coordinate), and
+// whether it is past the volume's far end (w > 1).
+fn fog_volume_uvw(world_pos: vec3<f32>) -> vec3<f32> {
+    let clip = frame.view_proj * vec4<f32>(world_pos, 1.0);
+    let uv = clip.xy / max(clip.w, 1e-4) * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
+    let depth = dot(world_pos - frame.camera_pos.xyz, frame.fog_look[3].yzw);
+    let near = frame.fog_look[2].x;
+    let w = log(max(depth, near) / near) * frame.fog_look[3].x;
+    return vec3<f32>(uv, w);
+}
+
+// A premultiplied layer at `world_pos` (rgb times its cover, its cover)
+// laid over a scene already seen through the weather's fog: the layer's own
+// colour through it, so that the two together are as if fogged at once.
+fn weather_fog_layer(c: vec4<f32>, world_pos: vec3<f32>) -> vec4<f32> {
+    if (fog_mode() == FOG_MODE_OFF || c.a <= 1e-4) { return c; }
+    return vec4<f32>(weather_fog(c.rgb / c.a, world_pos) * c.a, c.a);
+}
+
+// How open the air at `p` is (the flow grid, read half a cell up as fog.wgsl
+// `fog_open` does); 1 where the grid does not reach.
+fn fog_air(p: vec3<f32>) -> f32 {
+    let cell = frame.fog_look[4].w;
+    if (cell <= 0.0) { return 1.0; }
+    let size = frame.fog_look[5].xyz * cell;
+    let c = (p + vec3<f32>(0.0, 0.0, cell * 0.5) - frame.fog_look[4].xyz) / size;
+    if (any(c <= vec3<f32>(0.0)) || any(c >= vec3<f32>(1.0))) { return 1.0; }
+    return textureSampleLevel(fog_flow_air, lin_clamp, c, 0.0).x;
+}
+
+// Interleaved gradient noise (Jimenez, "Next Generation Post Processing in
+// Call of Duty: Advanced Warfare", SIGGRAPH 2014): a different jitter for
+// neighbouring froxels.
+fn fog_ign(p: vec2<f32>) -> f32 {
+    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
+}
+
+// `col` of a surface at `world_pos` seen through the weather's fog.
+fn weather_fog(col_in: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+    let mode = fog_mode();
+    if (mode == FOG_MODE_OFF) { return col_in; }
+    // (a surface's colour below zero, as the void sea's far off at night,
+    // would come out darker than the fog in front of it)
+    let col = max(col_in, vec3<f32>(0.0));
+    let cam = frame.camera_pos.xyz;
+    if (mode == FOG_MODE_HEIGHT) { return fog_segment(col, cam, world_pos, fog_cover(world_pos)); }
+    let uvw = fog_volume_uvw(world_pos);
+    let slices = frame.fog_look[2].z;
+    // the slice's far side holds what it integrated: a point inside the
+    // first slice takes its share of it. Read up to half a slice nearer or
+    // farther, by the pixel and the frame (the anti-aliasing averages it):
+    // the steps from one slice to the next showed as bands across the
+    // ground at a low angle
+    let pixel = uvw.xy * frame.screen.xy + vec2<f32>(f32((frame.anim_clock.x / 16u) % 64u) * 5.588238);
+    let k = uvw.z * slices + fog_ign(pixel) - 0.5;
+    let at = vec3<f32>(clamp(uvw.xy, vec2<f32>(0.0), vec2<f32>(1.0)), clamp((k - 0.5) / slices, 0.5 / slices, 1.0 - 0.5 / slices));
+    var v = textureSampleLevel(fog_volume, lin_clamp, at, 0.0);
+    if (k < 1.0) { v = mix(vec4<f32>(0.0, 0.0, 0.0, 1.0), v, max(k, 0.0)); }
+    if (uvw.z <= 1.0) {
+        // a surface seen from sealed air through sealed air (a closed room's
+        // walls from inside it) takes none: the volume's froxels, metres
+        // deep, reach past the walls and brought the fog outside in
+        let air = max(max(fog_air(cam), fog_air(mix(cam, world_pos, 0.5))), fog_air(world_pos));
+        return mix(col, col * v.a + v.rgb, smoothstep(0.0, 0.3, air));
+    }
+    // past its far end: the height fog from there on, behind the volume
+    let rel = world_pos - cam;
+    let depth = dot(rel, frame.fog_look[3].yzw);
+    let edge = cam + rel * (frame.fog_look[2].y / max(depth, 1e-3));
+    return fog_segment(col, edge, world_pos, 0.0) * v.a + v.rgb;
 }
 
 // Whether a surface takes the water's fog in its own shading (apply_fog):
@@ -1398,6 +1713,19 @@ fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     return apply_air_fog(col,world_pos);
 }
 
+// `apply_fog` for an additive layer (additive particles). What it lands on
+// already holds the weather fog's light in front of it: the layer takes the
+// fog's transmittance only, not that light again, or every sprite shows as a
+// fog-coloured quad in thick fog. `weather_fog` is affine in its colour
+// (`col * T + L`), so its light is what it gives a black surface. The haze
+// and the water's fog stay as `apply_fog` has them.
+fn apply_fog_additive(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+    let fogged = apply_fog(col, world_pos);
+    let weather = !water_fogs_source(world_pos) || (!camera_underwater() && water_excluded(world_pos));
+    if (!weather || fog_mode() == FOG_MODE_OFF) { return fogged; }
+    return max(fogged - weather_fog(vec3<f32>(0.0), world_pos), vec3<f32>(0.0));
+}
+
 // ------------------------------------------------------------- shadows
 
 // Half-width of the shadow filter in metres, the same in every cascade:
@@ -1415,6 +1743,10 @@ const SHADOW_FILTER_GAPS: u32 = 0x100u;
 const SHADOW_OFFSET_MAPPED: u32 = 0x200u;
 // frame.light_mode.z: il_tex holds GTAO's indirect light of this frame
 const SCREEN_INDIRECT: u32 = 0x400u;
+// frame.light_mode.w: il_tex's alpha holds the share of the sky's ambient
+// the traced probes let through (rt_gi.wgsl `cs_gi_filter`, `screen_sky`);
+// the probe walk is in the bits under it
+const TRACED_SKY: u32 = 0x100u;
 // frame.light_mode.z: normal maps on a unit, orthogonal tangent frame as the
 // Legacy Viewer's per-vertex tangents (AURORA_TANGENTS, perturb_normal)
 const TANGENT_UNIT: u32 = 0x800u;
@@ -1437,6 +1769,16 @@ const BLEND_SCREEN_DEPTH: u32 = 0x10000u;
 // frame.light_mode.z: geometric specular anti-aliasing of the objects
 // (AURORA_SPECULAR_AA, specular_aa_roughness)
 const SPECULAR_AA: u32 = 0x8000u;
+// The point lights' share is traced (common.wgsl `local_share`).
+const LOCAL_TRACED: u32 = 0x1000000u;
+// With it: how many of the frame's first lights the share is of, less one,
+// in these bits (Preferences' lamps, 1 to 64, rt_shadows.rs `traced_count`;
+// the others are not shadowed), and whether the projectors' beams take it
+// (`projector_at`). The bits above LOCAL_TRACED: those below are flags
+// (types.rs `the_flags_of_the_light_mode_word_share_no_bit`).
+const TRACED_LIGHTS_SHIFT: u32 = 25u;
+const TRACED_LIGHTS_BITS: u32 = 0x3Fu;
+const PROJECTORS_TRACED: u32 = 0x80000000u;
 
 // Geometric specular anti-aliasing (Kaplanyan & Hoffman 2016, "Stable
 // Geometric Specular Antialiasing with Projected-Space NDF Filtering", in
@@ -1625,6 +1967,17 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
 // is in the shadow).
 var<private> contact_share: f32 = 1.0;
 
+// Whether the fragment being shaded takes the traced sun's glass with its
+// mask (`sun_shadow`): yes on the surface the mask was traced for, no on a
+// blended layer that only lies on it (`contact_share` from
+// `on_occlusion_surface`). The glass in that surface's mask is mostly the
+// layer itself: a sea's foam lying on the sand went dark in its own
+// shadow (2026-11-22, grid report of beta6). As the Legacy Viewer, whose
+// blended face is lit where its own texel casts in the shadow map, the
+// sand under it in the shadow. Another pane's tint over the layer is lost
+// with it.
+var<private> contact_glass: bool = true;
+
 // The sun's contact shadow at a pixel of the main view (contact_shadows.rs):
 // what the shadow map is too coarse to show, taken as the darker of the
 // two (sun_shadow). 1 elsewhere: other views, blended faces, off.
@@ -1639,6 +1992,55 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
     }
     return 1.0 - contact_share * textureLoad(contact_tex, p, 0).r;
 }
+
+// What arrives of the point lights' and the projectors' red, green and
+// blue at a pixel of the main view: the traced lights' tint (rt_lights.wgsl, `.gba` of the traced
+// mask). 1 elsewhere: other views, without the traced lights.
+fn local_share(frag: vec2<f32>) -> vec3<f32> {
+    if (!local_traced(frag)) {
+        return vec3<f32>(1.0);
+    }
+    let p = vec2<i32>(frag);
+    let size = vec2<i32>(textureDimensions(contact_tex));
+    if (any(p < vec2<i32>(0)) || any(p >= size)) {
+        return vec3<f32>(1.0);
+    }
+    return textureLoad(contact_tex, p, 0).gba;
+}
+
+// Whether `local_share` is traced at this pixel, the projectors' beams'
+// shadows with it (`projector_at`). On every face of the main view, a
+// blended one and the snow included: such a face, which the mask was not
+// traced for (`contact_share` 0), takes the share of the solid surface
+// behind it. Unshadowed, the hair and veils of an avatar in a closed room
+// took a lamp outside through the walls. The limit, chosen by the human
+// (2026-11-22): a lit veil in front of a wall in a lamp's shadow is
+// darkened with the wall. An Aurora difference: the Legacy Viewer shadows
+// no point light, on any face.
+fn local_traced(frag: vec2<f32>) -> bool {
+    return (frame.light_mode.z & LOCAL_TRACED) != 0u && !in_reflection_pass();
+}
+
+// Whether light `i` of the frame is one the traced share is of.
+fn light_traced(i: i32) -> bool {
+    return u32(i) <= ((frame.light_mode.z >> TRACED_LIGHTS_SHIFT) & TRACED_LIGHTS_BITS);
+}
+
+// Point light `i` of the frame with its colour times `share` (local_share),
+// if the share is of it.
+fn shared_light(i: i32, share: vec3<f32>) -> Light {
+    var lt = frame.lights[i];
+    let s = select(vec3<f32>(1.0), share, light_traced(i));
+    lt.color_falloff = vec4<f32>(lt.color_falloff.rgb * s, lt.color_falloff.w);
+    return lt;
+}
+
+// The colour the glass gives the sunlight at this pixel, which `sun_shadow`
+// reads with the traced shadow and the shading multiplies the sun by
+// (`shade_pbr`, the classic sky's `ll_classic_sun_ambient`,
+// `ll_classic_pbr`, a legacy face's highlights): 1 where the sun is not
+// traced or meets no glass.
+var<private> sun_glass: vec3<f32> = vec3<f32>(1.0);
 
 // Whether this shader reads the soft shadows: the sun's mask and the
 // projectors' filter. `true` here; while the option is off the scene's
@@ -1675,10 +2077,23 @@ fn soft_shadow(world_pos: vec3<f32>, frag: vec2<f32>) -> f32 {
     return f32(texel & 1023u) / 1023.0;
 }
 
-// The sun's shadow of an opaque surface of the main view: the shadow map
-// (its soft mask where that holds), and the contact shadows where they are
-// on, then the shadow intensity (Preferences, or the photo's).
+// The sun's shadow of an opaque surface of the main view: the ray-traced
+// mask where the view traces it (rt_shadows.rs; the contact shadows are
+// in it), else the shadow map (its soft mask where that holds) and the
+// contact shadows where they are on; then the shadow intensity
+// (Preferences, or the photo's).
 fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
+    // the traced mask holds where the surface is the prepass's
+    if (frame.contact.z > 0.5 && frame.params.z > 0.5 && contact_share > 0.0 && !in_reflection_pass()) {
+        let p = vec2<i32>(frag);
+        let size = vec2<i32>(textureDimensions(sun_glass_tex));
+        if (contact_glass && all(p >= vec2<i32>(0)) && all(p < size)) {
+            sun_glass = textureLoad(sun_glass_tex, p, 0).rgb;
+        }
+        let traced = contact_shadow(frag);
+        // (as below: a classic sky lifts it in `classic_shadowed`)
+        return select(traced, shadow_lift(traced), frame.sky_ll.x < 0.5);
+    }
     var s = soft_shadow(world_pos, frag);
     if (s < 0.0) {
         s = shadow_factor(world_pos, n, vertex_depth);
@@ -1909,6 +2324,53 @@ fn screen_indirect(frag: vec2<f32>) -> vec3<f32> {
     return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb * (share * screen_ao(frag));
 }
 
+// `screen_sky` and `screen_open` in a reflection pass, which has no screen
+// of the traced light: how open the place the pass is drawn from is, for
+// all its faces (rt_gi.wgsl `gi_points`: texel 0 a probe's capture, 1 the
+// mirror). 1 in the passes that do not set TRACED_SKY (the water's
+// reflection, the impostors, the HUD) and without the traced probes.
+fn reflection_open() -> f32 {
+    if ((frame.light_mode.w & TRACED_SKY) == 0u) {
+        return 1.0;
+    }
+    let last = i32(textureDimensions(gi_open_tex).x) - 1;
+    let i = min(select(1, 0, (frame.light_mode.z & PROBE_CAPTURE_DOME) != 0u), last);
+    return clamp(textureLoad(gi_open_tex, vec2<i32>(i, 0), 0).r, 0.0, 1.0);
+}
+
+// The share of the sky's ambient that reaches the fragment at `frag`: what
+// the traced global illumination's probes see of the sky there (gi.rs; a
+// room, the shade of a roof or a tree), 1 without them and in reflection
+// passes (the HUD is fullbright). A face the indirect light's depth does
+// not hold (a blended one, the snow) takes the sky of what lies behind
+// it, most often the same room. The light the surfaces around bounce stays the
+// traced indirect light's (`screen_indirect`), so that none is counted
+// twice. An Aurora difference, with the traced indirect light only: the
+// Legacy Viewer's sky ambient reaches every place alike, darkened by its
+// screen-space occlusion alone.
+fn screen_sky(frag: vec2<f32>) -> f32 {
+    if (in_reflection_pass()) {
+        return reflection_open();
+    }
+    if ((frame.light_mode.w & TRACED_SKY) == 0u || (frame.light_mode.z & SCREEN_INDIRECT) == 0u) {
+        return 1.0;
+    }
+    return clamp(textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).a, 0.0, 1.0);
+}
+
+// How open the place of the fragment at `frag` is, whatever its normal
+// (gi_update.wgsl `gi_openness`): 1 out in the open, 0 in a closed room;
+// 1 without the traced probes; in reflection passes `reflection_open`.
+fn screen_open(frag: vec2<f32>) -> f32 {
+    if (in_reflection_pass()) {
+        return reflection_open();
+    }
+    if ((frame.light_mode.w & TRACED_SKY) == 0u || (frame.light_mode.z & SCREEN_INDIRECT) == 0u) {
+        return 1.0;
+    }
+    return clamp(textureSampleLevel(gi_open_tex, lin_clamp, screen_uv(frag), 0.0).g, 0.0, 1.0);
+}
+
 // The solid angle two spherical caps share, divided by 2 pi: caps of
 // cosines `cos_a` and `cos_b` whose axes are `cos_d` apart. Oat and Sander,
 // "Ambient Aperture Lighting" (2007), with the smooth approximation of the
@@ -2040,7 +2502,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     let l = normalize(frame.sun_dir.xyz);
     let nl = max(dot(n, l), 0.0);
     if (legacy) {
-        col += diffuse_color * frame.sun_color.rgb * (nl * shadow / 3.0);
+        col += diffuse_color * frame.sun_color.rgb * sun_glass * (nl * shadow / 3.0);
     } else if (nl > 0.0) {
         let h = normalize(l + v);
         let nh = max(dot(n, h), 0.0);
@@ -2048,14 +2510,15 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         let f = f_schlick(f0, vh);
         let spec = d_ggx(nh, a) * v_smith(nv, nl, a) * f;
         let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-        col += (kd + spec) * frame.sun_color.rgb * nl * shadow;
+        col += (kd + spec) * frame.sun_color.rgb * sun_glass * nl * shadow;
     }
     // local lights
     var local = vec3<f32>(0.0);
     var lights = light_walk(world_pos, frag);
     var spots = projector_walk(lights);
+    let share = local_share(frag);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        let lt = frame.lights[i];
+        let lt = shared_light(i, share);
         let to_l = lt.pos_radius.xyz - world_pos;
         let dist = length(to_l);
         let radius = lt.pos_radius.w;
@@ -2075,7 +2538,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        local += pbr_local_light(projector_at(i, world_pos, n), n, v, f0, a, nv, diffuse_color);
+        local += pbr_local_light(projector_at(i, world_pos, n, frag), n, v, f0, a, nv, diffuse_color);
     }
     col += local;
     shade_pbr_local = local;
@@ -2089,6 +2552,9 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     // with GTAO, the occlusion of the reflected ray instead of the ambient one
     let spec_ao = specular_occlusion(frag, r, roughness, ao);
     var occl = (0.35 + 0.65 * shadow) * (1.0 - 0.75 * roughness) * spec_ao;
+    // the sky's reflection, where no reflection probe gives the place's,
+    // takes the traced probes' sight of the sky as the ambient does
+    var env_of_sky = true;
     if (probes_on()) {
         // non classic skies: ambient from the probes' irradiance along the
         // normal, each probe mixed with the sky ambient by its ambiance
@@ -2101,9 +2567,14 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         if (s.b.w > 0.0) {
             env = s.b.rgb * probe_pass_radiance();
             occl = spec_ao;
+            env_of_sky = false;
         }
     }
-    col += diffuse_color * amb * ao * mat_ao;
+    let sky = screen_sky(frag);
+    if (env_of_sky) {
+        occl *= sky;
+    }
+    col += diffuse_color * amb * ao * mat_ao * sky;
     col += diffuse_color * screen_indirect(frag) * mat_ao;
     if (legacy) {
         return col;
@@ -2550,8 +3021,9 @@ struct LightAt {
     shadow: f32,
 };
 
-// Projector `i` of the frame's list on a point of normal `n`.
-fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> LightAt {
+// Projector `i` of the frame's list on a point of normal `n`, seen at
+// pixel `frag`.
+fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>, frag: vec2<f32>) -> LightAt {
     let lt = frame.lights[i];
     var at: LightAt;
     at.shadow = 1.0;
@@ -2586,9 +3058,18 @@ fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> LightAt {
     let slot = pj.tex.x;
     let l_dist = -dot(to_l, pj.dir.xyz);
     let c = projector_diffuse(slot, uv, clamp((l_dist - pj.origin.w) / pj.dir.w, 0.0, 1.0));
-    // the beam is shadowed, the ambiance is not (spotLightF)
-    at.shadow = projector_shadow(i, world_pos, n);
-    at.color = lt.color_falloff.rgb * c.rgb * c.a * at.shadow;
+    // the beam is shadowed, the ambiance is not (spotLightF): by the traced
+    // lights' tint where it is traced (rt_lights.wgsl, which draws the
+    // projectors with the point lights), by its shadow map elsewhere
+    var beam = vec3<f32>(1.0);
+    if (local_traced(frag) && (frame.light_mode.z & PROJECTORS_TRACED) != 0u && light_traced(i)) {
+        beam = local_share(frag);
+        at.shadow = dot(beam, vec3<f32>(0.2126, 0.7152, 0.0722));
+    } else {
+        at.shadow = projector_shadow(i, world_pos, n);
+        beam = vec3<f32>(at.shadow);
+    }
+    at.color = lt.color_falloff.rgb * c.rgb * c.a * beam;
     at.ambiance = pj.params.y;
     if (at.ambiance > 0.0) {
         // getTexture2DLodAmbient: the image's mean color (its last level),
@@ -2807,7 +3288,8 @@ fn ll_ssao(irr: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     let ao = screen_ao(frag);
     let occluded = min(irr * 0.6, vec3<f32>(0.18));
     let effect = occluded - vec3<f32>(0.2 * (occluded.r + occluded.g + occluded.b) / 3.0);
-    return mix(effect, irr, ao);
+    // (and the traced probes' sight of the sky, `screen_sky`)
+    return mix(effect, irr, ao) * screen_sky(frag);
 }
 
 // softenLightF.glsl final_scale: 1.1 on classic skies, applied to the whole
@@ -2828,7 +3310,7 @@ fn ll_local_scale() -> f32 {
 fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2<f32>, a: LLAtmos) -> vec3<f32> {
     let nl_sun = max(dot(n, frame.sun_dir.xyz), 0.0);
     if (ll_classic_mode()) {
-        let sunlit = a.sunlit * 1.35;
+        let sunlit = a.sunlit * 1.35 * sun_glass;
         let irr = ll_ssao(a.amblit * ll_ambient_lighting(n), frag);
         let sun_contrib = vec3<f32>(classic_shadowed(pow(nl_sun, 1.2), shadow));
         // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
@@ -2838,7 +3320,7 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
     let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
     let amb_grey = vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722)));
     let irr = ll_ssao(select(amb_grey, amb_lin, colored_sky_ambient()), frag);
-    return (irr + classic_shadowed(nl_sun, shadow) * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
+    return (irr + classic_shadowed(nl_sun, shadow) * srgb_to_linear(a.sunlit) * sun_glass + screen_indirect(frag)) * base;
 }
 
 // Local lights on a classic surface (multiPointLightF): light color x n.l x
@@ -2847,8 +3329,9 @@ fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, frag: v
     var local = vec3<f32>(0.0);
     var lights = light_walk(world_pos, frag);
     var spots = projector_walk(lights);
+    let share = local_share(frag);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        let lt = frame.lights[i];
+        let lt = shared_light(i, share);
         let to_l = lt.pos_radius.xyz - world_pos;
         let dist = length(to_l);
         let radius = lt.pos_radius.w;
@@ -2860,7 +3343,7 @@ fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, frag: v
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        local += ll_diffuse_light(projector_at(i, world_pos, n), n, base);
+        local += ll_diffuse_light(projector_at(i, world_pos, n, frag), n, base);
     }
     return local * ll_local_scale();
 }
@@ -2899,7 +3382,7 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
         let spec = d_ggx(nh, ra) * v_smith(nv, nl, ra) * f;
         let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
         let sun_contrib = srgb_to_linear(ll_linear_to_srgb(vec3<f32>(classic_shadowed(pow(nl, 1.2), shadow))) * sunlit * 0.7) * PI;
-        final_sun = clamp(sun_contrib * (diff + spec) * shadow_lift(shadow), vec3<f32>(0.0), vec3<f32>(10.0));
+        final_sun = clamp(sun_contrib * (diff + spec) * sun_glass * shadow_lift(shadow), vec3<f32>(0.0), vec3<f32>(10.0));
     }
     var col = srgb_to_linear(ll_linear_to_srgb(irr * diffuse_color) + ll_linear_to_srgb(final_sun) * 1.1);
     // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
@@ -2912,7 +3395,10 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
     let hemi = mix(mix(frame.ground_color.rgb, frame.sky_horizon.rgb, clamp(up * 2.0, 0.0, 1.0)),
                    frame.sky_zenith.rgb, clamp(up * 2.0 - 1.0, 0.0, 1.0));
     let r = reflect(-v, n);
-    var env = probe_radiance(probe_point(world_pos, n), frag, r, roughness, mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness));
+    // (the sky's reflection, where no reflection probe gives the place's,
+    // takes the traced probes' sight of the sky, as `shade_pbr`'s)
+    let sky_env = mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness) * screen_sky(frag);
+    var env = probe_radiance(probe_point(world_pos, n), frag, r, roughness, sky_env);
     let m = mirror_tap(world_pos, r, 1.0 - clamp(roughness_in, 0.0, 1.0));
     env = mix(env, m.rgb, m.a);
     // pbrIbl scales the specular by the material's occlusion only (ORM red);
@@ -2935,8 +3421,9 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
     var col = vec3<f32>(0.0);
     var lights = light_walk(world_pos, frag);
     var spots = projector_walk(lights);
+    let share = local_share(frag);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        let lt = frame.lights[i];
+        let lt = shared_light(i, share);
         let to_l = lt.pos_radius.xyz - world_pos;
         let dist = length(to_l);
         let radius = lt.pos_radius.w;
@@ -2954,7 +3441,7 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        col += ll_pbr_light(projector_at(i, world_pos, n), n, v, f0, ra, nv, diffuse_color);
+        col += ll_pbr_light(projector_at(i, world_pos, n, frag), n, v, f0, ra, nv, diffuse_color);
     }
     return col * ll_local_scale();
 }

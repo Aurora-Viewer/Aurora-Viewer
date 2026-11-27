@@ -451,8 +451,9 @@ fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 /// Remove the transcript files of a folder (and the folder once empty).
-/// Only `.txt` files directly in it: nothing else is ever touched.
-pub fn erase(dir: &Path) -> std::io::Result<usize> {
+/// Only `.txt` files directly in it: nothing else is ever touched. Only
+/// `ChatLog` decides which folder: never a shared one (`ChatLog::shared`).
+pub(super) fn erase(dir: &Path) -> std::io::Result<usize> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),

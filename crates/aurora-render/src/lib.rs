@@ -25,14 +25,21 @@ mod cutout;
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;
 mod device_lost;
-pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss_panic, loss_details};
+pub use device_lost::{
+    GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_drop, in_guarded_poll, in_guarded_start, is_drop_loss_panic, is_loss_panic,
+    is_start_loss_panic, loss_details, start_guarded,
+};
 mod dof;
 mod drawn_pick;
 mod equirect;
 mod exposure;
 mod film_readback;
+mod fit_clip;
+pub use fit_clip::FitClipParams;
+mod fog;
 pub mod frame_priority;
 mod fsr;
+pub mod gi;
 pub mod gpu_alloc;
 pub mod gpu_cull;
 mod gtao;
@@ -44,10 +51,12 @@ pub mod light_tiles;
 pub mod look_thumbs;
 pub mod looks;
 pub mod main_thread;
+mod motion_blur;
 mod motion_debug;
 mod motion_history;
 mod occlusion;
 pub mod oit_stochastic;
+mod outside;
 pub mod pacing;
 mod packet;
 pub mod panorama;
@@ -58,13 +67,21 @@ pub mod pipeline_cache;
 mod portal_tests;
 pub mod present;
 pub mod preview;
+mod preview_blend;
 mod preview_mesh;
+mod preview_mips;
 pub mod probes;
 pub mod projector_shadows;
 mod readback;
 mod render_thread;
 mod renderer;
 mod rlva;
+#[cfg(test)]
+mod rt_flags_tests;
+mod rt_gi_counts;
+mod rt_gi_probes;
+mod rt_light_changes;
+mod rt_shadows;
 pub mod second_view;
 mod selection;
 pub mod shadow_cull;
@@ -97,6 +114,7 @@ pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
+pub use rt_shadows::LampQuality;
 pub use thumbnail::{THUMBNAIL_MAX, Thumbnail};
 pub use vr_control::{HeadPose, VrState};
 /// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
@@ -136,6 +154,7 @@ pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;
 pub use label_depth::{WORLD_OVERLAY_NEAR_W, clip_world_line, world_label_at, world_line_at};
 pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
+pub use outside::{OutsideEvent, OutsideFrame, same_picture};
 pub use renderer::{CASCADES, RenderError};
 // What a tile of a photo draws around what it keeps for the soft shadows.
 pub use soft_shadows::tile_reach as soft_shadow_tile_reach;
@@ -290,6 +309,8 @@ mod shader_tests {
     #[test]
     fn asset_preview_shader_is_valid() {
         validate(include_str!("shaders/preview.wgsl"));
+        validate(include_str!("shaders/preview_outline.wgsl"));
+        validate(include_str!("shaders/preview_mips.wgsl"));
     }
 
     #[test]
@@ -1178,6 +1199,11 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     #[test]
     fn exposure_shader_is_valid() {
         validate(include_str!("shaders/exposure.wgsl"));
+    }
+
+    #[test]
+    fn fit_clip_shader_is_valid() {
+        validate(include_str!("shaders/fit_clip.wgsl"));
     }
 
     #[test]

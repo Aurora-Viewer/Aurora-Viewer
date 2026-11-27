@@ -179,7 +179,15 @@ impl Thumbnails {
             }
             self.pending.insert(group.id, group.digest);
             let group = group.clone();
-            let images = images.to_vec();
+            // the pixels only: a job still running at exit must not hold the
+            // GPU's staging memory (`Live::close_for_exit`)
+            let images: Vec<_> = images
+                .iter()
+                .map(|image| PreparedImage {
+                    staged: None,
+                    ..image.clone()
+                })
+                .collect();
             let tx = self.tx.clone();
             let lib = self.rig.clone();
             run(Box::new(move || {
