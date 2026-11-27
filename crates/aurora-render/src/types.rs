@@ -2018,6 +2018,8 @@ pub struct FrameParams {
     pub debug: DebugRender,
     /// Depth of field (RenderDepthOfField); None: off, at no cost.
     pub dof: Option<DepthOfField>,
+    /// Motion blur (motion_blur.rs, Aurora's own); None: off, at no cost.
+    pub motion_blur: Option<MotionBlur>,
     /// A cut-out photo (cutout.rs): no sky, terrain or water, no glow, and
     /// what is drawn keeps its coverage, in the snapshot's alpha or over a
     /// checkerboard on the live view.
@@ -2114,6 +2116,20 @@ pub struct DepthOfField {
     /// Focus peaking (the photo viewfinder's manual focus): the sharp
     /// edges painted this linear colour.
     pub peaking: Option<[f32; 3]>,
+}
+
+/// The motion blur of a frame, worked out by the viewer (motion_blur.rs).
+/// Aurora's own: the Legacy Viewer draws none.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotionBlur {
+    /// How much of each pixel's motion since the last frame the blur
+    /// spreads: the shutter's open time over the frame's time (0.5: a
+    /// 180° shutter).
+    pub scale: f32,
+    /// The longest streak, as a share of the image's height.
+    pub max_share: f32,
+    /// Samples of the gather along the motion.
+    pub samples: u32,
 }
 
 /// Views shown instead of the image, and checks painted over it

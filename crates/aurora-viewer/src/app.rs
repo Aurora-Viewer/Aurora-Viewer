@@ -13474,6 +13474,7 @@ impl App {
                 };
                 self.dof_frame(&mut gfx.renderer, dt, view)
             },
+            motion_blur: self.motion_blur_frame(dt),
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
             // (the Director's green screen, in place of the checkerboard)

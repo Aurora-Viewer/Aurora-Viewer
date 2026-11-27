@@ -889,8 +889,14 @@ struct Taa {
 /// The depth prepass's colour target this frame, when something reads the
 /// motion (`Backend::motion_now`): the mesh normals (xy) and each pixel's
 /// screen motion (zw, object.wgsl `depth_normal`). GTAO's normals when its
-/// targets exist (TAA then reads the same), else TAA's own.
-fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>) -> Option<&'a wgpu::TextureView> {
+/// targets exist (TAA then reads the same), else TAA's own, else the motion
+/// blur's (`Backend::blur_motion`).
+fn motion_view<'a>(
+    motion_now: bool,
+    targets: &'a Targets,
+    taa: Option<&'a Taa>,
+    blur: Option<&'a wgpu::TextureView>,
+) -> Option<&'a wgpu::TextureView> {
     if !motion_now {
         return None;
     }
@@ -899,6 +905,7 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
         .as_ref()
         .map(|g| &g.normals)
         .or_else(|| taa.and_then(|t| t.motion.as_ref()))
+        .or(blur)
 }
 
 /// The coverage from which a blended face gives FSR its own depth and
@@ -2248,6 +2255,13 @@ pub(crate) struct Backend {
     glow: Glow,
     /// Depth of field, made the first time it is on.
     dof: Option<crate::dof::Dof>,
+    /// Motion blur, made the first time it is on.
+    motion_blur: Option<crate::motion_blur::MotionBlurPass>,
+    /// The motion target of the depth prepass while the motion blur reads
+    /// it and neither GTAO nor TAA has one (`motion_view`); its size.
+    blur_motion: Option<((u32, u32), wgpu::TextureView)>,
+    /// This frame draws the motion blur (`motion_blur_wanted`).
+    blur_now: bool,
     /// The photo's look, made the first time one is on.
     looks: Option<crate::looks::Looks>,
     /// The photo filters' catalogue pictures, while the catalogue asks for
@@ -3513,6 +3527,39 @@ fn cloud_targets(
     let (_, refused) = crate::gpu_alloc::scoped(device, || clouds.ensure_targets(device, size, still));
     if first_use(oom, "volumetric clouds", false, refused && !lost) {
         clouds.release_targets();
+        return false;
+    }
+    true
+}
+
+/// Whether the frame draws its motion blur: asked for, and not on a photo
+/// nor an offline film's frame (drawn at their own size, a frame apart
+/// from the last one the window drew), nor on a cut-out frame, whose empty
+/// background keeps its coverage.
+fn motion_blur_wanted(f: &FrameParams, snapshot: bool) -> bool {
+    f.motion_blur.is_some_and(|m| m.scale > 0.0) && !snapshot && !f.cutout
+}
+
+/// The motion blur's targets for `size` are made, checked: false while
+/// refused or waiting (the frame goes without the effect).
+fn motion_blur_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    blur: &mut Option<crate::motion_blur::MotionBlurPass>,
+    device: &wgpu::Device,
+    post: &crate::dof::PostInputs,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let b = blur.get_or_insert_with(|| crate::motion_blur::MotionBlurPass::new(device, HDR_FORMAT));
+    if b.has_targets(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || b.ensure_targets(device, size, HDR_FORMAT, post));
+    if first_use(oom, "motion blur", false, refused && !lost) {
+        b.release();
         return false;
     }
     true
@@ -5036,6 +5083,9 @@ impl Backend {
             shadow_sampler,
             glow,
             dof: None,
+            motion_blur: None,
+            blur_motion: None,
+            blur_now: false,
             looks: None,
             look_thumbs: None,
             rlva_spheres: None,
@@ -7617,6 +7667,37 @@ impl Backend {
         }
     }
 
+    /// The motion blur's own motion target, while it draws and neither
+    /// GTAO nor TAA keeps one (`motion_view`), at the world's size; let go
+    /// otherwise. Refused by a full video memory, the blur follows the
+    /// camera alone.
+    fn ensure_blur_motion(&mut self) {
+        let shared = self.targets.gtao.is_some() || self.taa.as_ref().is_some_and(|t| t.motion.is_some());
+        if !self.blur_now || shared {
+            self.blur_motion = None;
+            return;
+        }
+        let size = self.scene_size();
+        if self.blur_motion.as_ref().is_some_and(|(s, _)| *s == size) {
+            return;
+        }
+        self.blur_motion = None;
+        let lost = self.lost.get();
+        self.blur_motion = extra(&mut self.oom, &self.device, lost, "motion blur motion", |device| {
+            let view = make_view(
+                device,
+                "motion blur motion",
+                size.0,
+                size.1,
+                crate::gtao::NORMAL_FORMAT,
+                1,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            )
+            .1;
+            (size, view)
+        });
+    }
+
     /// The targets made on first use, let go: each is made again, checked,
     /// when next needed.
     fn drop_first_use_targets(&mut self) {
@@ -7630,6 +7711,10 @@ impl Backend {
         if let Some(dof) = &mut self.dof {
             dof.release();
         }
+        if let Some(blur) = &mut self.motion_blur {
+            blur.release();
+        }
+        self.blur_motion = None;
         if let Some(looks) = &mut self.looks {
             looks.release();
         }
@@ -9852,7 +9937,9 @@ impl Backend {
         // (the traced shadows take the soft ones' place)
         self.soft_now = !self.rt_now && self.soft_on(f.shadows, f.shadow_softness);
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
-        self.motion_now = self.gtao_normals_now || self.taa.is_some();
+        self.blur_now = motion_blur_wanted(f, snapshot.is_some());
+        self.motion_now = self.gtao_normals_now || self.taa.is_some() || self.blur_now;
+        self.ensure_blur_motion();
         // nothing kept the matrices while nothing read the motion: the
         // first frame that reads it again starts the history again
         self.motion_cut |= self.motion_now && !self.motion_kept;
@@ -11454,7 +11541,12 @@ impl Backend {
         };
         // the mesh normals and the motion, drawn beside the depth when GTAO
         // or TAA reads them; without them the passes keep no colour target
-        let normals = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
+        let normals = motion_view(
+            self.motion_now,
+            &self.targets,
+            self.taa.as_ref(),
+            self.blur_motion.as_ref().map(|(_, v)| v),
+        );
         let normal_target = |load| {
             normals.map(|view| {
                 Some(wgpu::RenderPassColorAttachment {
@@ -11794,7 +11886,12 @@ impl Backend {
                 rt.release_screen();
             }
             // moved surfaces keep their history through the prepass's motion
-            let rt_motion_drawn = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
+            let rt_motion_drawn = motion_view(
+                self.motion_now,
+                &self.targets,
+                self.taa.as_ref(),
+                self.blur_motion.as_ref().map(|(_, v)| v),
+            );
             let rt_motion = rt_motion_drawn.unwrap_or(&self.dummies.black);
             // (the sun's soft shadow too, whether the lights are traced or not)
             let light = crate::rt_shadows::TraceLight {
@@ -12731,7 +12828,12 @@ impl Backend {
                         &light,
                         &self.targets.depth_ss,
                         gbuf,
-                        motion_view(self.motion_now, &self.targets, self.taa.as_ref()),
+                        motion_view(
+                            self.motion_now,
+                            &self.targets,
+                            self.taa.as_ref(),
+                            self.blur_motion.as_ref().map(|(_, v)| v),
+                        ),
                         &self.dummies.black,
                         &self.targets.scene_copy,
                         &scene,
@@ -13512,6 +13614,65 @@ impl Backend {
                 }
             }
         }
+        // ---- motion blur, on the resolved image and its depth of field,
+        // before the glow, the bloom and the tone mapping (not on a photo,
+        // an offline film's frame nor the first frame after a cut)
+        match (&f.motion_blur, self.prev_view_proj) {
+            (Some(params), Some(prev))
+                if self.blur_now
+                    && !self.motion_cut
+                    && motion_blur_targets(
+                        &mut self.oom,
+                        &mut self.motion_blur,
+                        &self.device,
+                        &crate::dof::PostInputs {
+                            layout: &self.post_layout,
+                            sampler: &self.post_sampler,
+                            buffer: &self.post_buffer,
+                            glow: &self.glow.views[1],
+                        },
+                        post_size,
+                        self.lost.get(),
+                    ) =>
+            {
+                let motion = motion_view(
+                    self.motion_now,
+                    &self.targets,
+                    self.taa.as_ref(),
+                    self.blur_motion.as_ref().map(|(_, v)| v),
+                );
+                let blur = self.motion_blur.as_mut().expect("made by motion_blur_targets");
+                post_bg = blur.encode(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    post_src,
+                    post_depth,
+                    motion,
+                    &crate::motion_blur::Cameras {
+                        view_proj: unjittered_vp,
+                        prev_view_proj: prev,
+                        proj: f.proj,
+                    },
+                    post_size,
+                    params,
+                    HDR_FORMAT,
+                    &crate::dof::PostInputs {
+                        layout: &self.post_layout,
+                        sampler: &self.post_sampler,
+                        buffer: &self.post_buffer,
+                        glow: &self.glow.views[1],
+                    },
+                );
+            }
+            // (refused by a full video memory, or a frame without it)
+            (Some(_), _) => {}
+            (None, _) => {
+                if let Some(blur) = &mut self.motion_blur {
+                    blur.release();
+                }
+            }
+        }
         self.prev_view_proj = Some(unjittered_vp);
         self.prev_motion_view = Some((f.proj, f.view));
         // the camera the depth was drawn with, jitter included: unprojected
@@ -13748,7 +13909,12 @@ impl Backend {
         }
 
         if let Some(debug) = &self.motion_debug {
-            let motion = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
+            let motion = motion_view(
+                self.motion_now,
+                &self.targets,
+                self.taa.as_ref(),
+                self.blur_motion.as_ref().map(|(_, v)| v),
+            );
             debug.encode(
                 &self.device,
                 &self.queue,

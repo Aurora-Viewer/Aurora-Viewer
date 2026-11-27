@@ -91,6 +91,7 @@ mod mac_quit;
 mod mac_window_menu;
 mod machine_id;
 mod media;
+mod motion_blur;
 mod movement;
 mod natural_order;
 mod net_adapters;
