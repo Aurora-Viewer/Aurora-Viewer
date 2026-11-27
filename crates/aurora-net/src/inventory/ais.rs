@@ -2,9 +2,14 @@
 //! AISUpdate::parseEmbedded (indra/newview/llaisapi.cpp).
 
 use super::{FolderContents, InvFolder, InvItem, folder_from_llsd, item_from_llsd};
+use crate::probe::InventoryRead;
 use aurora_llsd::Llsd;
 use std::collections::HashSet;
+use std::sync::Arc;
 use uuid::Uuid;
+
+mod subtree_pacing;
+pub(crate) use subtree_pacing::SubtreePacer;
 
 pub(super) fn favorite(record: &Llsd) -> Result<bool, &'static str> {
     match &record["favorite"] {
@@ -149,6 +154,8 @@ pub const TREE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180
 /// A subtree read's whole time, its retries and their waits included:
 /// under the walk's own deadline (background.rs TREE_DEADLINE, 240 s).
 pub const TREE_TOTAL: std::time::Duration = std::time::Duration::from_secs(210);
+/// Keep paced shallow reads under the walk's 1,200 second deadline.
+const WALK_FOLDER_TOTAL: std::time::Duration = std::time::Duration::from_secs(1100);
 
 /// Why an inventory read failed, enough for the background walk to decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,13 +284,14 @@ fn embedded_categories(doc: &Llsd) -> impl Iterator<Item = (Uuid, &Llsd)> {
 /// (`children` of `parent`, a batch of its folders): whole subtrees in one
 /// read. A requested child missing from a subset reply is left unfetched;
 /// the caller sees it still is.
-pub async fn fetch_tree(
+pub(crate) async fn fetch_tree(
     http: &reqwest::Client,
     cap: &str,
     owner: Uuid,
     parent: Uuid,
     children: &[Uuid],
     depth: i32,
+    pacer: Option<Arc<SubtreePacer>>,
 ) -> Result<Vec<FolderContents>, FetchError> {
     let mut url = format!("{}/category/{parent}/children?depth={depth}", cap.trim_end_matches('/'));
     if !children.is_empty() {
@@ -297,15 +305,34 @@ pub async fn fetch_tree(
     // reply takes longer than a folder's; one that times out, or that a
     // gateway gives up on, is never asked again as is: the walk reads it in
     // smaller parts)
+    let state = TryState {
+        pacer,
+        ..Default::default()
+    };
     let doc = if depth > 0 {
         // (one answer within TREE_TOTAL, retries and waits included: the
         // walk's deadline never frees a slot while its request still runs)
-        let state = TryState::default();
-        tokio::time::timeout(TREE_TOTAL, get_with(http, url, TREE_TIMEOUT, RETRY_ATTEMPTS, 0, Some(&state)))
-            .await
-            .unwrap_or_else(|_| Err(state.out_of_time()))?
+        tokio::time::timeout(
+            TREE_TOTAL,
+            get_with(http, url, TREE_TIMEOUT, RETRY_ATTEMPTS, 0, Some(&state), InventoryRead::Subtree),
+        )
+        .await
+        .unwrap_or_else(|_| Err(state.out_of_time()))?
     } else {
-        get(http, url).await?
+        tokio::time::timeout(
+            WALK_FOLDER_TOTAL,
+            get_with(
+                http,
+                url,
+                REQUEST_TIMEOUT,
+                RETRY_ATTEMPTS,
+                RETRY_ATTEMPTS,
+                Some(&state),
+                InventoryRead::WalkFolder,
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| Err(state.out_of_time()))?
     };
     parse_tree_reply(&doc, owner, parent, children, depth).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(200)))
 }
@@ -334,6 +361,7 @@ fn parse_tree_reply(doc: &Llsd, owner: Uuid, parent: Uuid, children: &[Uuid], de
 /// time ([`TREE_TOTAL`]) runs out.
 #[derive(Default)]
 struct TryState {
+    pacer: Option<Arc<SubtreePacer>>,
     /// A throttle or an overload (429 or 503) was answered.
     overloaded: std::sync::atomic::AtomicBool,
     retry_after_secs: std::sync::atomic::AtomicU64,
@@ -378,7 +406,16 @@ impl TryState {
 /// One AIS read, retried on the conditions the Legacy Viewer's HTTP layer retries
 /// (timeout, 408/425/429 and 5xx), with its backoff and `Retry-After`.
 async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
-    get_with(http, url, REQUEST_TIMEOUT, RETRY_ATTEMPTS, RETRY_ATTEMPTS, None).await
+    get_with(
+        http,
+        url,
+        REQUEST_TIMEOUT,
+        RETRY_ATTEMPTS,
+        RETRY_ATTEMPTS,
+        None,
+        InventoryRead::DirectFolder,
+    )
+    .await
 }
 
 /// [`get`] with its own timeout, how many times a failed attempt is tried
@@ -390,15 +427,19 @@ async fn get_with(
     retries: u32,
     timeout_retries: u32,
     state: Option<&TryState>,
+    read: InventoryRead,
 ) -> Result<Llsd, FetchError> {
     let mut attempt = 0;
     let mut timeouts = 0;
     loop {
+        if let Some(pacer) = state.and_then(|state| state.pacer.as_ref()) {
+            pacer.wait().await;
+        }
         attempt += 1;
         if attempt > 1 {
             crate::probe::http_retry(crate::probe::HttpKind::Inventory);
         }
-        let timed = crate::probe::HttpRequest::start(crate::probe::HttpKind::Inventory);
+        let timed = crate::probe::HttpRequest::start_inventory(read);
         if let Some(state) = state {
             state.sending(Some(std::time::Instant::now()));
         }
@@ -444,6 +485,9 @@ async fn get_with(
             if let Some(state) = state {
                 state.sending(None);
                 if matches!(status, 429 | 503) {
+                    if let Some(pacer) = &state.pacer {
+                        pacer.overloaded(wait);
+                    }
                     use std::sync::atomic::Ordering::Relaxed;
                     state.overloaded.store(true, Relaxed);
                     state
@@ -504,25 +548,55 @@ async fn get_with(
     }
 }
 
-/// Bounded parallel reads, outside the viewer thread. Never substitute a
-/// legacy listing: it may omit the favorites and thumbnails of siblings.
+#[derive(Default)]
+pub(crate) struct FolderReads {
+    pub contents: Vec<FolderContents>,
+    pub failures: Vec<(Uuid, FetchError)>,
+}
+
+/// Callers such as mutations need a complete readback before proceeding.
 pub async fn fetch_folders(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[Uuid]) -> Result<Vec<FolderContents>, FetchError> {
-    let mut contents = Vec::with_capacity(ids.len());
+    let reads = read_folders(http, cap, owner, ids).await;
+    match reads.failures.into_iter().next() {
+        Some((_, error)) => Err(error),
+        None => Ok(reads.contents),
+    }
+}
+
+/// Bounded parallel reads outside the viewer thread. A failure answers
+/// only its own folder. Keep good listings, including favorites and
+/// thumbnails that the legacy endpoint may omit.
+pub(crate) async fn read_folders(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[Uuid]) -> FolderReads {
+    let mut reads = FolderReads::default();
     for chunk in ids.chunks(16) {
         let mut tasks = tokio::task::JoinSet::new();
+        let mut answered = HashSet::with_capacity(chunk.len());
         for id in chunk.iter().copied() {
             let http = http.clone();
             let url = format!("{}/category/{id}/children?depth=0", cap.trim_end_matches('/'));
             tasks.spawn(async move {
-                let doc = get(&http, url).await?;
-                parse_folder(&doc, id, owner).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(200)))
+                let result = get(&http, url)
+                    .await
+                    .and_then(|doc| parse_folder(&doc, id, owner).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(200))));
+                (id, result)
             });
         }
         while let Some(result) = tasks.join_next().await {
-            contents.push(result.map_err(|_| FetchError::new(FetchFailure::Fatal, None))??);
+            let Ok((id, result)) = result else { continue };
+            answered.insert(id);
+            match result {
+                Ok(contents) => reads.contents.push(contents),
+                Err(error) => reads.failures.push((id, error)),
+            }
         }
+        reads.failures.extend(
+            chunk
+                .iter()
+                .filter(|id| !answered.contains(id))
+                .map(|id| (*id, FetchError::new(FetchFailure::Fatal, None))),
+        );
     }
-    Ok(contents)
+    reads
 }
 
 fn parse_item_reply(doc: &Llsd, id: Uuid, owner: Uuid) -> Result<InvItem, &'static str> {
@@ -571,7 +645,12 @@ pub(crate) async fn read_one_item(http: &reqwest::Client, cap: &str, owner: Uuid
     let mut result = ItemReads::default();
     let url = format!("{}/item/{id}", cap.trim_end_matches('/'));
     let state = TryState::default();
-    match tokio::time::timeout(TREE_TIMEOUT, get_with(http, url, TREE_TIMEOUT, 0, 0, Some(&state))).await {
+    match tokio::time::timeout(
+        TREE_TIMEOUT,
+        get_with(http, url, TREE_TIMEOUT, 0, 0, Some(&state), InventoryRead::Item),
+    )
+    .await
+    {
         Ok(Ok(doc)) => match parse_item_reply(&doc, id, owner) {
             Ok(item) => result.items.push(item),
             Err(reason) => {
@@ -614,11 +693,7 @@ pub async fn read_items(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[U
                 // (AISAPI::HTTP_TIMEOUT, as every AIS command: an item read
                 // always answers, so the viewer's one-read-at-a-time claim
                 // (world/inventory.rs ITEM_READ_DEADLINE) outlasts it)
-                let read = tokio::time::timeout(
-                    TREE_TIMEOUT,
-                    crate::caps::get_llsd_as(&http, &url, crate::probe::HttpKind::Inventory),
-                )
-                .await;
+                let read = tokio::time::timeout(TREE_TIMEOUT, crate::caps::get_inventory_item_llsd(&http, &url)).await;
                 (id, read.map(|read| read.map(|doc| parse_item_reply(&doc, id, owner).ok())))
             });
         }
@@ -648,6 +723,65 @@ mod tests {
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    #[tokio::test]
+    async fn an_overloaded_shallow_read_defers_a_subtree_on_the_same_capability() {
+        use std::time::Duration;
+        use tokio::time::Instant;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            let mut rejected_at = None;
+            for (index, response) in [
+                &b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"[..],
+                &b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"[..],
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let (mut stream, _) = listener.accept().await.expect("connection");
+                let mut request = Vec::new();
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let mut buffer = [0; 1024];
+                    let length = stream.read(&mut buffer).await.expect("request");
+                    assert_ne!(length, 0);
+                    request.extend_from_slice(&buffer[..length]);
+                }
+                if index == 0 {
+                    rejected_at = Some(Instant::now());
+                } else {
+                    assert!(rejected_at.expect("first rejection").elapsed() >= Duration::from_secs(1));
+                }
+                stream.write_all(response).await.expect("response");
+                crate::test_http::finish(stream);
+            }
+        });
+        let http = crate::test_http_client();
+        let pacer = SubtreePacer::for_cap(&mut None, &url);
+        let first = TryState {
+            pacer: Some(pacer.clone()),
+            ..Default::default()
+        };
+        let second = TryState {
+            pacer: Some(pacer),
+            ..Default::default()
+        };
+        let timeout = Duration::from_secs(4);
+        let rejected = get_with(&http, url.clone(), timeout, 0, 0, Some(&first), InventoryRead::WalkFolder)
+            .await
+            .expect_err("the shallow read is overloaded");
+        assert_eq!(rejected.status, Some(503));
+        let received = tokio::time::timeout(
+            Duration::from_secs(5),
+            get_with(&http, url, timeout, 0, 0, Some(&second), InventoryRead::Subtree),
+        )
+        .await
+        .expect("shared pacing releases the next request")
+        .expect("subtree response");
+        assert_eq!(received, Llsd::Undef);
+        server.await.expect("server");
     }
 
     fn record(n: u128, folder: bool, kind: i32, favorite: bool) -> Llsd {
@@ -750,6 +884,54 @@ mod tests {
             requests
         });
         (url, task)
+    }
+
+    #[tokio::test]
+    async fn a_refused_folder_does_not_discard_a_successful_sibling() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
+        let cap = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.expect("connection");
+                let mut request = Vec::new();
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let mut buffer = [0; 1024];
+                    let n = socket.read(&mut buffer).await.expect("read");
+                    assert_ne!(n, 0);
+                    request.extend_from_slice(&buffer[..n]);
+                }
+                requests.push((socket, request));
+            }
+            // The refusal reaches the client before the valid reply.
+            let good = format!("/category/{}/children", id(1));
+            requests.sort_by_key(|(_, bytes)| String::from_utf8_lossy(bytes).contains(&good));
+            let (mut refused, request) = requests.remove(0);
+            assert!(String::from_utf8_lossy(&request).contains(&format!("/category/{}/children", id(4))));
+            refused
+                .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .expect("refusal");
+            crate::test_http::finish(refused);
+            let (mut accepted, request) = requests.remove(0);
+            assert!(String::from_utf8_lossy(&request).contains(&good));
+            let body = aurora_llsd::to_xml(&snapshot(vec![record(3, false, 1, false)]));
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            accepted.write_all(header.as_bytes()).await.expect("header");
+            accepted.write_all(&body).await.expect("body");
+            crate::test_http::finish(accepted);
+        });
+        let http = crate::test_http_client();
+        let reads = tokio::time::timeout(std::time::Duration::from_secs(5), read_folders(&http, &cap, id(2), &[id(4), id(1)]))
+            .await
+            .expect("independent folder results");
+        assert_eq!(reads.contents.len(), 1);
+        assert_eq!(reads.contents[0].folder_id, id(1));
+        assert_eq!(reads.failures, [(id(4), FetchError::status_of(403))]);
+        server.await.expect("server");
     }
 
     #[tokio::test]
@@ -1062,7 +1244,7 @@ mod tests {
             }
             seen
         });
-        let contents = fetch_tree(&crate::test_http_client(), &url, id(2), id(1), &[], 0)
+        let contents = fetch_tree(&crate::test_http_client(), &url, id(2), id(1), &[], 0, None)
             .await
             .expect("a throttled or unavailable AIS read is retried");
         assert_eq!(fetched(&contents), [id(1)]);
@@ -1118,6 +1300,7 @@ mod tests {
             0,
             0,
             Some(&state),
+            InventoryRead::Subtree,
         )
         .await
         .expect_err("never answered");
@@ -1142,6 +1325,7 @@ mod tests {
             0,
             0,
             Some(&state),
+            InventoryRead::Subtree,
         )
         .await
         .expect_err("refused");
@@ -1167,7 +1351,7 @@ mod tests {
                 .expect("response");
             1
         });
-        let error = fetch_tree(&crate::test_http_client(), &url, id(2), id(1), &[], 0)
+        let error = fetch_tree(&crate::test_http_client(), &url, id(2), id(1), &[], 0, None)
             .await
             .expect_err("a folder over the limit is refused");
         assert_eq!(error.kind, FetchFailure::TooBig);

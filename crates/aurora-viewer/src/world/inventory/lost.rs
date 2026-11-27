@@ -16,7 +16,7 @@ impl Inventory {
             .cloned()
             .collect();
         self.repair_item_parents(&mut items, ItemSource::Cache);
-        self.add_items_inner(items);
+        self.add_items_inner(items, None);
         for folder in self.folders.values_mut().filter(|f| !f.library) {
             folder.items.clear();
         }

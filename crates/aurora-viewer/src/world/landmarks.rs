@@ -361,9 +361,9 @@ impl Landmarks {
     }
 }
 
-/// The folders of the Favorites and Landmarks trees never fetched yet: the
-/// landmark lookups only see fetched folders, where Firestorm has the whole
-/// inventory loaded in the background after login.
+/// Folders needed by the navigation bar's passive landmark lookup. Let the
+/// background walk batch their descendants during login. Once idle, look for
+/// unread descendants in case they were outside the background walk.
 pub fn unfetched_folders(inv: &Inventory) -> Vec<Uuid> {
     let mut stack: Vec<Uuid> = [FOLDER_FAVORITES, FOLDER_LANDMARKS]
         .into_iter()
@@ -373,7 +373,9 @@ pub fn unfetched_folders(inv: &Inventory) -> Vec<Uuid> {
     let mut out = Vec::new();
     while let Some(id) = stack.pop() {
         if let Some(folder) = inv.folders.get(&id).filter(|_| seen.insert(id)) {
-            stack.extend(folder.children.iter().copied());
+            if inv.background_idle {
+                stack.extend(folder.children.iter().copied());
+            }
             if folder.state == crate::world::inventory::FetchState::Unknown {
                 out.push(id);
             }
@@ -448,6 +450,43 @@ mod tests {
     use super::*;
 
     const REGION: Uuid = Uuid::from_u128(0x5E61_0000_0000_0000_0000_0000_0000_0001);
+
+    #[test]
+    fn passive_landmark_lookup_leaves_descendants_to_the_background_walk() {
+        use aurora_net::inventory::{FolderContents, InvFolder};
+        let root = Uuid::from_u128(1);
+        let favorites = Uuid::from_u128(10);
+        let landmarks = Uuid::from_u128(20);
+        let nested = Uuid::from_u128(21);
+        let folder = |id, parent, kind| InvFolder {
+            id,
+            parent,
+            type_default: kind,
+            version: 1,
+            ..Default::default()
+        };
+        let listing = |folder_id, folders| FolderContents {
+            folder_id,
+            owner_id: Uuid::nil(),
+            version: 2,
+            folders,
+            items: Vec::new(),
+        };
+        let mut inv = Inventory {
+            root,
+            ..Default::default()
+        };
+        inv.apply(vec![
+            listing(
+                root,
+                vec![folder(favorites, root, FOLDER_FAVORITES), folder(landmarks, root, FOLDER_LANDMARKS)],
+            ),
+            listing(landmarks, vec![folder(nested, landmarks, -1)]),
+        ]);
+        assert_eq!(unfetched_folders(&inv), [favorites]);
+        inv.set_background_idle(true);
+        assert_eq!(unfetched_folders(&inv), [nested, favorites]);
+    }
 
     #[test]
     fn inventory_actions_wait_for_asset_handle_and_actual_region_name() {
