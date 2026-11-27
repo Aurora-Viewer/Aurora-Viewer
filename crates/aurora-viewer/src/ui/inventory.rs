@@ -2213,8 +2213,10 @@ fn folder_name_with(inv: &Inventory, id: Uuid, translate: impl Fn(&'static str) 
 fn system_inventory_folder_labels_use_type_without_renaming_resident_folders() {
     use aurora_net::inventory::InvFolder;
 
-    let mut inv = Inventory::default();
-    inv.root = Uuid::from_u128(1);
+    let mut inv = Inventory {
+        root: Uuid::from_u128(1),
+        ..Default::default()
+    };
     let folders = [
         (2, "Clothes", 5),
         (3, "Body Parts", 13),
