@@ -436,6 +436,9 @@ pub fn appearance_request(
 /// Whether Paste (not as link) into `to` would go through: the outfit rules
 /// for the outfit folders, the inventory's elsewhere.
 pub(super) fn paste_allowed(inv: &Inventory, st: &InventoryUi, to: Uuid, prefs: &InventoryPreferences, facts: &Facts) -> bool {
+    if rules::received_purchase_folder(inv, to) {
+        return !st.cut && rules::received_purchase_copy_allowed(inv, &st.clipboard, to);
+    }
     match crate::world::outfit_paste::plan(inv, &st.clipboard, to, st.cut, &prefs.protected) {
         Ok(crate::world::outfit_paste::Paste::Inventory) => {
             rules::paste_allowed(inv, &st.clipboard, to, st.cut, false, &prefs.protected, &facts.worn)
@@ -454,6 +457,21 @@ pub(super) fn paste(
     actions: &mut Vec<InvAction>,
 ) {
     let cut = st.cut && !links;
+    if !links && rules::received_purchase_folder(inv, to) && !st.clipboard.is_empty() {
+        if cut {
+            st.message = aurora_i18n::tr!("received-inbox-copy-only").into();
+            return;
+        }
+        match rules::copy_into_received_purchase(inv, &st.clipboard, to) {
+            Ok(change) => {
+                st.message.clear();
+                st.consume_clipboard = false;
+                actions.push(InvAction::Edit(change));
+            }
+            Err(reason) => st.message = reason,
+        }
+        return;
+    }
     let ids = st.clipboard.clone();
     if let Some(consume) = paste_ids(inv, &ids, to, cut, links, st, prefs, facts, actions) {
         st.consume_clipboard = consume;
@@ -2488,6 +2506,36 @@ mod tests {
             assert!(!h.st.consume_clipboard);
         }
         assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
+    }
+
+    #[test]
+    fn purchase_folder_accepts_clipboard_copy_but_keeps_cut_and_links_blocked() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, id(1));
+        crate::world::inventory::demo::seed_received(&mut inv, id(1));
+        let purchase = id(8_300_001);
+        let item = id(8_300_002);
+        let prefs = InventoryPreferences::default();
+        let facts = Facts::default();
+        let mut st = InventoryUi {
+            clipboard: vec![item],
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+
+        assert!(paste_allowed(&inv, &st, purchase, &prefs, &facts));
+        paste(&inv, purchase, false, &mut st, &prefs, &facts, &mut actions);
+        assert!(matches!(actions.as_slice(), [InvAction::Edit(change)] if change.copies[0].parent == purchase));
+        assert!(!st.consume_clipboard);
+        actions.clear();
+
+        paste(&inv, purchase, true, &mut st, &prefs, &facts, &mut actions);
+        assert!(actions.is_empty());
+        st.cut = true;
+        assert!(!paste_allowed(&inv, &st, purchase, &prefs, &facts));
+        paste(&inv, purchase, false, &mut st, &prefs, &facts, &mut actions);
+        assert!(actions.is_empty());
+        assert_eq!(st.message, aurora_i18n::tr!("received-inbox-copy-only"));
     }
 
     /// The inventory refused every paste under My Outfits. It now follows

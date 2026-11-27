@@ -697,6 +697,31 @@ pub fn copy_tree(inv: &Inventory, id: Uuid, to: Uuid) -> Result<Mutation, String
     copy_one(inv, id, to, &mut change, &mut HashSet::new())?;
     Ok(change)
 }
+
+/// Explicit clipboard copies can go into a loaded purchase folder. The
+/// delivery root and ordinary drag destinations keep their own rules.
+pub fn received_purchase_folder(inv: &Inventory, to: Uuid) -> bool {
+    inv.folders
+        .get(&to)
+        .is_some_and(|folder| folder.info.type_default == -1 && folder.state == FetchState::Fetched)
+        && mutable_content(inv, to, None)
+        && in_type(inv, to, 50)
+}
+
+pub fn received_purchase_copy_allowed(inv: &Inventory, items: &[Uuid], to: Uuid) -> bool {
+    received_purchase_folder(inv, to)
+        && matches!(items, [id] if inv.items.get(id).is_some_and(|item| {
+            !matches!(item.asset_type, 24 | 25) && held(inv, item) & COPY != 0
+        }))
+}
+
+pub fn copy_into_received_purchase(inv: &Inventory, items: &[Uuid], to: Uuid) -> Result<Mutation, String> {
+    if !received_purchase_copy_allowed(inv, items, to) {
+        return Err(aurora_i18n::tr!("received-inbox-copy-only").into());
+    }
+    copy_tree(inv, items[0], to)
+}
+
 pub fn paste(
     inv: &Inventory,
     ids: &[Uuid],

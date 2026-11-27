@@ -1694,7 +1694,6 @@ ao-swimming-down = Pływanie w dół
 ao-always = Zawsze
 rez-under-land-group = Rezzuj z grupą działki
 ui-sound-object-rezzed = Obiekt zrezzowany z szafy
-rez-marketplace = Przed upuszczeniem przenieś ten obiekt poza folder Rzeczy na Marketplace.
 rez-incomplete = Przedmiot lub awatar nie został jeszcze wczytany.
 rez-object-only = Do świata można upuszczać tylko obiekty z szafy.
 rez-worn = Odłącz ten obiekt przed upuszczeniem go w świecie.

@@ -1675,7 +1675,6 @@ ao-swimming-down = Abschwimmen
 ao-always = Immer
 rez-under-land-group = Unter der Landgruppe rezzen
 ui-sound-object-rezzed = Objekt aus dem Inventar gerezzt
-rez-marketplace = Verschieben Sie dieses Objekt aus den Marktplatz-Einträgen, bevor Sie es ablegen.
 rez-incomplete = Das Objekt oder der Avatar wurde noch nicht geladen.
 rez-object-only = Nur Inventarobjekte können in der Welt abgelegt werden.
 rez-worn = Nehmen Sie dieses Objekt ab, bevor Sie es in die Welt fallen lassen.

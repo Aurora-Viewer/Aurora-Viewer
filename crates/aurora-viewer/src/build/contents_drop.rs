@@ -54,7 +54,7 @@ pub enum Target {
 
 pub fn reason_text(reason: &str) -> &'static str {
     match reason {
-        "rez-marketplace" => aurora_i18n::tr!("rez-marketplace"),
+        "rez-marketplace" => aurora_i18n::tr!("rez-marketplace-listed-stock"),
         "rez-incomplete" => aurora_i18n::tr!("rez-incomplete"),
         "rez-object-only" => aurora_i18n::tr!("rez-object-only"),
         "rez-worn" => aurora_i18n::tr!("rez-worn"),

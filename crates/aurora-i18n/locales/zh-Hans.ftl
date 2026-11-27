@@ -1657,7 +1657,6 @@ ao-swimming-down = 向下游
 ao-always = 始终
 rez-under-land-group = 以土地的群组生成
 ui-sound-object-rezzed = 从库存生成的物件
-rez-marketplace = 将此物件移出市场列表后再生成。
 rez-incomplete = 项目或化身尚未加载完成。
 rez-object-only = 只有库存物件可以放置到世界中。
 rez-worn = 生成前请先卸下此物件。

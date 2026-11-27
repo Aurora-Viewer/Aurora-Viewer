@@ -973,6 +973,18 @@ mod tests {
     }
 
     #[test]
+    fn a_marketplace_purchase_rezzes_on_land_with_its_purchase_folder() {
+        let mut w = world();
+        crate::world::inventory::demo::seed_received(&mut w.inventory, w.agent_id);
+        let point = Vec3::new(140.0, 130.0, 32.0);
+        let drop = prepare(&w, item(8_300_002), point + Vec3::Z * 4.0, (point, None), false, false, true).unwrap();
+        assert!(drop.consume.is_none());
+        let request = rez(drop);
+        assert!(!request.remove);
+        assert_eq!(request.source_folder, item(8_300_001));
+    }
+
+    #[test]
     fn library_object_cards_rez_the_actual_inventory_item_with_hidden_assets_and_group_flags() {
         let mut w = world();
         let mut scene = crate::scene::Scene::new(std::env::temp_dir(), w.avatar_lib.clone());
