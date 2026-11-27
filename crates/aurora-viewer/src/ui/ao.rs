@@ -107,6 +107,9 @@ pub struct AoUi {
     /// slot, `None` for its main list.
     pick_into: Option<Uuid>,
     preview: preview::Preview,
+    /// The preview's 3D stage: our outfit, posed by the preview's skeleton
+    /// (app/ao_preview.rs), drawn as Inspect draws an avatar.
+    pub stage: super::object_stage::StageUi,
     /// The slot each group had open, to open it again (`page::show`).
     category_states: [Option<State>; category::Category::ALL.len()],
     /// The slot header that takes the keyboard focus next frame.

@@ -1,10 +1,9 @@
-//! The AO window's preview: a client-only copy of our avatar and of what it
-//! wears (made as the animation editor's mirror is, mirror.rs), standing
-//! where we stand and playing the animation the window previews. Only the
-//! second camera draws it (`aurora_render::gpu_cull::object_flags::
-//! SECOND_VIEW_ONLY`, set by the scene for `on_ao_preview`), and that view
-//! leaves our own avatar out, so the preview shows the copy in our place,
-//! in our light, while the world sees our avatar as it is.
+//! The AO window's preview: a client-only copy of our avatar's skeleton
+//! (the avatar alone, made as the animation editor's mirror is, mirror.rs)
+//! that plays the animation the window previews. It is drawn nowhere (the
+//! scene leaves it out of every view, `Scene::sync_photo_isolation`); its
+//! joints pose our outfit on the preview's stage, the 3D view of Inspect
+//! (`object_stage`, app/ao_preview.rs).
 //!
 //! Nothing about it is sent to the region, and no one else sees it. The
 //! Legacy Viewer has no such preview: it plays an animation on the avatar
@@ -15,8 +14,9 @@ use super::*;
 /// The copy's local ids, clear of the mirror's (0xFFF0_0000), the
 /// mannequins' (0xFFF1_0000…) and the avatar cache's (0xFFE0_0000…).
 const FIRST_LOCAL: u32 = 0xFFF3_0000;
-/// How far we may walk before the copy follows (metres).
-const FOLLOW: f32 = 0.5;
+/// How far we may walk before the copy follows (metres): it stays in range,
+/// where the scene poses avatars.
+const FOLLOW: f32 = 8.0;
 
 #[derive(Debug, Clone)]
 pub struct AoPreview {
@@ -72,7 +72,7 @@ impl World {
         let moved = self.ao_preview.as_ref().is_none_or(|p| p.at.distance(here) > FOLLOW);
         if !alive || moved {
             // (made again in place: `upsert_preview` keeps the objects there)
-            let root = self.copy_own_avatar(id, FIRST_LOCAL, here, rotation)?;
+            let root = self.copy_own_avatar(id, FIRST_LOCAL, here, rotation, false)?;
             let old = self.ao_preview.take();
             self.ao_preview = Some(AoPreview {
                 id,

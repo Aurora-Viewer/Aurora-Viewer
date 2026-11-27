@@ -571,6 +571,7 @@ impl App {
     }
 
     pub(super) fn ao_window(&mut self, ctx: &egui::Context, p: &Palette) {
+        self.ao_preview_stage(ctx);
         self.movement_ui.measured_speed = self.world.agent.velocity.length();
         let mut prefs = self.settings.movements.get(&self.world.agent_id).cloned().unwrap_or_default();
         self.movement_ui.motor_status =

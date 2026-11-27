@@ -467,11 +467,6 @@ pub struct ObjGpu {
     /// the reflections and probes, so that the subject keeps the scene's
     /// light (#2316).
     pub unseen: bool,
-    /// The AO window's preview copy of our avatar and what it wears
-    /// (`World::on_ao_preview`, `object_flags::SECOND_VIEW_ONLY`): drawn by
-    /// the second camera only, never in the window's view, its shadows or
-    /// its reflections.
-    pub second_only: bool,
     /// What our avatar wears and RLVa's @showself or @showselfhead hide: not
     /// drawn, and not picked either, the ray going on to what is behind
     /// (LLViewerJointAttachment::setAttachmentVisibility clears the bridge's
@@ -578,7 +573,6 @@ impl ObjGpu {
             (self.first_person_hidden, object_flags::FIRST_PERSON_HIDDEN),
             (self.hidden, object_flags::HIDDEN),
             (self.unseen, object_flags::UNSEEN),
-            (self.second_only, object_flags::SECOND_VIEW_ONLY),
             (self.physical, object_flags::PHYSICAL),
         ] {
             if on {
@@ -669,9 +663,7 @@ fn object_visibility(
     too_complex: impl Fn(usize) -> bool,
     loading: impl Fn(usize) -> bool,
 ) -> Option<ObjVis> {
-    // (the CPU lists are the window's: the second camera's copy is not
-    // drawn there, as on the GPU)
-    if g.faces.is_empty() || g.hud || g.second_only {
+    if g.faces.is_empty() || g.hud {
         return None;
     }
     let avatar = g.avatar(idx);
@@ -3012,8 +3004,11 @@ impl Scene {
         let iso = &world.photo_isolation;
         let types = self.hidden_types;
         // (hidden, unseen); a HUD is no rendering type: it stays
+        let preview = world.ao_preview().is_some();
         let left_out = |idx: usize, hud: bool| {
-            if !hud && types.hides_object(world, idx) {
+            // the AO preview's skeleton (world/ao_preview.rs): posed for the
+            // preview's stage, drawn nowhere
+            if (!hud && types.hides_object(world, idx)) || (preview && world.on_ao_preview(idx)) {
                 return (true, false);
             }
             match isolate::object_view(world, idx) {
@@ -3043,7 +3038,7 @@ impl Scene {
                     renderer.cull.objects.set(idx, g.cull_object(idx));
                 }
             }
-        } else if iso.hides() || types.any_object() || world.avatar_studio {
+        } else if iso.hides() || types.any_object() || world.avatar_studio || preview {
             for &idx in synced {
                 if let Some(g) = self.gpu.get_mut(idx) {
                     (g.hidden, g.unseen) = left_out(idx, g.hud);
@@ -3509,13 +3504,6 @@ impl Scene {
         let t_part = self.parts.lap(Part::SyncFlexibles, t_part);
         step(&mut slow, "flexibles");
         self.sync_photo_isolation(renderer, world, &synced);
-        // the AO preview's copy, for the second camera only
-        let preview = world.ao_preview().is_some();
-        for &idx in &synced {
-            if let Some(g) = self.gpu.get_mut(idx) {
-                g.second_only = preview && world.on_ao_preview(idx);
-            }
-        }
         // GPU object table: bounds and flags of what was synced (unchanged
         // entries are not uploaded); the same bounds for the hover search,
         // the same flags for the lists
@@ -5984,7 +5972,6 @@ impl Scene {
                 pixel_scale: view.screen_height / view.tan_half_fov.max(1e-6),
                 shadows,
                 reflections,
-                second_view: false,
             });
             // counted by the GPU, a frame or two late
             self.stats.visible_objects = renderer.cull.last.visible_objects as usize;
@@ -8893,7 +8880,6 @@ mod tests {
             pixel_scale: view.screen_height / view.tan_half_fov,
             shadows: true,
             reflections: true,
-            second_view: false,
         };
         // cascades and reflection views that hold everything: the bins then
         // show the CPU's casts / reflects decisions

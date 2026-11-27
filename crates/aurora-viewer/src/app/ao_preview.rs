@@ -1,58 +1,32 @@
-//! The AO window's preview (ui/ao/preview.rs, world/ao_preview.rs): while
-//! its stage is shown, a copy of our avatar plays the previewed entry where
-//! we stand, and the second camera (aurora_render::second_view) frames it,
-//! our own avatar left out of that picture. The Second Camera window keeps
-//! the second view while it is open: the stage then says so.
+//! The AO window's preview (ui/ao/preview.rs): while its stage is shown, a
+//! hidden skeleton of our avatar plays the previewed entry
+//! (world/ao_preview.rs), and the 3D stage of Inspect (`object_stage`) shows
+//! our outfit posed by its joints, as Inspect shows an avatar
+//! (app/inspect.rs `inspect_stage`). Closed where RLVa limits what may be
+//! seen, as that stage is.
 use super::*;
-use crate::camera::second::{Framing, Subject};
+use crate::object_stage::Place;
 use uuid::Uuid;
 
-impl App {
-    /// An avatar as posed last frame, as a second camera frames it.
-    pub(super) fn framed_subject(&self, id: Uuid, now: Instant) -> Option<Subject> {
-        let face = self.scene.face_world(&self.world, &id, now)?;
-        let idx = self.world.objects.index_of_uuid(&id)?;
-        let (_, rotation, _) = crate::scene::Scene::object_transform(&self.world, idx, now, 0)?;
-        let feet = ["mFootLeft", "mFootRight"]
-            .iter()
-            .filter_map(|joint| self.scene.joint_world(&self.world, &id, joint, now))
-            .map(|p| p.z)
-            .reduce(f32::min)
-            .unwrap_or(face.head.z - 1.6);
-        Some(Subject {
-            head: face.head,
-            eyes: face.eyes.map(|(left, right)| (left + right) * 0.5),
-            facing: rotation * Vec3::X,
-            feet,
-        })
-    }
+/// How often the parts of our own body shown on the stage are looked at
+/// again (as Inspect does).
+const BODY_PARTS: std::time::Duration = std::time::Duration::from_millis(500);
 
-    /// The preview's copy and view for this frame, after the second camera
-    /// (`second_camera_frame`): the copy goes while the stage is not shown.
-    pub(super) fn ao_preview_frame(&mut self, now: Instant, dt: f32) {
-        let stage = self.ao_ui.take_stage().filter(|_| self.panels.ao);
-        let Some(stage) = stage else {
-            self.world.remove_ao_preview();
-            self.ao_preview_camera.cut();
-            return;
-        };
-        // (a Second camera window that shows no picture leaves the view)
-        let blocked = if self.second_camera_job.is_some() {
-            Some(aurora_i18n::tr!("ao-preview-second-camera"))
-        } else {
-            match self.second_camera_unavailable() {
-                Some(ui::second_camera::Unavailable::Restricted) => Some(aurora_i18n::tr!("second-camera-restricted")),
-                Some(ui::second_camera::Unavailable::NoAvatar) => Some(aurora_i18n::tr!("second-camera-no-avatar")),
-                // in mouselook the copy is still whole
-                Some(ui::second_camera::Unavailable::Mouselook) | None => None,
+impl App {
+    /// The preview's skeleton and stage for this frame, before the AO window
+    /// is drawn: both go while the stage is not shown.
+    pub(super) fn ao_preview_stage(&mut self, ctx: &egui::Context) {
+        let shown = self.ao_ui.take_stage() && self.panels.ao && self.in_world();
+        if !shown {
+            if let Some(copy) = self.world.ao_preview() {
+                self.scene.watched.remove(&copy);
+                self.world.remove_ao_preview();
+                self.ao_ui.stage.stage.clear(&self.scene);
+                self.ao_ui.stage.restart();
             }
-        };
-        if let Some(notice) = blocked {
-            self.world.remove_ao_preview();
-            self.ao_preview_camera.cut();
-            self.ao_ui.set_stage(false, Some(notice));
             return;
         }
+        let now = std::time::Instant::now();
         let selected = self
             .settings
             .ao
@@ -61,30 +35,41 @@ impl App {
             .map_or(Uuid::nil(), |a| a.selected);
         let assets = self.ao_ui.preview_assets(self.ao_catalog.selected(selected), &self.ao_runtime);
         let Some(copy) = self.world.update_ao_preview(&assets, now) else {
-            self.ao_ui.set_stage(false, None);
             return;
         };
-        // the copy appears a frame after it is made: framed once it is posed
-        let Some(subject) = self.framed_subject(copy, now) else {
-            self.ao_ui.set_stage(false, None);
+        // posed every frame, wherever the camera looks
+        self.scene.watched.insert(copy);
+        let w = &self.world;
+        let Some(own) = w.objects.index_of_uuid(&w.agent_id) else {
             return;
         };
-        if self.ao_preview_camera.framing != Framing::Body {
-            self.ao_preview_camera.set_framing(Framing::Body);
+        // what we wear, not the HUDs, and our own body where it shows
+        let mut roots: Vec<Uuid> = super::inspect::worn_roots(w, &w.agent_id)
+            .into_iter()
+            .filter(|id| {
+                w.objects
+                    .index_of_uuid(id)
+                    .and_then(|i| w.objects.get(i))
+                    .is_some_and(|o| !(31..=38).contains(&o.attachment_point()))
+            })
+            .collect();
+        if self.ao_preview_body.is_none_or(|(at, _)| now.duration_since(at) > BODY_PARTS) {
+            let parts = crate::object_stage::own::body_parts(w, &self.scene, own);
+            self.ao_preview_body = Some((now, !parts.is_empty()));
         }
-        if stage.drag != egui::Vec2::ZERO {
-            self.ao_preview_camera.orbit.drag(stage.drag.x, stage.drag.y);
+        if self.ao_preview_body.is_some_and(|(_, shows)| shows) {
+            roots.insert(0, w.agent_id);
         }
-        let shot = self.ao_preview_camera.follow(&subject, stage.aspect, dt);
-        let own = self.world.objects.index_of_uuid(&self.world.agent_id).map(|i| i as u32);
-        self.second_camera_job = Some(aurora_render::second_view::SecondViewJob {
-            view: shot.view(),
-            proj: shot.proj(stage.aspect),
-            eye: shot.eye,
-            fov_y: shot.fov_y,
-            size: stage.size,
-            hide_avatar: own,
+        let group = |root: &Uuid| super::inspect::stage_group(w, root);
+        let stage = &mut self.ao_ui.stage;
+        stage.stage.update(w, &self.scene, &roots, group, Place::Worn(own), ctx, now);
+        stage.worn = true;
+        stage.single = false;
+        stage.light = self.settings.stage_light;
+        let joints = stage.wants_joints().then(|| {
+            let model = stage.stage.model().ok();
+            crate::object_stage::shown_joints(w, &copy, model.map(|m| &**m))
         });
-        self.ao_ui.set_stage(true, None);
+        stage.set_joints(joints.flatten());
     }
 }

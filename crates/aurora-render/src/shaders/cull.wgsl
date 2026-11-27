@@ -80,8 +80,6 @@ const OBJ_PHYSICAL: u32 = 256u;
 // left out of the photo's picture only (snapshot::isolate::View::Unseen):
 // out of the main view, still casting and in the reflections (#2316)
 const OBJ_UNSEEN: u32 = 512u;
-// drawn by the second camera only (the AO preview's copy of our avatar)
-const OBJ_SECOND_VIEW_ONLY: u32 = 1024u;
 const FACE_FIRST_PERSON_HIDDEN: u32 = 16u;
 
 // a skeleton's own anchor, from the first joint of its palette (common.wgsl)
@@ -110,8 +108,6 @@ const F_PROBE_SHADOW: u32 = 256u;
 // projector shadow map k is drawn
 const F_SPOT: u32 = 65536u;
 const F_WATER_AIR: u32 = 1024u;
-// this cull is the second camera's (second_view.rs)
-const F_SECOND_VIEW: u32 = 32768u;
 // blended faces that are not rigged cast too (off: AURORA_BLEND_SHADOWS=0)
 const F_BLEND_CASTS: u32 = 2048u;
 const F_FIRST_PERSON: u32 = 4096u;
@@ -368,9 +364,6 @@ fn face_mask(i: u32) -> u32 {
     }
     let o = objects[f.object];
     if ((o.flags & OBJ_ACTIVE) == 0u || (o.flags & (OBJ_HUD | OBJ_HIDDEN)) != 0u) {
-        return 0u;
-    }
-    if ((o.flags & OBJ_SECOND_VIEW_ONLY) != 0u && (frame.sizes.w & F_SECOND_VIEW) == 0u) {
         return 0u;
     }
     let is_avatar = (o.flags & OBJ_AVATAR) != 0u;

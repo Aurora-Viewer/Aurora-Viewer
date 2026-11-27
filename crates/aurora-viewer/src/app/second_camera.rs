@@ -8,7 +8,7 @@ use crate::ui::second_camera::Unavailable;
 
 impl App {
     /// Why the second camera cannot show our avatar now.
-    pub(super) fn second_camera_unavailable(&self) -> Option<Unavailable> {
+    fn second_camera_unavailable(&self) -> Option<Unavailable> {
         if !self.in_world() || self.scene_paused() {
             Some(Unavailable::NoAvatar)
         } else if self.world.rlva.second_camera_blocked() {
@@ -22,7 +22,22 @@ impl App {
 
     /// Our avatar as posed last frame, as the second camera frames it.
     fn second_camera_subject(&self, now: Instant) -> Option<Subject> {
-        self.framed_subject(self.world.agent_id, now)
+        let id = self.world.agent_id;
+        let face = self.scene.face_world(&self.world, &id, now)?;
+        let idx = self.world.objects.index_of_uuid(&id)?;
+        let (_, rotation, _) = crate::scene::Scene::object_transform(&self.world, idx, now, 0)?;
+        let feet = ["mFootLeft", "mFootRight"]
+            .iter()
+            .filter_map(|joint| self.scene.joint_world(&self.world, &id, joint, now))
+            .map(|p| p.z)
+            .reduce(f32::min)
+            .unwrap_or(face.head.z - 1.6);
+        Some(Subject {
+            head: face.head,
+            eyes: face.eyes.map(|(left, right)| (left + right) * 0.5),
+            facing: rotation * Vec3::X,
+            feet,
+        })
     }
 
     /// The second camera's view of this frame, once a frame before the
@@ -47,7 +62,6 @@ impl App {
             eye: shot.eye,
             fov_y: shot.fov_y,
             size: picture.size,
-            hide_avatar: None,
         });
     }
 

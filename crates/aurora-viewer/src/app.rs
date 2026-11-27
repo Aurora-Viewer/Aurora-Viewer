@@ -952,8 +952,6 @@ pub struct App {
     second_camera: crate::camera::second::SecondCamera,
     second_camera_ui: ui::second_camera::SecondCameraUi,
     second_camera_picture: Option<ui::second_camera::Picture>,
-    /// The AO window preview's camera (app/ao_preview.rs).
-    ao_preview_camera: crate::camera::second::SecondCamera,
     second_camera_job: Option<aurora_render::second_view::SecondViewJob>,
     /// Mark ▸ Custom color… of the radar and mini-map menus, and the last
     /// colour it gave this session.
@@ -1300,6 +1298,9 @@ pub struct App {
     /// AURORA_DEMO_INVENTORY=offer: folder the offered item was last shown in.
     demo_offer_shown: Option<uuid::Uuid>,
     ao_ui: ui::ao::AoUi,
+    /// When the AO preview last looked at the parts of our body its stage
+    /// shows, and whether some show (app/ao_preview.rs).
+    ao_preview_body: Option<(std::time::Instant, bool)>,
     ao_catalog: crate::ao::inventory::Catalog,
     ao_bootstrap: crate::ao::bootstrap::Bootstrap,
     ao_runtime: crate::ao::runtime::Runtime,
@@ -2274,7 +2275,6 @@ impl App {
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
             second_camera: Default::default(),
-            ao_preview_camera: Default::default(),
             second_camera_ui: Default::default(),
             second_camera_picture: None,
             second_camera_job: None,
@@ -2496,6 +2496,7 @@ impl App {
             world_edits: Default::default(),
             demo_offer_shown: None,
             ao_ui: Default::default(),
+            ao_preview_body: None,
             ao_catalog: Default::default(),
             ao_bootstrap: Default::default(),
             ao_runtime: Default::default(),
@@ -12185,7 +12186,6 @@ impl App {
         // what the second camera sees is listed too (its terrain, water and
         // blended faces: our avatar's hair seen from the front)
         self.second_camera_frame(now, dt);
-        self.ao_preview_frame(now, dt);
         cull.second = self.second_camera_planes();
         // The experimental XR worker can look in any direction after these
         // CPU lists are prepared; per-eye GPU culling still uses the real frusta.

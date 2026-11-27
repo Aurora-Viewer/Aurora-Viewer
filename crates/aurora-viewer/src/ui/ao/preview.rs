@@ -1,63 +1,43 @@
 //! The AO window's preview column: the open slot's entries one at a time,
 //! with the layers that play on top, and a bar of segments to go through
-//! them. On the stage above the caption, a copy of our avatar plays the
-//! entry (world/ao_preview.rs), seen by the second camera
-//! (`aurora_render::second_view`); a drag turns around it.
+//! them. Above the caption, our outfit on the 3D stage of Inspect
+//! (`ui::object_stage`), posed by the preview's skeleton playing the entry
+//! (world/ao_preview.rs, app/ao_preview.rs): turned by a drag, paused and
+//! played from its own bar.
 use super::*;
 
 /// Height of the caption under the stage.
 const CAPTION: f32 = 136.0;
 
-/// Which entry of the open slot the preview shows, and whether it plays.
+/// Which entry of the open slot the preview shows.
 #[derive(Default)]
 pub(super) struct Preview {
     index: usize,
-    paused: bool,
-    /// The stage drawn this frame: its picture's size in pixels and its
-    /// width over height (taken by the app, `AoUi::take_stage`).
-    stage: Option<([u32; 2], f32)>,
-    /// The drag over the stage since the app last took it.
-    drag: Vec2,
-    /// The second camera shows the copy (set by the app).
-    live: bool,
-    /// Why it does not, when it cannot.
-    notice: Option<&'static str>,
+    /// The stage was drawn this frame (taken by the app, `AoUi::take_stage`).
+    shown: bool,
 }
 
-/// What the stage asks of the app this frame.
-pub struct Stage {
-    pub size: [u32; 2],
-    pub aspect: f32,
-    /// Points dragged across the stage: the camera turns with it.
-    pub drag: Vec2,
+impl Preview {
+    /// Shows that entry of the main list.
+    pub(super) fn show_entry(&mut self, index: usize) {
+        self.index = index;
+    }
 }
 
 impl AoUi {
-    /// The stage the window drew this frame, if any: the app makes the copy
-    /// and the second camera's view of it only then.
-    pub fn take_stage(&mut self) -> Option<Stage> {
-        let (size, aspect) = self.preview.stage.take()?;
-        Some(Stage {
-            size,
-            aspect,
-            drag: std::mem::take(&mut self.preview.drag),
-        })
+    /// Whether the window drew its stage this frame: the app keeps the
+    /// skeleton and the stage's model only then.
+    pub fn take_stage(&mut self) -> bool {
+        std::mem::take(&mut self.preview.shown)
     }
 
-    /// Whether the stage shows the copy, or why not.
-    pub fn set_stage(&mut self, live: bool, notice: Option<&'static str>) {
-        self.preview.live = live;
-        self.preview.notice = notice;
-    }
-
-    /// The animations the copy plays: the previewed entry's (all members of
-    /// a group) with the entry each layer plays now; the slot's default
-    /// animation while it is empty or paused.
+    /// The animations the skeleton plays: the previewed entry's (all members
+    /// of a stack) with the entry each layer plays now; the slot's stock
+    /// animation while it is empty.
     pub fn preview_assets(&self, set: Option<&Set>, runtime: &Runtime) -> Vec<Uuid> {
         let state = self.state;
         let config = set.and_then(|s| s.states.get(&state));
-        let entry = config.and_then(|c| c.steps.get(self.preview.index));
-        let (Some(config), Some(entry), false) = (config, entry, self.preview.paused) else {
+        let (Some(config), Some(entry)) = (config, config.and_then(|c| c.steps.get(self.preview.index))) else {
             return vec![state.motion()];
         };
         let mut assets: Vec<Uuid> = entry.members.iter().map(|m| m.asset).collect();
@@ -67,14 +47,6 @@ impl AoUi {
         }
         assets.retain(|a| !a.is_nil());
         assets
-    }
-}
-
-impl Preview {
-    /// Shows that entry of the main list, playing.
-    pub(super) fn show_entry(&mut self, index: usize) {
-        self.index = index;
-        self.paused = false;
     }
 }
 
@@ -119,24 +91,17 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, set: Option<&Set>, runtime: &
     let caption = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - CAPTION), rect.max);
     let stage = egui::Rect::from_min_max(egui::pos2(rect.left(), header.bottom()), egui::pos2(rect.right(), caption.top()));
     let frame = stage.shrink2(Vec2::new(12.0, 0.0));
-    state.preview.stage = Some((
-        aurora_render::second_view::target_size(frame.size(), ui.ctx().pixels_per_point()),
-        frame.width() / frame.height().max(1.0),
-    ));
-    if state.preview.live {
-        aurora_render::second_view::paint(ui, frame);
-        let response = ui
-            .interact(frame, ui.scope_id().with("ao_preview_stage"), egui::Sense::drag())
-            .on_hover_text(aurora_i18n::tr!("ao-preview-drag"));
-        if response.dragged_by(egui::PointerButton::Primary) {
-            state.preview.drag += response.drag_delta();
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-        } else if response.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-        }
-    } else {
-        stage_placeholder(ui, p, stage, state.preview.notice.unwrap_or(aurora_i18n::tr!("ao-preview-stage")));
-    }
+    state.preview.shown = true;
+    let radius = ui.visuals().window_corner_radius;
+    ui.painter().rect(
+        frame,
+        radius,
+        state.stage.ground(p),
+        widgets::border_stroke(p, egui::Stroke::NONE),
+        egui::StrokeKind::Inside,
+    );
+    let spoken = aurora_i18n::tr!("ao-preview");
+    let _ = state.stage.show(ui, p, frame, 0.0, Default::default(), spoken, &|_| None);
     if names.len() > 1 {
         for (forward, icon, x) in [
             (false, "caret-left-filled", stage.left() + 24.0),
@@ -160,20 +125,6 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, set: Option<&Set>, runtime: &
         }
     }
     caption_text(ui, p, set, runtime, state, &names, caption.shrink2(Vec2::new(20.0, 16.0)));
-}
-
-/// The stage's floor and a line while the avatar is not drawn on it.
-fn stage_placeholder(ui: &egui::Ui, p: &Palette, stage: egui::Rect, text: &str) {
-    let floor = egui::pos2(stage.center().x, stage.bottom() - 18.0);
-    ui.painter().add(egui::Shape::ellipse_filled(
-        floor,
-        Vec2::new(110.0, 16.0),
-        p.violet.gamma_multiply(0.18),
-    ));
-    let galley = ui
-        .painter()
-        .layout(text.to_owned(), egui::FontId::proportional(12.0), p.muted, stage.width() - 60.0);
-    widgets::paint_ink_centered(ui.painter(), galley, stage.center(), p.muted);
 }
 
 /// The slot in small capitals with the entry's place, the entry's name in
@@ -212,34 +163,14 @@ fn caption_text(
         .get(state.preview.index)
         .cloned()
         .unwrap_or_else(|| aurora_i18n::tr!("ao-preview-none").to_owned());
-    let button = 26.0;
     widgets::paint_elided(
         ui,
         &hero,
         egui::pos2(area.left(), y),
-        area.width() - button - 8.0,
+        area.width(),
         egui::FontId::new(20.0, super::super::fonts::semibold(ui.ctx())),
         p.ink,
     );
-    if !names.is_empty() {
-        let toggle = egui::Rect::from_center_size(egui::pos2(area.right() - button / 2.0, y), Vec2::splat(button));
-        let (icon, tip) = if state.preview.paused {
-            ("player-play-filled", aurora_i18n::tr!("ao-preview-play"))
-        } else {
-            ("player-pause-filled", aurora_i18n::tr!("ao-preview-pause"))
-        };
-        let response = ui
-            .interact(toggle, ui.scope_id().with("ao_preview_toggle"), egui::Sense::click())
-            .on_hover_text(tip);
-        if response.hovered() {
-            ui.painter()
-                .rect_filled(toggle, ui.visuals().widgets.inactive.corner_radius, p.raised);
-        }
-        widgets::paint_glyph(ui.painter(), icon, toggle.center(), 14.0, p.ink);
-        if response.clicked() {
-            state.preview.paused = !state.preview.paused;
-        }
-    }
     y += 22.0;
     if let Some(config) = set.and_then(|s| s.states.get(&state.state)) {
         for track in config.tracks.iter().take(2) {
