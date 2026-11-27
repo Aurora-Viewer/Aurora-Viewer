@@ -608,7 +608,8 @@ impl Session<'_> {
                 m.agent_data.agent_id = agent_id;
                 m.agent_data.session_id = session_id;
                 m.object_data.object_id = object_id;
-                self.send(addr, &m, true);
+                // unreliable, as LLToolGrab::startSpin (lltoolgrab.cpp)
+                self.send(addr, &m, false);
             }
             BuildCmd::SpinUpdate { object_id, rotation, .. } => {
                 let mut m = ObjectSpinUpdate::default();
@@ -623,7 +624,8 @@ impl Session<'_> {
                 m.agent_data.agent_id = agent_id;
                 m.agent_data.session_id = session_id;
                 m.object_data.object_id = object_id;
-                self.send(addr, &m, true);
+                // unreliable, as LLToolGrab::stopSpin
+                self.send(addr, &m, false);
             }
             BuildCmd::DuplicateOnRay {
                 local_ids,
