@@ -1479,7 +1479,8 @@ fn demo_video_volume() -> Option<u8> {
 /// Right click on a card: open, copy the link, hide this preview, hide the
 /// previews of its site.
 fn card_menu(resp: &egui::Response, p: &Palette, pv: &mut Previews, k: u64, url: &str) {
-    crate::ui::menu::context_menu(resp, p, |ui| {
+    let over_card = resp.container_contains_pointer() && resp.ctx.input(|input| input.pointer.secondary_clicked());
+    crate::ui::menu::context_menu_also(resp, p, over_card, |ui| {
         if crate::ui::menu::item(ui, p, "external-link-filled", aurora_i18n::tr!("ui-chat-preview-open")) {
             super::open_web_link(ui.ctx(), url);
         }
@@ -1492,7 +1493,7 @@ fn card_menu(resp: &egui::Response, p: &Palette, pv: &mut Previews, k: u64, url:
         }
         super::site_preview_actions(ui, p, url);
     });
-    super::line_menu::inline(resp);
+    super::line_menu::inline_popup(&resp.ctx, resp.id.with("context_menu"));
 }
 
 #[cfg(test)]
