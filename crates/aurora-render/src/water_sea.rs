@@ -32,7 +32,7 @@ pub const SWASH_REACH: f32 = 1.0;
 /// Wind speed (m/s) at which the sea is as rough as it gets.
 pub const STORM_WIND: f32 = 20.0;
 
-/// What the shaders read (`WaterSea`): 11 × vec4.
+/// What the shaders read (`WaterSea`): 12 × vec4.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Sea {
@@ -61,8 +61,60 @@ pub struct Sea {
     /// the wind (m, `caustic_drift`).
     pub look: [f32; 4],
     /// The lakes' cascade (water_fft.rs `LAKE`): x its tile (m, 0 without
-    /// a spectrum), y its significant height (m, scaled as `shore[3]`).
+    /// a spectrum), y its significant height (m, scaled as `shore[3]`); z
+    /// the wind sea's own wave's wavenumber (rad/m) and w its phase at
+    /// `frame[2]` (`lake_wave`).
     pub lake: [f32; 4],
+    /// The whitecaps (`whitecap_folds`): x the chop's fold past which the
+    /// dense core shows, y the faint veil's, z the share of the open sea they
+    /// cover between them (Monahan's: `whitecap_coverage`; the Sea panel's
+    /// foam still sets how white they are); 0: the shaders' own thresholds
+    /// by the roughness (no spectrum).
+    pub foam: [f32; 4],
+}
+
+/// The share of the sea's surface whitecaps cover in a wind of `speed` m/s
+/// (at 10 m): Monahan and O'Muircheartaigh (1980), `3.84·10⁻⁶ U^3.41`,
+/// some 0.5 % in a moderate breeze, 2 % at 12 m/s, 5 % in a near gale,
+/// 10 % in a gale; held under 20 %.
+pub fn whitecap_coverage(speed: f32) -> f32 {
+    if !speed.is_finite() || speed <= 0.0 {
+        return 0.0;
+    }
+    (3.84e-6 * speed.powf(3.41)).min(0.2)
+}
+
+/// The chop's folds (`1 - max(det(I + J·scale), 0.25)`, as water_sea's
+/// `breakers` takes it on open water) past which the whitecaps' dense core
+/// (x) and their faint veil (y) cover `coverage` of the open sea between
+/// them, the core a third of it (actively breaking crests; the rest the
+/// foam they leave): the quantiles of the fold over `samples` points of the
+/// open sea's largest tile in `maps`, its derivatives scaled by `scale`
+/// (`Sea::look[1]`). The whitecaps follow the sea drawn, whatever its
+/// spectrum, fetch, chop or limit. (A fold falling by hand with the wind
+/// whitened four tenths of a gale's sea, where whitecaps cover a tenth.)
+pub fn whitecap_folds(maps: &OceanMaps, scale: f32, coverage: f32, samples: usize) -> [f32; 2] {
+    if maps.texels.is_empty() || coverage <= 1e-4 || samples < 16 {
+        // (nothing folds that far: no whitecaps)
+        return [1.0, 1.0];
+    }
+    let tile = OCEAN_TILES[0];
+    let side = (samples as f32).sqrt().ceil() as usize;
+    let mut folds = Vec::with_capacity(side * side);
+    for i in 0..side * side {
+        let (x, y) = ((i % side) as f32, (i / side) as f32);
+        // (jittered, the same jitter each time: no lattice against the
+        // cascades' own)
+        let jx = ((i as f32 * 12.9898).sin() * 43_758.547).fract().abs();
+        let jy = ((i as f32 * 78.233).sin() * 43_758.547).fract().abs();
+        let p = Vec2::new(x + jx, y + jy) * (tile / side as f32);
+        let j = maps.sample_weighted(p, [1.0, 1.0, 0.0]).jacobian * scale;
+        let det = (1.0 + j.x) * (1.0 + j.z) - j.y * j.y;
+        folds.push(1.0 - det.max(0.25));
+    }
+    folds.sort_by(f32::total_cmp);
+    let at = |share: f32| folds[((1.0 - share.clamp(0.0, 1.0)) * (folds.len() - 1) as f32).round() as usize];
+    [at(coverage / 3.0), at(coverage)]
 }
 
 /// How much of the open sea's two cascades (x) and of the lakes' (y) the
@@ -672,7 +724,17 @@ pub struct SeaDriver {
     tune: SeaTune,
     /// Whether any water around takes the lakes' cascade (`set_lakes`).
     lakes: bool,
+    /// When the whitecaps' folds were last measured (`whitecap_folds`, twice
+    /// a second), eased into `Sea::foam` in between.
+    foam_at: Option<f32>,
+    foam_aim: [f32; 2],
 }
+
+/// How many points of the sea `whitecap_folds` reads (some 0.1 ms).
+const WHITECAP_SAMPLES: usize = 2048;
+/// How long the whitecaps' folds take to follow a new measure (s): a few
+/// hundred samples give the quantile of a 1 % share to some 5 %.
+const WHITECAP_EASE: f32 = 1.5;
 
 impl Default for SeaDriver {
     fn default() -> Self {
@@ -691,6 +753,8 @@ impl Default for SeaDriver {
                 ..SeaTune::default()
             },
             lakes: true,
+            foam_at: None,
+            foam_aim: [1.0, 1.0],
         }
     }
 }
@@ -880,6 +944,28 @@ impl SeaDriver {
             // the highest crest: the swell growing up to twice in the
             // shallows, on the wind sea's highest (about its Hs)
             sea.wind[3] = 2.0 * sea.trains[0][3] + height;
+            // the whitecaps, as many as the wind makes on the sea drawn
+            // (`whitecap_folds`), measured twice a second and eased
+            let coverage = whitecap_coverage(speed);
+            if self.foam_at.is_none_or(|at| !(0.0..0.5).contains(&(time - at))) {
+                self.foam_at = Some(time);
+                self.foam_aim = whitecap_folds(&self.maps, sea.look[1], coverage, WHITECAP_SAMPLES);
+            }
+            let k = if sea.foam[0] > 0.0 {
+                1.0 - (-dt / WHITECAP_EASE).exp()
+            } else {
+                1.0
+            };
+            sea.foam = [
+                sea.foam[0] + (self.foam_aim[0] - sea.foam[0]) * k,
+                sea.foam[1] + (self.foam_aim[1] - sea.foam[1]) * k,
+                coverage,
+                0.0,
+            ];
+        } else {
+            // (the stylized trains: the shaders' own thresholds)
+            sea.foam = [0.0; 4];
+            self.foam_at = None;
         }
         self.sea
     }
@@ -1125,6 +1211,44 @@ mod tests {
         // back in time: a new clock
         driver.advance(0.5, Vec2::new(15.0, 0.0), Vec2::ZERO);
         assert_eq!(driver.sea().wind[2], 15.0);
+    }
+
+    #[test]
+    fn whitecaps_cover_as_much_of_the_sea_as_the_wind_makes() {
+        // Monahan's coverage: a breeze's few, a gale's tenth
+        assert_eq!(whitecap_coverage(0.0), 0.0);
+        assert!((whitecap_coverage(8.0) - 0.0046).abs() < 0.001, "{}", whitecap_coverage(8.0));
+        assert!((whitecap_coverage(16.0) - 0.049).abs() < 0.005, "{}", whitecap_coverage(16.0));
+        assert!((whitecap_coverage(20.0) - 0.1).abs() < 0.01, "{}", whitecap_coverage(20.0));
+        assert_eq!(whitecap_coverage(60.0), 0.2);
+        for speed in [10.0, 16.0, 20.0] {
+            let mut ocean = Ocean::new();
+            let maps = ocean.update(30.0, Vec2::X, speed, Spectrum::Jonswap, 1.0, crate::water_fft::FETCH, 1.0, false);
+            let coverage = whitecap_coverage(speed);
+            let [core, veil] = whitecap_folds(&maps, 1.0, coverage, WHITECAP_SAMPLES);
+            assert!(core > veil, "{speed} m/s: {core} {veil}");
+            // the share of other points of the sea past each fold
+            let n = 6000;
+            let share = |fold: f32| {
+                (0..n)
+                    .filter(|i| {
+                        let p = Vec2::new((*i as f32 * 0.618_034).fract(), (*i as f32 * 0.414_213_6).fract()) * 500.0;
+                        let j = maps.sample_weighted(p, [1.0, 1.0, 0.0]).jacobian;
+                        1.0 - ((1.0 + j.x) * (1.0 + j.z) - j.y * j.y).max(0.25) > fold
+                    })
+                    .count() as f32
+                    / n as f32
+            };
+            let (a, b) = (share(core), share(veil));
+            assert!(
+                a > coverage / 3.0 * 0.5 && a < coverage / 3.0 * 2.0,
+                "{speed} m/s core: {a} for {}",
+                coverage / 3.0
+            );
+            assert!(b > coverage * 0.5 && b < coverage * 2.0, "{speed} m/s veil: {b} for {coverage}");
+        }
+        // no wind, no whitecaps
+        assert_eq!(whitecap_folds(&OceanMaps::default(), 1.0, 0.05, 64), [1.0, 1.0]);
     }
 
     #[test]

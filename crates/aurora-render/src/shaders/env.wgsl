@@ -1715,13 +1715,19 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         // streaks between the crests read as painted stripes: left out.)
         // (from a fresh breeze on: a Beaufort 4 sea already shows scattered
         // white horses)
-        let cap_start=mix(0.25,0.04,sqrt(rough));
+        // (as many as the wind makes on the sea drawn: Monahan's coverage,
+        // water_cap_folds. A fold falling by hand with the wind whitened
+        // some four tenths of a near gale's sea, where whitecaps cover a
+        // twentieth, and the faint veil's edges, cut on the CPU maps' coarse
+        // fold, drew grey jagged shapes in the shade.)
         // (the veil starts on a real fold, however rough the sea: from
         // `cap_start - 0.12`, under 0 past a strong breeze, a sea that does
         // not fold at all, a swell with no chop or a lake's flat water,
         // took the veil wherever the gusts' patches lay, as large white
         // blotches)
-        let veil_start=max(cap_start-0.12,0.03);
+        let folds=water_cap_folds(water_fx.sea);
+        let cap_start=folds.x;
+        let veil_start=folds.y;
         // (the veil also takes the foam the crests left in the last
         // seconds, fading and drawn out downwind (water_fft.rs): thinner,
         // from deeper folds only, so a gale's sea is streaked, not grey)
@@ -2103,7 +2109,11 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     color = mix(fb, color, min(1.0, fade * 60.0));
     if(foam>0.0) {
         let nl=max(frame.sun_dir.z,0.0);
-        var foam_light=(frame.sky_horizon.rgb*0.3+frame.sun_color.rgb*nl*shadow/PI)*0.75;
+        // (foam is a near-white diffuser under the whole sky: out of the
+        // sun it gives back most of the sky's light, as pale bluish white.
+        // With a third of it, foam in the shade of a wall or a crest drew
+        // grey, darker than the water round it.)
+        var foam_light=(frame.sky_horizon.rgb*0.6+frame.sun_color.rgb*nl*shadow/PI)*0.75;
         if(is_classic_sky()) {
             // Classic water uses the sky's radiance units. Limit highlights
             // without shifting their hue or inheriting the seabed's GTAO.
@@ -2756,7 +2766,7 @@ fn vs_water_crest_mist(@builtin(vertex_index) vertex: u32, @builtin(instance_ind
     let shown=vec3<f32>(p,level)+swell.offset*region;
     // the whitecaps' test where it is drawn (vs_water's `core`, `gusty`)
     let rough=sea.frame.w;
-    let cap_start=mix(0.25,0.04,sqrt(rough));
+    let cap_start=water_cap_folds(sea).x;
     let toward=sea.wind.xy;
     let along=vec2<f32>(dot(shown.xy,toward),dot(shown.xy,vec2<f32>(-toward.y,toward.x)));
     let q=along-vec2<f32>(time*(0.3+0.04*sea.wind.z),0.0);

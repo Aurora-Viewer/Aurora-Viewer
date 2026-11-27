@@ -11,7 +11,20 @@ struct WaterSea {
     wind: vec4<f32>,            // toward xy, speed, highest crest
     look: vec4<f32>,            // x whitecap foam, y the spectrum's chop scale (1 by default), zw the caustics' drift
     lake: vec4<f32>,            // the lakes' cascade (water_fft.rs LAKE): x its tile (0: none), y its Hs; z the wind sea's own wave's wavenumber, w its phase at frame.z (Sea::lake_wave)
+    foam: vec4<f32>,            // the whitecaps' folds (water_sea.rs whitecap_folds): x the dense core's, y the veil's, z their coverage; x 0: by the roughness
 };
+// The whitecaps' folds: past x the dense core shows, past y the faint veil
+// (`breakers`, the chop's fold). As many as the wind makes on the sea drawn
+// (Sea::foam: Monahan's coverage, from the fold's quantiles on the CPU);
+// without a spectrum, falling with the roughness as before.
+fn water_cap_folds(sea: WaterSea) -> vec2<f32> {
+    if(sea.foam.x>0.0){
+        // (the veil always under the core, on a real fold)
+        return vec2<f32>(sea.foam.x,clamp(sea.foam.y,0.03,max(sea.foam.x-0.02,0.03)));
+    }
+    let cap=mix(0.25,0.04,sqrt(sea.frame.w));
+    return vec2<f32>(cap,max(cap-0.12,0.03));
+}
 // How much of the open sea's two cascades (x) and of the lakes' (y) the
 // wind sea takes where the sea grid's exposure gives `chop` (its packed
 // fetch): open water keeps the open sea; over a short fetch it gives way
