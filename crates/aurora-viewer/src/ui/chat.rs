@@ -5171,10 +5171,15 @@ impl Held {
     /// vertical offset of the area's anchor. The clip reaches a screen
     /// lower: in the frame a line arrives, the lines are laid out below the
     /// bar before they are moved up, and egui paints nothing of a card or a
-    /// label laid out wholly outside the clip.
-    fn new(ui: &mut egui::Ui, lift: f32) -> Self {
+    /// label laid out wholly outside the clip. It starts at `ceiling`: the
+    /// oldest lines of a stack higher than its room are cut there, and
+    /// never leave the screen nor go under the top bar.
+    fn new(ui: &mut egui::Ui, lift: f32, ceiling: f32) -> Self {
         let clip = ui.clip_rect();
-        ui.set_clip_rect(clip.with_max_y(clip.bottom() + ui.ctx().content_rect().height()));
+        ui.set_clip_rect(
+            clip.with_min_y(clip.top().max(ceiling))
+                .with_max_y(clip.bottom() + ui.ctx().content_rect().height()),
+        );
         let layer = ui.layer_id();
         Self {
             room: ui.ctx().content_rect().bottom(),
@@ -5266,14 +5271,16 @@ pub struct LinesPlace {
     /// Their left edge; None, the screen's with the usual 8 px.
     left: Option<f32>,
     /// The edge they end on instead, each line aligned on it, when there
-    /// is no left edge (by a bar of the right side) or no room from it (a
-    /// block at the right end of its bar).
+    /// is no room from their left edge (a block at the right end of its
+    /// bar, or of a bar of the right side).
     right: Option<f32>,
     /// Their bottom, or their top when they hang `down`.
     edge: f32,
     down: bool,
     /// How low lines hung down may go.
     limit: f32,
+    /// How high lines going up may go.
+    ceiling: f32,
 }
 
 impl LinesPlace {
@@ -5292,16 +5299,17 @@ impl LinesPlace {
             edge: bottom - Self::GAP,
             down: false,
             limit: bottom - Self::GAP,
+            ceiling: f32::NEG_INFINITY,
         }
     }
 
     /// By the chat `block`, on `screen`; `room` is the top and the bottom
     /// of what the bars leave (`layout::bars_room`).
     ///
-    /// - A block of the bottom or the top bar, or of a horizontal floating
-    ///   block: the lines start at its left, above it or under it.
-    /// - A block of a side bar: beside the bar, towards the middle of the
-    ///   screen, up from the block's bottom or down from its top.
+    /// - The lines are above the block or under it, on a side bar too,
+    ///   never beside it (the human's choice, 2026-11-27). They start at
+    ///   its left, or end on its right when there is no room from its left
+    ///   (`column`).
     /// - Automatic: where there is more room, so under a bar moved to the
     ///   upper half of the screen. A direction asked for is kept unless it
     ///   has no room for a line and the other has more.
@@ -5317,40 +5325,34 @@ impl LinesPlace {
         let surface = block.rect.expand(PAD);
         let docked = !block.floating;
         let limit = room.1 - Self::GAP;
-        let (left, right, up, down) = if block.bar.vertical() {
-            let (left, right) = if surface.center().x < screen.center().x {
-                (Some(surface.right() + MARGIN), None)
-            } else {
-                (None, Some(surface.left() - MARGIN))
-            };
-            (left, right, surface.bottom().min(limit), surface.top().max(room.0))
+        let up = if docked && block.bar == Bar::Bottom {
+            // what the bottom bar keeps free, its other rows included
+            limit
         } else {
-            let up = if docked && block.bar == Bar::Bottom {
-                // what the bottom bar keeps free, its other rows included
-                limit
-            } else {
-                surface.top() - MARGIN - Self::GAP
-            };
-            let under = surface.bottom() + MARGIN;
-            let down = if docked && block.bar == Bar::Top {
-                under.max(room.0)
-            } else {
-                under
-            } + Self::GAP;
-            (Some(surface.left()), Some(surface.right()), up, down)
+            surface.top() - MARGIN - Self::GAP
         };
-        let (above, below) = (up - screen.top(), limit - down);
+        let under = surface.bottom() + MARGIN;
+        let down = if docked && block.bar == Bar::Top {
+            under.max(room.0)
+        } else {
+            under
+        } + Self::GAP;
+        // going up, the lines stop under the top bar; those of a block
+        // that stands over it, at the top of the screen
+        let ceiling = if up > room.0 { room.0 } else { screen.top() };
+        let (above, below) = (up - ceiling, limit - down);
         let down_wanted = match direction {
             Direction::Auto => below > above,
             Direction::Up => above < Self::ROOM && below > above,
             Direction::Down => !(below < Self::ROOM && above > below),
         };
         Self {
-            left,
-            right,
+            left: Some(surface.left()),
+            right: Some(surface.right()),
             edge: if down_wanted { down } else { up },
             down: down_wanted,
             limit,
+            ceiling,
         }
     }
 
@@ -5443,7 +5445,7 @@ fn lines_area(ctx: &egui::Context, place: LinesPlace, width: f32, lines: impl Fn
             .show(ctx, |ui| {
                 // a line that leaves or arrives moves the others in this
                 // frame only (#2544)
-                let held = Held::new(ui, lift);
+                let held = Held::new(ui, lift, place.ceiling);
                 ui.set_max_width(width);
                 lines(ui, right);
                 shift = held.settle(ui);

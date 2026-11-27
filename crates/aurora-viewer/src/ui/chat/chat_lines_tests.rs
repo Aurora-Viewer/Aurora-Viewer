@@ -97,6 +97,7 @@ fn the_lines_stand_by_the_chat_block_above_it_or_under_it() {
     assert!(!at.down);
     assert_eq!(at.edge, super::LinesPlace::above(BAR).edge, "the bottom the lines had");
     assert_eq!(at.column(screen, 470.0), (8.0, false), "the left they had");
+    assert_eq!(at.ceiling, 52.0, "they stop under the top bar");
     // asked under a bar that has nothing under it: above all the same
     assert_eq!(super::LinesPlace::by(dock, Down, screen, room), at);
     let centred = ChatPlace::at(block(450.0, 760.0, 380.0), Bar::Bottom, false);
@@ -138,21 +139,30 @@ fn the_lines_stand_by_the_chat_block_above_it_or_under_it() {
     assert!(!super::LinesPlace::by(low, Auto, screen, room).down);
     assert!(super::LinesPlace::by(low, Down, screen, room).down);
 
-    // a side bar's block: beside the bar, from the block's bottom or top
-    let left = ChatPlace::at(block(8.0, 600.0, 28.0), Bar::Left, false);
+    // a side bar's block: above it or under it too, never beside it
+    let left = ChatPlace::at(block(8.0, 600.0, 380.0), Bar::Left, false);
     let at = super::LinesPlace::by(left, Auto, screen, room);
     assert!(!at.down);
-    assert_eq!(at.edge, 632.0);
-    assert_eq!(at.column(screen, 470.0), (40.0 + 8.0, false));
-    let side = ChatPlace::at(block(1244.0, 100.0, 28.0), Bar::Right, false);
+    assert_eq!(at.edge, 596.0 - 8.0 - 6.0);
+    assert_eq!(at.column(screen, 470.0), (8.0, false));
+    let side = ChatPlace::at(block(892.0, 100.0, 380.0), Bar::Right, false);
     let at = super::LinesPlace::by(side, Auto, screen, room);
     assert!(at.down);
-    assert_eq!(at.edge, 96.0);
+    assert_eq!(at.edge, 132.0 + 8.0 + 6.0);
     assert_eq!(
         at.column(screen, 470.0),
-        (1240.0 - 8.0 - 470.0, true),
-        "they end before the right bar"
+        (1280.0 - 8.0 - 470.0, true),
+        "they end on the block's right, kept on the screen"
     );
+    assert!(
+        super::LinesPlace::by(side, Up, screen, room).down,
+        "no room for a line between the top bar and the block"
+    );
+    let lower = ChatPlace::at(block(892.0, 300.0, 380.0), Bar::Right, false);
+    let at = super::LinesPlace::by(lower, Up, screen, room);
+    assert!(!at.down, "asked above, with room there");
+    assert_eq!(at.edge, 296.0 - 8.0 - 6.0);
+    assert_eq!(at.ceiling, 52.0);
 }
 
 /// Lines hung under a chat bar start under it; when they reach the bottom
@@ -171,6 +181,7 @@ fn lines_hung_under_the_chat_bar_start_there_and_stop_over_the_bottom_bar() {
             edge: 58.0,
             down: true,
             limit,
+            ceiling: 0.0,
         };
         let draw = |world: &World, limit: f32| {
             let mut drawn = None;
@@ -207,6 +218,27 @@ fn lines_hung_under_the_chat_bar_start_there_and_stop_over_the_bottom_bar() {
         for who in 10..35 {
             say(&mut world, who, "one more line of the nearby chat", 0);
         }
+        // going up from a bar, the same lines stop under the top bar: the
+        // newest stay on the chat bar, the oldest are cut
+        let up = super::LinesPlace {
+            edge: 700.0,
+            down: false,
+            ceiling: 420.0,
+            ..place(734.0)
+        };
+        let mut drawn = None;
+        for n in 0..4 {
+            drawn = drawn_at(&ctx, &world, 200.0, cards, n, up);
+        }
+        let drawn = drawn.expect("lines");
+        assert!(
+            drawn.top() >= 419.5 && drawn.top() < 440.0,
+            "cards {cards}: the oldest lines are cut under the top bar: {drawn:?}"
+        );
+        assert!(
+            (680.0..=700.5).contains(&drawn.bottom()),
+            "cards {cards}: the newest line stays on the chat bar: {drawn:?}"
+        );
         let many = draw(&world, 400.0);
         assert!(
             many.top() >= 57.5,
