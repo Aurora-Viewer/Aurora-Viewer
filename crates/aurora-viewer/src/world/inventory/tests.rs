@@ -126,16 +126,22 @@ fn only_an_accepted_snapshot_can_acknowledge_a_previously_unknown_item() {
             })
             .collect(),
     };
-    assert_eq!(inv.apply_snapshots(vec![snapshot(version - 1)], true), vec![root]);
-    assert!(inv.take_accepted_snapshot_items().is_empty());
-    assert!(inv.items.contains_key(&known));
-    assert_eq!(inv.folders[&root].state, FetchState::Fetching);
+    let refetches = |inv: &Inventory| inv.queue.iter().filter(|(id, _)| *id == root).count();
     assert_eq!(inv.apply_snapshots(vec![snapshot(version - 1)], true), vec![root]);
     assert!(
         inv.take_accepted_snapshot_items().is_empty(),
-        "a refresh does not make an older reply current"
+        "a rejected snapshot acknowledges nothing"
     );
-    assert!(inv.apply_snapshots(vec![snapshot(version)], true).is_empty());
+    assert!(inv.items.contains_key(&known));
+    assert_eq!(inv.folders[&root].state, FetchState::Fetching);
+    assert_eq!(refetches(&inv), 1, "the stale folder is read again");
+    // The refetch's answer carries the server's version, even below the
+    // local one (AISUpdate::parseCategory): taken, and not read again, or a
+    // folder whose local version ran ahead would be read forever.
+    assert!(inv.apply_snapshots(vec![snapshot(version - 1)], true).is_empty());
+    assert_eq!(inv.folders[&root].state, FetchState::Fetched);
+    assert_eq!(inv.folders[&root].info.version, version - 1);
+    assert_eq!(refetches(&inv), 1, "no second refetch");
     assert_eq!(
         inv.take_accepted_snapshot_items(),
         vec![unknown],

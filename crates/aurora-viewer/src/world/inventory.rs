@@ -78,10 +78,11 @@ pub struct Inventory {
     pub(crate) failed_at: HashMap<Uuid, std::time::Instant>,
     /// Failed item reads (network, server error), by attempt.
     pub item_failures: HashMap<Uuid, u8>,
+    /// The background walk has nothing left to read (`set_background_idle`).
     pub(crate) background_idle: bool,
+    /// Items first learnt from the last accepted folder snapshot, for the
+    /// session to drop its duplicate reads (`take_accepted_snapshot_items`).
     pub(crate) accepted_snapshot_items: Vec<Uuid>,
-    /// Folders whose older contents were rejected and are being read again.
-    pub(crate) stale_snapshot_refetches: HashSet<Uuid>,
     /// Failed item reads to ask for again (`take_item_retry`).
     pub item_retries: HashSet<Uuid>,
     /// Items not in the inventory with a read on its way, and until when
@@ -394,15 +395,19 @@ impl Inventory {
         for mut c in contents {
             // Inventory versions advance as copies arrive (Firestorm's
             // LLInventoryModel::accountForUpdate). A delayed pre-copy HTTP
-            // snapshot must not replace the newer, populated folder.
-            if self.folders.get(&c.folder_id).is_some_and(|f| {
-                c.version < f.info.version && (f.state == FetchState::Fetched || self.stale_snapshot_refetches.contains(&c.folder_id))
-            }) {
-                self.stale_snapshot_refetches.insert(c.folder_id);
+            // snapshot must not replace the newer, populated folder. The
+            // refetch's own answer is taken as it comes (the server's version
+            // is canonical: AISUpdate::parseCategory resets the version to
+            // unknown before it refetches), or a folder whose local version
+            // ran ahead of the server's would be read again forever.
+            if self
+                .folders
+                .get(&c.folder_id)
+                .is_some_and(|f| f.state == FetchState::Fetched && c.version < f.info.version)
+            {
                 stale.push(c.folder_id);
                 continue;
             }
-            self.stale_snapshot_refetches.remove(&c.folder_id);
             let library = self.folders.get(&c.folder_id).map(|f| f.library).unwrap_or(false);
             let child_ids: Vec<Uuid> = c.folders.iter().map(|f| f.id).collect();
             for mut f in c.folders {
@@ -909,7 +914,6 @@ impl Inventory {
         self.pending_folder_repairs
             .retain(|id| self.repaired_folder_parents.contains_key(id));
         self.folders.retain(|id, _| !removed.contains(id));
-        self.stale_snapshot_refetches.retain(|id| !removed.contains(id));
         self.sort_all();
         self.generation += 1;
     }
