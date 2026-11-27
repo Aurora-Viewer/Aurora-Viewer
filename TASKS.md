@@ -3413,6 +3413,7 @@ What sets the frame rate at KB once the ray tracing is kept to Deluxe (RT) ([PR 
 
 ## Interface
 
+- 🔧 The texture library is no longer on the default bottom bar (human request, 2026-11-27; task `toolbar-no-library-default`; no issue): the Legacy Viewer's skins/default/toolbars.xml has no such button. It stays in the toolbar catalogue (Customize); a bar the user already arranged keeps it, only a bar that follows the skin's default loses it.
 - ✅ Four small interface fixes (task `small-ui-fixes-batch`, 2026-11-27; validated by the human in a logged-in viewer on 2026-11-27):
   - "Open Places › Favorites" of the favorites bar shows the Favorites list in Aurora's look too ([#4771](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/4771)): it set the classic tab only, and Aurora's look kept the last list shown. It now goes through `PlacesUi::open_tab` and closes a place profile left open, like the teleport history's shortcut.
   - The build tools' position / rotation / size readout shows as soon as the handles do, not only during a drag ([#4716](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/4716)): LLManipTranslate::render, LLManipRotate::render and LLManipScale::render call LLManip::renderXYZ at rest too.
