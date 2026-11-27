@@ -7554,9 +7554,22 @@ impl App {
     fn pump_network_events(&mut self, t_ev: Instant) {
         let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
         while let Ok((sent, ev)) = self.net.events.try_recv() {
+            let folder_reply = matches!(
+                &ev,
+                NetEvent::InventoryContents(_) | NetEvent::InventoryTreeFetched { result: Ok(_), .. }
+            );
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
             self.receive_event(ev, self.director_render_stamp(sent));
+            if folder_reply {
+                let items = self.world.inventory.take_accepted_snapshot_items();
+                if !items.is_empty() {
+                    self.net.send(NetCommand::InventoryItemsKnown {
+                        items,
+                        owner: self.world.agent_id,
+                    });
+                }
+            }
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
             // (more per frame in gaming mode's slow loop, app/gaming_mode.rs;

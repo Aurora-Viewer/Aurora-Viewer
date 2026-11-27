@@ -239,6 +239,41 @@ scales tighten the bound, and 16-bit upload quantization has its own allowance.
 `imports::mesh` uses Lowest first for automatic collision;
 explicit collision sources and convex decomposition retain their existing path.
 
+`Inventory::retrying_folders` owns background cooldowns. The walker checks each
+target before retrying it. Open views retry after ten seconds through
+`Inventory::request_shown`, honoring cooldown ownership and folder limits.
+An explicit folder open can issue an interactive read during cooldown;
+the walker reconciles that result before resuming. Bulk demand requests only
+unknown folders. The watchdog and subtree splitting from #4094 still handle
+unanswered or incomplete reads, while cooldown-owned folders stay with
+their pending retry.
+
+`session/inventory_reads.rs` coalesces ordinary and attachment AIS reads by
+owner and item within a session and admits up to 16 at once, separately
+from background folder reads. An attachment consumer promotes a queued
+ordinary read. Each single-item HTTP attempt has a 180-second deadline.
+The queue handles retry pacing with per-key 2/10/60-second cooldowns.
+On 429 or 503 the item's capability also pauses new single-item starts
+for the server's Retry-After (up to 60 seconds, at least 2 seconds).
+Only newly discovered records in a version-checked folder snapshot acknowledge
+redundant ordinary reads. A background reply that arrives after its read has
+been retired cannot apply snapshots or cancel item reads. Shared successes
+use attachment parent repair once and release both claims. Pending AIS reads pause during seed changes
+and resume on the new capability; stale replies cannot classify originals.
+`CheckInventoryOffer` uses a separate fresh server read and private reply.
+
+Outfit restoration keeps still-linked originals pending past the initial
+metadata grace period. Accepted late metadata resumes attachment restoration.
+Explicit detaches, confirmed absence and authoritative outfit changes cancel
+pending intent. Late attachments have independent retry windows; after the
+initial restore, passive pending checks run at most once per second. A
+deliberate wear may omit an exhausted original when the background walk is
+idle. #4094's bounded ten-minute reread rounds still run; exhausted reads
+never mark an original as missing or unlink it from the saved outfit.
+The restorer requests due rereads for still-linked originals even when
+Appearance is closed. An entirely unreadable outfit cannot replace the
+worn outfit through the partial-wear fallback.
+
 `ui/chat/select/document.rs` scopes the transcript's rich-text selection to
 group notice bodies, in group profiles and notification cards. It retains
 selection for the Copy menu without replacing clickable links or emoji.

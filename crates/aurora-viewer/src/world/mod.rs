@@ -1927,7 +1927,9 @@ impl World {
         // (items a busy server would not give are asked again after their
         // pause, whether or not another read comes)
         self.inventory.expire_given_up(std::time::Instant::now());
-        self.inventory_background.pump(&mut self.inventory, self.agent_id)
+        let commands = self.inventory_background.pump(&mut self.inventory, self.agent_id);
+        self.inventory.set_background_idle(self.inventory_background.is_idle());
+        commands
     }
 
     /// The background inventory walk's state (Dev Toolbox N4).
@@ -3150,7 +3152,7 @@ impl World {
     /// on and only waits out its retry window.
     pub fn outfit_restoring(&self) -> bool {
         self.login.is_some()
-            && !self.outfit.is_done()
+            && (!self.outfit.is_done() || self.outfit.has_pending_login_restore())
             && !self.outfit_attachments_worn()
             && (self.outfit.started()
                 || !self.movement_complete
@@ -3168,7 +3170,7 @@ impl World {
     /// Run the outfit restore and the wears waiting for their items; its
     /// network commands are left in `self.outfit.commands`.
     pub fn update_outfit(&mut self, second_life: bool, now: Instant) {
-        if self.outfit.is_idle() {
+        if !self.outfit.needs_update(now) {
             return;
         }
         let ready = self.demo_outfit_region
@@ -5027,16 +5029,13 @@ impl World {
                 None
             }
             NetEvent::InventoryContents(c) => {
-                self.inventory.apply(c);
+                self.inventory.apply_snapshots(c, true);
                 None
             }
             NetEvent::InventoryTreeFetched { request, result } => {
-                let (stale, outcome) = match result {
-                    Ok(contents) => (self.inventory.apply(contents), Ok(())),
-                    Err(error) => (Vec::new(), Err(error)),
-                };
-                self.inventory_background.on_reply(&mut self.inventory, request, &stale, outcome);
-                self.announce_inventory_limit();
+                if self.inventory_background.on_reply(&mut self.inventory, request, result) {
+                    self.announce_inventory_limit();
+                }
                 None
             }
             NetEvent::InventoryFetchFailed { folders, too_big, status } => {
@@ -5054,7 +5053,7 @@ impl World {
                     // on the new region's capabilities (`retry_failed`)
                     for id in folders {
                         if self.inventory_retried.insert(id) {
-                            self.inventory.request(id);
+                            self.inventory.retry(id);
                         }
                     }
                 }
@@ -5066,9 +5065,12 @@ impl World {
                 self.inventory.add_items(items);
                 None
             }
-            NetEvent::AttachmentInventoryItems(items) => {
+            NetEvent::AttachmentInventoryItems { items, coalesced } => {
                 let ids: Vec<_> = items.iter().map(|item| item.id).collect();
                 self.inventory.items_answered(&ids, true);
+                if coalesced {
+                    self.inventory.items_answered(&ids, false);
+                }
                 self.inventory.add_attachment_items(items);
                 None
             }
@@ -5126,17 +5128,28 @@ impl World {
                 }
                 None
             }
-            NetEvent::InventoryItemsFailed { items, attachment } => {
-                log::warn!("{} inventory items could not be fetched", items.len());
-                // (only this kind's claim: the other kind's read of the same
-                // item may still be on its way)
+            NetEvent::InventoryItemsFailed {
+                items,
+                attachment,
+                coalesced,
+            } => {
                 self.inventory.items_answered(&items, attachment);
+                if coalesced {
+                    self.inventory.items_answered(&items, !attachment);
+                }
                 self.inventory.items_failed(&items);
                 None
             }
-            NetEvent::InventoryItemsMissing { items, attachment } => {
-                log::warn!("{} inventory items do not exist (broken links)", items.len());
+            NetEvent::InventoryItemsMissing {
+                items,
+                attachment,
+                coalesced,
+            } => {
+                log::debug!("{} inventory items do not exist (broken links)", items.len());
                 self.inventory.items_answered(&items, attachment);
+                if coalesced {
+                    self.inventory.items_answered(&items, !attachment);
+                }
                 self.inventory.items_missing(items);
                 None
             }
