@@ -36,6 +36,7 @@ mod popout;
 pub mod previews;
 mod reorder;
 pub(crate) mod shortcuts;
+mod translation;
 pub use reorder::Demo as ReorderDemo;
 pub(crate) mod select;
 pub(crate) mod sidebar;
@@ -87,6 +88,7 @@ enum ChatField {
 
 #[derive(Default)]
 pub struct ChatUi {
+    pub(crate) translation: translation::Controls,
     /// Keyboard events for the next nearby line when two sends share a frame.
     deferred_bar_input: Vec<egui::Event>,
     pub input: String,
@@ -2838,7 +2840,13 @@ fn tool_resp(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, icon: 
         ui.painter().rect_filled(rect, radius, p.raised);
     }
     if let Some(t) = icons.get(icon) {
-        let tint = if resp.hovered() || active { p.ink } else { p.muted };
+        let tint = if icon == "language" {
+            p.indigo_light
+        } else if resp.hovered() || active {
+            p.ink
+        } else {
+            p.muted
+        };
         let r = egui::Rect::from_center_size(rect.center(), egui::vec2(18.0, 18.0));
         ui.painter().image(
             t.id(),
@@ -3438,7 +3446,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             None => (None, w.chat_clock),
         },
     };
-    let nearby = st.selected.is_none();
+    let conversation = st.selected;
+    let translation_controls = &st.translation;
     let menu = ui.layer_id().id.with(("chat_line_menu", st.selected));
     let paused = line_menu::is_open(ui.ctx(), menu);
     if paused && !view.is_paused() {
@@ -3558,16 +3567,16 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                         Rows::Classic(_) => draw_line(ui, &mut env, line, row.look, mark),
                         Rows::Thread(th) => thread::draw(ui, &mut env, th, line, row.look, mark, painted),
                     }
-                    if nearby && let Some(outcome) = w.chat_translation.outcome(clock.token, clock.first + row.line as u64) {
-                        use crate::chat_translation::Outcome;
-                        let text = match outcome {
-                            Outcome::Translated(text) => aurora_i18n::tr!("ui-chat-translation-result", text = text.as_str()),
-                            Outcome::Credentials => aurora_i18n::tr!("ui-chat-translation-credentials").to_owned(),
-                            Outcome::Quota => aurora_i18n::tr!("ui-chat-translation-quota").to_owned(),
-                            Outcome::Unavailable => aurora_i18n::tr!("ui-chat-translation-unavailable").to_owned(),
-                        };
-                        ui.label(RichText::new(text).size(super::fonts::chat_size(ui.ctx(), 12.0)).color(p.muted));
-                    }
+                    let inset = if matches!(&rows, Rows::Thread(_)) { thread::GUTTER } else { 26.0 };
+                    translation::message(
+                        ui,
+                        &env,
+                        translation_controls,
+                        conversation,
+                        line,
+                        (clock.token, clock.first + row.line as u64),
+                        inset,
+                    );
                     ui.set_opacity(opacity);
                 };
                 // a blocked resident's line, kept in the history: greyed
@@ -4681,6 +4690,9 @@ fn classic_pane(
                 let b = tool_resp(ui, p, icons, "gif", st.gif_open).on_hover_text(aurora_i18n::tr!("ui-chat-gif"));
                 gif_btn = Some(b.rect);
                 gif_picker::button(&b, p, st);
+            }
+            if world.can_translate_conversation(st.selected) {
+                translation::toolbar(ui, p, icons, &st.translation, world.chat_translation.characters());
             }
             // leave exactly the send button + spacing (else the row overflows
             // and the resizable window grows every frame)

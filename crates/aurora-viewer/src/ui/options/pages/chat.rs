@@ -766,7 +766,12 @@ fn chat_translation(cx: &mut Cx) {
     let p = cx.p;
     cx.group(tr!("ui-options-chat-translation"), |cx| {
         cx.note(tr!("ui-options-chat-translation-privacy"));
-        cx.toggle(tr!("ui-options-chat-translation-enabled"), "", &field!(chat_translation.enabled));
+        cx.toggle(tr!("ui-options-chat-translation-on"), "", &field!(chat_translation.enabled));
+        cx.toggle(
+            tr!("ui-options-chat-translation-auto"),
+            tr!("ui-options-chat-translation-auto-hint"),
+            &field!(chat_translation.automatic_nearby),
+        );
         cx.row(
             tr!("ui-options-chat-translation-target"),
             tr!("ui-options-chat-translation-target-hint"),

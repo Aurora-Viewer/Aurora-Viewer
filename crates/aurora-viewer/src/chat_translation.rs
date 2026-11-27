@@ -11,11 +11,13 @@ use tokio::{runtime::Handle, task::JoinHandle};
 const AZURE: &str = "https://api.cognitive.microsofttranslator.com/translate";
 const MAX_PENDING: usize = 4;
 const MAX_RESPONSE: usize = 32 * 1024;
+pub const DEMO_ORIGINAL: &str = "¡Hola! ¿Vienes al concierto esta noche?";
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Settings {
     pub enabled: bool,
+    pub automatic_nearby: bool,
     pub target: String,
     pub azure_key: String,
     pub azure_region: String,
@@ -25,6 +27,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             enabled: false,
+            automatic_nearby: false,
             target: "en".into(),
             azure_key: String::new(),
             azure_region: String::new(),
@@ -60,6 +63,7 @@ impl Settings {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
     Translated(String),
+    SameLanguage,
     Credentials,
     Quota,
     Unavailable,
@@ -136,7 +140,7 @@ async fn translate(client: &reqwest::Client, settings: &Settings, text: &str) ->
     parse(&body, text, settings.target.trim())
 }
 
-fn eligible_body(text: &str) -> Option<&str> {
+pub fn eligible_body(text: &str) -> Option<&str> {
     let text = text
         .strip_prefix("/me ")
         .or_else(|| text.starts_with("/me'").then(|| &text[3..]))
@@ -145,8 +149,45 @@ fn eligible_body(text: &str) -> Option<&str> {
     (text.len() <= 4096 && text.chars().any(char::is_alphabetic) && !text.contains("://")).then_some(text)
 }
 
+pub fn likely_target_language(text: &str, target: &str) -> bool {
+    detect_source(text).is_some_and(|language| targets_source(language, target))
+}
+
+pub fn detect_source(text: &str) -> Option<whatlang::Lang> {
+    whatlang::detect(text)
+        .filter(|result| result.is_reliable())
+        .map(|result| result.lang())
+}
+
+pub fn targets_source(source: whatlang::Lang, target: &str) -> bool {
+    let language = match target.trim().to_ascii_lowercase().as_str() {
+        "en" => "eng",
+        "es" => "spa",
+        "fr" => "fra",
+        "de" => "deu",
+        "it" => "ita",
+        "pt" | "pt-pt" => "por",
+        "ja" => "jpn",
+        "ko" => "kor",
+        "ru" => "rus",
+        "uk" => "ukr",
+        "ar" => "ara",
+        "hi" => "hin",
+        "nl" => "nld",
+        "pl" => "pol",
+        "tr" => "tur",
+        "sv" => "swe",
+        "vi" => "vie",
+        "th" => "tha",
+        _ => return false,
+    };
+    source.code() == language
+}
+
 struct Job {
-    seq: u64,
+    line: (u64, u64),
+    characters: usize,
+    manual: bool,
     result: Receiver<Result<Option<Outcome>, Outcome>>,
     task: JoinHandle<()>,
 }
@@ -161,21 +202,20 @@ impl Drop for Job {
 pub struct Nearby {
     settings: Option<Settings>,
     worker: Option<(Handle, reqwest::Client)>,
-    token: u64,
     jobs: Vec<Job>,
-    outcomes: BTreeMap<u64, Outcome>,
+    outcomes: BTreeMap<(u64, u64), Outcome>,
     pause_until: Option<Instant>,
+    characters: usize,
 }
 
 impl Nearby {
     /// Called before the frame handles chat events. Demo mode passes no settings.
-    pub fn configure(&mut self, settings: Option<&Settings>, handle: &Handle, token: u64) {
+    pub fn configure(&mut self, settings: Option<&Settings>, handle: &Handle) {
         let settings = settings.filter(|s| s.enabled && s.ready());
-        if self.token != token || self.settings.as_ref() != settings {
+        if self.settings.as_ref() != settings {
             self.jobs.clear();
             self.outcomes.clear();
             self.pause_until = None;
-            self.token = token;
             self.settings = settings.cloned();
         }
         if settings.is_some() && self.worker.is_none() {
@@ -191,64 +231,94 @@ impl Nearby {
         }
     }
 
-    pub fn offer(&mut self, token: u64, seq: u64, text: &str) {
+    pub fn automatic_nearby(&self) -> bool {
+        self.settings.as_ref().is_some_and(|s| s.automatic_nearby)
+    }
+
+    pub fn characters(&self) -> usize {
+        self.characters
+    }
+
+    pub fn pending(&self, token: u64, seq: u64) -> bool {
+        self.jobs.iter().any(|job| job.line == (token, seq))
+    }
+
+    pub fn offer(&mut self, token: u64, seq: u64, text: &str, manual: bool) {
         let (Some(settings), Some((handle, client))) = (&self.settings, &self.worker) else {
             return;
         };
-        if self.token != token || self.jobs.len() >= MAX_PENDING || self.pause_until.is_some_and(|until| Instant::now() < until) {
+        let line = (token, seq);
+        if self.pending(token, seq) || matches!(self.outcomes.get(&line), Some(Outcome::Translated(_) | Outcome::SameLanguage)) {
+            return;
+        }
+        if self.jobs.len() >= MAX_PENDING || self.pause_until.is_some_and(|until| Instant::now() < until) {
+            if manual {
+                self.outcomes.entry(line).or_insert(Outcome::Unavailable);
+            }
             return;
         }
         let Some(text) = eligible_body(text) else {
             return;
         };
+        if !manual && likely_target_language(text, settings.target.trim()) {
+            return;
+        }
+        self.outcomes.remove(&line);
         let (send, result) = bounded(1);
         let (settings, client, text) = (settings.clone(), client.clone(), text.to_owned());
+        let characters = text.chars().count();
         let task = handle.spawn(async move {
             let _ = send.send(translate(&client, &settings, &text).await);
         });
-        self.jobs.push(Job { seq, result, task });
-    }
-
-    pub fn poll(&mut self, token: u64, first: u64) {
-        if token != self.token {
-            return;
-        }
-        while self.outcomes.first_key_value().is_some_and(|(&seq, _)| seq < first) {
-            self.outcomes.pop_first();
-        }
-        self.jobs.retain(|job| {
-            if job.seq < first {
-                return false;
-            }
-            match job.result.try_recv() {
-                Ok(Ok(result)) => {
-                    if let Some(result) = result {
-                        self.outcomes.insert(job.seq, result);
-                    }
-                    false
-                }
-                Ok(Err(error)) => {
-                    if self.pause_until.is_none_or(|until| Instant::now() >= until) {
-                        self.outcomes.insert(job.seq, error);
-                    }
-                    self.pause_until = Some(Instant::now() + Duration::from_secs(30));
-                    false
-                }
-                Err(TryRecvError::Empty) => true,
-                Err(TryRecvError::Disconnected) => false,
-            }
+        self.jobs.push(Job {
+            line,
+            characters,
+            manual,
+            result,
+            task,
         });
     }
 
+    pub fn poll(&mut self) {
+        self.jobs.retain(|job| match job.result.try_recv() {
+            Ok(Ok(result)) => {
+                self.characters = self.characters.saturating_add(job.characters);
+                if let Some(result) = result.or_else(|| job.manual.then_some(Outcome::SameLanguage)) {
+                    self.outcomes.insert(job.line, result);
+                }
+                false
+            }
+            Ok(Err(error)) => {
+                if job.manual || self.pause_until.is_none_or(|until| Instant::now() >= until) {
+                    self.outcomes.insert(job.line, error);
+                }
+                self.pause_until = Some(Instant::now() + Duration::from_secs(30));
+                false
+            }
+            Err(TryRecvError::Empty) => true,
+            Err(TryRecvError::Disconnected) => false,
+        });
+        while self.outcomes.len() > 512 {
+            self.outcomes.pop_first();
+        }
+    }
+
     pub fn outcome(&self, token: u64, seq: u64) -> Option<&Outcome> {
-        (token == self.token).then(|| self.outcomes.get(&seq)).flatten()
+        self.outcomes.get(&(token, seq))
     }
 
     /// This fixture stays entirely offline, even if the user saved a key.
     pub fn demo_line(&mut self, token: u64, seq: u64) {
-        self.token = token;
-        self.outcomes
-            .insert(seq, Outcome::Translated("Hello! Are you coming to the concert tonight?".into()));
+        if self
+            .outcomes
+            .insert(
+                (token, seq),
+                Outcome::Translated("Hello! Are you coming to the concert tonight?".into()),
+            )
+            .is_none()
+        {
+            self.characters = self.characters.saturating_add(DEMO_ORIGINAL.chars().count());
+        }
     }
 }
 
@@ -290,5 +360,14 @@ mod tests {
         assert_eq!(eligible_body("✨ 123"), None);
         assert_eq!(eligible_body("Hello https://example.com"), None);
         assert_eq!(eligible_body(&"a".repeat(4097)), None);
+    }
+
+    #[test]
+    fn confident_local_detection_hides_same_language_only() {
+        let message = "Hello, is anyone around right now?";
+        assert!(likely_target_language(message, " EN "));
+        assert!(!likely_target_language(message, "fr"));
+        assert!(!likely_target_language("ok", "en"));
+        assert!(!likely_target_language("欢迎回家", "zh-Hant"));
     }
 }

@@ -316,6 +316,14 @@ pub struct AttachChoice {
 
 #[derive(Debug, Clone)]
 pub enum CtxAction {
+    OpenChatTranslation,
+    EnableChatTranslation(bool),
+    AutoTranslateNearby(bool),
+    TranslateChatLine {
+        conversation: Option<Uuid>,
+        token: u64,
+        seq: u64,
+    },
     /// Reopen this menu in the shared arrangement editor.
     CustomizeMenu(Box<ContextMenu>),
     SitAt(Vec3),

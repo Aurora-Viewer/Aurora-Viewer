@@ -260,6 +260,10 @@ pub(super) fn radial_entries(
 /// object UUIDs, coordinates and changing toggle state.
 fn action_key(action: &CtxAction) -> String {
     let base = match action {
+        CtxAction::OpenChatTranslation => "OpenChatTranslation",
+        CtxAction::EnableChatTranslation(_) => "EnableChatTranslation",
+        CtxAction::AutoTranslateNearby(_) => "AutoTranslateNearby",
+        CtxAction::TranslateChatLine { .. } => "TranslateChatLine",
         CtxAction::CustomizeMenu(..) => "CustomizeMenu",
         CtxAction::SitAt(..) => "SitAt",
         CtxAction::SitStand => "SitStand",

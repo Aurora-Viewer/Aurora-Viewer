@@ -339,6 +339,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "spelling" => row(Page::Chat, 6, tr!("ui-options-spelling-on")),
         "auto-replace" => row(Page::Chat, 6, tr!("ui-options-auto-replace-on")),
         "gifs" => row(Page::Chat, 0, tr!("ui-options-gifs-show")),
+        "translation" => row(Page::Chat, 0, tr!("ui-options-chat-translation-on")),
         // the conversation options (AURORA_DEMO_CONV_OPTIONS)
         "conversation-options" => row(Page::Chat, 0, tr!("ui-options-im-tab-order")),
         "history-fade" => row(Page::Chat, 3, tr!("ui-options-history-fade")),
@@ -729,6 +730,11 @@ impl OptionsUi {
     pub fn open_gifs(&mut self) {
         self.open(Page::Chat, 0);
         self.reveal = Some((Page::Chat, 0, aurora_i18n::tr!("ui-options-gifs-show")));
+    }
+
+    pub fn open_chat_translation(&mut self) {
+        self.open(Page::Chat, 0);
+        self.reveal = Some((Page::Chat, 0, aurora_i18n::tr!("ui-options-chat-translation-on")));
     }
 
     /// Opens the Sound and voice page on one of its parts.

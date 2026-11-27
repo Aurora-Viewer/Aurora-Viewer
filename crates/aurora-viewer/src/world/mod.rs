@@ -2547,6 +2547,45 @@ impl World {
         self.chat_unread += 1;
     }
 
+    pub fn can_translate_conversation(&self, conversation: Option<Uuid>) -> bool {
+        conversation.is_none_or(|id| self.private_peer(id).is_some() && !self.calls.conferences.contains_key(&id))
+    }
+
+    pub fn translation_text<'a>(&self, conversation: Option<Uuid>, line: &'a ChatLine) -> Option<&'a str> {
+        if line.origin != Origin::Live || line.blocked || line.source.is_nil() || line.source == self.agent_id {
+            return None;
+        }
+        match (conversation, line.kind) {
+            (None, ChatKind::Local(ChatType::Whisper | ChatType::Normal | ChatType::Shout)) => (),
+            (Some(id), ChatKind::Im) if line.source == id && self.can_translate_conversation(conversation) => (),
+            _ => return None,
+        }
+        crate::chat_translation::eligible_body(&line.text)
+    }
+
+    pub fn translate_chat_line(&mut self, conversation: Option<Uuid>, token: u64, seq: u64, demo: bool) {
+        let (lines, clock) = match conversation {
+            None => (&self.chat, self.chat_clock),
+            Some(id) => {
+                let Some(session) = self.social.ims.iter().find(|s| s.other == id) else {
+                    return;
+                };
+                (&session.lines, session.clock)
+            }
+        };
+        if clock.token == token
+            && let Some(index) = seq.checked_sub(clock.first)
+            && let Some(line) = lines.get(index as usize)
+            && self.translation_text(conversation, line).is_some()
+        {
+            if demo && line.text == crate::chat_translation::DEMO_ORIGINAL {
+                self.chat_translation.demo_line(token, seq);
+            } else if !demo {
+                self.chat_translation.offer(token, seq, &line.text, true);
+            }
+        }
+    }
+
     /// A line of this kind counts as unread and may alert (keyword sound,
     /// flash, system notification): always, or only a person's while the
     /// option asks for it (#741).
@@ -5514,9 +5553,12 @@ impl World {
             speaker,
             private_history: false,
         });
-        if translate && let Some(line) = self.chat.back() {
+        if translate
+            && self.chat_translation.automatic_nearby()
+            && let Some(line) = self.chat.back()
+        {
             let seq = self.chat_clock.first + self.chat.len() as u64 - 1;
-            self.chat_translation.offer(self.chat_clock.token, seq, &line.text);
+            self.chat_translation.offer(self.chat_clock.token, seq, &line.text, false);
         }
     }
 

@@ -56,7 +56,7 @@ const THIS_PC_GIFS: &[&str] = &["giphy_key", "klipy_key", "customer_id"];
 const THIS_PC_NESTED: &[(&str, &[&str])] = &[
     ("audio", THIS_PC_AUDIO),
     ("gifs", THIS_PC_GIFS),
-    ("chat_translation", &["enabled", "azure_key", "azure_region"]),
+    ("chat_translation", &["enabled", "automatic_nearby", "azure_key", "azure_region"]),
 ];
 
 /// Whether the path of a setting (`gifs.giphy_key`) names a setting of the
@@ -306,6 +306,7 @@ impl Settings {
         self.gifs.klipy_key = current.gifs.klipy_key.clone();
         self.gifs.customer_id = current.gifs.customer_id.clone();
         self.chat_translation.enabled = current.chat_translation.enabled;
+        self.chat_translation.automatic_nearby = current.chat_translation.automatic_nearby;
         self.chat_translation.azure_key.clone_from(&current.chat_translation.azure_key);
         self.chat_translation
             .azure_region
@@ -356,6 +357,7 @@ mod tests {
         s.gifs.klipy_key = "klipy-key-of-this-pc".into();
         s.gifs.customer_id = "id-of-this-pc".into();
         s.chat_translation.enabled = true;
+        s.chat_translation.automatic_nearby = true;
         s.chat_translation.azure_key = "translation-key-of-this-pc".into();
         s.chat_translation.azure_region = "translation-region-of-this-pc".into();
         s
