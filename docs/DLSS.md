@@ -255,9 +255,9 @@ setting's mode comes back; NGX's own frame generation stays loaded until
 DLSS frees its resources (DLSS turned off, or the viewer closed).
 
 It needs sl-ngx with frame generation (NGX's `FrameGeneration` feature,
-and on Linux its presenter, in sl-ngx since `5b0dd82`, the commit
-`scripts/dlss-setup.sh` builds; the viewer builds it again at start after
-an update), the SDK's
+and on Linux its presenter, in sl-ngx since `5b0dd82`; `scripts/dlss-setup.sh`
+builds `494eb3b`, the presenter with its review fixes, and the viewer builds
+it again at start after an update), the SDK's
 `libnvidia-ngx-dlssg.so.*` beside it, and a card and driver NGX offers it on:
 Streamline is asked when DLSS starts, and the choice is greyed while it is
 off and not offered (on, it can always be turned off, with a note under it).

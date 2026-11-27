@@ -6580,7 +6580,7 @@ pub(crate) use imp::{opened_for_xr, opening_device, xr_device_extensions, xr_ins
 /// `libsl_ngx.<first 12 digits>.so` in the DLSS folder, loaded before the
 /// plain `libsl_ngx.so`, and built at start when missing ([`update`]).
 #[cfg_attr(not(all(feature = "dlss", target_os = "linux")), allow(dead_code, reason = "Linux's DLSS only"))]
-pub(crate) const SL_NGX_COMMIT: &str = "5b0dd82fada40c01f8c99958184eb411be600326";
+pub(crate) const SL_NGX_COMMIT: &str = "494eb3bed1622573b94bcc252aaad23d904cf945";
 
 /// `libsl_ngx.<commit>.so`: [`SL_NGX_COMMIT`]'s library.
 #[cfg_attr(not(all(feature = "dlss", target_os = "linux")), allow(dead_code, reason = "Linux's DLSS only"))]
