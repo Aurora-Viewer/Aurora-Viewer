@@ -529,23 +529,24 @@ pub fn page(cx: &mut Cx) {
         );
         cx.toggle(tr!("joystick-avatar-enabled"), "", &field!(joystick.avatar_enabled));
         cx.toggle(tr!("joystick-flycam-enabled"), "", &field!(joystick.flycam_enabled));
-        cx.row_with(tr!("joystick-flycam"), tr!("joystick-flycam-hint"), &Nothing, |ui, s, st, r| {
-            let available = s.joystick.enabled && s.joystick.flycam_enabled && st.joystick.selected_joystick(&s.joystick).is_some();
-            if ui
-                .add_enabled(
-                    available,
-                    egui::Button::new(if st.flycam_active {
-                        tr!("joystick-flycam-stop")
-                    } else {
-                        tr!("joystick-flycam-start")
-                    }),
-                )
-                .clicked()
-            {
-                r.toggle_flycam = true;
-            }
-            false
-        });
+        cx.link_as("joystick.flycam_mode")
+            .row_with(tr!("joystick-flycam"), tr!("joystick-flycam-hint"), &Nothing, |ui, s, st, r| {
+                let available = s.joystick.enabled && s.joystick.flycam_enabled && st.joystick.selected_joystick(&s.joystick).is_some();
+                if ui
+                    .add_enabled(
+                        available,
+                        egui::Button::new(if st.flycam_active {
+                            tr!("joystick-flycam-stop")
+                        } else {
+                            tr!("joystick-flycam-start")
+                        }),
+                    )
+                    .clicked()
+                {
+                    r.toggle_flycam = true;
+                }
+                false
+            });
         button(cx, tr!("joystick-flycam-button"), field!(joystick.flycam_button));
         button(cx, tr!("joystick-jump-button"), field!(joystick.jump_button));
         cx.slider(tr!("joystick-run-threshold"), "", &field!(joystick.run_threshold), 0.1..=1.0, "");

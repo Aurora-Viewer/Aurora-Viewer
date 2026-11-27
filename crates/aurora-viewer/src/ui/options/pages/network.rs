@@ -14,12 +14,13 @@ pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
     let p = cx.p;
     cx.group(tr!("grids-list"), |cx| {
-        cx.row(tr!("grids-manage"), tr!("grids-description"), &Nothing, |ui, _| {
-            if ui.button(tr!("grids-manage")).clicked() {
-                crate::ui::grids::request_open(ui.ctx());
-            }
-            false
-        });
+        cx.link_as("network.grids")
+            .row(tr!("grids-manage"), tr!("grids-description"), &Nothing, |ui, _| {
+                if ui.button(tr!("grids-manage")).clicked() {
+                    crate::ui::grids::request_open(ui.ctx());
+                }
+                false
+            });
     });
     cx.group(tr!("ui-options-network"), |cx| {
         // (the step of the Legacy Viewer's slider, panel_preferences_setup.xml,
@@ -125,7 +126,7 @@ pub fn page(cx: &mut Cx) {
                 changed
             },
         );
-        cx.row_with(
+        cx.link_as("network.clear_cache").row_with(
             tr!("ui-options-clear-cache"),
             tr!("ui-options-everything-will-be-downloaded-again-as-needed"),
             &Nothing,
@@ -197,7 +198,7 @@ pub fn page(cx: &mut Cx) {
     });
     super::proxy::group(cx);
     cx.group(tr!("ui-options-logs-and-tools"), |cx| {
-        cx.row(
+        cx.link_as("network.session_log").row(
             tr!("ui-options-session-log"),
             tr!("ui-options-aurora-log-previous-session-aurora-previous-log"),
             &Nothing,
@@ -218,7 +219,7 @@ pub fn page(cx: &mut Cx) {
             },
         );
         // the former Debug page of the window
-        cx.row_with(
+        cx.link_as("network.debug_tools").row_with(
             tr!("ui-options-debug-tools"),
             tr!("ui-options-debug-tools-help"),
             &Nothing,

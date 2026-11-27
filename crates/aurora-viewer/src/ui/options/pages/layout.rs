@@ -122,7 +122,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 );
                 // not a setting: the windows' layout (ui_layout.ron), which
                 // "Reset everything…" also forgets with every setting
-                cx.row_with(
+                cx.link_as("layout.reset_windows").row_with(
                     tr!("ui-options-reset-windows"),
                     tr!("ui-options-reset-windows-help"),
                     &Nothing,

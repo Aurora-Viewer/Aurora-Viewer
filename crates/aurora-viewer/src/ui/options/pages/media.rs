@@ -99,7 +99,7 @@ pub fn page(cx: &mut Cx) {
                 tr!("ui-options-media-filter-own-worn-help"),
                 &field!(media.filter_trust_own_worn),
             );
-            cx.below().row_with(
+            cx.link_as("media.filter_sites").below().row_with(
                 tr!("ui-options-media-filter-list"),
                 tr!("ui-options-media-filter-list-help"),
                 &Nothing,
@@ -134,61 +134,63 @@ pub fn page(cx: &mut Cx) {
                 .changed()
             },
         );
-        cx.wide().row_with(tr!("ui-options-plugins"), "", &Nothing, |ui, _, st, _| {
-            use crate::media::pack::PackState;
-            let megabytes = |bytes: u64| aurora_i18n::integer((bytes / (1024 * 1024)) as i64);
-            // plugins found: their folder; otherwise where Aurora's pack stands
-            // (`retry`: the button that asks for the download, Download or
-            // Retry)
-            let (status, download, retry) = if !st.media_plugins.is_empty() {
-                let text = tr!(
-                    "status-active-player-s",
-                    value0 = st.media_plugins.to_string(),
-                    value1 = format!("{}", st.media_running)
-                );
-                (text, None, false)
-            } else {
-                match st.media_pack {
-                    PackState::Downloading(d) if !d.preparing => {
-                        let text = tr!(
-                            "media-plugins-downloading",
-                            received = megabytes(d.received),
-                            total = megabytes(d.total)
-                        );
-                        (text, Some(d.received as f32 / d.total.max(1) as f32), false)
+        cx.link_as("media.plugins")
+            .wide()
+            .row_with(tr!("ui-options-plugins"), "", &Nothing, |ui, _, st, _| {
+                use crate::media::pack::PackState;
+                let megabytes = |bytes: u64| aurora_i18n::integer((bytes / (1024 * 1024)) as i64);
+                // plugins found: their folder; otherwise where Aurora's pack stands
+                // (`retry`: the button that asks for the download, Download or
+                // Retry)
+                let (status, download, retry) = if !st.media_plugins.is_empty() {
+                    let text = tr!(
+                        "status-active-player-s",
+                        value0 = st.media_plugins.to_string(),
+                        value1 = format!("{}", st.media_running)
+                    );
+                    (text, None, false)
+                } else {
+                    match st.media_pack {
+                        PackState::Downloading(d) if !d.preparing => {
+                            let text = tr!(
+                                "media-plugins-downloading",
+                                received = megabytes(d.received),
+                                total = megabytes(d.total)
+                            );
+                            (text, Some(d.received as f32 / d.total.max(1) as f32), false)
+                        }
+                        PackState::Downloading(_) => (tr!("media-plugins-installing").to_string(), Some(1.0), false),
+                        // (nothing to try again when no pack exists for this system)
+                        PackState::Failed(failure) => (
+                            media_pack_error(failure).to_string(),
+                            None,
+                            !matches!(failure, aurora_updater::Failure::Unsupported),
+                        ),
+                        // not downloaded: never asked, or "Not now" on the card
+                        PackState::Idle => (
+                            tr!("media-plugins-not-downloaded", size = crate::ui::web_view::pack_megabytes()).to_string(),
+                            None,
+                            true,
+                        ),
+                        PackState::Ready => (tr!("media-plugins-missing").to_string(), None, false),
                     }
-                    PackState::Downloading(_) => (tr!("media-plugins-installing").to_string(), Some(1.0), false),
-                    // (nothing to try again when no pack exists for this system)
-                    PackState::Failed(failure) => (
-                        media_pack_error(failure).to_string(),
-                        None,
-                        !matches!(failure, aurora_updater::Failure::Unsupported),
-                    ),
-                    // not downloaded: never asked, or "Not now" on the card
-                    PackState::Idle => (
-                        tr!("media-plugins-not-downloaded", size = crate::ui::web_view::pack_megabytes()).to_string(),
-                        None,
-                        true,
-                    ),
-                    PackState::Ready => (tr!("media-plugins-missing").to_string(), None, false),
+                };
+                if let Some(fraction) = download {
+                    widgets::progress(ui, &p, "media_pack", fraction, SLIDER_W + 60.0, &status, None);
+                    return false;
                 }
-            };
-            if let Some(fraction) = download {
-                widgets::progress(ui, &p, "media_pack", fraction, SLIDER_W + 60.0, &status, None);
-                return false;
-            }
-            let (icon, label) = if matches!(st.media_pack, PackState::Idle) {
-                ("download-filled", tr!("media-plugins-download"))
-            } else {
-                ("refresh", tr!("media-plugins-retry"))
-            };
-            if retry && widgets::action_button(ui, &p, icon, label, widgets::ActionKind::Flat, egui::vec2(0.0, 24.0)).clicked() {
-                st.media_pack_download = true;
-            }
-            // the path of a folder, of any length: cut to the row (whole on
-            // hover)
-            ui.add(widgets::elided_label(ui, RichText::new(status).size(12.0).color(p.muted), 380.0));
-            false
-        });
+                let (icon, label) = if matches!(st.media_pack, PackState::Idle) {
+                    ("download-filled", tr!("media-plugins-download"))
+                } else {
+                    ("refresh", tr!("media-plugins-retry"))
+                };
+                if retry && widgets::action_button(ui, &p, icon, label, widgets::ActionKind::Flat, egui::vec2(0.0, 24.0)).clicked() {
+                    st.media_pack_download = true;
+                }
+                // the path of a folder, of any length: cut to the row (whole on
+                // hover)
+                ui.add(widgets::elided_label(ui, RichText::new(status).size(12.0).color(p.muted), 380.0));
+                false
+            });
     });
 }

@@ -136,7 +136,7 @@ pub fn page(cx: &mut Cx) {
             if let Handler::Other(program) = &handler {
                 cx.note(&tr!("ui-options-slurl-links-other", program = program.clone()));
             }
-            cx.row(
+            cx.link_as("system.slurl_links").row(
                 tr!("ui-options-slurl-links-open"),
                 tr!("ui-options-slurl-links-open-help"),
                 &Nothing,
@@ -164,7 +164,7 @@ pub fn page(cx: &mut Cx) {
     cx.group(tr!("ui-options-backup"), |cx| {
         use crate::ui::widgets::{ActionKind, action_button, action_button_if};
         let size = Vec2::new(0.0, 26.0);
-        cx.row_with(
+        cx.link_as("system.backup_save").row_with(
             tr!("ui-options-backup-save"),
             tr!("ui-options-backup-save-help"),
             &Nothing,
@@ -189,7 +189,7 @@ pub fn page(cx: &mut Cx) {
                 false
             },
         );
-        cx.row_with(
+        cx.link_as("system.backup_restore").row_with(
             tr!("ui-options-backup-restore"),
             tr!("ui-options-backup-restore-help"),
             &Nothing,
@@ -214,7 +214,7 @@ pub fn page(cx: &mut Cx) {
                 false
             },
         );
-        cx.row_with(
+        cx.link_as("system.legacy_lists").row_with(
             tr!("ui-options-legacy-lists"),
             tr!("ui-options-legacy-lists-help"),
             &Nothing,
@@ -249,7 +249,7 @@ pub fn page(cx: &mut Cx) {
     // it registered outside its folders, confirmed first
     cx.group(tr!("ui-options-remove-aurora"), |cx| {
         use crate::ui::widgets::{ActionKind, action_button};
-        cx.row_with(
+        cx.link_as("system.remove_aurora").row_with(
             tr!("ui-options-remove-aurora"),
             tr!("ui-options-remove-aurora-help"),
             &Nothing,

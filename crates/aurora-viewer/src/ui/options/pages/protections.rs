@@ -91,7 +91,8 @@ pub fn page(cx: &mut Cx) {
         );
         cx.greyed(false);
         cx.note(tr!("anti-spam-session-hint"));
-        cx.keywords(tr!("anti-spam-title"))
+        cx.link_as("protections.session_blocks")
+            .keywords(tr!("anti-spam-title"))
             .below()
             .row_with(tr!("anti-spam-session-blocks"), "", &Nothing, |ui, s, st, r| {
                 session(ui, &p, s.anti_spam.global, &st.anti_spam_blocks, r);

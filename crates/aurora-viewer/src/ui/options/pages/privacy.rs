@@ -48,19 +48,20 @@ fn account_group(cx: &mut Cx) {
     let p = cx.p;
     cx.group(tr!("ui-options-account-visibility"), |cx| {
         let Some(account) = cx.st.account.clone() else {
-            cx.row(tr!("ui-options-account-visibility"), "", &Nothing, |ui, _| {
-                ui.label(
-                    egui::RichText::new(tr!("ui-options-account-visibility-login"))
-                        .size(11.5)
-                        .color(p.muted),
-                );
-                false
-            });
+            cx.link_as("privacy.visibility")
+                .row(tr!("ui-options-account-visibility"), "", &Nothing, |ui, _| {
+                    ui.label(
+                        egui::RichText::new(tr!("ui-options-account-visibility-login"))
+                            .size(11.5)
+                            .color(p.muted),
+                    );
+                    false
+                });
             return;
         };
         let known = account.show_in_search.is_some();
         let mut publish = account.show_in_search.unwrap_or(false);
-        cx.row_with(
+        cx.link_as("privacy.show_in_search").row_with(
             tr!("ui-options-show-me-in-search"),
             tr!("ui-options-show-me-in-search-hint"),
             &Nothing,
@@ -75,7 +76,7 @@ fn account_group(cx: &mut Cx) {
         let info = account.info.clone();
         let mut hide = info.as_ref().is_some_and(UserInfo::hide_online);
         let editable = info.as_ref().is_some_and(UserInfo::visibility_editable);
-        cx.row_with(
+        cx.link_as("privacy.online_friends_only").row_with(
             tr!("ui-options-online-friends-only"),
             tr!("ui-options-online-friends-only-hint"),
             &Nothing,
@@ -88,7 +89,7 @@ fn account_group(cx: &mut Cx) {
         );
         if account.second_life {
             // the setting lives on the account's web page
-            cx.row(
+            cx.link_as("privacy.offline_im_email").row(
                 tr!("ui-options-offline-im-email"),
                 tr!("ui-options-offline-im-email-web-hint"),
                 &Nothing,
@@ -112,7 +113,7 @@ fn account_group(cx: &mut Cx) {
             let mut email = info.as_ref().is_some_and(|i| i.im_via_email);
             let address = info.as_ref().map(|i| shown_email(&i.email)).unwrap_or_default();
             let known = info.is_some();
-            cx.row_with(
+            cx.link_as("privacy.offline_im_email").row_with(
                 &tr!("ui-options-offline-im-email-to", email = address),
                 tr!("ui-options-offline-im-email-hint"),
                 &Nothing,
@@ -140,12 +141,13 @@ fn login_favorites_row(cx: &mut Cx) {
     } else {
         tr!("ui-options-login-favorites-login")
     };
-    cx.row_with(tr!("ui-options-login-favorites"), hint, &Nothing, |ui, _, _, r| {
-        if ui.add_enabled_ui(state.is_some(), |ui| toggle(ui, &p, &mut shown)).inner {
-            r.login_favorites = Some(shown);
-        }
-        false
-    });
+    cx.link_as("privacy.login_favorites")
+        .row_with(tr!("ui-options-login-favorites"), hint, &Nothing, |ui, _, _, r| {
+            if ui.add_enabled_ui(state.is_some(), |ui| toggle(ui, &p, &mut shown)).inner {
+                r.login_favorites = Some(shown);
+            }
+            false
+        });
 }
 
 pub(super) fn page(cx: &mut Cx) {
@@ -241,7 +243,7 @@ pub(super) fn page(cx: &mut Cx) {
         // the account's ceiling, while logged in
         if let Some(access) = cx.st.maturity {
             let p = cx.p;
-            cx.wide().row_with(
+            cx.link_as("privacy.content_rated").wide().row_with(
                 tr!("ui-options-content-rated"),
                 tr!("ui-options-content-rated-help"),
                 &Nothing,
@@ -271,7 +273,7 @@ pub(super) fn page(cx: &mut Cx) {
         // Always offered: reading the credential store at every frame to
         // hide it would cost more than a harmless click.
         let p = cx.p;
-        cx.keywords("GitHub").row(
+        cx.link_as("privacy.crash_github").keywords("GitHub").row(
             tr!("ui-options-crash-github"),
             tr!("ui-options-crash-github-hint"),
             &Nothing,

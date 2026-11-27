@@ -68,7 +68,7 @@ pub fn page(cx: &mut Cx) {
             &field!(spelling.extra),
             |ui, s| extra_dictionaries(ui, &p, &mut s.spelling, &catalogue),
         );
-        cx.wide().below().row_with(
+        cx.link_as("spelling.dictionaries").wide().below().row_with(
             tr!("ui-options-spelling-imported"),
             tr!("ui-options-spelling-imported-hint"),
             &Nothing,
@@ -85,7 +85,7 @@ pub fn page(cx: &mut Cx) {
             &field!(auto_replace),
         );
         // the lists stay editable while it is off: they can be made ready
-        cx.wide().below().row_with(
+        cx.link_as("spelling.auto_replace_lists").wide().below().row_with(
             tr!("ui-options-auto-replace-lists"),
             tr!("ui-options-auto-replace-lists-hint"),
             &Nothing,

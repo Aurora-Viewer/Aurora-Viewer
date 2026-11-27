@@ -60,7 +60,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     },
                 );
                 let p = cx.p;
-                cx.row(
+                cx.link_as("camera.preset_angles").row(
                     tr!("ui-options-camera-preset-angles"),
                     tr!("ui-options-camera-restores-the-preset-s-camera-position-and-focus-point"),
                     &Nothing,

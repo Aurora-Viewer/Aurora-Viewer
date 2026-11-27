@@ -1207,7 +1207,7 @@ fn history(cx: &mut Cx) {
     cx.group(tr!("ui-options-folder"), |cx| {
         cx.note(tr!("ui-options-chat-logs-note"));
         let p = cx.p;
-        cx.below().row_with(
+        cx.link_as("chat.logs_folder").below().row_with(
             tr!("ui-options-chat-logs-folder"),
             tr!("ui-options-chat-logs-folder-help"),
             &Nothing,

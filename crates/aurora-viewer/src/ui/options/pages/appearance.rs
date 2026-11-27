@@ -32,18 +32,20 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     0,
                 );
                 cx.note(tr!("ui-options-customize-colors-icons-and-the-toolbar-in"));
-                cx.below().row(tr!("ui-options-skin-folder"), "", &Nothing, |ui, _| {
-                    let dir = crate::settings::config_dir().join("skins").join("aurora");
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new(dir.display().to_string()).size(12.0).monospace().color(p.teal));
-                        ui.label(
-                            RichText::new(tr!("ui-options-theme-json-layout-json-icons-reloaded-automatically"))
-                                .size(11.0)
-                                .color(p.muted),
-                        );
+                cx.link_as("appearance.skin_folder")
+                    .below()
+                    .row(tr!("ui-options-skin-folder"), "", &Nothing, |ui, _| {
+                        let dir = crate::settings::config_dir().join("skins").join("aurora");
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(dir.display().to_string()).size(12.0).monospace().color(p.teal));
+                            ui.label(
+                                RichText::new(tr!("ui-options-theme-json-layout-json-icons-reloaded-automatically"))
+                                    .size(11.0)
+                                    .color(p.muted),
+                            );
+                        });
+                        false
                     });
-                    false
-                });
             });
         }
     }
@@ -168,22 +170,23 @@ fn interface_colors(cx: &mut Cx) {
             shown.text,
             skin.ink,
         );
-        cx.row(tr!("ui-options-all-interface-colors"), "", &Nothing, |ui, s| {
-            let reset = crate::ui::widgets::action_button_if(
-                ui,
-                &p,
-                "restore",
-                tr!("ui-options-reset-all"),
-                crate::ui::widgets::ActionKind::Flat,
-                egui::vec2(0.0, 26.0),
-                !s.interface_colors.is_default(),
-            )
-            .clicked();
-            if reset {
-                s.interface_colors = Default::default();
-            }
-            reset
-        });
+        cx.link_as("appearance.interface_colors")
+            .row(tr!("ui-options-all-interface-colors"), "", &Nothing, |ui, s| {
+                let reset = crate::ui::widgets::action_button_if(
+                    ui,
+                    &p,
+                    "restore",
+                    tr!("ui-options-reset-all"),
+                    crate::ui::widgets::ActionKind::Flat,
+                    egui::vec2(0.0, 26.0),
+                    !s.interface_colors.is_default(),
+                )
+                .clicked();
+                if reset {
+                    s.interface_colors = Default::default();
+                }
+                reset
+            });
         if !high_contrast {
             let adjusted = crate::interface_colors::adjusted(&cx.s.interface_colors);
             if adjusted.text {
@@ -256,7 +259,7 @@ fn font(cx: &mut Cx) {
                 }
                 false
             });
-        cx.row_with(
+        cx.link_as("appearance.system_fonts").row_with(
             tr!("ui-options-system-fonts"),
             tr!("ui-options-system-font-help"),
             &Nothing,
@@ -514,21 +517,22 @@ fn colors(cx: &mut Cx) {
     // the colours of the names are on Avatars › Name tags; every colour
     // back to its default, as the button of the former Colors page
     cx.group(tr!("ui-options-all-colors"), |cx| {
-        cx.row(tr!("ui-options-all-colors"), "", &Nothing, |ui, s| {
-            let reset = crate::ui::widgets::action_button(
-                ui,
-                &p,
-                "restore",
-                tr!("ui-options-default-colors"),
-                crate::ui::widgets::ActionKind::Flat,
-                egui::vec2(0.0, 26.0),
-            )
-            .clicked();
-            if reset {
-                s.colors = crate::settings::ColorSettings::default();
-            }
-            reset
-        });
+        cx.link_as("appearance.all_colors")
+            .row(tr!("ui-options-all-colors"), "", &Nothing, |ui, s| {
+                let reset = crate::ui::widgets::action_button(
+                    ui,
+                    &p,
+                    "restore",
+                    tr!("ui-options-default-colors"),
+                    crate::ui::widgets::ActionKind::Flat,
+                    egui::vec2(0.0, 26.0),
+                )
+                .clicked();
+                if reset {
+                    s.colors = crate::settings::ColorSettings::default();
+                }
+                reset
+            });
     });
 }
 

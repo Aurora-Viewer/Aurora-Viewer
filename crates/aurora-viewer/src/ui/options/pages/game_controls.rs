@@ -11,7 +11,7 @@
 //! waits for the next button pressed (or axis pushed past half), any of the
 //! 32 buttons (LL's capture cannot take Misc1 nor buttons 21 to 31).
 
-use super::super::cx::{Custom, Cx, F, Nothing, field};
+use super::super::cx::{Custom, Cx, F, LinkPart, Nothing, field};
 use crate::game_control::{
     self as gc, AXIS_NAMES, AXIS_NONE, AXIS_TRIGGERS, BUTTON_NONE, DeviceView, Mode, NUM_AXES, NUM_BUTTONS,
     device::{self, AXIS_OUTPUT_NONE, AXIS_OUTPUT_TRIGGER_PAIR, MAX_AXIS_DEAD_ZONE, MAX_AXIS_OFFSET, Options},
@@ -341,7 +341,7 @@ fn actions_tab(cx: &mut Cx) {
         .st
         .game_control_mode
         .unwrap_or(if live == Mode::None { Mode::Avatar } else { live });
-    cx.row_with(
+    cx.link_as("game_controls.edit_mode").row_with(
         tr!("game-control-edit-mode"),
         tr!("game-control-edit-mode-hint"),
         &Nothing,
@@ -403,7 +403,7 @@ fn mode_rows(cx: &mut Cx, mode: Mode) {
                 "×",
             );
         }
-        cx.row(
+        cx.link_as("game_controls.restore_actions").row(
             tr!("game-control-restore-actions"),
             tr!("game-control-restore-actions-hint"),
             &Nothing,
@@ -471,95 +471,101 @@ fn binding_row(cx: &mut Cx, mode: Mode, axis: bool, action: Action) {
     };
     let roll_off = mode == Mode::Flycam && action.is_roll() && !cx.s.game_control.flycam_allow_roll;
     let this = Capture { mode, axis, action };
-    cx.row_with(action_name(mode, action), hint, &track, |ui, s, st, _| {
-        let current = bound(&map(s), label, none);
-        let mut chosen: Option<String> = None;
-        ui.horizontal(|ui| {
-            let text = match &current {
-                Some(input) if axis => axis_input_label(input).to_owned(),
-                Some(input) => button_input_label(input),
-                None => tr!("common-none").to_owned(),
-            };
-            let text = with_glyph(ui, current.as_deref().unwrap_or(none), &text, None);
-            egui::ComboBox::from_id_salt(("game-control-binding", mode as u8, axis, label))
-                .selected_text(text)
-                .show_ui(ui, |ui| {
-                    if axis {
-                        for (name, index) in AXIS_INPUTS {
-                            if ui
-                                .selectable_label(
-                                    current.as_deref().unwrap_or(AXIS_NONE) == name,
-                                    with_glyph(ui, name, axis_input_name(index), None),
-                                )
-                                .clicked()
-                            {
-                                chosen = Some(name.to_owned());
-                            }
-                        }
-                    } else {
-                        for i in 0..NUM_BUTTONS {
-                            let name = gc::button_name(i);
-                            if ui
-                                .selectable_label(
-                                    current.as_deref() == Some(name.as_str()),
-                                    with_glyph(ui, &name, &button_input_name(i), None),
-                                )
-                                .clicked()
-                            {
-                                chosen = Some(name);
-                            }
-                        }
-                        if ui.selectable_label(current.is_none(), tr!("common-none")).clicked() {
-                            chosen = Some(BUTTON_NONE.to_owned());
-                        }
-                    }
-                });
-            let waiting = st.game_control_capture == Some(this);
-            let tip = if waiting {
-                tr!("game-control-capture-waiting")
-            } else {
-                tr!("game-control-capture")
-            };
-            if widgets::icon_button(ui, &p, "player-record-filled", tip, !roll_off) {
-                st.game_control_capture = if waiting { None } else { Some(this) };
-            }
-            if waiting {
-                let found = match st.game_control.active {
-                    Some(ActiveInput::Axis(i, _)) if axis => Some(if i >= 4 {
-                        AXIS_TRIGGERS.to_owned()
-                    } else {
-                        AXIS_NAMES[i].to_owned()
-                    }),
-                    Some(ActiveInput::Button(i)) if !axis => Some(gc::button_name(i)),
-                    _ => None,
+    // one link per binding: the row shares its mode's mappings with the others
+    cx.link_as(format_args!("{}.{}", mode_path(mode), LinkPart(label))).row_with(
+        action_name(mode, action),
+        hint,
+        &track,
+        |ui, s, st, _| {
+            let current = bound(&map(s), label, none);
+            let mut chosen: Option<String> = None;
+            ui.horizontal(|ui| {
+                let text = match &current {
+                    Some(input) if axis => axis_input_label(input).to_owned(),
+                    Some(input) => button_input_label(input),
+                    None => tr!("common-none").to_owned(),
                 };
-                if let Some(input) = found {
-                    chosen = Some(input);
-                    st.game_control_capture = None;
+                let text = with_glyph(ui, current.as_deref().unwrap_or(none), &text, None);
+                egui::ComboBox::from_id_salt(("game-control-binding", mode as u8, axis, label))
+                    .selected_text(text)
+                    .show_ui(ui, |ui| {
+                        if axis {
+                            for (name, index) in AXIS_INPUTS {
+                                if ui
+                                    .selectable_label(
+                                        current.as_deref().unwrap_or(AXIS_NONE) == name,
+                                        with_glyph(ui, name, axis_input_name(index), None),
+                                    )
+                                    .clicked()
+                                {
+                                    chosen = Some(name.to_owned());
+                                }
+                            }
+                        } else {
+                            for i in 0..NUM_BUTTONS {
+                                let name = gc::button_name(i);
+                                if ui
+                                    .selectable_label(
+                                        current.as_deref() == Some(name.as_str()),
+                                        with_glyph(ui, &name, &button_input_name(i), None),
+                                    )
+                                    .clicked()
+                                {
+                                    chosen = Some(name);
+                                }
+                            }
+                            if ui.selectable_label(current.is_none(), tr!("common-none")).clicked() {
+                                chosen = Some(BUTTON_NONE.to_owned());
+                            }
+                        }
+                    });
+                let waiting = st.game_control_capture == Some(this);
+                let tip = if waiting {
+                    tr!("game-control-capture-waiting")
+                } else {
+                    tr!("game-control-capture")
+                };
+                if widgets::icon_button(ui, &p, "player-record-filled", tip, !roll_off) {
+                    st.game_control_capture = if waiting { None } else { Some(this) };
                 }
-            }
-            if axis {
-                let mut invert = s.game_control.axis_invert(mode, label);
-                let enabled = current.is_some() && !roll_off;
-                let changed = ui
-                    .add_enabled_ui(enabled, |ui| {
-                        widgets::checkbox(ui, &p, &mut invert, tr!("game-control-invert")).changed()
-                    })
-                    .inner;
-                if changed {
-                    s.game_control.set_axis_invert(mode, label, invert);
-                    chosen.get_or_insert_with(|| current.clone().unwrap_or_else(|| none.to_owned()));
+                if waiting {
+                    let found = match st.game_control.active {
+                        Some(ActiveInput::Axis(i, _)) if axis => Some(if i >= 4 {
+                            AXIS_TRIGGERS.to_owned()
+                        } else {
+                            AXIS_NAMES[i].to_owned()
+                        }),
+                        Some(ActiveInput::Button(i)) if !axis => Some(gc::button_name(i)),
+                        _ => None,
+                    };
+                    if let Some(input) = found {
+                        chosen = Some(input);
+                        st.game_control_capture = None;
+                    }
                 }
+                if axis {
+                    let mut invert = s.game_control.axis_invert(mode, label);
+                    let enabled = current.is_some() && !roll_off;
+                    let changed = ui
+                        .add_enabled_ui(enabled, |ui| {
+                            widgets::checkbox(ui, &p, &mut invert, tr!("game-control-invert")).changed()
+                        })
+                        .inner;
+                    if changed {
+                        s.game_control.set_axis_invert(mode, label, invert);
+                        chosen.get_or_insert_with(|| current.clone().unwrap_or_else(|| none.to_owned()));
+                    }
+                }
+            });
+            let Some(input) = chosen else { return false };
+            // (roll off: a roll action may only be cleared)
+            if roll_off && input != none {
+                return false;
             }
-        });
-        let Some(input) = chosen else { return false };
-        // (roll off: a roll action may only be cleared)
-        if roll_off && input != none {
-            return false;
-        }
-        s.game_control.bind_exclusive(mode, axis, label, &input);
-        true
-    });
+            s.game_control.bind_exclusive(mode, axis, label, &input);
+            true
+        },
+    );
 }
 
 /// The devices a tab lists: the connected ones, and with `all` the ones
@@ -588,23 +594,24 @@ fn device_picker(cx: &mut Cx, all: bool) -> Option<String> {
         cx.st.game_control_device = list[0].0.clone();
     }
     let picked = cx.st.game_control_device.clone();
-    cx.row_with(tr!("game-control-device"), "", &Nothing, |ui, _, st, _| {
-        let name = list
-            .iter()
-            .find(|(id, _)| *id == picked)
-            .map_or(picked.as_str(), |(_, n)| n.as_str());
-        egui::ComboBox::from_id_salt("game-control-device")
-            .selected_text(name)
-            .show_ui(ui, |ui| {
-                for (id, name) in &list {
-                    if ui.selectable_label(*id == picked, name).clicked() {
-                        st.game_control_device = id.clone();
-                        st.game_control_calibration = None;
+    cx.link_as("game_controls.device")
+        .row_with(tr!("game-control-device"), "", &Nothing, |ui, _, st, _| {
+            let name = list
+                .iter()
+                .find(|(id, _)| *id == picked)
+                .map_or(picked.as_str(), |(_, n)| n.as_str());
+            egui::ComboBox::from_id_salt("game-control-device")
+                .selected_text(name)
+                .show_ui(ui, |ui| {
+                    for (id, name) in &list {
+                        if ui.selectable_label(*id == picked, name).clicked() {
+                            st.game_control_device = id.clone();
+                            st.game_control_calibration = None;
+                        }
                     }
-                }
-            });
-        false
-    });
+                });
+            false
+        });
     Some(cx.st.game_control_device.clone())
 }
 
@@ -627,16 +634,17 @@ fn save_device(s: &mut Settings, id: &str, name: &str, options: &Options) {
 fn device_mappings_tab(cx: &mut Cx) {
     let p = cx.p;
     let mut all = cx.st.game_control_show_all;
-    cx.row(tr!("game-control-show-all-devices"), "", &Nothing, |ui, _| {
-        widgets::switch(ui, &p, &mut all);
-        false
-    });
+    cx.link_as("game_controls.show_all_devices")
+        .row(tr!("game-control-show-all-devices"), "", &Nothing, |ui, _| {
+            widgets::switch(ui, &p, &mut all);
+            false
+        });
     cx.st.game_control_show_all = all;
     let Some(id) = device_picker(cx, all) else { return };
     let devices = cx.st.game_control.devices.clone();
     {
         let (id, devices) = (id.clone(), devices.clone());
-        cx.row(
+        cx.link_as("game_controls.restore_device").row(
             tr!("game-control-restore-device"),
             tr!("game-control-restore-device-hint"),
             &Nothing,
@@ -717,7 +725,7 @@ fn device_options_tab(cx: &mut Cx) {
     let live = devices.iter().find(|d| d.id == id).cloned().unwrap_or_default();
     {
         let (id, devices) = (id.clone(), devices.clone());
-        cx.row(
+        cx.link_as("game_controls.restore_device_options").row(
             tr!("game-control-restore-device-options"),
             tr!("game-control-restore-device-options-hint"),
             &Nothing,
@@ -734,7 +742,7 @@ fn device_options_tab(cx: &mut Cx) {
     }
     {
         let id = id.clone();
-        cx.row_with(
+        cx.link_as("game_controls.auto_calibrate").row_with(
             tr!("game-control-auto-calibrate"),
             tr!("game-control-auto-calibrate-hint"),
             &Nothing,
