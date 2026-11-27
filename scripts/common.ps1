@@ -428,13 +428,17 @@ function Get-BranchHeadOwners([string]$Dir, [string]$Branch) {
 }
 
 # The newest of $Prs (gh pr list JSON, newest first) whose head is in the
-# repository of one of $Owners, and whose head commit passes $HasHead when
-# given: another contributor's PR from a branch of the same name (main,
-# fix/...) is not ours.
-function Select-BranchPr($Prs, [string[]]$Owners, [scriptblock]$HasHead) {
+# repository of one of $Owners: another contributor's PR from a branch of
+# the same name (main, fix/...) is not ours. With $Tip, a commit of the
+# repository in $Dir, only a PR whose head holds it (Test-CommitIn).
+# The commit check is called here, not handed over as a script block: one
+# made with GetNewClosure() only finds the functions of the global scope,
+# not those a called script dot-sourced, so end-task.ps1 got "Test-CommitIn
+# is not recognized" and no PR, merged or not.
+function Select-BranchPr($Prs, [string[]]$Owners, [string]$Dir, [string]$Tip) {
     foreach ($pr in $Prs) {
         if (-not $pr.headRepositoryOwner -or $Owners -notcontains $pr.headRepositoryOwner.login) { continue }
-        if ($HasHead -and -not (& $HasHead $pr.headRefOid)) { continue }
+        if ($Tip -and -not (Test-CommitIn $Dir $Tip $pr.headRefOid)) { continue }
         return $pr
     }
 }
@@ -477,11 +481,10 @@ function Get-BranchPr([string]$Dir, [string]$Branch, [switch]$AllCommits) {
     # pipeline as one object
     $prs = ($json -join "`n") | ConvertFrom-Json
     if (-not $prs) { return }
-    $hasHead = $null
+    $tip = $null
     if ($AllCommits) {
         $tip = git -C $Dir rev-parse --verify --quiet "refs/heads/$Branch" 2>$null
         if (-not $tip) { return }
-        $hasHead = { param($Oid) Test-CommitIn $Dir $tip $Oid }.GetNewClosure()
     }
-    Select-BranchPr $prs (Get-BranchHeadOwners $Dir $Branch) $hasHead
+    Select-BranchPr $prs (Get-BranchHeadOwners $Dir $Branch) $Dir $tip
 }
