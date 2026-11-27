@@ -175,25 +175,45 @@ fn position(rect: Rect, layer: &Layer, i: u32, t: f32, margin: f32) -> Pos2 {
     Pos2::new(rect.left() - margin + x.rem_euclid(span_x), rect.top() + y)
 }
 
-/// A soft round dot: a bright core and a halo that fades to nothing, so the
-/// edge stays smooth at any size.
-fn dot(mesh: &mut Mesh, center: Pos2, radius: f32, halo: f32, core: Color32) {
-    const SEG: u32 = 10;
+/// The rings of a dot, from its centre (fraction of its outer radius,
+/// fraction of the core's opacity). A sharp flake: a solid core of `1/halo`
+/// and a halo that fades out. A blurred one: a gaussian, rings close enough
+/// that the falloff shows no bands.
+fn rings(halo: f32, blurred: bool) -> Vec<(f32, f32)> {
+    if blurred {
+        let gauss = |u: f32| ((-4.5 * u * u).exp() - (-4.5f32).exp()) / (1.0 - (-4.5f32).exp());
+        [0.15, 0.3, 0.45, 0.6, 0.75, 0.88, 1.0].iter().map(|&u| (u, gauss(u))).collect()
+    } else {
+        let core = 1.0 / halo;
+        vec![(core, 0.8), (core + (1.0 - core) * 0.45, 0.22), (1.0, 0.0)]
+    }
+}
+
+/// A soft round dot: centre `core` opacity, then `rings`. The number of
+/// sides follows the size, so a large blurred flake stays round.
+fn dot(mesh: &mut Mesh, center: Pos2, outer: f32, rings: &[(f32, f32)], core: Color32) {
+    let seg = ((outer * 0.8) as u32).clamp(8, 32);
     let i = mesh.vertices.len() as u32;
     mesh.vertices.push(v(center, core));
-    let rim = core.gamma_multiply(0.8);
-    for ring in [(radius, rim), (radius * halo, Color32::TRANSPARENT)] {
-        for s in 0..SEG {
-            let a = s as f32 / SEG as f32 * std::f32::consts::TAU;
-            mesh.vertices.push(v(center + egui::vec2(a.cos(), a.sin()) * ring.0, ring.1));
+    for &(u, k) in rings {
+        for s in 0..seg {
+            let a = s as f32 / seg as f32 * std::f32::consts::TAU;
+            mesh.vertices
+                .push(v(center + egui::vec2(a.cos(), a.sin()) * outer * u, core.gamma_multiply(k)));
         }
     }
-    for s in 0..SEG {
-        let (a0, a1) = (i + 1 + s, i + 1 + (s + 1) % SEG);
-        let (b0, b1) = (a0 + SEG, a1 + SEG);
+    for s in 0..seg {
+        let (a0, a1) = (i + 1 + s, i + 1 + (s + 1) % seg);
         mesh.add_triangle(i, a0, a1);
-        mesh.add_triangle(a0, b0, b1);
-        mesh.add_triangle(a0, b1, a1);
+    }
+    for ring in 0..rings.len() as u32 - 1 {
+        for s in 0..seg {
+            let a0 = i + 1 + ring * seg + s;
+            let a1 = i + 1 + ring * seg + (s + 1) % seg;
+            let (b0, b1) = (a0 + seg, a1 + seg);
+            mesh.add_triangle(a0, b0, b1);
+            mesh.add_triangle(a0, b1, a1);
+        }
     }
 }
 
@@ -202,29 +222,34 @@ pub(super) fn color(p: &Palette) -> Color32 {
     mix(Color32::WHITE, p.violet_pale, 0.14)
 }
 
-/// The flakes of one depth. `amount` (0–1) thins and fades them; `soft` is
-/// the view through a frosted pane: no far flakes, the others twice as
-/// wide and faint.
-pub(super) fn flakes(p: &Palette, rect: Rect, t: f32, amount: f32, depth: Depth, soft: bool) -> Option<Shape> {
+/// The flakes of one depth over the sky `rect`, those that reach `visible`
+/// only. `amount` (0–1) thins and fades them; `soft` is the view through a
+/// frosted pane: no far flakes, the others blurred, wider and fainter.
+pub(super) fn flakes(p: &Palette, rect: Rect, visible: Rect, t: f32, amount: f32, depth: Depth, soft: bool) -> Option<Shape> {
     if amount <= 0.0 || (soft && depth == Depth::Far) {
         return None;
     }
     let layer = depth.layer();
     let area = (rect.width() * rect.height() / (1920.0 * 1080.0)).clamp(0.25, 2.5);
     let count = (layer.count * area * amount.min(1.0)).round() as u32;
-    let (grow, alpha, halo) = if soft { (2.6, 0.30, 2.6) } else { (1.0, 1.0, 2.0) };
+    let (grow, alpha, halo) = if soft { (2.6, 0.40, 2.6) } else { (1.0, 1.0, 2.0) };
+    let rings = rings(halo, soft);
     let snow = color(p);
     let margin = layer.radius.1 * grow * halo + layer.sway * 1.4;
     let mut mesh = Mesh::default();
     for i in 0..count {
         let pos = position(rect, &layer, i, t, margin);
         let r = (layer.radius.0 + (layer.radius.1 - layer.radius.0) * hash(layer.seed + i * 7 + 5)) * grow;
+        let outer = r * halo;
+        if !visible.expand(outer).contains(pos) {
+            continue;
+        }
         // a few flakes catch more light than the others
         let glint = 0.75 + 0.25 * hash(layer.seed + i * 7 + 6);
         let core = snow.gamma_multiply((layer.alpha * glint * alpha * amount).clamp(0.0, 1.0));
-        dot(&mut mesh, pos, r, halo, core);
+        dot(&mut mesh, pos, outer, &rings, core);
     }
-    Some(Shape::mesh(mesh))
+    (!mesh.is_empty()).then(|| Shape::mesh(mesh))
 }
 
 /// Strength of the frosting on a crest: only the parts of the ridgeline that
@@ -294,10 +319,10 @@ mod tests {
     fn the_frosted_view_has_no_far_flakes_and_no_snow_means_nothing_drawn() {
         let p = crate::theme::Theme::default().skin_palette();
         let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(1920.0, 1080.0));
-        assert!(flakes(&p, rect, 3.0, 1.0, Depth::Far, true).is_none());
-        assert!(flakes(&p, rect, 3.0, 1.0, Depth::Near, true).is_some());
+        assert!(flakes(&p, rect, rect, 3.0, 1.0, Depth::Far, true).is_none());
+        assert!(flakes(&p, rect, rect, 3.0, 1.0, Depth::Near, true).is_some());
         for depth in [Depth::Far, Depth::Middle, Depth::Near] {
-            assert!(flakes(&p, rect, 3.0, 0.0, depth, false).is_none());
+            assert!(flakes(&p, rect, rect, 3.0, 0.0, depth, false).is_none());
         }
     }
 

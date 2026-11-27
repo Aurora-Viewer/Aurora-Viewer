@@ -49,7 +49,7 @@ fn gradient(mesh: &mut Mesh, r: Rect, top: Color32, bottom: Color32) {
 /// Paint the background over `rect`; `t` = time in seconds, `alpha` fades it,
 /// `snow` (0–1, `snow::amount`) is how much it snows.
 pub fn paint(painter: &egui::Painter, p: &Palette, rect: Rect, t: f32, alpha: f32, snow: f32) {
-    painter.extend(shapes(p, rect, t, alpha, false, snow));
+    painter.extend(shapes(p, rect, rect, t, alpha, false, snow));
 }
 
 /// The background as a frosted pane shows it: the same sky at the same
@@ -57,9 +57,10 @@ pub fn paint(painter: &egui::Painter, p: &Palette, rect: Rect, t: f32, alpha: f3
 /// their edges and the ridgelines feathered). The cards of the login screen
 /// draw it under their tint: the blur of the in-world windows only knows the
 /// 3D scene, and there is none behind them. The snow shows through too,
-/// blurred, where it falls outside.
-pub fn frosted(p: &Palette, rect: Rect, t: f32, snow: f32) -> Vec<Shape> {
-    shapes(p, rect, t, 1.0, true, snow)
+/// blurred, where it falls outside; only the flakes that reach `visible` are
+/// drawn.
+pub fn frosted(p: &Palette, rect: Rect, visible: Rect, t: f32, snow: f32) -> Vec<Shape> {
+    shapes(p, rect, visible, t, 1.0, true, snow)
 }
 
 /// Shared login glass: a softened sky under the skin's lighter panel tint.
@@ -67,7 +68,7 @@ pub const LOGIN_TINT: f32 = 0.56;
 
 /// The sky shown through a login card, with its own lights and panel tint.
 pub fn frosted_pane(p: &Palette, screen: Rect, t: f32, pane: Rect, lights: Vec<Shape>, snow: f32) -> Vec<Shape> {
-    let mut out = frosted(p, screen, t, snow);
+    let mut out = frosted(p, screen, pane, t, snow);
     out.extend(lights);
     let alpha = (f32::from(p.panel_alpha) * LOGIN_TINT) as u8;
     out.push(Shape::rect_filled(
@@ -78,7 +79,9 @@ pub fn frosted_pane(p: &Palette, screen: Rect, t: f32, pane: Rect, lights: Vec<S
     out
 }
 
-fn shapes(p: &Palette, rect: Rect, t: f32, alpha: f32, soft: bool, snow: f32) -> Vec<Shape> {
+/// `visible`: the part of `rect` that will show (the flakes elsewhere are
+/// skipped).
+fn shapes(p: &Palette, rect: Rect, visible: Rect, t: f32, alpha: f32, soft: bool, snow: f32) -> Vec<Shape> {
     let mut out = Vec::new();
     let a = alpha.clamp(0.0, 1.0);
     // the flakes fade with the sky
@@ -228,7 +231,7 @@ fn shapes(p: &Palette, rect: Rect, t: f32, alpha: f32, soft: bool, snow: f32) ->
             out.push(Shape::mesh(caps));
         }
     };
-    let flakes = |out: &mut Vec<Shape>, depth| out.extend(snow::flakes(p, rect, t, snow, depth, soft));
+    let flakes = |out: &mut Vec<Shape>, depth| out.extend(snow::flakes(p, rect, visible, t, snow, depth, soft));
     flakes(&mut out, snow::Depth::Far);
     ridge(&mut out, 0.7, 0.86, 0.16, fade(mix(p.navy, p.indigo, 0.16)), 0.42);
     flakes(&mut out, snow::Depth::Middle);
