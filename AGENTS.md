@@ -842,25 +842,28 @@ follows the steps below; on Linux the scripts run as `pwsh
    done.
 6. **Whatever the author has to change** (a conflict, a test broken on the
    merge with `main`, a finding, a failing test): ask your human whether
-   you fix it yourself on the author's branch (when it allows maintainers'
-   pushes and the fix is small and sure: merge `main`, fix, `check.ps1`,
-   push, wait for green) or post the `## Changes requested`.
-7. **Post the review yourself**, naming the head it read, then end the
-   review worktree (`end-task.ps1 -Name review-<n> -Force`, once nothing
-   is left to push).
+   you fix it yourself on the author's branch (when you may push to it: a
+   branch of this repository, or a fork that allows maintainers' pushes;
+   and the fix is small and sure: merge `main`, fix, `check.ps1`, push,
+   wait for green) or post the `## Changes requested`.
+7. **Post the review yourself** (below), naming the PR's head it read
+   (never the worktree's local merge), then end the review worktree
+   (`end-task.ps1 -Name review-<n> -Force`, once nothing is left to
+   push).
 8. **The merge** of a ✅ PR is a question your human answers (rule 5),
    then `merge-pr.ps1`; once merged, the Status of the issues it closes
    (`issue-board.ps1`, section 15).
 
-Then post the review as a comment (`gh pr comment <n> --body-file …`). The
-file given to `--body-file` (like the one of the PR description) is a draft
-in `.scratch/`, never committed: the review lives in the PR comment, not in
-the repository. **Someone else's PR** is reviewed only once its description
-is complete (no `needs-description` label) and its PR CI is green: an
-outside contributor's CI waits for a maintainer's "Approve and run", so ask
-your human to approve it, once you have read its diff and checked its
-conflicts with `main` (step 3 above), naming anything it changes that CI
-runs. When you ask the
+The review, of your own PR or of someone else's, is posted as a comment
+(`gh pr comment <n> --body-file …`). The file given to `--body-file` (like
+the one of the PR description) is a draft in `.scratch/`, never committed:
+the review lives in the PR comment, not in the repository. **Someone
+else's PR** is reviewed only once its description is complete (no
+`needs-description` label), and gets its verdict only once its PR CI is
+green: an outside contributor's CI waits for a maintainer's "Approve and
+run", so ask your human to approve it, once you have read its diff and
+checked its conflicts with `main` (step 3 above), naming anything it
+changes that CI or a local build runs. When you ask the
 author of someone else's PR for changes,
 open that comment with `## Changes requested`: the PR tracking of
 `aurora-tools.cmd` lists the PR as waiting on its author until a new
