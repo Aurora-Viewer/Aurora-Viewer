@@ -580,6 +580,106 @@ impl Emoji {
         out
     }
 
+    /// A text already laid out by egui, painted with its colour emoji.
+    ///
+    /// egui's text only draws glyphs with an outline, so a colour emoji is
+    /// the "no glyph" square ([`Emoji::has`] is the font of pictures). The
+    /// glyph is made transparent and the picture drawn over it, as
+    /// `text_field` does for a field: the galley, its wrapping and the
+    /// character boxes its callers use stay the ones egui laid out (the
+    /// nearby chat lines above the bar, #5097).
+    ///
+    /// `alpha` fades the pictures; a caller whose painter is already faded
+    /// (`Painter::multiply_opacity`) passes 1.0.
+    pub fn paint_galley(
+        &mut self,
+        painter: &egui::Painter,
+        origin: egui::Pos2,
+        galley: std::sync::Arc<egui::Galley>,
+        size: f32,
+        color: egui::Color32,
+        alpha: f32,
+    ) {
+        let alpha = alpha.clamp(0.0, 1.0);
+        if !self.available() || alpha <= 0.0 {
+            painter.galley(origin, galley, color);
+            return;
+        }
+        let s = emoji_side(size) * super::fonts::scale(painter.ctx());
+        let full = s * painter.ctx().pixels_per_point() > DECODED as f32;
+        // The glyphs egui keeps are one per character (as `text_field`
+        // relies on); the glyph's `chr` alone cannot tell the variation
+        // selector of ❤️ from the heart it points at. A row's hard newline
+        // is not one of the row's glyphs.
+        let mut pictures = Vec::new();
+        let mut clears = Vec::new();
+        let mut chars = galley.text().chars();
+        for (row, placed) in galley.rows.iter().enumerate() {
+            for (i, glyph) in placed.row.glyphs.iter().enumerate() {
+                let Some(c) = chars.next() else { break };
+                let picture = c != '\u{FE0F}' && c != '\u{200D}' && self.has(c);
+                if picture {
+                    pictures.push((
+                        c,
+                        egui::pos2(
+                            origin.x + placed.pos.x + glyph.pos.x + glyph.advance_width * 0.5,
+                            origin.y + placed.pos.y + placed.row.size.y * 0.5,
+                        ),
+                        // no wider than the glyph's cell: the picture would
+                        // cover the colon or letter after the name (a line
+                        // above the bar)
+                        glyph.advance_width,
+                    ));
+                }
+                if picture || c == '\u{FE0F}' || c == '\u{200D}' {
+                    clears.push((row, i));
+                }
+            }
+            if placed.ends_with_newline {
+                chars.next();
+            }
+        }
+        if pictures.is_empty() {
+            painter.galley(origin, galley, color);
+            return;
+        }
+        // the square egui drew under each picture, made invisible (its
+        // vertices alone: the row and every character box stay put)
+        let mut galley = galley;
+        {
+            let galley = std::sync::Arc::make_mut(&mut galley);
+            for (row, i) in clears {
+                let Some(placed) = galley.rows.get_mut(row) else { continue };
+                let row = std::sync::Arc::make_mut(&mut placed.row);
+                let end = row.visuals.glyph_vertex_range.end as u32;
+                let Some(glyph) = row.glyphs.get(i) else { continue };
+                let to = row.glyphs.get(i + 1).map_or(end, |next| next.first_vertex);
+                for v in row
+                    .visuals
+                    .mesh
+                    .vertices
+                    .get_mut(glyph.first_vertex as usize..to as usize)
+                    .unwrap_or_default()
+                {
+                    v.color = egui::Color32::TRANSPARENT;
+                }
+            }
+        }
+        painter.galley(origin, galley, color);
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        for (c, at, advance) in pictures {
+            if let Some(t) = self.texture_sized(painter.ctx(), c, full) {
+                let side = if advance > 0.0 { s.min(advance) } else { s };
+                painter.image(
+                    t.id(),
+                    egui::Rect::from_center_size(at, egui::vec2(side, side)),
+                    uv,
+                    super::widgets::PICTURE_TINT.gamma_multiply(alpha),
+                );
+            }
+        }
+    }
+
     /// A clickable emoji in the rect of `resp`, the picker's and the recent
     /// row's: the pill under the pointer, the picture, a small star on a
     /// `favorite`, its shortcode. Also whether its right-click menu asked to
@@ -952,5 +1052,51 @@ mod tests {
         frame(&mut frames, &mut emoji, true, vec![]);
         frame(&mut frames, &mut emoji, true, vec![]);
         assert!(frames.ctx.memory(|m| m.has_focus(egui::Id::unique(SEARCH_ID))));
+    }
+
+    /// The pictures `paint_galley` draws for a text laid out by egui, and the
+    /// characters of its galley (which must stay the text's).
+    fn painted_galley(text: &str) -> (usize, String) {
+        let mut frames = Frames::new();
+        let mut emoji = Emoji::load();
+        let mut shown = String::new();
+        let draw = |frames: &mut Frames, emoji: &mut Emoji, shown: &mut String| {
+            frames.shapes(Vec::new(), |ui| {
+                let galley = crate::ui::bidi::no_wrap(ui.ctx(), text.to_owned(), egui::FontId::proportional(13.0), egui::Color32::WHITE);
+                shown.clear();
+                shown.push_str(galley.text());
+                emoji.paint_galley(ui.painter(), egui::Pos2::ZERO, galley, 13.0, egui::Color32::WHITE, 1.0);
+            })
+        };
+        // two passes: a picture's texture is only ready for the second one
+        draw(&mut frames, &mut emoji, &mut shown);
+        let shapes = draw(&mut frames, &mut emoji, &mut shown);
+        let textured = |shape: &egui::Shape| match shape {
+            egui::epaint::Shape::Mesh(m) => m.texture_id != egui::TextureId::default(),
+            egui::epaint::Shape::Rect(r) => r.brush.as_ref().is_some_and(|b| b.fill_texture_id != egui::TextureId::default()),
+            _ => false,
+        };
+        (shapes.iter().filter(|s| textured(s)).count(), shown.clone())
+    }
+
+    /// A text egui laid out (a nearby-chat toast, #5097) shows its emoji as
+    /// pictures, and keeps the characters of its galley for the link and
+    /// sender boxes its callers take from it.
+    #[test]
+    fn a_laid_out_line_draws_its_emoji_as_pictures() {
+        let loaded = Emoji::load();
+        assert!(loaded.available(), "the emoji font is loaded");
+        assert!(loaded.has('🫶'), "the font draws the heart hands");
+        assert_eq!(painted_galley("Anya : 🫶").0, 1, "the heart hands is a picture");
+        assert_eq!(painted_galley("🫶").0, 1, "an emoji alone too");
+        assert_eq!(painted_galley("plain words").0, 0, "no emoji, no picture");
+        assert_eq!(painted_galley("❤️").0, 1, "the variation selector is not a second picture");
+        assert_eq!(painted_galley("😀 a 😀").0, 2, "one picture per emoji");
+        let (pictures, shown) = painted_galley("مرحبا 😀");
+        assert_eq!(pictures, 1, "an emoji in a right-to-left line");
+        assert!(
+            shown.contains("مرحبا") && shown.contains('😀'),
+            "the laid-out characters stay the text's: {shown:?}"
+        );
     }
 }
