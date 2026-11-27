@@ -379,6 +379,113 @@ impl Emoji {
         flush(ui, &mut run);
     }
 
+    /// A one-line text with its colour emoji, cut at `width` with an ellipsis
+    /// like [`crate::ui::widgets::paint_elided`]: the previews of the
+    /// conversation list, where egui's own text would draw a square for
+    /// every emoji the system has no outline for (#4974: 🫶 on macOS).
+    /// `left_center` is the row's left and the middle of its letters; the
+    /// pictures take the side [`emoji_side`] gives `font.size`, as in
+    /// `inline`. Returns true when the text was cut.
+    pub fn elided_row(
+        &mut self,
+        ui: &egui::Ui,
+        text: &str,
+        font: egui::FontId,
+        color: egui::Color32,
+        left_center: egui::Pos2,
+        width: f32,
+    ) -> bool {
+        if text.is_empty() {
+            return false;
+        }
+        if !self.available() || super::bidi::has_rtl(text) || !text.chars().any(|c| self.has(c)) {
+            return super::widgets::paint_elided(ui, text, left_center, width, font, color);
+        }
+        // less room than the ellipsis itself: nothing readable to paint
+        if width < font.size {
+            return true;
+        }
+        let s = emoji_side(font.size) * super::fonts::scale(ui.ctx());
+        let full = s * ui.ctx().pixels_per_point() > DECODED as f32;
+        // the text split into runs and pictures, as `inline` walks it
+        enum Piece<'a> {
+            Text(&'a str, std::sync::Arc<egui::Galley>),
+            Emoji(egui::TextureHandle),
+        }
+        let layout = |t: &str| ui.fonts_mut(|f| f.layout_no_wrap(t.to_owned(), font.clone(), color));
+        let mut pieces = Vec::new();
+        let mut total = 0.0;
+        let mut start = 0;
+        for (i, c) in text.char_indices() {
+            // the row is full: what follows is cut, so neither laid out nor
+            // decoded (a long message of emoji is walked at every frame)
+            if total > width {
+                break;
+            }
+            // variation selector / zero-width joiner: part of the previous emoji
+            if c == '\u{FE0F}' || c == '\u{200D}' {
+                if i > start {
+                    let galley = layout(&text[start..i]);
+                    total += galley.size().x;
+                    pieces.push(Piece::Text(&text[start..i], galley));
+                }
+                start = i + c.len_utf8();
+                continue;
+            }
+            if self.has(c)
+                && let Some(t) = self.texture_sized(ui.ctx(), c, full)
+            {
+                if i > start {
+                    let galley = layout(&text[start..i]);
+                    total += galley.size().x;
+                    pieces.push(Piece::Text(&text[start..i], galley));
+                }
+                pieces.push(Piece::Emoji(t));
+                total += s;
+                start = i + c.len_utf8();
+            }
+        }
+        if start < text.len() && total <= width {
+            let galley = layout(&text[start..]);
+            total += galley.size().x;
+            pieces.push(Piece::Text(&text[start..], galley));
+        }
+        let ellipsis = layout("…");
+        let last = left_center.x + width;
+        // the ellipsis' room is kept aside when the row does not fit, so that
+        // a picture cut at the edge still leaves a mark that it was cut
+        let budget = if total <= width { last } else { last - ellipsis.size().x };
+        let mut x = left_center.x;
+        for piece in &pieces {
+            match piece {
+                Piece::Text(t, galley) => {
+                    if x + galley.size().x > budget {
+                        // the room left, the ellipsis' own included
+                        let cut = super::widgets::elided_galley(ui, egui::RichText::new(*t).font(font.clone()).color(color), budget - x);
+                        super::widgets::paint_row_text(ui.painter(), cut, x, left_center.y, color);
+                        return true;
+                    }
+                    super::widgets::paint_row_text(ui.painter(), galley.clone(), x, left_center.y, color);
+                    x += galley.size().x;
+                }
+                Piece::Emoji(t) => {
+                    if x + s > budget {
+                        if x + ellipsis.size().x <= last {
+                            super::widgets::paint_row_text(ui.painter(), ellipsis.clone(), x, left_center.y, color);
+                        }
+                        return true;
+                    }
+                    egui::Image::new(t).paint_at(
+                        ui,
+                        egui::Rect::from_center_size(egui::pos2(x + s * 0.5, left_center.y), egui::vec2(s, s)),
+                    );
+                    x += s;
+                }
+            }
+        }
+        false
+    }
+
     /// A wrapping text field (the conversation input) whose emoji show in
     /// colour, as in the history. egui's text only has one-colour glyphs, so
     /// the emoji are laid out blank (same size as in `inline`) and their
@@ -730,6 +837,72 @@ mod tests {
             let (pictures, glyphs) = field_pictures(text);
             assert_eq!(pictures, expected, "{text:?}: glyphs {glyphs:?}");
         }
+    }
+
+    /// The pictures of a preview row drawn by `elided_row`, and what the
+    /// text beside them shows.
+    fn row(text: &str, width: f32) -> (usize, bool, String) {
+        let mut frames = Frames::new();
+        let mut emoji = Emoji::load();
+        let mut cut = false;
+        let draw = |frames: &mut Frames, emoji: &mut Emoji, cut: &mut bool| {
+            frames.shapes(Vec::new(), |ui| {
+                *cut = emoji.elided_row(
+                    ui,
+                    text,
+                    egui::FontId::proportional(11.0),
+                    egui::Color32::WHITE,
+                    egui::pos2(0.0, 10.0),
+                    width,
+                );
+            })
+        };
+        // two passes: a picture's texture is only ready for the second one
+        draw(&mut frames, &mut emoji, &mut cut);
+        let shapes = draw(&mut frames, &mut emoji, &mut cut);
+        let textured = |shape: &egui::Shape| match shape {
+            // `painter.image` (a mesh), `Image::paint_at` (a textured rect)
+            egui::epaint::Shape::Mesh(m) => m.texture_id != egui::TextureId::default(),
+            egui::epaint::Shape::Rect(r) => r.brush.as_ref().is_some_and(|b| b.fill_texture_id != egui::TextureId::default()),
+            _ => false,
+        };
+        let pictures = shapes.iter().filter(|s| textured(s)).count();
+        let shown = shapes
+            .iter()
+            .filter_map(|s| match s {
+                egui::epaint::Shape::Text(t) => Some(
+                    t.galley
+                        .rows
+                        .iter()
+                        .flat_map(|r| r.row.glyphs.iter().map(|g| g.chr))
+                        .collect::<String>(),
+                ),
+                _ => None,
+            })
+            .collect();
+        (pictures, cut, shown)
+    }
+
+    /// A preview shows its emoji as pictures (not the square egui's fonts
+    /// draw for one they lack, #4974), and cuts a long text as the plain
+    /// path does.
+    #[test]
+    fn a_preview_draws_its_emoji_as_pictures() {
+        let loaded = Emoji::load();
+        assert!(loaded.available(), "the emoji font is loaded");
+        assert!(loaded.has('🫶'), "the font draws the heart hands");
+        assert_eq!(row("Anya : 🫶", 200.0).0, 1, "the heart hands is a picture");
+        assert_eq!(row("🫶", 200.0).0, 1, "an emoji alone too");
+        let (pictures, cut, shown) = row("Anya : 🫶", 20.0);
+        assert!(cut, "the text is cut");
+        assert_eq!(pictures, 0, "the emoji did not fit");
+        assert!(shown.ends_with('…'), "the cut text ends with an ellipsis: {shown:?}");
+        // cut at a picture: those that fit, then the ellipsis in the room kept for it
+        let (pictures, cut, shown) = row("🫶🫶🫶🫶🫶🫶🫶🫶🫶🫶", 40.0);
+        assert!(cut, "the row of pictures is cut");
+        assert!((1..10).contains(&pictures), "the pictures that fit: {pictures}");
+        assert_eq!(shown, "…", "the ellipsis follows the last picture");
+        assert_eq!(row("plain words", 200.0).0, 0, "no emoji, no picture");
     }
 
     /// Opened, the picker's search has the keyboard and what is typed
