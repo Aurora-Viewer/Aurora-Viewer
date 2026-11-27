@@ -74,7 +74,7 @@ fn chat_place_id() -> Id {
 /// The chat block of this frame, when a bar drew it (`show_chat`, earlier
 /// in the frame): none while the interface is hidden or edited.
 pub fn chat_place(ctx: &egui::Context) -> Option<ChatPlace> {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data(|data| data.get_temp::<ChatPlace>(chat_place_id()))
         .filter(|place| place.frame == frame)
 }
@@ -351,7 +351,7 @@ pub fn show_chat(
             rect: drawn,
             bar: slot.bar,
             floating: slot.floating,
-            frame: ui.ctx().cumulative_frame_nr(),
+            frame: ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT),
         };
         ui.ctx().data_mut(|data| data.insert_temp(chat_place_id(), place));
         if let Some(lift) = lift {
