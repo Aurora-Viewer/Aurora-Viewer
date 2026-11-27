@@ -967,6 +967,7 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         let hazed = ll_haze(ll_classic_sun_ambient(albedo, n, sh, in.clip.xy, a) * ll_final_scale() + local + wet_light + albedo*water_caustic_light(in.world_pos,n)*shadow_lift(sh), a);
         var color=water_scene_lit(hazed,local*a.atten,in.world_pos);
         if(water_fogs_source(in.world_pos)){color=apply_fog(color,in.world_pos);}
+        else{color=weather_fog(color,in.world_pos);}
         return light_tiles_checked(debug_view(color, in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
     }
     let col = shade_pbr(albedo, 0.0, mix(0.92,0.4,wet), 1.0, n, v, in.world_pos, sh, in.clip.xy, true) + wet_light + albedo*water_caustic_light(in.world_pos,n)*sh;
@@ -983,46 +984,60 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
     surface_occlusion = normal_map_occlusion(geo, material.normal, in.world_pos, 1.0 / in.clip.w);
     screen_share = 1.0;
     contact_share = 1.0;
-    if (material.color.a < material.cutoff) { discard; }
-    let n = material.normal;
-    let v = normalize(frame.camera_pos.xyz - in.world_pos);
-    let dist = distance(in.world_pos, frame.camera_pos.xyz);
-    let sh = sun_shadow(in.world_pos, geo, dist, in.clip.xy);
-    let metal = clamp(material.orm.b, 0.0, 1.0);
-    // pbrterrainF.glsl writes the material's ORM unchanged. Broadening its
-    // roughness from normal derivatives washes out terrain relief.
-    let rough = clamp(material.orm.g, 0.03, 1.0);
-    let ao = select(1.0, material.orm.r, frame.sky_ll.z > 0.5);
-    // pbrterrainF.glsl writes its emissive only with HAS_EMISSIVE
-    let emissive = select(material.emissive, vec3<f32>(0.0), deferred_emissive_off());
-    var color: vec3<f32>;
-    if (is_classic_sky()) {
-        let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
-        let local = ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
-        color = (ll_classic_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, a)
-            + emissive) * ll_final_scale() + local;
-        // (the caustics lift the classic sky's shadow themselves, as above)
-        color = ll_haze(color + material.color.rgb * water_caustic_light(in.world_pos, n) * shadow_lift(sh), a);
-        if (water_fogs_source(in.world_pos)) {
-            color = apply_fog(water_scene_lit(color, (local + emissive * ll_final_scale()) * a.atten, in.world_pos), in.world_pos);
+    // The shading only on the branch that keeps the fragment, the discard on
+    // the other (see fs_terrain). `!(a < cutoff)` keeps a NaN alpha, as before.
+    var out: Shaded;
+    if (!(material.color.a < material.cutoff)) {
+        let n = material.normal;
+        let v = normalize(frame.camera_pos.xyz - in.world_pos);
+        let dist = distance(in.world_pos, frame.camera_pos.xyz);
+        let sh = sun_shadow(in.world_pos, geo, dist, in.clip.xy);
+        let metal = clamp(material.orm.b, 0.0, 1.0);
+        // pbrterrainF.glsl writes the material's ORM unchanged. Broadening its
+        // roughness from normal derivatives washes out terrain relief.
+        let rough = clamp(material.orm.g, 0.03, 1.0);
+        let ao = select(1.0, material.orm.r, frame.sky_ll.z > 0.5);
+        // pbrterrainF.glsl writes its emissive only with HAS_EMISSIVE
+        let emissive = select(material.emissive, vec3<f32>(0.0), deferred_emissive_off());
+        var color: vec3<f32>;
+        if (is_classic_sky()) {
+            let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
+            let local = ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
+            color = (ll_classic_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, a)
+                + emissive) * ll_final_scale() + local;
+            // (the caustics lift the classic sky's shadow themselves, as above)
+            color = ll_haze(color + material.color.rgb * water_caustic_light(in.world_pos, n) * shadow_lift(sh), a);
+            if (water_fogs_source(in.world_pos)) {
+                color = apply_fog(water_scene_lit(color, (local + emissive * ll_final_scale()) * a.atten, in.world_pos), in.world_pos);
+            } else {
+                color = weather_fog(color, in.world_pos);
+            }
+        } else {
+            color = shade_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, false) + emissive;
+            let own = shade_pbr_local + emissive;
+            color += material.color.rgb * water_caustic_light(in.world_pos, n) * sh;
+            color = apply_fog(water_scene_lit(color, own, in.world_pos), in.world_pos);
         }
+        color = debug_view(color, in.world_pos, n, dist, in.clip.xy);
+        out = Shaded(vec4<f32>(light_tiles_checked(color, in.world_pos, in.clip.xy), 1.0), n, rough, metal);
     } else {
-        color = shade_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, false) + emissive;
-        let own = shade_pbr_local + emissive;
-        color += material.color.rgb * water_caustic_light(in.world_pos, n) * sh;
-        color = apply_fog(water_scene_lit(color, own, in.world_pos), in.world_pos);
+        discard;
     }
-    color = debug_view(color, in.world_pos, n, dist, in.clip.xy);
-    return Shaded(vec4<f32>(light_tiles_checked(color, in.world_pos, in.clip.xy), 1.0), n, rough, metal);
+    return out;
 }
 
 @fragment
 fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
-    let col = terrain_color(in);
-    if (reflection_clip(in.world_pos)) {
+    // The shading only on the branch that keeps the fragment, the discard
+    // on the other: with the discard after it, Apple's shader compiler on
+    // M3 and later (AGX G15/G16) aborts while emitting this pipeline.
+    var out = vec4<f32>(0.0);
+    if (!reflection_clip(in.world_pos)) {
+        out = vec4<f32>(terrain_color(in), 1.0);
+    } else {
         discard;
     }
-    return vec4<f32>(col, 1.0);
+    return out;
 }
 
 @fragment
@@ -1710,6 +1725,9 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         // TASKS.md), with calcAtmosphericVars in hazeF's eye space
         // (ll_atmos_eye): in world space its glow put a second sun on the sea.
         color = ll_haze(color, ll_atmos_eye(in.world_pos - frame.camera_pos.xyz));
+        // the weather's fog over the surface, once: what is seen through it
+        // took the water's fog alone (apply_fog)
+        color = weather_fog(color, in.world_pos);
     }
     return vec4<f32>(color, 1.0);
 }
@@ -3288,6 +3306,7 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     if (is_classic_sky()) {
         let a = ll_atmos(world - cam);
         color = ll_haze(ll_classic_diffuse(base, sn, world, shade, clip, a) + sheen + glint, a);
+        color = weather_fog(color, world);
     } else {
         color = apply_fog(shade_pbr(base, 0.0, 0.85, 1.0, sn, view, world, lifted, clip, false) + sheen + glint, world);
     }
@@ -3396,7 +3415,8 @@ fn fs_rain_wet(in: RainWetOut) -> @location(0) vec4<f32> {
     if (rain_debug > 0.5) { return rain_debug_color(world); }
     if (on_deep_snow(world)) { discard; }
     let n = rain_depth_normal(uv, world);
-    let out = with_snow(rain_wet_surface(in.clip.xy, uv, world, n, 0.6, true, 1.0), snow_cover(in.clip.xy, world, n));
+    // (the wet ground through the weather's fog; the snow lying fogs itself)
+    let out = with_snow(weather_fog_layer(rain_wet_surface(in.clip.xy, uv, world, n, 0.6, true, 1.0), world), snow_cover(in.clip.xy, world, n));
     if (out.a < 0.01) { discard; }
     return out;
 }
@@ -3481,7 +3501,7 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
     var out: vec4<f32>;
     if (cleared) {
         let flat_n = rain_depth_normal(uv, world);
-        out = with_snow(rain_wet_surface(in.clip.xy, uv, world, flat_n, 0.6, true, 1.0), snow_cover(in.clip.xy, world, flat_n));
+        out = with_snow(weather_fog_layer(rain_wet_surface(in.clip.xy, uv, world, flat_n, 0.6, true, 1.0), world), snow_cover(in.clip.xy, world, flat_n));
     } else {
         var n = rain_oct_decode(g.xy);
         if (dot(n, frame.camera_pos.xyz - world) < 0.0) { n = -n; }
@@ -3499,7 +3519,7 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
         if (frame.rain_wet.w > 0.0 && n.z + 0.1 >= 0.5) {
             level = min(rain_build_level(uv, world, n), n.z + 0.1);
         }
-        out = with_snow(rain_wet_surface(in.clip.xy, uv, world, n, porosity, false, level), snow_cover(in.clip.xy, world, n));
+        out = with_snow(weather_fog_layer(rain_wet_surface(in.clip.xy, uv, world, n, porosity, false, level), world), snow_cover(in.clip.xy, world, n));
     }
     if (out.a < 0.01) { discard; }
     return out;

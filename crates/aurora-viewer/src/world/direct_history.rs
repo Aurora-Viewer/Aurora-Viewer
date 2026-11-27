@@ -840,7 +840,9 @@ impl World {
     /// History rows as conversation lines: ours, the system's or the
     /// sender's by id, by the cached legacy name, else the other resident
     /// (LLIMSession::addMessagesFromHistoryCache). A row without a time
-    /// takes the one before.
+    /// takes the one before. The other resident taken for want of a
+    /// better one gives a line its picture and its profile, and its name
+    /// only when the row's name is theirs, as `World::history_lines`.
     pub fn service_lines<'a>(&self, rows: impl Iterator<Item = &'a HistoryMessage>, peer: Option<Uuid>) -> Vec<ChatLine> {
         let names = &self.social.avatar_names;
         let trim = names.options.trim_resident;
@@ -880,6 +882,8 @@ impl World {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                // a direct conversation's, as `World::history_lines` marks them
+                private_history: peer.is_some(),
             }
         })
         .collect()

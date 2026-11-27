@@ -4,6 +4,51 @@
 use aurora_prim::RawShape;
 use aurora_prim::params::*;
 use glam::Quat;
+use serde::{Deserialize, Serialize};
+
+/// The most shapes captured from prims the Create window keeps.
+pub const MAX_CAPTURED: usize = 20;
+
+/// A prim's shape captured from the world by the Create window's picker
+/// (Aurora's own, human request 2026-11-24): its quantized shape, as
+/// ObjectAdd sends it, and its size. Kept in the build settings, on this
+/// computer only.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CapturedShape {
+    #[serde(with = "RawShapeDef")]
+    pub shape: RawShape,
+    pub scale: [f32; 3],
+}
+
+/// The saved form of a `RawShape` (aurora-prim has no serde).
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "RawShape")]
+struct RawShapeDef {
+    path_curve: u8,
+    profile_curve: u8,
+    path_begin: u16,
+    path_end: u16,
+    path_scale_x: u8,
+    path_scale_y: u8,
+    path_shear_x: u8,
+    path_shear_y: u8,
+    path_twist: i8,
+    path_twist_begin: i8,
+    path_radius_offset: i8,
+    path_taper_x: i8,
+    path_taper_y: i8,
+    path_revolutions: u8,
+    path_skew: i8,
+    profile_begin: u16,
+    profile_end: u16,
+    profile_hollow: u16,
+}
+
+/// The Create tool's choice, `create_shape`: the 13 shapes, then the tree
+/// and the grass, then the captured shapes in their order.
+pub fn captured_index(create_shape: usize) -> Option<usize> {
+    create_shape.checked_sub(shapes().len() + 2)
+}
 
 pub struct Shape {
     pub name: &'static str,

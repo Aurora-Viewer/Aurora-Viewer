@@ -1717,6 +1717,36 @@ fn blender_live_change_times_follow_each_source() {
     assert!(live.changed.is_empty() && live.received_at.is_none(), "Stop forgets the times");
 }
 
+/// A texture repaint or a material change refreshes the card (its thumbnail
+/// and its time), though the geometry and the surface colour stay the same.
+#[test]
+fn blender_live_digest_follows_materials_and_textures() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let digest = |value: &serde_json::Value| prepare(value).expect("snapshot").sources[0].digest;
+    let mut value = static_triangle();
+    value["images"] = serde_json::json!([{"width":1,"height":1,"rgba":STANDARD.encode([255, 0, 0, 255])}]);
+    value["meshes"][0]["faces"][0]["color"] = serde_json::json!([1.0, 1.0, 1.0, 1.0]);
+    value["meshes"][0]["faces"][0]["material"] = serde_json::json!({
+        "metallic":0.0,"roughness":0.5,"emissive":[0,0,0],"double_sided":false,
+        "alpha_mode":"OPAQUE","textures":[0,null,null,null]
+    });
+    let first = digest(&value);
+    assert_eq!(digest(&value), first, "the same snapshot keeps its digest");
+    let mut painted = value.clone();
+    painted["images"][0]["rgba"] = STANDARD.encode([0, 0, 255, 255]).into();
+    assert_ne!(digest(&painted), first, "a repainted texture");
+    let mut rougher = value.clone();
+    rougher["meshes"][0]["faces"][0]["material"]["roughness"] = 0.9.into();
+    assert_ne!(digest(&rougher), first, "a PBR factor");
+    let mut moved = value.clone();
+    moved["meshes"][0]["faces"][0]["material"]["transforms"] =
+        serde_json::json!([[0.5, 0, 1, 1, 0], [0, 0, 1, 1, 0], [0, 0, 1, 1, 0], [0, 0, 1, 1, 0]]);
+    assert_ne!(digest(&moved), first, "a texture transform");
+    let mut plain = value.clone();
+    plain["meshes"][0]["faces"][0]["material"] = serde_json::Value::Null;
+    assert_ne!(digest(&plain), first, "a material removed");
+}
+
 #[test]
 fn blender_live_placement_changes_are_undone_with_their_prims_and_states() {
     use glam::Vec3;
