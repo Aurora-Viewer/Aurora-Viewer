@@ -133,7 +133,8 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
   you, to merge" (`-ToMerge` alone), and your agents offer you their merge
   if the head is still the one the review names ("Reviewed head:"); after a
   push, a merge of main included, they review it again first.
-  An agent that reviews from the queue asks you once to approve the
+  An agent that reviews from the queue offers you a selection from its top
+  and claims only what you pick; it asks you once to approve the
   outside CI of the PRs it claimed (naming any that changes `.github/`,
   scripts or build files), waits for it, posts its review and asks you
   before any merge.

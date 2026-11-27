@@ -804,6 +804,9 @@ queue keeps them off each other's PRs.
   `fix(area):` title), then the rest not reviewed yet. In each, crash
   before fix before the rest, then the longest waiting. A PR your human
   already claimed comes before all of them: finish it first.
+- **Your human picks.** Offer them a selection from the top of the queue,
+  in its order, and claim only the PRs they choose; never pick and claim
+  on your own.
 - **Claim before you read** the PR. `-Claim` refuses a PR another
   maintainer holds: a claim (an assignee whose review is not posted yet),
   a re-review that belongs to its previous reviewer for 2 days after the

@@ -1,6 +1,6 @@
 ---
 name: review-next
-description: Pick the next pull request of someone else to review from the review queue (re-reviews first, then crash fixes, the fix label, then PRs not reviewed yet), claim it so no other maintainer reviews it at the same time, and review it through to the posted comment and the merge offer. Use when the human asks to review the next PR, asks what to review, or asks to work through the review queue.
+description: Offer the human a selection of the next pull requests of someone else to review from the review queue (re-reviews first, then crash fixes, the fix label, then PRs not reviewed yet), claim the ones they pick so no other maintainer reviews them at the same time, and review them through to the posted comment and the merge offer. Use when the human asks to review the next PR, asks what to review, or asks to work through the review queue.
 ---
 
 # Review the next PR of the queue
@@ -20,12 +20,12 @@ alone, with no `cd` or `;` around it.
 ends "I'll review it once CI is green" leaves the review hanging: nothing
 wakes you reliably. Wait in the turn (step 4), or release the claim (step 8).
 
-**Ask your human mid-turn, once.** What only they can say before the reviews
-go on (the CI approvals, the merge of the PRs of step 1, a condition an
-earlier ✅ left to them) goes in one question dialog that keeps the turn
-going (Claude Code: `AskUserQuestion`, one question per subject, up to
-four), asked when step 3 has gathered it all, never in the end-of-turn
-box, which ends the turn. The end-of-turn question is only for what comes
+**Ask your human mid-turn.** What only they can say before the reviews go
+on goes in a question dialog that keeps the turn going (Claude Code:
+`AskUserQuestion`, one question per subject, up to four), never in the
+end-of-turn box, which ends the turn. Two dialogs at most: the selection
+(step 2, with the merges and conditions of step 1), then the CI approvals
+of the PRs claimed (step 3, once it has gathered them all). The end-of-turn question is only for what comes
 after the reviews: the merge of the PRs reviewed ✅ in this turn and the
 decisions of step 6.
 
@@ -43,8 +43,8 @@ decisions of step 6.
      the head you reviewed (for a merge of main, that it brings nothing but
      main).
    - A verdict line with a condition (`✅ ready to merge once …`): what it
-     waits for is your human's, in the question of step 3 ("Have you done
-     the check …?"). Not done yet: it stays approved.
+     waits for is your human's, in the dialog of step 2 ("Have you done the
+     check …?"). Not done yet: it stays approved.
    - `conflict: true`: no CI can test it against `main` (GitHub cannot
      build the merge), so ask the author to merge main: a `## Changes
      requested` (AGENTS.md section 11, like every request to an author)
@@ -53,27 +53,40 @@ decisions of step 6.
      once it is pushed (a merge of main alone is no answer to the queue).
      Their answer brings it back as a re-review of the merge. Already asked
      since your ✅ (a comment of yours after it says so): nothing to post.
-   - `ci`: `Approval`, it joins the approval question of step 3, then the
+   - `ci`: `Approval`, it joins the CI approvals of step 3, then the
      wait of step 4; `Run` or `None`, wait (step 4); `Fail`, read the failing job (step 4) and ask the author
      to fix it.
-   - Otherwise (head reviewed, green CI, no conflict): it goes in the merge
-     offer of step 7.
+   - Otherwise (head reviewed, green CI, no conflict): offer its merge in
+     the dialog of step 2; on their yes, merge it as step 7 says.
 
-2. **Read the queue and claim**:
+2. **Read the queue, offer a selection, claim what your human picks**:
 
    ```
-   pwsh ./scripts/review-queue.ps1 -Json -Top 5
+   pwsh ./scripts/review-queue.ps1 -Json -Top 8
+   ```
+
+   Never pick and claim on your own. Offer the first entries, in the
+   queue's order, in a question dialog that keeps the turn going (Claude
+   Code: `AskUserQuestion`, several choices allowed, one option per PR, up
+   to four): number, author, title, kind and notes (`claimed by you`,
+   `CI waits for Approve and run`, `conflict with main`, a crash issue),
+   the first marked as recommended. Their own answer can name others
+   further down the queue. Put the questions of step 1 (merges, conditions)
+   in the same dialog. An entry with `claimed_by_you: true` is a review
+   your human's account started: say so in its option, and whether another
+   of their sessions may still be on it (a `../work/review-<n>` worktree),
+   since the claim cannot tell their sessions apart. An empty queue: say
+   so, and go to step 7 with the PRs of step 1.
+
+   Then claim each PR they picked, before reading anything of it:
+
+   ```
    pwsh ./scripts/review-queue.ps1 -Claim <n>
    ```
 
-   Take the first entry (one with `claimed_by_you: true` is a review your
-   human's account started: finish it first, unless another of their
-   sessions is still on it, a `../work/review-<n>` worktree or their word
-   says so; the claim cannot tell their sessions apart), or as many as the human asked for,
-   in order. Claim each before reading anything of it. A refused claim
-   (another maintainer holds it): take the next entry. Never remove another
-   maintainer's assignment, never take a PR the queue left out. An empty
-   queue: say so, and go to step 7 with the PRs of step 1.
+   A refused claim (another maintainer took it since): say so, and offer
+   the next entry instead. Never remove another maintainer's assignment,
+   never take a PR the queue left out.
 
 3. **Before the code** (AGENTS.md section 11, someone else's PR):
    - **Description**: `needs-description` means its author completes it
@@ -110,9 +123,8 @@ decisions of step 6.
 
      `gh pr checks` can show only the description check as passed while
      the real CI never ran: always list the runs of the head commit. Ask in
-     the mid-turn question dialog (above), with the merges of step 1 and
-     their conditions ("Approve the CI of #3475 and #4449?": "Approve them"
-     / "Not now"). On their yes, approve each run (`gh api -X POST
+     one mid-turn dialog for all of them ("Approve the CI of #3475 and
+     #4449?": "Approve them" / "Not now"). On their yes, approve each run (`gh api -X POST
      repos/Aurora-Viewer/Aurora-Viewer/actions/runs/<id>/approve`) and go on
      to step 4; on a no, release those claims (step 8). If your tool
      refuses the call, give your human the commands.
@@ -169,8 +181,8 @@ decisions of step 6.
    ⚠️ verdict and the options, then ask the human in the end-of-turn
    question; post their decision as a new comment once they answer.
 
-7. **Offer the merge**: the PRs of step 1 left for it are in the question
-   dialog of step 3; every PR you reviewed ✅ in this turn goes in one
+7. **Offer the merge**: the PRs of step 1 left for it are in the dialog
+   of step 2; every PR you reviewed ✅ in this turn goes in one
    end-of-turn question with buttons ("Merge #4267 and #2297?": "Merge
    them" / "Not yet"). Merging someone else's PR
    needs your human's yes (AGENTS.md section 1, rule 5): never merge
