@@ -153,6 +153,18 @@ impl<B: Clone, T: Clone, E> Journal<B, T, E> {
             .sum()
     }
 
+    /// Bytes the texture writes recorded since the last replay take staged
+    /// for a buffer-to-texture copy, rows padded (write_staging.rs).
+    pub fn texture_staged_bytes(&self) -> u64 {
+        self.ops
+            .iter()
+            .map(|op| match op {
+                Op::Texture { dst, .. } => crate::write_staging::staged_len(dst.width, dst.height),
+                _ => 0,
+            })
+            .sum()
+    }
+
     /// Recorded buffer writes, texture writes and submits (diagnostics).
     pub fn counts(&self) -> [usize; 3] {
         let mut n = [0; 3];
@@ -374,5 +386,22 @@ mod tests {
         assert_eq!(r.0, vec![Call::Buffer(1, 0, vec![10])]);
         building.replay(&mut r);
         assert_eq!(r.0[1], Call::Buffer(1, 0, vec![11]));
+    }
+
+    #[test]
+    fn texture_writes_are_counted_with_their_rows_padded() {
+        let mut j: Journal<u32, u32, &'static str> = Journal::default();
+        j.write_buffer(&1, 0, &[0; 12]);
+        // 1 x 2 texels: a row padded to 256 bytes, then the last row's 4
+        j.write_texture(&7, texel(0), &[9; 8]);
+        // 64 x 3 texels: rows of 256 bytes already
+        let wide = TexelDst {
+            width: 64,
+            height: 3,
+            ..texel(1)
+        };
+        j.write_texture(&7, wide, &[1; 64 * 3 * 4]);
+        assert_eq!(j.texture_staged_bytes(), 260 + 768);
+        assert_eq!(j.buffer_bytes(), 12);
     }
 }
