@@ -212,10 +212,8 @@ pub(super) struct Shades {
     pub card: egui::Color32,
     /// A slot that holds animations; a group row under the pointer.
     pub slot: egui::Color32,
-    /// The open slot and the summary's tiles.
+    /// The open slot.
     pub open: egui::Color32,
-    /// A tile under the pointer.
-    pub open_hot: egui::Color32,
     /// An entry's card and the order button.
     pub item: egui::Color32,
     pub item_hot: egui::Color32,
@@ -231,7 +229,6 @@ pub(super) fn shades(p: &Palette) -> Shades {
         card: mix(0.1),
         slot: mix(0.26),
         open: mix(0.4),
-        open_hot: mix(0.7),
         item: mix(0.6),
         item_hot: mix(0.78),
         stack: p.bar.lerp_to_gamma(p.violet, 0.17),

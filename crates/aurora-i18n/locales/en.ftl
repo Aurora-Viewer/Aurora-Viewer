@@ -1708,7 +1708,6 @@ inventory-move-connection-unavailable = Cannot move: the region connection is un
 inventory-move-invalid-target = The item or destination folder could not be found. Reload the inventory.
 ao-title = AO · Avatar animations
 ao-enabled = Enable AO
-ao-stands = Stands and turns
 ao-set = Set
 ao-reload = Reload sets from inventory
 ao-new = New set
@@ -13807,8 +13806,6 @@ movement-fly-assist = Enhance flying
 movement-swimming = Enable swimming
 movement-jump-obstacles = Jump out of the water at steep obstacles
 movement-water-walk = Walk / run on water
-movement-run-multiplier = Running multiplier
-movement-run-help = ×1 keeps normal running unchanged. Increase up to ×5 to boost running; walking is unchanged.
 movement-run-awaiting-script = Running: awaiting fresh bridge feedback.
 movement-run-no-command = Running: no boost command currently received by the script.
 movement-run-no-controls = awaiting movement keys
@@ -13824,8 +13821,6 @@ movement-run-ramping = accelerating gradually
 movement-run-saturated = thrust limit reached
 movement-run-regulation = Requested thrust: { $power }%; ramp target: { $ramp } m/s; { $restarts } restarts.
 movement-run-feedback = Running: { $state }. Target { $target } m/s; script measures { $speed } m/s; { $pushes } thrust updates.
-movement-swim-speed = Swimming
-movement-fly-multiplier = Flight multiplier
 movement-float-height = Flotation height
 movement-float-help = Offset from the default surface position: positive floats higher, negative lower. 0 m restores the default height.
 movement-speed-help = Each enhancement can be switched separately. Simulator physics and latency can limit speeds. Movelock takes priority.
@@ -13933,7 +13928,6 @@ bridge-request-sequence = The bridge response does not match the command sent. R
 # Integrated AO movement tab.
 ao-movement-help = Movement aids are configured independently of the AO’s other animations.
 movement-pass-enable = Obstacle passage
-movement-fly-help = ×1 keeps normal flight. Increase up to ×5 to fly faster.
 
 # Authenticated read-only Aurora bridge queries.
 radar-opt-bridge = Correct missing altitudes with the Aurora bridge
@@ -13986,13 +13980,10 @@ ao-duplicate-native = { $count ->
 ao-native-already-exists = A native Aurora AO folder already exists. Choose it in the AO window instead of migrating again.
 
 # Guided AO editor
-ao-combine = Combine…
 ao-combine-title = Combine animations
 ao-combine-existing = Move animations here from { $state }
 ao-combine-existing-help = Checked animations will be removed from the main list.
 ao-combine-empty = Add animations here.
-movement-run-speed = Running speed
-movement-flight-speed = Flight speed
 ao-combine-group-choice = Play several animations together
 
 # Construction inspector and resource picker
@@ -16862,19 +16853,6 @@ ao-category-water-line = Only needed if you turn on swimming
 ao-tab-movement-short = Movement
 ao-movement-intro = Each enhancement is separate. Simulator physics and latency can limit speeds.
 ao-experimental = Experimental
-ao-of-filled = of { $total } filled
-ao-animations-word = { $count ->
-    [one] animation
-   *[other] animations
-    }
-ao-from-creators = { $count ->
-    [one] from { $count } creator
-   *[other] from { $count } creators
-    }
-ao-none-yet = None yet
-ao-still-empty = still empty
-ao-all-filled = Every slot is filled
-ao-go-to = Go to { $slot }
 ao-swimming-switch = Swimming
 ao-page-hint = Drag animations from your inventory onto a slot. Click a slot to edit it.
 ao-slot-default = Default animation
@@ -16909,7 +16887,6 @@ ao-preview-none = Nothing to preview yet
 ao-preview-previous = Previous animation
 ao-preview-next = Next animation
 ao-drop-box = Drop animations here, or click to choose
-ao-combine-tip = Make animations of this slot play together, or as a layer
 ao-line-standing = When you stand still
 ao-line-standing-up = Getting up from a sit
 ao-line-sitting = On chairs and objects
@@ -16990,6 +16967,4 @@ ao-run-multiplier = Running multiplier
 ao-flight-multiplier = Flight multiplier
 ao-swim-speed-label = Speed
 ao-water-walk-line = Turns swimming off while on.
-ao-stands-on-line = Your stands and turns play
-ao-stands-off-line = Paused for this session: Second Life's defaults play
-ao-stands-tip = Click to pause or play your stands and turns, for this session
+ao-make-stack = Make a stack with…

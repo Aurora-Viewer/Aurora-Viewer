@@ -1038,6 +1038,27 @@ impl Controller {
         self.last_eval = None;
     }
 
+    /// The joint positions held from the motions that set them (a deformer
+    /// that stopped keeps the avatar deformed), as offsets from the rest
+    /// skeleton.
+    pub(crate) fn held_positions(&self) -> (&[Vec3], Option<Vec3>) {
+        (&self.pos_delta, self.pelvis_offset)
+    }
+
+    /// Take another avatar's held joint positions (the AO window's preview
+    /// copy takes ours: our deformers shape it too). A joint one of this
+    /// controller's motions drives gets its own position at the next frame.
+    /// Nothing is taken until both have posed the same skeleton (the poses
+    /// are indexed by joint).
+    pub(crate) fn hold_positions(&mut self, (positions, pelvis): (&[Vec3], Option<Vec3>)) {
+        if positions.len() != self.pos_delta.len() {
+            return;
+        }
+        self.pos_delta.clear();
+        self.pos_delta.extend_from_slice(positions);
+        self.pelvis_offset = pelvis;
+    }
+
     /// Forget the held pose (LLVOAvatar::resetSkeleton): a joint no motion
     /// drives keeps the rotation and position the last motion gave it, which
     /// is how an avatar stays deformed after a pose or a mesh animation
@@ -3591,6 +3612,48 @@ mod tests {
     /// A stopped animation leaves its joint positions held (the deformed
     /// avatar of #272); "Reset skeleton" brings the rest skeleton back,
     /// "and animations" also drops the motions still easing out.
+    /// The AO preview's copy takes the joint positions our avatar holds:
+    /// a deformer that stopped long ago shapes the copy too, and a motion of
+    /// the copy's own still sets the joints it drives.
+    #[test]
+    fn held_positions_carry_a_stopped_deformer_to_another_controller() {
+        let rig = rig();
+        let mut deformer = crate::demo::tags::height_animation(&rig);
+        deformer.ease_in = 0.0;
+        deformer.ease_out = 0.0;
+        let deformer = Arc::new(BoundAnim::bind(deformer, &rig));
+        let torso = rig.names["mTorso"];
+        let epoch = Instant::now();
+        let at = |s: f32| epoch + Duration::from_secs_f32(s);
+        let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let torso_z = |c: &mut Controller, t: Instant, pose: &mut Vec<[[f32; 4]; 4]>| {
+            c.evaluate(&rig, t, None, pose);
+            Mat4::from_cols_array_2d(&pose[torso]).w_axis.z
+        };
+        // ours: the deformer played, then stopped
+        let mut ours = synchronized_controller();
+        let id = Uuid::from_u128(0xDEF0);
+        ours.sync(&[signal(id, 1, epoch)], at(0.0), |_| Some(deformer.clone()));
+        torso_z(&mut ours, at(0.5), &mut pose);
+        ours.sync(&[], at(1.0), |_| None);
+        ours.sync(&[], at(2.0), |_| None);
+        let deformed = torso_z(&mut ours, at(2.0), &mut pose);
+        // the copy, playing nothing of its own: the rest skeleton
+        let mut copy = synchronized_controller();
+        let rest = torso_z(&mut copy, at(2.0), &mut pose);
+        assert!(deformed > rest + 0.7, "our avatar stays deformed");
+        // a pose of another size (not posed yet) is not taken
+        let mut fresh = synchronized_controller();
+        fresh.hold_positions(ours.held_positions());
+        assert!(fresh.held_positions().0.is_empty());
+        copy.hold_positions(ours.held_positions());
+        let shared = torso_z(&mut copy, at(2.1), &mut pose);
+        assert!(
+            (shared - deformed).abs() < 1e-3,
+            "the copy takes the deformation: {shared} vs {deformed}"
+        );
+    }
+
     #[test]
     fn reset_skeleton_drops_the_pose_a_stopped_animation_left() {
         let rig = rig();

@@ -45,24 +45,6 @@ pub(super) fn animations(set: &Set) -> usize {
     set.states.keys().map(|s| slot_animations(set, *s)).sum()
 }
 
-/// The creators of a group's animations, as their originals name them.
-fn creators(inv: &Inventory, set: &Set, states: &[State]) -> usize {
-    let mut seen = std::collections::HashSet::new();
-    for config in states.iter().filter_map(|s| set.states.get(s)) {
-        let members = config
-            .steps
-            .iter()
-            .flat_map(|s| &s.members)
-            .chain(config.tracks.iter().flat_map(|t| &t.members));
-        for member in members {
-            if let Some(item) = inv.items.get(&member.original).filter(|it| !it.creator.is_nil()) {
-                seen.insert(item.creator);
-            }
-        }
-    }
-    seen.len()
-}
-
 /// What a slot is for, under its name.
 pub(super) fn description(state: State) -> &'static str {
     aurora_i18n::text(match state {
@@ -124,10 +106,6 @@ pub(super) fn show(
     }
     state.category_states[category.index()] = Some(state.state);
     ui.spacing_mut().item_spacing.y = 8.0;
-    summary(ui, p, inv, set, category, &states, state);
-    if matches!(category, Category::General | Category::Ground) {
-        stands_card(ui, p, runtime);
-    }
     movement_card(ui, p, category, prefs, swim_ready, out);
     if category == Category::Water && !set.swimming_ready() {
         swimming_warning(ui, p);
@@ -150,141 +128,6 @@ pub(super) fn show(
         });
 }
 
-/// The group's name and three tiles: how many slots are filled, how many
-/// animations and creators, and what is still empty (a click opens it).
-fn summary(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, set: &Set, category: Category, states: &[State], state: &mut AoUi) {
-    let height = 64.0;
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), egui::Sense::hover());
-    let radius = ui.visuals().window_corner_radius;
-    let shade = super::shades(p);
-    ui.painter().rect_filled(rect, radius, shade.card);
-    let inner = rect.shrink2(Vec2::new(12.0, 8.0));
-    let tiles_w = (inner.width() * 0.6).min(420.0);
-    let text_room = inner.width() - tiles_w - 14.0;
-    let title = egui::FontId::new(22.0, super::super::fonts::semibold(ui.ctx()));
-    widgets::paint_elided(
-        ui,
-        category.label(),
-        egui::pos2(inner.left(), inner.center().y - 10.0),
-        text_room,
-        title,
-        p.ink,
-    );
-    widgets::paint_elided(
-        ui,
-        category.description(),
-        egui::pos2(inner.left(), inner.center().y + 12.0),
-        text_room,
-        egui::FontId::proportional(12.0),
-        p.muted,
-    );
-    let filled_states: Vec<bool> = states.iter().map(|s| filled(set, *s)).collect();
-    let filled_n = filled_states.iter().filter(|f| **f).count();
-    let empty: Vec<State> = states.iter().copied().filter(|s| !filled(set, *s)).collect();
-    let anims: usize = states.iter().map(|s| slot_animations(set, *s)).sum();
-    let gap = 6.0;
-    let tile_w = (tiles_w - 2.0 * gap) / 3.0;
-    let tile = |i: usize| {
-        egui::Rect::from_min_size(
-            egui::pos2(inner.right() - tiles_w + i as f32 * (tile_w + gap), inner.top()),
-            Vec2::new(tile_w, inner.height()),
-        )
-    };
-    let tile_radius = ui.visuals().widgets.inactive.corner_radius;
-    // Filled, with one mark per slot.
-    let r = tile(0);
-    ui.painter().rect_filled(r, tile_radius, shade.open);
-    figure(
-        ui,
-        p,
-        r,
-        &filled_n.to_string(),
-        &aurora_i18n::tr!("ao-of-filled", total = states.len()),
-    );
-    let marks = filled_states.len().max(1) as f32;
-    let mark_w = ((r.width() - 20.0 - 2.0 * (marks - 1.0)) / marks).max(2.0);
-    for (i, on) in filled_states.iter().enumerate() {
-        let x = r.left() + 10.0 + i as f32 * (mark_w + 2.0);
-        let mark = egui::Rect::from_min_size(egui::pos2(x, r.bottom() - 13.0), Vec2::new(mark_w, 4.0));
-        ui.painter()
-            .rect_filled(mark, tile_radius, if *on { p.violet_light } else { p.field });
-    }
-    // Animations and their creators.
-    let r = tile(1);
-    ui.painter().rect_filled(r, tile_radius, shade.open);
-    figure(ui, p, r, &anims.to_string(), &aurora_i18n::tr!("ao-animations-word", count = anims));
-    let makers = creators(inv, set, states);
-    let line = if makers > 0 {
-        aurora_i18n::tr!("ao-from-creators", count = makers)
-    } else {
-        aurora_i18n::tr!("ao-none-yet").to_owned()
-    };
-    widgets::paint_elided(
-        ui,
-        &line,
-        egui::pos2(r.left() + 10.0, r.bottom() - 12.0),
-        r.width() - 20.0,
-        egui::FontId::proportional(11.0),
-        p.muted,
-    );
-    // Still empty, or all filled.
-    let r = tile(2);
-    if let Some(first) = empty.first().copied() {
-        let response = ui
-            .interact(r, ui.scope_id().with("ao_first_empty"), egui::Sense::click())
-            .on_hover_text(aurora_i18n::tr!("ao-go-to", slot = first.label()));
-        let fill = if response.hovered() { shade.open_hot } else { shade.open };
-        ui.painter().rect_filled(r, tile_radius, fill);
-        figure(ui, p, r, &empty.len().to_string(), aurora_i18n::tr!("ao-still-empty"));
-        let next = format!("{} →", first.label());
-        widgets::paint_elided(
-            ui,
-            &next,
-            egui::pos2(r.left() + 10.0, r.bottom() - 12.0),
-            r.width() - 20.0,
-            egui::FontId::proportional(11.0),
-            p.violet_pale,
-        );
-        if response.clicked() {
-            state.select_state(first);
-        }
-    } else {
-        ui.painter().rect_filled(r, tile_radius, shade.open);
-        widgets::paint_glyph(
-            ui.painter(),
-            "circle-check-filled",
-            egui::pos2(r.left() + 18.0, r.top() + 16.0),
-            16.0,
-            p.success,
-        );
-        widgets::paint_elided(
-            ui,
-            aurora_i18n::tr!("ao-all-filled"),
-            egui::pos2(r.left() + 10.0, r.bottom() - 12.0),
-            r.width() - 20.0,
-            egui::FontId::proportional(11.5),
-            p.muted,
-        );
-    }
-}
-
-/// A tile's figure in bold and its word after it.
-fn figure(ui: &egui::Ui, p: &Palette, r: egui::Rect, number: &str, word: &str) {
-    let bold = egui::FontId::new(16.0, super::super::fonts::semibold(ui.ctx()));
-    let galley = ui.painter().layout_no_wrap(number.to_owned(), bold, p.ink);
-    let y = r.top() + 16.0;
-    let width = galley.size().x;
-    widgets::paint_row_text(ui.painter(), galley, r.left() + 10.0, y, p.ink);
-    widgets::paint_elided(
-        ui,
-        word,
-        egui::pos2(r.left() + 15.0 + width, y),
-        r.width() - 25.0 - width,
-        egui::FontId::proportional(11.5),
-        p.muted,
-    );
-}
-
 /// The movement enhancement that goes with Ground, Flying or Swimming, in
 /// one line, with the way to its full settings.
 fn movement_card(
@@ -295,13 +138,8 @@ fn movement_card(
     swim_ready: bool,
     out: &mut Vec<Action>,
 ) {
+    // (running and flying are the Movement page's alone)
     let (icon, value, label, ready) = match category {
-        Category::Flight => (
-            "plane-tilt-filled",
-            &mut prefs.fly_assist,
-            aurora_i18n::tr!("movement-fly-assist"),
-            true,
-        ),
         Category::Water => ("swimming", &mut prefs.swimming, aurora_i18n::tr!("ao-swimming-switch"), swim_ready),
         _ => return,
     };
@@ -315,62 +153,6 @@ fn movement_card(
             }
         });
     });
-}
-
-/// Stands and turns, on the pages of the stands (General) and the turns
-/// (Ground): a card that says what plays, lit in the accent while the AO
-/// plays them, its figure standing in a disc; a click anywhere on it
-/// switches them. Paused for the session only, as AOEngine's stands
-/// switch is not saved (`Runtime::stands`).
-fn stands_card(ui: &mut egui::Ui, p: &Palette, runtime: &mut Runtime) {
-    let on = runtime.stands;
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 52.0), egui::Sense::click());
-    let radius = ui.visuals().window_corner_radius;
-    let lit = ui.ctx().animate_bool(ui.scope_id().with("ao_stands_lit"), on);
-    let shade = super::shades(p);
-    let fill = shade.card.lerp_to_gamma(p.violet, 0.16 * lit);
-    let fill = if response.hovered() {
-        fill.lerp_to_gamma(p.raised, 0.25)
-    } else {
-        fill
-    };
-    ui.painter().rect(
-        rect,
-        radius,
-        fill,
-        egui::Stroke::new(1.0, shade.edge.lerp_to_gamma(p.violet_light, 0.6 * lit)),
-        egui::StrokeKind::Inside,
-    );
-    // the accent's edge on the left while they play
-    if lit > 0.0 {
-        let edge = egui::Rect::from_min_size(rect.left_top() + Vec2::new(0.0, 8.0), Vec2::new(3.0, rect.height() - 16.0));
-        ui.painter().rect_filled(
-            edge,
-            ui.visuals().widgets.inactive.corner_radius,
-            p.violet_light.gamma_multiply(lit),
-        );
-    }
-    let y = rect.center().y;
-    let disc = egui::pos2(rect.left() + 30.0, y);
-    ui.painter().circle_filled(disc, 16.0, p.raised.lerp_to_gamma(p.violet, 0.75 * lit));
-    let figure = p.muted.lerp_to_gamma(p.on_accent, lit);
-    widgets::paint_glyph(ui.painter(), "man-filled", disc, 18.0, figure);
-    let x = rect.left() + 56.0;
-    let title = egui::FontId::new(13.5, super::super::fonts::semibold(ui.ctx()));
-    let room = rect.width() - 56.0 - 64.0;
-    widgets::paint_elided(ui, aurora_i18n::tr!("ao-stands"), egui::pos2(x, y - 9.0), room, title, p.ink);
-    let line = aurora_i18n::text(if on { "ao-stands-on-line" } else { "ao-stands-off-line" });
-    widgets::paint_elided(ui, line, egui::pos2(x, y + 9.0), room, egui::FontId::proportional(11.5), p.muted);
-    // the switch at the right end, as a picture: the whole card is the button
-    let track = egui::Rect::from_center_size(egui::pos2(rect.right() - 34.0, y), Vec2::new(36.0, 20.0));
-    let knob_radius = ui.visuals().widgets.inactive.corner_radius;
-    ui.painter().rect_filled(track, knob_radius, p.field.lerp_to_gamma(p.violet, lit));
-    let knob = egui::Rect::from_center_size(egui::pos2(track.left() + 10.0 + lit * (track.width() - 20.0), y), Vec2::splat(14.0));
-    ui.painter().rect_filled(knob, knob_radius, p.muted.lerp_to_gamma(p.on_accent, lit));
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, true, on, aurora_i18n::tr!("ao-stands")));
-    if response.on_hover_text(aurora_i18n::tr!("ao-stands-tip")).clicked() {
-        runtime.stands = !on;
-    }
 }
 
 /// One slot: its title line, then what it holds (closed) or its editor (open).

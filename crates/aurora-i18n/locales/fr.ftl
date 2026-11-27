@@ -1711,7 +1711,6 @@ inventory-move-connection-unavailable = Le déplacement est impossible : la conn
 inventory-move-invalid-target = L’élément ou le dossier de destination est introuvable. Rechargez l’inventaire.
 ao-title = AO · Animations de l’avatar
 ao-enabled = Activer l’AO
-ao-stands = Debout et rotations
 ao-set = Ensemble
 ao-reload = Recharger les ensembles depuis l’inventaire
 ao-new = Nouvel ensemble
@@ -13812,8 +13811,6 @@ movement-fly-assist = Améliorer le vol
 movement-swimming = Activer la nage
 movement-jump-obstacles = Sauter hors de l’eau devant un obstacle raide
 movement-water-walk = Marcher / courir sur l’eau
-movement-run-multiplier = Multiplicateur de course
-movement-run-help = ×1 conserve la course normale. Augmentez jusqu’à ×5 pour accélérer la course ; la marche reste inchangée.
 movement-run-awaiting-script = Course : attente d’un retour récent du bridge.
 movement-run-no-command = Course : aucune commande d’accélération reçue actuellement par le script.
 movement-run-no-controls = attente des touches de déplacement
@@ -13829,8 +13826,6 @@ movement-run-ramping = accélération progressive
 movement-run-saturated = limite de poussée atteinte
 movement-run-regulation = Poussée demandée : { $power } % ; cible progressive : { $ramp } m/s ; { $restarts } reprises.
 movement-run-feedback = Course : { $state }. Objectif { $target } m/s ; le script mesure { $speed } m/s ; { $pushes } mises à jour de poussée.
-movement-swim-speed = Nage
-movement-fly-multiplier = Multiplicateur de vol
 movement-float-height = Hauteur de flottaison
 movement-float-help = Décalage par rapport à la position de surface par défaut : positif pour flotter plus haut, négatif plus bas. 0 m rétablit la hauteur par défaut.
 movement-speed-help = Chaque amélioration s’active séparément. La physique du simulateur et la latence peuvent limiter les vitesses. Le Movelock reste prioritaire.
@@ -13938,7 +13933,6 @@ bridge-request-sequence = La réponse du bridge ne correspond pas à la commande
 # Integrated AO movement tab.
 ao-movement-help = Les aides au mouvement se règlent indépendamment des autres animations de l’AO.
 movement-pass-enable = Traverser les obstacles
-movement-fly-help = ×1 conserve le vol normal. Augmentez jusqu’à ×5 pour accélérer le vol.
 
 # Authenticated read-only Aurora bridge queries.
 radar-opt-bridge = Corriger les altitudes manquantes avec le bridge Aurora
@@ -13991,13 +13985,10 @@ ao-duplicate-native = { $count ->
 ao-native-already-exists = Un dossier Aurora AO natif existe déjà. Sélectionnez-le dans la fenêtre AO au lieu de le migrer à nouveau.
 
 # Guided AO editor
-ao-combine = Combiner…
 ao-combine-title = Combiner des animations
 ao-combine-existing = Y déplacer des animations de { $state }
 ao-combine-existing-help = Les animations cochées seront retirées de la liste principale.
 ao-combine-empty = Ajoutez des animations ici.
-movement-run-speed = Vitesse de course
-movement-flight-speed = Vitesse de vol
 ao-combine-group-choice = Jouer plusieurs animations ensemble
 
 # Construction inspector and resource picker
@@ -16868,19 +16859,6 @@ ao-category-water-line = Utile seulement si vous activez la nage
 ao-tab-movement-short = Mouvements
 ao-movement-intro = Chaque amélioration est indépendante. La physique du simulateur et la latence peuvent limiter les vitesses.
 ao-experimental = Expérimental
-ao-of-filled = sur { $total } remplis
-ao-animations-word = { $count ->
-    [one] animation
-   *[other] animations
-    }
-ao-from-creators = { $count ->
-    [one] de { $count } créateur
-   *[other] de { $count } créateurs
-    }
-ao-none-yet = Aucune pour l’instant
-ao-still-empty = encore vides
-ao-all-filled = Tous les emplacements sont remplis
-ao-go-to = Aller à { $slot }
 ao-swimming-switch = Nage
 ao-page-hint = Glissez des animations de votre inventaire sur un emplacement. Cliquez sur un emplacement pour le modifier.
 ao-slot-default = Animation par défaut
@@ -16915,7 +16893,6 @@ ao-preview-none = Rien à prévisualiser pour l’instant
 ao-preview-previous = Animation précédente
 ao-preview-next = Animation suivante
 ao-drop-box = Déposez des animations ici, ou cliquez pour choisir
-ao-combine-tip = Faire jouer des animations de cet emplacement ensemble, ou en couche
 ao-line-standing = Quand vous restez immobile
 ao-line-standing-up = En se levant d’une assise
 ao-line-sitting = Sur les chaises et les objets
@@ -16996,6 +16973,4 @@ ao-run-multiplier = Multiplicateur de course
 ao-flight-multiplier = Multiplicateur de vol
 ao-swim-speed-label = Vitesse
 ao-water-walk-line = Désactive la nage tant qu’il est actif.
-ao-stands-on-line = Vos poses debout et rotations jouent
-ao-stands-off-line = En pause pour cette session : celles de Second Life jouent
-ao-stands-tip = Cliquez pour mettre en pause ou relancer vos poses debout et rotations, pour cette session
+ao-make-stack = Faire une pile avec…

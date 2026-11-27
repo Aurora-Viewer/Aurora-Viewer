@@ -74,7 +74,8 @@ pub(super) fn show(
         }
     }
     // Movement and Stands and turns at the column's foot, as the board has it
-    let foot = 36.0 + 2.0 * ui.spacing().item_spacing.y;
+    // (lower, near the column's foot)
+    let foot = 36.0 + ui.spacing().item_spacing.y - 6.0;
     ui.add_space((ui.available_height() - foot).max(4.0));
     let on = state.tab == 1;
     if movement_row(ui, p, on).clicked() {

@@ -6843,6 +6843,22 @@ impl Scene {
         self.motions.par_iter_mut().for_each(|(_, motions)| motions.resync_animations(now));
     }
 
+    /// Give `to` the joint positions `from` holds (`anim::Controller::
+    /// hold_positions`): the AO window's preview copy takes our deformers.
+    pub fn share_held_positions(&mut self, from: &Uuid, to: &Uuid) {
+        let Some((held, pelvis)) = self.motions.get(from).map(|c| {
+            let (held, pelvis) = c.held_positions();
+            (held.to_vec(), pelvis)
+        }) else {
+            return;
+        };
+        if let Some(copy) = self.motions.get_mut(to)
+            && copy.held_positions() != (held.as_slice(), pelvis)
+        {
+            copy.hold_positions((&held, pelvis));
+        }
+    }
+
     /// "Reset skeleton" of an avatar or an animated object
     /// (LLVOAvatar::resetSkeleton): the rest skeleton is built again from
     /// the shape and the worn meshes on the next frame, and the pose held

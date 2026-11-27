@@ -506,9 +506,10 @@ fn ao_manager_keeps_its_size_across_frames() {
 }
 
 #[test]
-fn the_title_switch_and_stands_change_runtime_without_inventory_writes() {
+fn the_title_switch_changes_runtime_without_inventory_writes() {
     let mut f = Fixture::new();
     f.runtime.paused = true;
+    f.runtime.stands = false;
     let switch = |f: &mut Fixture| {
         let mut texts = Vec::new();
         for shape in f.draw(Vec::new()).1 {
@@ -523,8 +524,7 @@ fn the_title_switch_and_stands_change_runtime_without_inventory_writes() {
     assert!(f.account.enabled);
     assert!(matches!(&out[..], [Action::Preferences]));
     assert!(!f.runtime.paused, "turned on, the AO plays again");
-    assert!(f.click(aurora_i18n::tr!("ao-stands")).is_empty());
-    assert!(!f.runtime.stands);
+    assert!(f.runtime.stands, "with its stands and turns");
     let at = switch(&mut f);
     let out = f.click_at(at);
     assert!(!f.account.enabled);
@@ -744,12 +744,19 @@ fn acknowledged_container_selection_is_remapped_and_bound_to_its_original_editor
 fn guided_combinations_are_cancellable_and_wait_for_acknowledgement() {
     let mut f = Fixture::new();
     let generation = f.inv.generation;
-    assert!(f.click(aurora_i18n::tr!("ao-combine")).is_empty());
-    assert!(f.state.combination.is_some());
+    // an entry's right-click menu makes a stack with it, in the guided dialog
+    click_with(&mut f, "Aurora Stand A", egui::PointerButton::Secondary, Default::default());
+    assert!(f.click(aurora_i18n::tr!("ao-make-stack")).is_empty());
+    let first = f.catalog.selected(f.account.selected).expect("set").states[&State::Standing].steps[0].id;
+    assert!(
+        f.state.combination.as_ref().is_some_and(|d| d.selected.contains(&first)),
+        "the entry is already chosen"
+    );
     assert!(f.click(aurora_i18n::tr!("common-cancel")).is_empty());
     assert!(f.state.combination.is_none());
     assert_eq!(f.inv.generation, generation);
-    f.click(aurora_i18n::tr!("ao-combine"));
+    click_with(&mut f, "Aurora Stand A", egui::PointerButton::Secondary, Default::default());
+    f.click(aurora_i18n::tr!("ao-make-stack"));
     let chosen = f.catalog.selected(f.account.selected).expect("set").states[&State::Standing].steps[0].id;
     let dialog = f.state.combination.as_mut().expect("dialog");
     dialog.name = "Together".into();
@@ -1585,7 +1592,12 @@ fn adding_to_a_stack_does_not_send_later_animations_into_it() {
     assert_eq!(f.state.container, None, "the slot still shows its main list");
     f.state.filter = "Type".into();
     f.settle();
-    let out = f.click("Aurora Type");
+    // the picker's row, over the page (its Typing slot shows the same name)
+    let mut rows = Vec::new();
+    for shape in f.draw(Vec::new()).1 {
+        text_rects(&shape.shape, "Aurora Type", &mut rows);
+    }
+    let out = f.click_at(rows.last().expect("the picker's row").center());
     assert!(matches!(&out[..], [Action::Edit(change, None)] if change.operations.iter().any(|op|
         matches!(op, Operation::Links { parent, .. } if *parent == stack))));
     assert_eq!(f.state.pick_into, None);

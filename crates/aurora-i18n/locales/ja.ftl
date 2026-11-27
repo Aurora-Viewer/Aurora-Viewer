@@ -1661,7 +1661,6 @@ inventory-move-connection-unavailable = 移動できません：リージョン�
 inventory-move-invalid-target = アイテムまたは移動先フォルダが見つかりませんでした。インベントリを再読み込みしてください。
 ao-title = ＡＯ・アバターのアニメーション
 ao-enabled = ＡＯを有効にする
-ao-stands = 立ちと回転
 ao-set = セット
 ao-reload = インベントリからセットを再読み込み
 ao-new = 新しいセット
@@ -13657,8 +13656,6 @@ movement-fly-assist = 飛行を強化
 movement-swimming = 泳ぎを有効にする
 movement-jump-obstacles = 急な障害物では水から飛び出す
 movement-water-walk = 水面を歩く／走る
-movement-run-multiplier = 走行の倍率
-movement-run-help = ×1では通常の走行のままです。×5まで上げると走行が速くなります。歩行は変わりません。
 movement-run-awaiting-script = 走行：ブリッジからの新しい応答を待っています。
 movement-run-no-command = 走行：スクリプトは現在ブーストのコマンドを受信していません。
 movement-run-no-controls = 移動キーを待っています
@@ -13674,8 +13671,6 @@ movement-run-ramping = 徐々に加速する
 movement-run-saturated = 推力の上限に到達
 movement-run-regulation = 要求された推力：{ $power }％、加速の目標：{ $ramp }ｍ／秒、再開{ $restarts }回。
 movement-run-feedback = 走行：{ $state }。目標{ $target }ｍ／秒、スクリプトの計測値{ $speed }ｍ／秒、推力の更新{ $pushes }回。
-movement-swim-speed = 水泳
-movement-fly-multiplier = 飛行の倍率
 movement-float-height = 浮かぶ高さ
 movement-float-help = デフォルトの水面位置からのオフセット：正の値で高く、負の値で低く浮かびます。0 mでデフォルトの高さに戻ります。
 movement-speed-help = 各強化は個別に切り替えられます。シミュレーターの物理と遅延によって速度が制限される場合があります。位置のロックが優先されます。
@@ -13783,7 +13778,6 @@ bridge-request-sequence = ブリッジのレスポンスが送信したコマン
 # Integrated AO movement tab.
 ao-movement-help = 移動の補助は、ＡＯの他のアニメーションとは独立して設定します。
 movement-pass-enable = 障害物の通り抜け
-movement-fly-help = ×１では通常の飛行のままです。×５まで上げると速く飛べます。
 
 # Authenticated read-only Aurora bridge queries.
 radar-opt-bridge = Auroraブリッジで不明な高度を補正
@@ -13830,13 +13824,10 @@ ao-duplicate-native = 別の#Aurora/{ $folder }フォルダに{ $count }セッ�
 ao-native-already-exists = Aurora ＡＯフォルダはすでにあります。再度移行せず、ＡＯウィンドウで選択してください。
 
 # Guided AO editor
-ao-combine = 組み合わせ…
 ao-combine-title = アニメーションを組み合わせる
 ao-combine-existing = { $state }からアニメーションをここに移動
 ao-combine-existing-help = チェックしたアニメーションはメインのリストから削除されます。
 ao-combine-empty = ここにアニメーションを追加してください。
-movement-run-speed = 走行速度
-movement-flight-speed = 飛行速度
 ao-combine-group-choice = 複数のアニメーションを同時に再生
 
 # Construction inspector and resource picker
@@ -16660,15 +16651,6 @@ ao-category-water-line = 泳ぐをオンにする場合のみ必要です
 ao-tab-movement-short = 移動
 ao-movement-intro = 各強化は個別に設定できます。シミュレーターの物理演算や遅延により速度が制限される場合があります。
 ao-experimental = 試験的
-ao-of-filled = ／{ $total }設定済み
-ao-animations-word = { $count ->
-   *[other] 個のアニメーション
-    }
-ao-from-creators = { $count }人のクリエイター
-ao-none-yet = まだありません
-ao-still-empty = 未設定
-ao-all-filled = すべてのスロットが設定済みです
-ao-go-to = { $slot }へ移動
 ao-swimming-switch = 泳ぐ
 ao-page-hint = インベントリからアニメーションをスロットにドラッグしてください。スロットをクリックすると編集できます。
 ao-slot-default = デフォルトのアニメーション
@@ -16703,7 +16685,6 @@ ao-preview-none = プレビューするものがまだありません
 ao-preview-previous = 前のアニメーション
 ao-preview-next = 次のアニメーション
 ao-drop-box = ここにアニメーションをドロップするか、クリックして選択
-ao-combine-tip = このスロットのアニメーションを同時に、またはレイヤーとして再生します
 ao-line-standing = 立ち止まっているとき
 ao-line-standing-up = 座った状態から立ち上がるとき
 ao-line-sitting = 椅子やオブジェクトの上
@@ -16784,6 +16765,4 @@ ao-run-multiplier = 走行の倍率
 ao-flight-multiplier = 飛行の倍率
 ao-swim-speed-label = 速度
 ao-water-walk-line = オンの間は泳ぐがオフになります。
-ao-stands-on-line = 立ちと回転のアニメーションを再生中
-ao-stands-off-line = このセッションでは一時停止中：Second Lifeのデフォルトを再生
-ao-stands-tip = クリックすると、このセッションの立ちと回転を一時停止または再生します
+ao-make-stack = スタックを作成…

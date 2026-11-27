@@ -245,7 +245,7 @@ impl Editor<'_> {
             self.turns(ui, c, None);
             self.main_list(ui, c);
         }
-        self.drop_box(ui, c, track.map(|t| t.id));
+        self.drop_box(ui, track.map(|t| t.id));
     }
 
     /// Main and each layer, with their counts, then "+" for a new layer.
@@ -558,6 +558,17 @@ impl Editor<'_> {
                 self.runtime.choose(self.state.state, c.folder, index);
                 self.state.preview.show_entry(index);
             }
+            // a stack made from this entry and others of the slot (the guided
+            // dialog, this entry already chosen)
+            if !step.group && step.members.len() == 1 {
+                super::super::menu::separator(ui, p);
+                if super::super::menu::item_if(ui, p, "stack-2-filled", aurora_i18n::tr!("ao-make-stack"), !busy) {
+                    let mut dialog = super::combinations::Dialog::new(self.set.id, self.state.state);
+                    dialog.selected.insert(step.id);
+                    self.state.picker = None;
+                    self.state.combination = Some(dialog);
+                }
+            }
             if step.group {
                 super::super::menu::separator(ui, p);
                 if super::super::menu::item_if(ui, p, "plus", aurora_i18n::tr!("ao-add-to-stack"), !busy) {
@@ -817,40 +828,22 @@ impl Editor<'_> {
     }
 
     /// The box that takes new animations: a drop from the inventory (the
-    /// whole slot takes it too), or a click to choose one; and the way to
-    /// make entries play together.
-    fn drop_box(&mut self, ui: &mut egui::Ui, c: &StateConfig, track: Option<Uuid>) {
+    /// whole slot takes it too), or a click to choose one.
+    fn drop_box(&mut self, ui: &mut egui::Ui, track: Option<Uuid>) {
         let p = self.p;
-        ui.horizontal(|ui| {
-            let singles = c.steps.iter().filter(|s| !s.group && s.members.len() == 1).count();
-            let together = track.is_none() && singles >= 2;
-            let room = ui.available_width() - if together { 150.0 + ui.spacing().item_spacing.x } else { 0.0 };
-            let (rect, response) = ui.allocate_exact_size(Vec2::new(room, 40.0), egui::Sense::click());
-            let hot = response.hovered() && !self.busy();
-            widgets::dashed_outline(ui.painter(), rect, if hot { p.violet_light } else { p.muted.gamma_multiply(0.5) });
-            let label = aurora_i18n::tr!("ao-drop-box");
-            let ink = if hot { p.ink } else { p.muted };
-            let galley = widgets::elided_galley(ui, RichText::new(label).size(12.5).color(ink), rect.width() - 40.0);
-            let x = rect.center().x - (galley.size().x + 20.0) / 2.0;
-            widgets::paint_glyph(ui.painter(), "plus", egui::pos2(x + 7.0, rect.center().y), 14.0, ink);
-            widgets::paint_row_text(ui.painter(), galley, x + 20.0, rect.center().y, ink);
-            let enabled = !self.busy();
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
-            if response.clicked() && enabled {
-                self.picker(track);
-            }
-            if together
-                && ui
-                    .add_enabled(
-                        enabled,
-                        egui::Button::new(aurora_i18n::tr!("ao-combine")).min_size(Vec2::new(150.0, 40.0)),
-                    )
-                    .on_hover_text(aurora_i18n::tr!("ao-combine-tip"))
-                    .clicked()
-            {
-                self.state.picker = None;
-                self.state.combination = Some(super::combinations::Dialog::new(self.set.id, self.state.state));
-            }
-        });
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), egui::Sense::click());
+        let hot = response.hovered() && !self.busy();
+        widgets::dashed_outline(ui.painter(), rect, if hot { p.violet_light } else { p.muted.gamma_multiply(0.5) });
+        let label = aurora_i18n::tr!("ao-drop-box");
+        let ink = if hot { p.ink } else { p.muted };
+        let galley = widgets::elided_galley(ui, RichText::new(label).size(12.5).color(ink), rect.width() - 40.0);
+        let x = rect.center().x - (galley.size().x + 20.0) / 2.0;
+        widgets::paint_glyph(ui.painter(), "plus", egui::pos2(x + 7.0, rect.center().y), 14.0, ink);
+        widgets::paint_row_text(ui.painter(), galley, x + 20.0, rect.center().y, ink);
+        let enabled = !self.busy();
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+        if response.clicked() && enabled {
+            self.picker(track);
+        }
     }
 }

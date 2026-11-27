@@ -48,8 +48,10 @@ impl App {
         let Some(copy) = self.world.update_ao_preview(base, &assets, now) else {
             return;
         };
-        // posed every frame, wherever the camera looks
+        // posed every frame, wherever the camera looks, with our deformers
         self.scene.watched.insert(copy);
+        let own = self.world.agent_id;
+        self.scene.share_held_positions(&own, &copy);
         let w = &self.world;
         let Some(own) = w.objects.index_of_uuid(&w.agent_id) else {
             return;
