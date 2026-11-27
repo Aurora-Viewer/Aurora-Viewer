@@ -1493,7 +1493,8 @@ const GPU_SHADOW_PARTS: [&[(u32, u32)]; 5] = [
 /// After the prepass of the multisampled depth, which opens the scene
 /// encoder (written right after `MARK_SCENE_BEGIN` without MSAA).
 const MARK_DEPTH_MSAA_END: u32 = 20;
-/// Around the bloom levels (bloom.rs), after the glow; part of the post.
+/// Around the sun shafts (sun_shafts.rs) and the bloom levels (bloom.rs),
+/// after the glow; part of the post.
 const MARK_BLOOM_BEGIN: u32 = 21;
 const MARK_BLOOM_END: u32 = 22;
 /// The depth prepasses on their own, both counted in the first element:
@@ -2262,6 +2263,8 @@ pub(crate) struct Backend {
     blur_motion: Option<((u32, u32), wgpu::TextureView)>,
     /// This frame draws the motion blur (`motion_blur_wanted`).
     blur_now: bool,
+    /// The sun's and the moon's shafts, made the first time they are on.
+    sun_shafts: Option<crate::sun_shafts::SunShafts>,
     /// The photo's look, made the first time one is on.
     looks: Option<crate::looks::Looks>,
     /// The photo filters' catalogue pictures, while the catalogue asks for
@@ -3585,6 +3588,32 @@ fn dof_targets(
     let (_, refused) = crate::gpu_alloc::scoped(device, || d.ensure_targets(device, size, HDR_FORMAT, post));
     if first_use(oom, "depth of field", false, refused && !lost) {
         d.release();
+        return false;
+    }
+    true
+}
+
+/// The sun shafts' targets for `size` (sun_shafts.rs), made on first use
+/// and checked as the depth of field's: refused by a full video memory, the
+/// frame goes without them.
+fn shafts_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    shafts: &mut Option<crate::sun_shafts::SunShafts>,
+    device: &wgpu::Device,
+    post: &crate::dof::PostInputs,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let s = shafts.get_or_insert_with(|| crate::sun_shafts::SunShafts::new(device, post.layout, HDR_FORMAT));
+    if s.has_targets(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || s.ensure_targets(device, size, HDR_FORMAT, post));
+    if first_use(oom, "sun shafts", false, refused && !lost) {
+        s.release();
         return false;
     }
     true
@@ -5086,6 +5115,7 @@ impl Backend {
             motion_blur: None,
             blur_motion: None,
             blur_now: false,
+            sun_shafts: None,
             looks: None,
             look_thumbs: None,
             rlva_spheres: None,
@@ -13712,9 +13742,38 @@ impl Backend {
         if glow_on {
             self.glow.encode(&mut encoder, post_bg);
         }
-        // ---- bloom, from the image the post pass reads (after the glow,
-        // which it leaves as it is)
         mark(&mut encoder, MARK_BLOOM_BEGIN);
+        // ---- the sun's and the moon's shafts (sun_shafts.rs), into the
+        // image the bloom and the tone mapping read (after the exposure,
+        // which their mask is measured with, and the glow of faces, which
+        // they leave as it is; timed with the bloom). None under a debug
+        // view (it replaces the image), on a cut-out photo (its empty
+        // background is no sky) or a photo drawn in tiles (each tile's
+        // streaks would end at its seams); kept ready while the light is
+        // merely out of view.
+        let shafts = crate::sun_shafts::strength(f.sun_rays);
+        let debug_view = f.debug_glow || f.debug.shadows || f.debug.ambient_occlusion;
+        if shafts > 0.0 && !debug_view && !f.cutout && f.photo_tile == Mat4::IDENTITY {
+            let post = crate::dof::PostInputs {
+                layout: &self.post_layout,
+                sampler: &self.post_sampler,
+                buffer: &self.post_buffer,
+                glow: &self.glow.views[1],
+            };
+            let ready = shafts_targets(&mut self.oom, &mut self.sun_shafts, &self.device, &post, post_size, self.lost.get());
+            let forward = crate::light_tiles::view_forward(f.view);
+            if ready
+                && let Some(sun) = crate::sun_shafts::sun_on_image(unjittered_vp, forward, f.sun_dir, f.sun_visible)
+                && let Some(s) = &self.sun_shafts
+                && let Some(bg) = s.encode(&self.device, &self.queue, &mut encoder, post_bg, post_depth, sun, shafts * sun.fade)
+            {
+                post_bg = bg;
+            }
+        } else if let Some(s) = &mut self.sun_shafts {
+            s.release();
+        }
+        // ---- bloom, from the image the post pass reads (after the glow,
+        // which it leaves as it is; the shafts included)
         if bloom > 0.0 {
             self.bloom.encode(&mut encoder, post_bg);
         }

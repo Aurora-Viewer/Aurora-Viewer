@@ -44,9 +44,9 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-show-chat-channel-hint"),
                     &field!(show_chat_channel),
                 );
-                // the row of FSFloaterNearbyChat's recent emojis, a switch
-                // in place of its arrow: on, off with the Legacy chat style
-                // (its own switch, the one of the style in use shown)
+                // the row of FSFloaterNearbyChat's recent emojis, the switch
+                // its arrow turns (`emoji::recent`), off; the Legacy chat
+                // style has its own, the one of the style in use shown
                 let legacy = cx.s.chat_style == crate::settings::ChatStyle::Legacy;
                 cx.conditional(!legacy, |cx| {
                     cx.toggle(
@@ -62,13 +62,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(show_recent_emojis_legacy),
                     );
                 });
-                // an Aurora addition: favourites first in that row and a
-                // star tab in the picker, off
-                cx.toggle(
-                    tr!("ui-options-favorite-emojis"),
-                    tr!("ui-options-favorite-emojis-hint"),
-                    &field!(favorite_emojis),
-                );
                 // #475: objects' lines like the notices, off (not in the
                 // Legacy Viewer)
                 cx.toggle(
@@ -191,6 +184,20 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(chat_console_max_lines),
                     0..=50,
                     "",
+                );
+                // the lines follow the chat bar wherever the interface's
+                // edit mode put it (Aurora's own: the Legacy Viewer's
+                // console and chat bar stay at the bottom left)
+                use crate::settings::ChatLinesDirection;
+                cx.combo(
+                    tr!("ui-options-chat-lines-direction"),
+                    tr!("ui-options-chat-lines-direction-hint"),
+                    &field!(chat_lines_direction),
+                    &[
+                        (ChatLinesDirection::Auto, tr!("ui-options-chat-lines-direction-auto")),
+                        (ChatLinesDirection::Up, tr!("ui-options-chat-lines-direction-up")),
+                        (ChatLinesDirection::Down, tr!("ui-options-chat-lines-direction-down")),
+                    ],
                 );
                 // the Legacy Viewer's Chat › Visuals (UseChatBubbles and what
                 // depends on it; ChatBubbleOpacity is in Appearance › Skin,

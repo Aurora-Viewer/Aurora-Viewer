@@ -13438,6 +13438,14 @@ impl App {
             sharpen: self.settings.sharpen,
             glow: self.settings.glow,
             bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
+            sun_rays: if self.settings.sun_rays {
+                self.settings.sun_rays_strength.clamp(
+                    *crate::settings::SUN_RAYS_STRENGTH.start(),
+                    *crate::settings::SUN_RAYS_STRENGTH.end(),
+                )
+            } else {
+                0.0
+            },
             water_height: self.world.main_water_height(),
             shadows: self.photo_shadow_quality() > 0 && matches!(self.screen, Screen::World),
             shadow_distance: Settings::shadow_params_of(self.photo_shadow_quality()).1,
@@ -20478,6 +20486,16 @@ impl App {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
                     // in their bubbles
                     let residents = !(self.chat_bubbles() && self.settings.chat_bubbles_hide_console);
+                    // by the chat bar, wherever it was moved to; at the
+                    // bottom left when no bar draws it
+                    let lines_place = match ui::bars::chrome::chat_place(&ctx) {
+                        Some(block) => {
+                            let screen = ctx.content_rect();
+                            let top = self.interface.last_room.map_or(screen.top(), |(room, _)| room.top());
+                            ui::chat::LinesPlace::by(block, self.settings.chat_lines_direction, screen, (top, bottom_top))
+                        }
+                        None => ui::chat::LinesPlace::above(bottom_top),
+                    };
                     ui::chat::toasts(
                         &ctx,
                         &p,
@@ -20486,7 +20504,7 @@ impl App {
                         &self.avatar_pics,
                         &mut self.chat_ui.wanted_names,
                         &mut self.chat_ui.wanted_pics,
-                        bottom_top,
+                        lines_place,
                         if crate::demo::chat_volume_comparison() {
                             3600.0
                         } else {
@@ -20603,14 +20621,25 @@ impl App {
                 self.chat_ui.group_emotes = self.settings.group_emotes || (self.demo && crate::demo::emotes_grouped());
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 // the Legacy chat style keeps its own switch; both are off by
-                // default, the demo switch shows the row whatever they say
-                self.chat_ui.recent_emojis.enabled = (self.demo && crate::demo::recent_emojis_on())
-                    || if self.settings.chat_style == crate::settings::ChatStyle::Legacy {
-                        self.settings.show_recent_emojis_legacy
+                // default, and the arrow beside the emoji buttons turns the
+                // one of the style in use. The demo switch shows the row
+                // whatever they say: its arrow hides it for the run, nothing
+                // saved
+                let demo_row = self.demo && crate::demo::recent_emojis_on();
+                if self.chat_ui.recent_emojis.take_toggle() {
+                    if demo_row {
+                        self.chat_ui.recent_emojis.demo_hidden ^= true;
                     } else {
-                        self.settings.show_recent_emojis
-                    };
-                self.chat_ui.recent_emojis.favorites_enabled = self.settings.favorite_emojis;
+                        let switch = self.settings.recent_emojis_switch();
+                        *switch = !*switch;
+                        self.settings.save();
+                    }
+                }
+                self.chat_ui.recent_emojis.enabled = if demo_row {
+                    !self.chat_ui.recent_emojis.demo_hidden
+                } else {
+                    *self.settings.recent_emojis_switch()
+                };
                 self.chat_ui.recent_emojis.above = self.settings.chat_style != crate::settings::ChatStyle::Legacy;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;

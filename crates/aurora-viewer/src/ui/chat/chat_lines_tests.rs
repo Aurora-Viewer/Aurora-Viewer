@@ -27,6 +27,12 @@ fn say(world: &mut World, who: u128, text: &str, age: u64) {
 
 /// What one frame of the toasts painted: the bottom of their shapes.
 fn frame(ctx: &egui::Context, world: &World, seconds: f32, cards: bool, frame: u32) -> Option<f32> {
+    drawn_at(ctx, world, seconds, cards, frame, super::LinesPlace::above(BAR)).map(|r| r.bottom())
+}
+
+/// What one frame of the toasts at `place` painted: the bounds of their
+/// shapes, each within its clip.
+fn drawn_at(ctx: &egui::Context, world: &World, seconds: f32, cards: bool, frame: u32, place: super::LinesPlace) -> Option<Rect> {
     let p = crate::theme::Theme::default().palette();
     let pics = std::collections::HashMap::new();
     let layer = LayerId::new(egui::Order::Background, egui::Id::unique("chat_toasts"));
@@ -47,7 +53,7 @@ fn frame(ctx: &egui::Context, world: &World, seconds: f32, cards: bool, frame: u
             &pics,
             &mut names,
             &mut wanted,
-            BAR,
+            place,
             seconds,
             // ConsoleMaxLines default (`settings::chat_console_max_lines`).
             40,
@@ -61,13 +67,188 @@ fn frame(ctx: &egui::Context, world: &World, seconds: f32, cards: bool, frame: u
             let shapes = g.get(layer)?;
             let r = shapes
                 .all_entries()
-                .map(|s| s.shape.visual_bounding_rect())
+                .map(|s| s.shape.visual_bounding_rect().intersect(s.clip_rect))
+                .filter(|r| r.is_positive())
                 .fold(Rect::NOTHING, Rect::union);
-            r.is_positive().then_some(r.bottom())
+            r.is_positive().then_some(r)
         });
     });
     out.textures_delta.clear();
     bottom
+}
+
+/// The lines follow the chat block wherever its bar is: above it, or under
+/// it when there is more room there, unless a direction is asked for and
+/// has room.
+#[test]
+fn the_lines_stand_by_the_chat_block_above_it_or_under_it() {
+    use crate::settings::ChatLinesDirection::{Auto, Down, Up};
+    use crate::ui::bars::chrome::ChatPlace;
+    use crate::ui::toolbar::Bar;
+    let screen = Rect::from_min_size(Pos2::ZERO, SCREEN);
+    // what the bars leave: under the top bar, over the bottom one
+    let room = (52.0, BAR);
+    let block = |x: f32, y: f32, w: f32| Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, 28.0));
+
+    // the dock's block: as before, over what the bottom bar keeps, from
+    // the block's left
+    let dock = ChatPlace::at(block(12.0, 760.0, 380.0), Bar::Bottom, false);
+    let at = super::LinesPlace::by(dock, Auto, screen, room);
+    assert!(!at.down);
+    assert_eq!(at.edge, super::LinesPlace::above(BAR).edge, "the bottom the lines had");
+    assert_eq!(at.column(screen, 470.0), (8.0, false), "the left they had");
+    assert_eq!(at.ceiling, 52.0, "they stop under the top bar");
+    // asked under a bar that has nothing under it: above all the same
+    assert_eq!(super::LinesPlace::by(dock, Down, screen, room), at);
+    let centred = ChatPlace::at(block(450.0, 760.0, 380.0), Bar::Bottom, false);
+    assert_eq!(
+        super::LinesPlace::by(centred, Auto, screen, room).column(screen, 470.0),
+        (446.0, false)
+    );
+
+    // the top bar's block: hung under it, clear of what stands under the bar
+    let top = ChatPlace::at(block(300.0, 8.0, 380.0), Bar::Top, false);
+    let at = super::LinesPlace::by(top, Auto, screen, room);
+    assert!(at.down);
+    assert_eq!(at.edge, 52.0 + 6.0);
+    assert_eq!(at.limit, BAR - 6.0, "down to the bottom bar");
+    assert_eq!(at.column(screen, 470.0), (296.0, false));
+    assert_eq!(super::LinesPlace::by(top, Up, screen, room), at, "no room above the top bar");
+    // at the right end of the bar, no room from the block's left: the
+    // lines end on its right, kept on the screen
+    let right = ChatPlace::at(block(890.0, 8.0, 380.0), Bar::Top, false);
+    assert_eq!(
+        super::LinesPlace::by(right, Auto, screen, room).column(screen, 470.0),
+        (1280.0 - 8.0 - 470.0, true)
+    );
+    let right = ChatPlace::at(block(840.0, 8.0, 380.0), Bar::Top, false);
+    assert_eq!(
+        super::LinesPlace::by(right, Auto, screen, room).column(screen, 470.0),
+        (1224.0 - 470.0, true)
+    );
+
+    // a floating block: where there is more room, or as asked
+    let high = ChatPlace::at(block(300.0, 200.0, 380.0), Bar::Top, true);
+    let at = super::LinesPlace::by(high, Auto, screen, room);
+    assert!(at.down);
+    assert_eq!(at.edge, 232.0 + 8.0 + 6.0);
+    let at = super::LinesPlace::by(high, Up, screen, room);
+    assert!(!at.down, "a direction asked for is kept while it has room");
+    assert_eq!(at.edge, 196.0 - 8.0 - 6.0);
+    let low = ChatPlace::at(block(300.0, 500.0, 380.0), Bar::Top, true);
+    assert!(!super::LinesPlace::by(low, Auto, screen, room).down);
+    assert!(super::LinesPlace::by(low, Down, screen, room).down);
+
+    // a side bar's block: above it or under it too, never beside it
+    let left = ChatPlace::at(block(8.0, 600.0, 380.0), Bar::Left, false);
+    let at = super::LinesPlace::by(left, Auto, screen, room);
+    assert!(!at.down);
+    assert_eq!(at.edge, 596.0 - 8.0 - 6.0);
+    assert_eq!(at.column(screen, 470.0), (8.0, false));
+    let side = ChatPlace::at(block(892.0, 100.0, 380.0), Bar::Right, false);
+    let at = super::LinesPlace::by(side, Auto, screen, room);
+    assert!(at.down);
+    assert_eq!(at.edge, 132.0 + 8.0 + 6.0);
+    assert_eq!(
+        at.column(screen, 470.0),
+        (1280.0 - 8.0 - 470.0, true),
+        "they end on the block's right, kept on the screen"
+    );
+    assert!(
+        super::LinesPlace::by(side, Up, screen, room).down,
+        "no room for a line between the top bar and the block"
+    );
+    let lower = ChatPlace::at(block(892.0, 300.0, 380.0), Bar::Right, false);
+    let at = super::LinesPlace::by(lower, Up, screen, room);
+    assert!(!at.down, "asked above, with room there");
+    assert_eq!(at.edge, 296.0 - 8.0 - 6.0);
+    assert_eq!(at.ceiling, 52.0);
+}
+
+/// Lines hung under a chat bar start under it; when they reach the bottom
+/// bar, the newest stay over it and the oldest go under the chat bar's
+/// edge, cut there.
+#[test]
+fn lines_hung_under_the_chat_bar_start_there_and_stop_over_the_bottom_bar() {
+    for cards in [true, false] {
+        let ctx = egui::Context::default();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        say(&mut world, 1, "y'all still alive?", 0);
+        say(&mut world, 2, "nope", 0);
+        let place = |limit: f32| super::LinesPlace {
+            left: Some(300.0),
+            right: None,
+            edge: 58.0,
+            down: true,
+            limit,
+            ceiling: 0.0,
+        };
+        let draw = |world: &World, limit: f32| {
+            let mut drawn = None;
+            for n in 0..4 {
+                drawn = drawn_at(&ctx, world, 200.0, cards, n, place(limit));
+            }
+            drawn.expect("lines")
+        };
+        let few = draw(&world, 734.0);
+        assert!(
+            (57.5..70.0).contains(&few.top()) && (299.0..310.0).contains(&few.left()),
+            "cards {cards}: the lines start under the bar, at its left: {few:?}"
+        );
+        assert!(few.bottom() < 200.0, "cards {cards}: two lines: {few:?}");
+        // by a bar of the right side: every line ends on the edge given
+        let ended = super::LinesPlace {
+            left: None,
+            right: Some(900.0),
+            ..place(734.0)
+        };
+        let mut drawn = None;
+        for n in 0..4 {
+            drawn = drawn_at(&ctx, &world, 200.0, cards, n, ended);
+        }
+        let drawn = drawn.expect("lines");
+        assert!(
+            (895.0..=900.5).contains(&drawn.right()) && drawn.left() > 430.0,
+            "cards {cards}: the lines end on the bar's side: {drawn:?}"
+        );
+        assert!(
+            (few.height() - drawn.height()).abs() < 0.5 && (few.width() - drawn.width()).abs() < 1.5,
+            "cards {cards}: aligned, the lines keep their size: {few:?}, {drawn:?}"
+        );
+        for who in 10..35 {
+            say(&mut world, who, "one more line of the nearby chat", 0);
+        }
+        // going up from a bar, the same lines stop under the top bar: the
+        // newest stay on the chat bar, the oldest are cut
+        let up = super::LinesPlace {
+            edge: 700.0,
+            down: false,
+            ceiling: 420.0,
+            ..place(734.0)
+        };
+        let mut drawn = None;
+        for n in 0..4 {
+            drawn = drawn_at(&ctx, &world, 200.0, cards, n, up);
+        }
+        let drawn = drawn.expect("lines");
+        assert!(
+            drawn.top() >= 419.5 && drawn.top() < 440.0,
+            "cards {cards}: the oldest lines are cut under the top bar: {drawn:?}"
+        );
+        assert!(
+            (680.0..=700.5).contains(&drawn.bottom()),
+            "cards {cards}: the newest line stays on the chat bar: {drawn:?}"
+        );
+        let many = draw(&world, 400.0);
+        assert!(
+            many.top() >= 57.5,
+            "cards {cards}: the oldest lines are cut under the bar: {many:?}"
+        );
+        assert!(
+            (380.0..=400.5).contains(&many.bottom()),
+            "cards {cards}: the newest line stays over the bottom bar: {many:?}"
+        );
+    }
 }
 
 /// The bottom of the lines frame by frame while `change` happens between
@@ -152,7 +333,7 @@ fn painted(ctx: &egui::Context, world: &World, cards: bool, frame: u32) -> usize
             &pics,
             &mut names,
             &mut wanted,
-            BAR,
+            super::LinesPlace::above(BAR),
             200.0,
             40,
             true,
@@ -212,7 +393,7 @@ fn bounds(ctx: &egui::Context, world: &World, seconds: f32, cards: bool, frame: 
             &pics,
             &mut names,
             &mut wanted,
-            BAR,
+            super::LinesPlace::above(BAR),
             seconds,
             // ConsoleMaxLines default (`settings::chat_console_max_lines`).
             40,
@@ -327,7 +508,7 @@ fn toast_emoji_pictures(cards: bool) -> usize {
                 &pics,
                 &mut names,
                 &mut wanted,
-                BAR,
+                super::LinesPlace::above(BAR),
                 200.0,
                 40,
                 true,

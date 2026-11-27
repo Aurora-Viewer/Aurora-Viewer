@@ -89,6 +89,19 @@ pub enum ChatThumbnails {
     TopRight,
 }
 
+/// Which way the nearby chat lines over the world stand from the chat bar
+/// they follow (Preferences › Chat, `ui::chat::LinesPlace`). Aurora's own:
+/// the Legacy Viewer's console stays at the bottom left, its chat bar too.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ChatLinesDirection {
+    /// Above the bar, or under it when there is more room there (a bar
+    /// moved to the top of the screen).
+    #[default]
+    Auto,
+    Up,
+    Down,
+}
+
 /// The nearby chat bar (Preferences › Chat, #2696): at the bottom always,
 /// only while it is used (the Legacy Viewer's `AutohideChatBar`, #1009), or
 /// never, the Nearby tab of the Conversations window taking its place
@@ -1031,10 +1044,6 @@ pub struct Settings {
     /// The same row with the Legacy chat style: off, as the Legacy Viewer's
     /// row starts closed behind its arrow (the human's choice, 2026-11-09).
     pub show_recent_emojis_legacy: bool,
-    /// Favourite emojis, kept by a right-click on an emoji: first in the
-    /// recent row and a star tab in the picker. Off (the human's choice,
-    /// 2026-11-09; an Aurora addition); Preferences > Chat.
-    pub favorite_emojis: bool,
     /// Our own objects' script errors in the nearby chat, with a red
     /// warning sign, instead of opening the Script debug window, which
     /// still keeps them (ShowScriptErrorsLocation 0; on, the human's choice
@@ -1230,6 +1239,8 @@ pub struct Settings {
     pub chat_toast_seconds: f32,
     /// Wrapped text rows above the chat bar (ConsoleMaxLines, 40; 0 hides them).
     pub chat_console_max_lines: u32,
+    /// Which way those rows stand from the chat bar they follow.
+    pub chat_lines_direction: ChatLinesDirection,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
     /// The same notices as a line of nearby chat (OnlineOfflinetoNearbyChat;
@@ -1808,6 +1819,13 @@ pub struct Settings {
     /// default until tried on modest GPUs, and left alone by the two buttons
     /// of Preferences › Aurora, as the water effects once were.
     pub volumetric_clouds: bool,
+    /// The sun's and the moon's shafts (aurora-render sun_shafts.rs): the
+    /// sky's light around them streaked across the image, cut by what stands
+    /// in front, with no visible mist. An Aurora feature (the Legacy Viewer
+    /// has none), off by default.
+    pub sun_rays: bool,
+    /// Their strength, 0.05..1.
+    pub sun_rays_strength: f32,
     /// 0 Khronos PBR Neutral, 1 ACES (RenderTonemapType: ACES by default,
     /// like the Legacy Viewer)
     pub tonemapper: u8,
@@ -2087,6 +2105,10 @@ pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 pub(crate) const PLANET_RADIUS_KM: f32 = aurora_render::curvature::EARTH_RADIUS / 1000.0;
 pub(crate) const PLANET_RADIUS_KM_RANGE: std::ops::RangeInclusive<f32> =
     aurora_render::curvature::RADIUS_MIN / 1000.0..=aurora_render::curvature::RADIUS_MAX / 1000.0;
+
+/// The sun's and the moon's rays' strength (`Settings::sun_rays_strength`).
+pub(crate) const SUN_RAYS_STRENGTH_DEFAULT: f32 = 0.5;
+pub(crate) const SUN_RAYS_STRENGTH: std::ops::RangeInclusive<f32> = 0.05..=1.0;
 
 /// RenderTonemapMix's default (settings.xml).
 pub(crate) const TONEMAP_MIX: f32 = 0.7;
@@ -2683,7 +2705,6 @@ impl Default for Settings {
             show_chat_channel: false,
             show_recent_emojis: false,
             show_recent_emojis_legacy: false,
-            favorite_emojis: false,
             script_errors_in_chat: true,
             script_errors_to_channel: false,
             script_errors_channel: 1,
@@ -2745,6 +2766,7 @@ impl Default for Settings {
             system_notifications_when_active: false,
             chat_toast_seconds: 20.0,
             chat_console_max_lines: 40,
+            chat_lines_direction: ChatLinesDirection::Auto,
             toast_friends_online: true,
             friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
@@ -2933,6 +2955,8 @@ impl Default for Settings {
             specular_aa: true,
             colored_sky_ambient: false,
             volumetric_clouds: false,
+            sun_rays: false,
+            sun_rays_strength: SUN_RAYS_STRENGTH_DEFAULT,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
             hdr_emissive: true,
@@ -4055,6 +4079,16 @@ impl Settings {
             hover_height_account: old.hover_height_account,
             ..Settings::default()
         };
+    }
+
+    /// "Show recent emojis" of the chat style in use (Preferences > Chat
+    /// shows that one alone): the Legacy style keeps its own.
+    pub fn recent_emojis_switch(&mut self) -> &mut bool {
+        if self.chat_style == ChatStyle::Legacy {
+            &mut self.show_recent_emojis_legacy
+        } else {
+            &mut self.show_recent_emojis
+        }
     }
 
     /// The settings as they are now, written by a save thread (saves.rs):
@@ -5607,8 +5641,6 @@ mod tests {
         let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
         assert!(!old.show_recent_emojis);
         assert!(!old.show_recent_emojis_legacy);
-        assert!(!Settings::default().favorite_emojis, "favourites off by default");
-        assert!(!old.favorite_emojis);
         let original = Settings {
             show_recent_emojis: true,
             ..Settings::default()
@@ -5616,6 +5648,25 @@ mod tests {
         let saved = serde_json::to_vec(&original).expect("serialize synthetic preference");
         let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic preference");
         assert!(loaded.sanitized().show_recent_emojis);
+        // a profile that kept the favourites' switch of 0.9.x, removed since
+        // (favourites are always there): it loads, the switch is dropped
+        let kept: Settings = serde_json::from_str(r#"{"favorite_emojis":true}"#).expect("a profile with the removed switch");
+        assert!(!serde_json::to_string(&kept).expect("serialize").contains("favorite_emojis"));
+    }
+
+    /// The arrow beside the emoji buttons turns the switch of the chat style
+    /// in use, as Preferences › Chat shows that one alone.
+    #[test]
+    fn the_recent_emojis_switch_is_the_one_of_the_chat_style_in_use() {
+        let mut settings = Settings::default();
+        assert_ne!(settings.chat_style, ChatStyle::Legacy);
+        *settings.recent_emojis_switch() = true;
+        assert!(settings.show_recent_emojis && !settings.show_recent_emojis_legacy);
+        settings.chat_style = ChatStyle::Legacy;
+        assert!(!*settings.recent_emojis_switch());
+        *settings.recent_emojis_switch() = true;
+        settings.show_recent_emojis = false;
+        assert!(*settings.recent_emojis_switch(), "the Legacy style keeps its own");
     }
 
     #[test]

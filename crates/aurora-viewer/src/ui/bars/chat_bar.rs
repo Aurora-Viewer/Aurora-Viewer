@@ -76,6 +76,8 @@ mod tests {
         let icons = Icons::default();
         let favorites = crate::ui::bars::favorites::View::default();
         let mut width = 380.0;
+        // where the block says it was drawn, read in the frame
+        let placed = std::cell::Cell::new(None);
         let mut frame = |bar: Bar, events, editing: bool, chat: &mut crate::ui::chat::ChatUi| {
             let mut sent = None;
             toolbar.open = editing;
@@ -121,6 +123,7 @@ mod tests {
                         &settings,
                     );
                     sent = chrome::show_chat(ui, &p, &icons, &mut panels, chat, &gestures, None, &row, &mut width).0;
+                    placed.set(chrome::chat_place(ui.ctx()));
                 },
             )
             .textures_delta
@@ -135,7 +138,12 @@ mod tests {
             assert!(chat.has_focus, "{bar:?}: the existing input keeps keyboard focus");
             assert_eq!(chat.input, "a draft with é");
             assert!(ctx.read_response(crate::ui::chat::bar_input_id()).is_some());
+            // the block says where it stands, for the chat lines that follow it
+            let place = placed.get().expect("the block's place");
+            assert_eq!((place.bar, place.floating), (bar, false), "{bar:?}: the block's bar");
+            assert_eq!(place.rect.left_top(), egui::pos2(30.0, 30.0), "{bar:?}: the block's rect");
             assert!(frame(bar, vec![], true, &mut chat).is_none());
+            assert!(placed.get().is_none(), "{bar:?}: no block drawn while the interface is edited");
             let source = ctx
                 .read_response(crate::ui::bars::tool_button_id("bar_chat"))
                 .expect("movable edit cell");
@@ -307,6 +315,134 @@ mod tests {
             alone.height(),
             "no room kept for a row that is not shown"
         );
+    }
+
+    /// The chat bar's field has the recent emojis' arrow before its emoji
+    /// button: a click asks the app to turn "Show recent emojis". The right
+    /// click of an emoji of the row is the emoji's alone: its "Favorite",
+    /// without the chat block's button and block settings (the human's
+    /// requests, 2026-11-27).
+    #[test]
+    fn the_chat_bar_has_the_recent_emojis_arrow_and_an_emojis_menu_is_its_own() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        let mut chat = crate::ui::chat::ChatUi::default();
+        let gestures = crate::gestures::Manager::default();
+        let mut toolbar = ToolbarUi::default();
+        let settings = ToolbarSettings {
+            composed: true,
+            chat_composed: true,
+            ..Default::default()
+        };
+        let button = crate::ui::bars::top::button("bar_chat", "message-filled");
+        let status = islands::tests::status(true, true);
+        let icons = Icons::default();
+        let favorites = crate::ui::bars::favorites::View::default();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut width = 380.0;
+        let mut time = 0.0;
+        // one frame of the block on the bottom bar: whether a menu is open,
+        // and whether it ended with the chat block's sections
+        let mut frame = |chat: &mut crate::ui::chat::ChatUi, events: Vec<egui::Event>| {
+            let mut menu = (false, false);
+            time += 1.0 / 60.0;
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    toolbar.prepare(ui.ctx(), &settings);
+                    chrome::prepare(ui, &p, &status, &settings, false);
+                    chrome::prepare_chat(ui.ctx(), chat, width);
+                    let row = Row {
+                        unread: 0,
+                        latest_unread: None,
+                        flash: 0.0,
+                        flying: false,
+                        seated: false,
+                        mouselook: false,
+                        ao_active: false,
+                        locked: false,
+                        favorites: &favorites,
+                        bar: Bar::Bottom,
+                        style: Default::default(),
+                        editing: false,
+                        floating: false,
+                    };
+                    let slot = Rect::from_min_size(egui::pos2(30.0, 30.0), egui::vec2(width, chrome::height(ui.ctx(), "bar_chat")));
+                    chrome::register_at(ui, &button, &row, slot);
+                    chrome::show(
+                        ui,
+                        &p,
+                        &icons,
+                        &mut panels,
+                        &status,
+                        &mut Default::default(),
+                        &mut Default::default(),
+                        Default::default(),
+                        &mut Default::default(),
+                        Default::default(),
+                        &mut toolbar,
+                        &settings,
+                    );
+                    chrome::show_chat(ui, &p, &icons, &mut panels, chat, &gestures, Some(&mut emoji), &row, &mut width);
+                    menu = (
+                        egui::Popup::is_any_open(ui.ctx()),
+                        crate::ui::toolbar::native_context::shown(ui.ctx(), "bar_chat"),
+                    );
+                },
+            )
+            .textures_delta
+            .clear();
+            menu
+        };
+        let click = |at: egui::Pos2, button: egui::PointerButton, pressed: bool| egui::Event::PointerButton {
+            pos: at,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let rect = |id: egui::Id| ctx.read_response(id).map(|r| r.rect);
+
+        chat.recent_emojis = crate::ui::emoji::recent::Recent::demo("👍😂");
+        chat.recent_emojis.enabled = true;
+        for _ in 0..3 {
+            frame(&mut chat, vec![]);
+        }
+        let arrow = rect(dock::recent_arrow_id()).expect("the recent emojis' arrow");
+        let smile = rect(egui::Id::unique("chat_island_emoji")).expect("the emoji button");
+        let typed = rect(crate::ui::chat::bar_input_id()).expect("the chat field");
+        assert!(
+            arrow.right() <= smile.left() + 0.5,
+            "the arrow is before the emoji: {arrow:?}, {smile:?}"
+        );
+        assert!(
+            typed.right() <= arrow.left() + 0.5,
+            "the text stops before the arrow: {typed:?}, {arrow:?}"
+        );
+        assert_eq!(arrow.center().y, smile.center().y, "on the emoji's line");
+
+        // its click is asked of the app, once
+        assert!(!chat.recent_emojis.take_toggle());
+        frame(&mut chat, vec![egui::Event::PointerMoved(arrow.center())]);
+        frame(&mut chat, vec![click(arrow.center(), egui::PointerButton::Primary, true)]);
+        frame(&mut chat, vec![click(arrow.center(), egui::PointerButton::Primary, false)]);
+        assert!(chat.recent_emojis.take_toggle(), "the arrow's click turns the switch");
+
+        // the right click of an emoji of the row: a menu, the emoji's alone
+        let cell = rect(egui::Id::unique(("recent_emoji", crate::ui::chat::bar_input_id(), 0usize))).expect("the first recent emoji");
+        frame(&mut chat, vec![egui::Event::PointerMoved(cell.center())]);
+        frame(&mut chat, vec![click(cell.center(), egui::PointerButton::Secondary, true)]);
+        frame(&mut chat, vec![click(cell.center(), egui::PointerButton::Secondary, false)]);
+        let (open, block_sections) = frame(&mut chat, vec![]);
+        assert!(open, "the emoji's menu is open");
+        assert!(!block_sections, "without the chat block's settings");
+        assert!(!chat.recent_emojis.take_toggle());
     }
 
     /// On the dock, the chat block's island alone rises for the recent

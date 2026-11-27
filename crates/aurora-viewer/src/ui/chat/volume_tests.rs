@@ -60,7 +60,7 @@ fn volume_emphasis_reaches_conversations_toasts_links_emoji_and_search() {
                                 &pics,
                                 &mut names,
                                 &mut wanted,
-                                850.0,
+                                LinesPlace::above(850.0),
                                 60.0,
                                 40,
                                 false,
