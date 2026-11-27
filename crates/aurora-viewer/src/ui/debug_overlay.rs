@@ -92,9 +92,10 @@ impl Lines<'_> {
     /// projected once (today's `cube` projects every corner once per edge,
     /// 24 times), and nothing drawn unless some corner lands on screen.
     /// Exactly what the unculled box draws: every one of its edges then has
-    /// an end the projector refuses. Behind walls still draws (this overlay
-    /// has no depth test, as the skeletons above); only off-screen is culled.
-    fn obb_culled(&self, pos: Vec3, rot: Quat, half: Vec3, color: Color32) {
+    /// an end the projector refuses. Each drawn edge carries the depth of
+    /// its world ends (`world_line_at`), so the scene hides what stands in
+    /// front of it, like the Legacy Viewer's depth-tested boxes.
+    fn obb_culled(&self, ctx: &egui::Context, pos: Vec3, rot: Quat, half: Vec3, color: Color32) {
         let corner = |x: f32, y: f32, z: f32| pos + rot * (half * Vec3::new(x, y, z));
         let sign = |i: usize| if i == 0 { -1.0 } else { 1.0 };
         // one projection per corner, remembered by its signs
@@ -109,17 +110,19 @@ impl Lines<'_> {
         let s = [-1.0f32, 1.0];
         for &a in &s {
             for &b in &s {
-                self.cached_seg(at(-1.0, a, b), at(1.0, a, b), color);
-                self.cached_seg(at(a, -1.0, b), at(a, 1.0, b), color);
-                self.cached_seg(at(a, b, -1.0), at(a, b, 1.0), color);
+                self.occluded_seg(ctx, corner(-1.0, a, b), at(-1.0, a, b), corner(1.0, a, b), at(1.0, a, b), color);
+                self.occluded_seg(ctx, corner(a, -1.0, b), at(a, -1.0, b), corner(a, 1.0, b), at(a, 1.0, b), color);
+                self.occluded_seg(ctx, corner(a, b, -1.0), at(a, b, -1.0), corner(a, b, 1.0), at(a, b, 1.0), color);
             }
         }
     }
 
-    /// An edge of `obb_culled`, from its remembered projected ends.
-    fn cached_seg(&self, a: Option<(Pos2, f32)>, b: Option<(Pos2, f32)>, color: Color32) {
-        if let (Some((pa, _)), Some((pb, _))) = (a, b) {
-            self.painter.line_segment([pa, pb], Stroke::new(self.width, color));
+    /// An edge of `obb_culled`: its world ends say where it stands, so the
+    /// scene hides it where it stands behind something.
+    fn occluded_seg(&self, ctx: &egui::Context, wa: Vec3, pa: Option<(Pos2, f32)>, wb: Vec3, pb: Option<(Pos2, f32)>, color: Color32) {
+        if let (Some((sa, _)), Some((sb, _))) = (pa, pb) {
+            aurora_render::world_line_at(ctx, wa, wb);
+            self.painter.line_segment([sa, sb], Stroke::new(self.width, color));
         }
     }
 
@@ -289,6 +292,48 @@ fn hidden_debug_texts(world: &World, drawn: impl Iterator<Item = (usize, Vec3, f
 }
 
 #[allow(clippy::too_many_arguments)]
+/// O10: the avatars' hitboxes (LLDrawPoolAvatar::renderAvatars, not for
+/// control avatars), in the colour of their minimap dot and 2 points wide
+/// like the Legacy Viewer's, hidden by what the scene has in front of them
+/// as its depth-tested boxes are. Painted with the world, before its end
+/// marker: the overlay's own layer draws over everything. Visual parity
+/// only: picking still tests the fixed click box (scene::picking).
+pub fn draw_hitboxes(ctx: &egui::Context, world: &World, scene: &Scene, proj: &Projector, eye: Vec3, dv: &DebugView) {
+    if !dv.avatar_hitboxes {
+        return;
+    }
+    let now = Instant::now();
+    let wide = Lines {
+        painter: super::hud::world_painter(ctx),
+        proj,
+        width: 2.0,
+    };
+    for (idx, o) in world.objects.avatars() {
+        if scene.gpu.get(idx).is_none() {
+            continue;
+        }
+        let Some((pp, _, _)) = Scene::object_transform(world, idx, now, 0) else {
+            continue;
+        };
+        if pp.distance(eye) > hitbox_draw_range(dv.avatar_hitbox_range) {
+            continue;
+        }
+        // Our own avatar turns with the agent's yaw, as the Legacy
+        // Viewer's own avatar object does. Everyone else keeps the
+        // rotation the simulator reported: `object_transform` replaces
+        // it with the drawn body's visual facing, which chases movement.
+        let rot = if o.full_id == world.agent_id && world.agent.has_local_control() {
+            world.agent.body_rotation()
+        } else {
+            let parent = world.objects.parent_of(o).and_then(|p| world.objects.get(p)).map(|p| p.rotation);
+            hitbox_rotation(o.rotation, parent)
+        };
+        let (pos, _, half) = avatar_hitbox_frame(pp, rot, o.scale);
+        wide.obb_culled(ctx, pos, rot, half, super::minimap::avatar_color(world, &o.full_id));
+    }
+    aurora_render::world_label_at(ctx, None);
+}
+
 pub fn draw(
     ctx: &egui::Context,
     world: &World,
@@ -469,41 +514,6 @@ pub fn draw(
             for (a, b) in bone_segments(&bones, poses, &rest, model) {
                 lines.seg(a, b, BONE);
             }
-        }
-    }
-
-    // O10: the avatars' hitboxes (LLDrawPoolAvatar::renderAvatars, not for
-    // control avatars), in the colour of their minimap dot and 2 points
-    // wide like the Legacy Viewer's. Visual parity only: picking still tests
-    // the fixed click box (scene::picking).
-    if dv.avatar_hitboxes {
-        let wide = Lines {
-            painter: lines.painter.clone(),
-            proj,
-            width: 2.0,
-        };
-        for (idx, o) in world.objects.avatars() {
-            if scene.gpu.get(idx).is_none() {
-                continue;
-            }
-            let Some((pp, _, _)) = Scene::object_transform(world, idx, now, 0) else {
-                continue;
-            };
-            if pp.distance(eye) > hitbox_draw_range(dv.avatar_hitbox_range) {
-                continue;
-            }
-            // Our own avatar turns with the agent's yaw, as the Legacy
-            // Viewer's own avatar object does. Everyone else keeps the
-            // rotation the simulator reported: `object_transform` replaces
-            // it with the drawn body's visual facing, which chases movement.
-            let rot = if o.full_id == world.agent_id && world.agent.has_local_control() {
-                world.agent.body_rotation()
-            } else {
-                let parent = world.objects.parent_of(o).and_then(|p| world.objects.get(p)).map(|p| p.rotation);
-                hitbox_rotation(o.rotation, parent)
-            };
-            let (pos, _, half) = avatar_hitbox_frame(pp, rot, o.scale);
-            wide.obb_culled(pos, rot, half, super::minimap::avatar_color(world, &o.full_id));
         }
     }
 }
@@ -699,7 +709,8 @@ mod tests {
 
     /// A hitbox draws its 12 edges while on screen and nothing once fully
     /// off-screen: off to the side, or behind the camera. A box straddling
-    /// the screen's edge still draws the edges with an end on screen.
+    /// the screen's edge still draws the edges with an end on screen. Every
+    /// drawn edge carries one depth mark for the scene to hide it by.
     #[test]
     fn a_hitbox_draws_its_edges_only_while_on_screen() {
         let paint = |view_proj: Mat4, pos: Vec3| {
@@ -712,27 +723,37 @@ mod tests {
             };
             let output = ctx.run_ui(Default::default(), |_| {
                 let lines = Lines {
-                    painter: ctx.layer_painter(egui::LayerId::background()),
+                    painter: crate::ui::hud::world_painter(&ctx),
                     proj: &proj,
                     width: 2.0,
                 };
-                lines.obb_culled(pos, Quat::IDENTITY, Vec3::ONE, RED);
+                lines.obb_culled(&ctx, pos, Quat::IDENTITY, Vec3::ONE, RED);
             });
-            output.shapes.len()
+            let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+            let mut marks = 0;
+            let mut meshes = 0;
+            for p in &primitives {
+                match &p.primitive {
+                    egui::epaint::Primitive::Callback(_) => marks += 1,
+                    egui::epaint::Primitive::Mesh(_) => meshes += 1,
+                }
+            }
+            (marks, meshes)
         };
         // centred: every corner lands on screen, all 12 edges draw
-        assert_eq!(paint(Mat4::IDENTITY, Vec3::ZERO), 12);
+        assert_eq!(paint(Mat4::IDENTITY, Vec3::ZERO), (12, 12));
         // straddling the edge: fewer edges, but still some
         let straddling = paint(Mat4::IDENTITY, Vec3::new(1.0, 0.0, 0.0));
-        assert!((1..12).contains(&straddling), "{straddling}");
+        assert!((1..12).contains(&straddling.1), "{straddling:?}");
+        assert_eq!(straddling.0, straddling.1);
         // off to the side: no corner lands on screen
-        assert_eq!(paint(Mat4::IDENTITY, Vec3::new(500.0, 0.0, 0.0)), 0);
+        assert_eq!(paint(Mat4::IDENTITY, Vec3::new(500.0, 0.0, 0.0)), (0, 0));
         // behind the camera: every corner fails the w check
         let behind = Mat4 {
             w_axis: glam::Vec4::new(0.0, 0.0, 0.0, -1.0),
             ..Mat4::IDENTITY
         };
-        assert_eq!(paint(behind, Vec3::ZERO), 0);
+        assert_eq!(paint(behind, Vec3::ZERO), (0, 0));
     }
 
     #[test]

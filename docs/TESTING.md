@@ -5602,7 +5602,9 @@ both open states and the selection count. Capture at frame 620.
   ambient occlusion). `hitboxes` is O10, the avatars' hitboxes of the
   Legacy Viewer's Avatar Hitboxes, on the avatars within its range (32 m
   until the Dev Toolbox's O10 slider moves, 0 draws nothing), each in the
-  colour of its minimap dot, drawn over the scene with no depth test.
+  colour of its minimap dot, hidden by what the scene has in front of it
+  (the labels' depth test; `AURORA_LABEL_OCCLUSION=0` draws them over the
+  scene as before).
   `hitboxes=<metres>` turns it on with that range. `lod` (Preferences › Debug › Detail
   levels) labels the objects around the pointer with the level they are
   drawn at (0 to 3), the one their distance asks for when it is another,

@@ -19472,6 +19472,14 @@ impl App {
                         },
                     );
                 }
+                ui::debug_overlay::draw_hitboxes(
+                    &ctx,
+                    &self.world,
+                    &self.scene,
+                    projector,
+                    self.camera.position,
+                    &self.settings.debug,
+                );
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 if self.demo && crate::demo::floating_text::scenario() {
