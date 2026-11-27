@@ -245,7 +245,7 @@ fn outfit_json_leaves_the_bridge_out() {
     let (change, _) = appearance::plan(
         &inv,
         appearance::Action::ImportJson {
-            backup: Box::new(old),
+            backup: Box::new(old.clone()),
             name: "Imported".into(),
             partial: false,
         },
@@ -254,4 +254,27 @@ fn outfit_json_leaves_the_bridge_out() {
     .expect("import");
     assert!(change.create.is_some());
     assert!(!change.links.iter().any(|l| l.target == bridge), "not imported into the outfit");
+    // review: neither attached again from the backup (the viewer wears its
+    // own) nor reported missing, even once that bridge is gone
+    let resolved = old.resolve(&inv, agent);
+    assert!(!resolved.links.iter().any(|l| l.target == bridge));
+    assert!(resolved.missing.is_empty(), "not missing");
+    let import = |backup: &Backup| appearance::Action::ImportJson {
+        backup: Box::new(backup.clone()),
+        name: "Imported".into(),
+        partial: false,
+    };
+    let attached = appearance::attachments_for_action(&inv, agent, &import(&old));
+    assert!(!attached.is_empty(), "the other objects are attached");
+    assert!(!attached.iter().any(|request| request.item_id == bridge), "not the bridge");
+    let mut named = old.clone();
+    for item in named.items.iter_mut().filter(|item| item.item_id == bridge) {
+        item.name = crate::world::bridge::NAME.into();
+    }
+    inv.items.remove(&bridge);
+    let resolved = named.resolve(&inv, agent);
+    assert!(resolved.missing.is_empty(), "a bridge since replaced is not missing");
+    assert!(!resolved.links.is_empty());
+    // an ordinary object that is gone still is
+    assert_eq!(old.resolve(&inv, agent).missing.len(), 1);
 }
