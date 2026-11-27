@@ -57,8 +57,10 @@ impl Default for Layout {
                 tb("device-vision-pro-filled", "vr_view", aurora_i18n::tr!("vr-view")),
                 tb("Command_View_Icon", "mouselook", aurora_i18n::tr!("common-mouselook-m")),
                 tb("Command_People_Icon", "people", aurora_i18n::tr!("common-people")),
+                // The texture library stays in the catalogue (Customize) but is
+                // not on the default bar: skins/default/toolbars.xml of the
+                // Legacy Viewer has no such button.
                 tb("Command_Inventory_Icon", "inventory", aurora_i18n::tr!("common-inventory")),
-                tb("stack-2-filled", "texture_library", aurora_i18n::tr!("texture-library-title")),
                 tb("Command_Gestures_Icon", "gestures", aurora_i18n::tr!("gesture-title")),
                 tb("Command_Appearance_Icon", "appearance", aurora_i18n::tr!("common-appearance")),
                 tb("Command_Search_Icon", "search", aurora_i18n::tr!("search-title")),
@@ -216,5 +218,16 @@ mod tests {
         assert_eq!(theme.violet, "#123456");
         assert_eq!(theme.panel_alpha, Theme::default().panel_alpha);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_default_bar_leaves_the_texture_library_to_the_catalogue() {
+        let bar = Layout::default().toolbar;
+        assert!(bar.iter().all(|b| b.command != "texture_library"));
+        assert!(bar.iter().any(|b| b.command == "inventory"));
+        assert!(
+            crate::ui::toolbar::command("texture_library").is_some_and(|c| c.ready),
+            "still offered in Customize"
+        );
     }
 }
