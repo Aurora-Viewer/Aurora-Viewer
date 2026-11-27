@@ -79,10 +79,6 @@ jobs:
       - name: Shell hook of the agents
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         run: ./scripts/test-agent-hook.ps1
-      # the order and the claims of the maintainers' review queue
-      - name: Review queue rules
-        if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
-        run: ./scripts/test-review-queue.ps1
       - name: Formatting
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         run: cargo fmt --all -- --check

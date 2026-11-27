@@ -592,6 +592,11 @@ pub fn wolf_attachments(kept: bool) -> Vec<ObjectUpdate> {
             "",
         );
         o.parent_id = 9001;
+        // not ours: a simulator reports no ownership or modify right on
+        // another avatar's attachment (the viewer locks it on its own too)
+        o.update_flags &= !(crate::ui::context::flags::OBJECT_YOU_OWNER
+            | crate::ui::context::flags::OBJECT_MODIFY
+            | crate::ui::context::flags::OBJECT_MOVE);
         o.state = ((point & 0x0F) << 4) | ((point & 0xF0) >> 4);
         o
     })

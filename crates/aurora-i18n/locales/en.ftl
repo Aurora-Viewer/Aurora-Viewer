@@ -14191,9 +14191,13 @@ poser-finger-col-middle = middle
 poser-finger-col-tip = tip
 poser-hint-rotation = degrees, parent frame
 poser-hint-position = meters, avatar axes · the chain follows
+poser-hint-position-only = meters, avatar axes · this joint only
+poser-move-joint-only = Move this joint only
+poser-move-joint-only-hint = Move this joint directly without bending its chain. Mirror mode also moves the opposite joint.
 poser-hint-scale = factors · center cube = uniform
 poser-ball-rotation = Drag to rotate · aligned with the camera
 poser-ball-position = Drag the handle in world · the chain bends
+poser-ball-position-only = Drag the handle in world · this joint only
 poser-ball-scale = Cubes in world: one axis · center: uniform
 poser-whole-pose = Whole pose
 poser-save-options = Save options
