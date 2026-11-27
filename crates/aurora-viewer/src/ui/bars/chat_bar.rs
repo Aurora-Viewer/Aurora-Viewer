@@ -53,7 +53,7 @@ mod tests {
     use super::*;
     use crate::ui::{
         bars::{chrome, islands},
-        toolbar::{Bar, ToolbarSettings, ToolbarUi},
+        toolbar::{Bar, ToolbarSettings, ToolbarUi, structure},
     };
 
     #[test]
@@ -310,6 +310,211 @@ mod tests {
             frame(&mut chat).height(),
             alone.height(),
             "no room kept for a row that is not shown"
+        );
+    }
+
+    /// On the dock, the chat block's island alone rises for the recent
+    /// emojis' row and for a paragraph, as the chat island did before the
+    /// field became a block: the dock and its buttons keep their height.
+    /// What stands out over the dock is still the interface, and takes its
+    /// clicks.
+    #[test]
+    fn the_docks_chat_island_alone_rises_for_the_recent_emojis_and_a_paragraph() {
+        type Frame<'a> = &'a mut dyn FnMut(Vec<egui::Event>, &mut crate::ui::chat::ChatUi) -> f32;
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        let mut chat = crate::ui::chat::ChatUi::default();
+        let gestures = crate::gestures::Manager::default();
+        let mut toolbar = ToolbarUi::default();
+        toolbar.islands = true;
+        let skin = crate::ui::skin::Layout::default();
+        let mut settings = ToolbarSettings {
+            composed: true,
+            ..Default::default()
+        };
+        settings.compose_chat(&skin);
+        let neighbour = settings
+            .buttons(&skin)
+            .iter()
+            .map(|button| button.command.clone())
+            .find(|command| !structure::is_block(command) && !structure::is_separator(command))
+            .expect("a plain button beside the chat block");
+        let status = islands::tests::status(true, true);
+        let icons = Icons::default();
+        let favorites = crate::ui::bars::favorites::View::default();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut width = 380.0;
+        // one frame of the dock: the top of what the bottom islands keep
+        let mut frame = |events, chat: &mut crate::ui::chat::ChatUi| {
+            let mut top = 0.0;
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1536.0, 864.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    toolbar.prepare(ui.ctx(), &settings);
+                    chrome::prepare(ui, &p, &status, &settings, false);
+                    chrome::prepare_chat(ui.ctx(), chat, width);
+                    let row = Row {
+                        unread: 0,
+                        latest_unread: None,
+                        flash: 0.0,
+                        flying: false,
+                        seated: false,
+                        mouselook: false,
+                        ao_active: false,
+                        locked: false,
+                        favorites: &favorites,
+                        bar: Bar::Bottom,
+                        style: settings.style(Bar::Bottom).resolve(Bar::Bottom, true),
+                        editing: false,
+                        floating: false,
+                    };
+                    top = dock::bottom(
+                        ui,
+                        &p,
+                        &icons,
+                        &skin,
+                        &mut toolbar,
+                        &settings,
+                        &mut panels,
+                        chat,
+                        &gestures,
+                        Some(&mut emoji),
+                        &row,
+                        &mut width,
+                        &mut crate::ui::bars::MicButton::default(),
+                    )
+                    .2;
+                    chrome::show(
+                        ui,
+                        &p,
+                        &icons,
+                        &mut panels,
+                        &status,
+                        &mut Default::default(),
+                        &mut Default::default(),
+                        Default::default(),
+                        &mut Default::default(),
+                        Default::default(),
+                        &mut toolbar,
+                        &settings,
+                    );
+                    chrome::show_chat(ui, &p, &icons, &mut panels, chat, &gestures, Some(&mut emoji), &row, &mut width);
+                },
+            )
+            .textures_delta
+            .clear();
+            top
+        };
+        let rect = |id: egui::Id, what: &str| ctx.read_response(id).unwrap_or_else(|| panic!("{what}")).rect;
+        let field = || rect(crate::ui::chat::bar_input_id(), "the chat field");
+        let dock = || rect(egui::Id::unique("toolbar_background"), "the dock");
+        let button = || rect(crate::ui::bars::tool_button_id(&neighbour), "the button beside the chat");
+        let cell = || {
+            rect(
+                egui::Id::unique(("recent_emoji", crate::ui::chat::bar_input_id(), 0usize)),
+                "the first recent emoji",
+            )
+        };
+        let settle = |frame: Frame, chat: &mut crate::ui::chat::ChatUi| {
+            for _ in 0..3 {
+                frame(vec![], chat);
+            }
+            frame(vec![], chat)
+        };
+        let click = |frame: Frame, chat: &mut crate::ui::chat::ChatUi, pos: egui::Pos2| {
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            frame(vec![egui::Event::PointerMoved(pos), press(true)], chat);
+            frame(vec![press(false)], chat);
+            frame(vec![], chat);
+        };
+
+        let top = settle(&mut frame, &mut chat);
+        let (plain, bar, beside) = (field(), dock(), button());
+        assert!(
+            bar.expand(0.5).contains_rect(plain),
+            "the field alone is in the dock: {plain:?} in {bar:?}"
+        );
+
+        chat.recent_emojis = crate::ui::emoji::recent::Recent::demo("👍😂");
+        chat.recent_emojis.enabled = true;
+        let row = crate::ui::emoji::recent::HEIGHT;
+        for above in [true, false] {
+            chat.recent_emojis.above = above;
+            let raised = settle(&mut frame, &mut chat);
+            assert_eq!(dock(), bar, "above {above}: the dock keeps its place and its height");
+            assert_eq!(button(), beside, "above {above}: so does the button beside the chat");
+            assert_eq!(
+                raised,
+                top - row,
+                "above {above}: the windows and the chat lines leave the row its room"
+            );
+            let (typed, first) = (field(), cell());
+            assert_eq!(typed.height(), plain.height(), "above {above}: the field keeps its height");
+            let over = if above {
+                assert_eq!(typed, plain, "the field stays where it is under the row");
+                assert!(
+                    first.bottom() <= typed.top() + 0.5,
+                    "the row is over the field: {first:?}, {typed:?}"
+                );
+                first
+            } else {
+                assert_eq!(typed.top(), plain.top() - row, "the field rises over the row");
+                assert!(
+                    first.top() >= typed.bottom() - 0.5,
+                    "the row is under the field: {first:?}, {typed:?}"
+                );
+                typed
+            };
+            assert!(
+                over.top() < bar.top(),
+                "above {above}: the island stands out over the dock: {over:?}, {bar:?}"
+            );
+            // over the dock, the pointer is still on the interface (an
+            // island's area; the world is the background's)
+            let island = |pos| ctx.layer_id_at(pos).is_some_and(|layer| layer.order == egui::Order::Middle);
+            let out = egui::pos2(over.center().x, (over.top() + bar.top()) / 2.0);
+            assert!(island(out), "above {above}: {out:?} is over the interface");
+            assert!(
+                !island(egui::pos2(beside.center().x, out.y)),
+                "above {above}: over the other islands, the world keeps its clicks"
+            );
+            if above {
+                chat.input.clear();
+                click(&mut frame, &mut chat, egui::pos2(first.center().x, out.y));
+                assert!(!chat.input.is_empty(), "a click on a recent emoji writes it");
+            } else {
+                chat.let_keyboard_go();
+                frame(vec![], &mut chat);
+                click(&mut frame, &mut chat, egui::pos2(typed.left() + 40.0, out.y));
+                assert!(chat.has_focus, "a click in the raised field gives it the keyboard");
+            }
+        }
+
+        // a paragraph raises the island the same way
+        chat.recent_emojis.enabled = false;
+        chat.input = "one\ntwo\nthree".into();
+        let raised = settle(&mut frame, &mut chat);
+        let typed = field();
+        assert!(typed.height() > plain.height(), "the field holds the paragraph: {typed:?}");
+        assert_eq!((dock(), button()), (bar, beside), "the dock keeps its height under a paragraph");
+        assert!(
+            typed.top() < bar.top(),
+            "the paragraph stands out over the dock: {typed:?}, {bar:?}"
+        );
+        assert!(
+            raised < typed.top() && raised < top,
+            "the windows and the chat lines stop over the paragraph: {raised}, {typed:?}"
         );
     }
 

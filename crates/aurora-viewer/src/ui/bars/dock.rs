@@ -261,10 +261,26 @@ pub fn bottom(
         chat_space,
     );
     let mut action = BarAction::None;
+    let split = buttons
+        .iter()
+        .any(|button| crate::ui::toolbar::structure::is_separator(&button.command))
+        || sizing::has_alignment(&ctx, buttons);
     if buttons.iter().any(|button| button.command == "bar_chat") {
+        // The chat block's island alone rises for the recent emojis' row
+        // and for a paragraph, as the chat island did before the field
+        // became a block: the dock's other islands keep their height. A
+        // dock in one piece has no island of the chat's to raise, and is
+        // as high as its chat block.
+        let lift = if toolbar.islands && split && !row.editing && !row.floating {
+            super::chrome::lift_chat(&ctx)
+        } else {
+            0.0
+        };
         let height = super::chrome::height(&ctx, "bar_chat") + V_PAD * 2.0;
         geo.height = geo.height.max(height);
         geo.dock.min.y = geo.dock.bottom() - geo.height;
+        // (what the islands keep of the screen: `Geometry::reserved`)
+        geo.chat.min.y = geo.chat.bottom() - geo.height - lift;
     }
     let mut committed = false;
 
@@ -336,10 +352,6 @@ pub fn bottom(
         };
         geo.dock.max.x = screen.right() - MARGIN;
     }
-    let split = buttons
-        .iter()
-        .any(|button| crate::ui::toolbar::structure::is_separator(&button.command))
-        || sizing::has_alignment(&ctx, buttons);
     super::islands::area_surface(&ctx, p, "dock", geo.dock, !split && !row.editing, |ui| {
         crate::ui::toolbar::edit_mode::region(ui, p, row.bar, geo.dock, buttons.is_empty());
         // the dock's background: its right-click menu and the drop target
