@@ -25,6 +25,29 @@ mod cutout;
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;
 mod device_lost;
+mod dlss;
+/// What the user runs to install NVIDIA's DLSS files (docs/DLSS.md).
+pub const DLSS_SETUP: &str = if cfg!(windows) { "dlss-setup.ps1" } else { "dlss-setup.sh" };
+/// Whether DLSS draws now: Preferences reads it each frame, since Streamline can
+/// refuse after the device opened for it (`DlssSupport::Failed`). Cheap
+/// once the device is open.
+pub fn dlss_support() -> DlssSupport {
+    dlss::support()
+}
+/// Tries DLSS again after Streamline refused it (Preferences' button,
+/// `DlssSupport::Failed`, or under Ray Reconstruction once refused):
+/// Streamline's start is asked again, Ray Reconstruction too, and each
+/// renderer makes its DLSS anew at its next frame. Preferences shows Ready again
+/// only once a feature is made.
+pub fn dlss_retry() {
+    dlss::retry();
+}
+/// DLSS draws in FSR's place: the setting (`RenderSettings::dlss`), unless
+/// `AURORA_DLSS` overrides it for this launch (dlss.rs). Preferences asks
+/// it too, so that its page names what draws.
+pub fn dlss_wanted(setting: bool) -> bool {
+    dlss::wanted(setting)
+}
 pub use device_lost::{
     GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_drop, in_guarded_poll, in_guarded_start, is_drop_loss_panic, is_loss_panic,
     is_start_loss_panic, loss_details, start_guarded,
@@ -157,7 +180,34 @@ pub use hud::HudView;
 pub use label_depth::{WORLD_OVERLAY_NEAR_W, clip_world_line, world_label_at, world_line_at};
 pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use outside::{OutsideEvent, OutsideFrame, same_picture};
+/// The window's settings trace nothing for DLSS Ray Reconstruction
+/// (`RenderSettings::dlss_rr`) to clean up: Preferences says so when it is
+/// chosen and ready.
+pub use renderer::rr_untraced as dlss_rr_untraced;
 pub use renderer::{CASCADES, RenderError};
+
+/// DLSS Ray Reconstruction can be chosen: the device was opened with its
+/// extensions and Streamline did not refuse it (dlss.rs).
+pub fn dlss_rr_ready() -> bool {
+    dlss::rr_ready()
+}
+/// The device was opened with DLSS Ray Reconstruction's extensions
+/// (dlss.rs).
+pub fn dlss_rr_device() -> bool {
+    dlss::rr_device()
+}
+/// Streamline offered DLSS Ray Reconstruction on this device, then refused it (its
+/// feature, or the video memory): [`dlss_retry`] asks again. Unlike Streamline
+/// saying it is not available there, which no retry changes (dlss.rs).
+pub fn dlss_rr_refused() -> bool {
+    dlss::rr_refused_here()
+}
+/// DLSS Ray Reconstruction refused for a photo or film frame on this device:
+/// the captures draw super resolution, the window keeps it, until
+/// [`dlss_retry`], another model or the next device (dlss.rs).
+pub fn dlss_rr_snapshot_refused() -> bool {
+    dlss::snapshot_rr_refused_here()
+}
 // What a tile of a photo draws around what it keeps for the soft shadows.
 pub use soft_shadows::tile_reach as soft_shadow_tile_reach;
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};

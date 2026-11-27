@@ -13749,6 +13749,10 @@ What the inventory must show with these scenarios:
 | `AURORA_DEBUG_MOTION=1` | The screen's motion vectors shown instead of the image |
 | `AURORA_TAA_MOTION=0` or `alt` | TAA reprojected through the camera alone, without the motion vectors, as before |
 | `AURORA_FSR_QUALITY=<0-4>` | FSR's mode for this launch, with `AURORA_AA=7`: native AA, quality, balanced, performance, ultra performance |
+| `AURORA_DLSS=<1/0>`, `AURORA_DLSS_DIR=<folder>`, `AURORA_DLSS_PRESET=<n>` | Builds with the `dlss` feature only (docs/DLSS.md): 1 draws DLSS in FSR's place for this launch whatever the DLSS setting (with FSR chosen: `AURORA_AA=7`), 0 keeps NVIDIA's files out of it; the folder of the user's DLSS files; NVIDIA's render preset number for this launch (11 K, 12 L, 13 M, 0 its own) |
+| `AURORA_DLSS_RR=<1/0>`, `AURORA_DLSS_RR_PRESET=<n>` | Builds with the `dlss` feature only (docs/DLSS.md): 1 draws DLSS Ray Reconstruction with DLSS for this launch whatever the setting, 0 keeps it out, its device extensions too; NVIDIA's Ray Reconstruction preset number for this launch (4 D, 5 E, 6 F, 0 its own) |
+| `AURORA_DLSS_RR_SHOW=<guide>`, `AURORA_DLSS_RR_SHOW_SCALE=<x>`, `AURORA_DLSS_RR_TRANSPOSED=1`, `AURORA_DLSS_RR_BEHIND=1`, `AURORA_DLSS_RR_FAIL=1` | Ray Reconstruction debugging (`dlss` feature): a guide drawn over the image, the camera matrices transposed, the surface behind the blended faces opaque to the eye, a refusal as if from Streamline |
+| `AURORA_DLSS_JITTER=x`, `y` or `xy`, `AURORA_DLSS_ALPHA=1` or `0`, `AURORA_DLSS_AUTOEXP=0`, `AURORA_DLSS_FAIL=<n>[,<n>]`, `AURORA_DLSS_SETTLE=0` | DLSS debugging (`dlss` feature): the jitter's sign flipped on the axes named; the scene's alpha upscaled by DLSS, or left as DLSS wrote it; no automatic exposure; those evaluates failed (counted from the first), to see DLSS made again and then given up; a feature made at every size of a resize, as before, to time it (the log times each feature's release after it was retired) |
 | `AURORA_FSR_SHARPNESS=<0-1>` or `off` | FSR's RCAS sharpening for this launch, or none |
 | `AURORA_FSR_REACTIVE=0` | FSR without the reactive mask it generates from the blended faces |
 | `AURORA_FSR_BLEND_MOTION=0` | FSR without the depth and motion of the blended faces |
@@ -13771,6 +13775,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SOFT_SHADOWS=0`, `1` or `alt` | Soft sun shadows off, on or one second in two for this launch |
 | `AURORA_SHADOW_SOFTNESS=<0-2>`, `AURORA_SHADOW_INTENSITY=<0-1>` | Size of the light of the soft shadows (1 = 2.3 degrees across; the real sun, 0.53 degrees, is a softness of 0.23) and darkness of the sun's shadows (1 = as before) for this launch |
 | `AURORA_SOFT_PROJECTORS=0` | With the soft shadows, the projectors keep their 5-tap shadows (to measure their cost apart) |
+| `AURORA_RT_RAW=1`, `spatial` or `0`, `AURORA_RT_GI_RAW=1` | The ray-traced passes' own denoisers skipped or kept for this launch, any build |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
@@ -13794,6 +13799,37 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_RENDER_INFO=<overlimit>[/<reporting>]` | The demo's region answers the avatar render info with these counts (8 reporting by default): the "may not see you fully" notice; the report it would get goes to the log |
 
 ### Details
+
+- **`AURORA_RT_RAW`, `AURORA_RT_GI_RAW`** (`rt_shadows.rs` `set_raw`, any
+  build): `AURORA_RT_RAW=1` skips both of the traced shadows' denoisers,
+  the temporal history and the à-trous filter (ReSTIR's reuse of last
+  frame's light choices stays), `spatial` the à-trous filter only, `0`
+  neither; with DLSS Ray Reconstruction drawing, the default keeps every
+  pass's own denoiser, and these force it either way.
+  `AURORA_RT_GI_RAW=1` hands the ray-traced indirect light to Ray
+  Reconstruction without its own à-trous filter too (its history stays;
+  the reflections keep theirs unless `AURORA_RT_RAW` says otherwise).
+  Look at the speckle and the smear of the traced shadows and the
+  indirect light in a dim interior with many lights while the camera
+  turns.
+- **Ray Reconstruction debugging** (`dlss` feature, docs/DLSS.md):
+  `AURORA_DLSS_RR_SHOW=diffuse`, `specular`, `normals`, `roughness` or
+  `albedo` draws that guide over the image (the specular one times
+  `AURORA_DLSS_RR_SHOW_SCALE`, 0.1 by default).
+  `AURORA_DLSS_RR_TRANSPOSED=1` hands Streamline the camera matrices transposed,
+  to compare with the row-major layout NVIDIA documents: they matter where
+  the reflections move with the camera, so look at the reflections on
+  glossy floors and on the water while the camera turns and moves.
+  `AURORA_DLSS_RR_BEHIND=1` gives Ray Reconstruction the depth, motion and
+  guides of the opaque surface behind the blended faces opaque to the eye,
+  as before (the impostor cards stay in all three): with `AURORA_RT_SHADOWS=1`,
+  `AURORA_DEMO_RT_WALK=1` and
+  `AURORA_DEMO_HAIR_CARDS=24,layered` (our avatar walks from frame 700 in a
+  blended hair), the hair then smears the history of what lies behind it
+  while it moves, and `AURORA_DLSS_RR_SHOW=normals` shows the ground's
+  normals in its place; by default it keeps its own. `AURORA_DLSS_RR_FAIL=1`
+  has Ray Reconstruction refused as if Streamline had, so DLSS falls back to
+  super resolution and Preferences shows the refusal and Try again.
 
 - **`AURORA_DEMO_VIEWER_STATS=1`** (`aurora_net::viewer_stats`,
   `app/viewer_stats.rs`): on the grid the session posts Linden Lab's viewer

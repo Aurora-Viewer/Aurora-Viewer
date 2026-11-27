@@ -41,7 +41,9 @@ struct Params {
     half: vec4<f32>,
     // x: 1 when last frame's glossy history is valid, y: the rays of a
     // glossy pixel this frame, z: 1 when a PBR face's occlusion counts
-    // (AURORA_PBR_OCCLUSION, as the frame's `sky_ll.z`).
+    // (AURORA_PBR_OCCLUSION, as the frame's `sky_ll.z`), w: the most frames
+    // the history may average whatever else says, 0 for no such cap
+    // (AURORA_RT_RAW, rt_shadows.rs `history_cap`).
     gloss: vec4<f32>,
     // (rt_history.wgsl `light_changed`, which the glossy history does not
     // ask: a reflection shows the light of what it meets, not the pixel's)
@@ -653,6 +655,11 @@ fn cs_gloss(@builtin(global_invocation_id) id: vec3<u32>) {
         most = min(most, GLOSS_HISTORY_MOVING);
     }
     most = max(most, GLOSS_HISTORY_MIN);
+    // (the cap last: a raw test wants each frame's rays alone, not the
+    // floor above)
+    if (params.gloss.w > 0.0) {
+        most = min(most, params.gloss.w);
+    }
     let count = min(k.count + f32(rays), max(most, f32(rays)));
     let share = f32(rays) / count;
     let mean = mix(k.color, sum / f32(rays), share);

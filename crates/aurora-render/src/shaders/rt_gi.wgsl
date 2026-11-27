@@ -872,7 +872,10 @@ fn cs_gi_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     let back = back_of(pixel, world, dist);
     let past = kept(back, n);
     if (past.count > 0.0) {
-        var most = select(params.half.w, HISTORY_MOVING, back.moving);
+        // (a moving surface's few frames, never more than `half.w`: that is
+        // AURORA_RT_RAW's cap of one, rt_shadows.rs `history_cap`, and
+        // otherwise at least 32, above HISTORY_MOVING)
+        var most = min(select(params.half.w, HISTORY_MOVING, back.moving), params.half.w);
         most = 1.0 / lamps_fresh(world, 1.0 / most);
         if (light_changed(world)) {
             most = min(most, params.changes.z);

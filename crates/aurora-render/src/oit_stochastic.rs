@@ -144,6 +144,10 @@ pub(crate) enum SceneHistory {
     Taa,
     /// FSR 3.1 (fsr.rs), in TAA's place: its own history and locks
     Fsr,
+    /// DLSS (dlss.rs), in FSR's place. It is given no reactive mask, so
+    /// nothing tells it to leave the blended faces to this frame: treated
+    /// as FSR until that is looked at.
+    Dlss,
 }
 
 /// The temporal blend's weight under `history`. 0 under TAA, whose history
@@ -156,7 +160,7 @@ pub(crate) enum SceneHistory {
 /// averages it as without a scene history.
 pub(crate) fn temporal_weight(wanted: f32, history: SceneHistory) -> f32 {
     match history {
-        SceneHistory::None | SceneHistory::Fsr => wanted,
+        SceneHistory::None | SceneHistory::Fsr | SceneHistory::Dlss => wanted,
         SceneHistory::Taa => 0.0,
     }
 }
@@ -913,6 +917,7 @@ impl Stochastic {
             let why = match f.history {
                 SceneHistory::Taa => "off, the scene's TAA accumulates",
                 SceneHistory::Fsr => "on, before FSR (its reactive mask leaves the blended faces to this frame)",
+                SceneHistory::Dlss => "on, before DLSS (as before FSR, without a reactive mask)",
                 SceneHistory::None => "on",
             };
             log::info!("oit stochastic: temporal blend {why}");

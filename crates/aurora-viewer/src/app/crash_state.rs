@@ -259,7 +259,21 @@ impl Timeline {
 /// the graphics card may trace none). `drawn` is the shadow quality and the
 /// ambient occlusion the world is drawn with (the photo window's over
 /// Preferences', `App::photo_shadow_quality`).
+#[cfg(test)]
 pub(super) fn effects(settings: &crate::settings::Settings, drawn: (u8, u8), vr: bool) -> String {
+    effects_drawn(settings, drawn, vr, None)
+}
+
+/// [`effects`], with what drew in FSR 3.1's place: `aa-dlss` (with FSR's
+/// quality, which sets DLSS's render size) or `aa-dlaa` when DLSS drew the
+/// last frame, `aa-fsr` when FSR did (the setting is the same for both,
+/// and FSR stands in for a DLSS that failed or is still being made).
+pub(super) fn effects_drawn(
+    settings: &crate::settings::Settings,
+    drawn: (u8, u8),
+    vr: bool,
+    dlss: Option<aurora_render::DlssDrawing>,
+) -> String {
     use std::fmt::Write;
     let mut out = String::new();
     let mut word = |on: bool, text: std::fmt::Arguments| {
@@ -295,7 +309,12 @@ pub(super) fn effects(settings: &crate::settings::Settings, drawn: (u8, u8), vr:
         4 => word(true, format_args!("aa-msaa8")),
         5 => word(true, format_args!("aa-taa")),
         6 => word(true, format_args!("aa-smaa")),
-        7 => word(true, format_args!("aa-fsr{}", settings.fsr_quality)),
+        7 => match dlss {
+            Some(aurora_render::DlssDrawing::Dlss) => word(true, format_args!("aa-dlss{}", settings.fsr_quality)),
+            Some(aurora_render::DlssDrawing::Dlaa) => word(true, format_args!("aa-dlaa")),
+            Some(aurora_render::DlssDrawing::Rr) => word(true, format_args!("aa-dlss-rr{}", settings.fsr_quality)),
+            None => word(true, format_args!("aa-fsr{}", settings.fsr_quality)),
+        },
         _ => {}
     }
     word(settings.blend_order > 0, format_args!("blend-exact{}", settings.blend_order));
@@ -497,7 +516,7 @@ impl App {
             ..Default::default()
         };
         let drawn = (self.photo_shadow_quality(), self.photo_ambient_occlusion());
-        state.effects = effects(&self.settings, drawn, renderer.vr_engaged());
+        state.effects = effects_drawn(&self.settings, drawn, renderer.vr_engaged(), renderer.dlss_drawing());
         live.apply(&mut state);
         state.window_state = if window.is_minimized().unwrap_or(false) {
             "minimized"
@@ -646,6 +665,43 @@ mod tests {
             "{list}"
         );
         assert!(!list.contains("vr"), "{list}");
+    }
+
+    #[test]
+    fn a_dlss_frame_is_named_for_what_drew_it() {
+        let settings = crate::settings::Settings {
+            antialiasing: 7,
+            fsr_quality: 2,
+            dlss: true,
+            ..Default::default()
+        };
+        let drawn = (settings.shadow_quality, settings.ssao);
+        let words = |dlss| effects_drawn(&settings, drawn, false, dlss);
+        let dlss = words(Some(aurora_render::DlssDrawing::Dlss));
+        assert!(dlss.split(',').any(|w| w == "aa-dlss2") && !dlss.contains("aa-fsr"), "{dlss}");
+        let dlaa = words(Some(aurora_render::DlssDrawing::Dlaa));
+        assert!(dlaa.split(',').any(|w| w == "aa-dlaa") && !dlaa.contains("aa-fsr"), "{dlaa}");
+        // FSR standing in for DLSS: the setting's word
+        assert!(words(None).split(',').any(|w| w == "aa-fsr2"), "{}", words(None));
+        // the report keeps both DLSS words
+        assert!(crate::crash::summary_state_value(&dlss).is_some(), "{dlss}");
+        assert!(crate::crash::summary_state_value(&dlaa).is_some(), "{dlaa}");
+    }
+
+    #[test]
+    fn a_ray_reconstruction_frame_is_named_for_it() {
+        let settings = crate::settings::Settings {
+            antialiasing: 7,
+            fsr_quality: 3,
+            dlss: true,
+            ..Default::default()
+        };
+        let drawn = (settings.shadow_quality, settings.ssao);
+        let rr = effects_drawn(&settings, drawn, false, Some(aurora_render::DlssDrawing::Rr));
+        assert!(rr.split(',').any(|w| w == "aa-dlss-rr3"), "{rr}");
+        assert!(!rr.contains("aa-fsr") && !rr.split(',').any(|w| w == "aa-dlss3"), "{rr}");
+        // the report keeps the word
+        assert!(crate::crash::summary_state_value(&rr).is_some(), "{rr}");
     }
 
     #[test]

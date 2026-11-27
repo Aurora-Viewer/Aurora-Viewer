@@ -14,7 +14,11 @@ param(
     [Parameter(Mandatory)][string]$Exe,
     [Parameter(Mandatory)][string]$Out,
     # repository whose assets go with the exe (default: this script's)
-    [string]$Source = (Split-Path $PSScriptRoot -Parent)
+    [string]$Source = (Split-Path $PSScriptRoot -Parent),
+    # a build with the `dlss` feature (docs/DLSS.md): its setup script goes
+    # next to the exe, where the viewer's Graphics page tells the user to
+    # run it
+    [switch]$Dlss
 )
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Out 'assets/emoji') -ErrorAction Stop | Out-Null
@@ -45,6 +49,10 @@ Copy-Item -LiteralPath $docs -Destination $Out -ErrorAction Stop
 if (-not [IO.Path]::GetExtension($Exe) -and -not $IsMacOS) {
     Copy-Item -LiteralPath (Join-Path $Source 'packaging/linux/aurora-viewer.desktop') -Destination $Out -ErrorAction Stop
     Copy-Item -LiteralPath (Join-Path $Source 'assets/branding/aurora-logo.svg') -Destination (Join-Path $Out 'aurora-viewer.svg') -ErrorAction Stop
+}
+if ($Dlss) {
+    $setup = if ([IO.Path]::GetExtension($Exe) -eq '.exe') { 'dlss-setup.ps1' } else { 'dlss-setup.sh' }
+    Copy-Item -LiteralPath (Join-Path $Source "scripts/$setup") -Destination $Out -ErrorAction Stop
 }
 $taskExePath = (Resolve-Path -LiteralPath $Exe).Path
 $taskVersion = (& $taskExePath --version | Out-String).Trim() -replace '^Aurora Viewer ', ''

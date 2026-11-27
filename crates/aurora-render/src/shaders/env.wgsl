@@ -655,6 +655,7 @@ fn fs_sky_g(in: SkyOut) -> GOut {
     var o: GOut;
     o.color = sky_pixel(in);
     o.gbuf = vec4<f32>(0.5, 0.5, 1.0, 0.0);
+    o.albedo = vec4<f32>(0.0);
     return o;
 }
 
@@ -946,6 +947,7 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         wet=(1.0-smoothstep(0.05,0.45,in.world_pos.z-level))*smoothstep(-2.0,-0.1,in.world_pos.z-level);
         albedo*=1.0-wet*0.32;
     }
+    g_albedo = albedo;
     let n = normalize(in.normal);
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
     let dist = distance(in.world_pos, frame.camera_pos.xyz);
@@ -1019,6 +1021,7 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
             color = apply_fog(water_scene_lit(color, own, in.world_pos), in.world_pos);
         }
         color = debug_view(color, in.world_pos, n, dist, in.clip.xy);
+        g_albedo = material.color.rgb;
         out = Shaded(vec4<f32>(light_tiles_checked(color, in.world_pos, in.clip.xy), 1.0), n, rough, metal);
     } else {
         discard;
@@ -1045,6 +1048,7 @@ fn fs_terrain_g(in: TerrainOut) -> GOut {
     var o: GOut;
     o.color = vec4<f32>(terrain_color(in), 1.0);
     o.gbuf = vec4<f32>(oct_encode(normalize(in.normal)), 1.0, 0.0);
+    o.albedo = vec4<f32>(g_albedo, 1.0);
     return o;
 }
 
@@ -1063,6 +1067,7 @@ fn fs_terrain_pbr_g(in: TerrainPbrOut) -> GOut {
     let shaded = terrain_pbr_shaded(in);
     o.color = shaded.color;
     o.gbuf = gbuffer(shaded);
+    o.albedo = vec4<f32>(g_albedo, 1.0);
     return o;
 }
 

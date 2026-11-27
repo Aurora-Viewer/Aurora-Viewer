@@ -211,6 +211,7 @@ mod tests {
                 samples: 4,
                 format: Some(wgpu::TextureFormat::Rgba16Float),
                 gbuf: Some(wgpu::TextureFormat::Rgba16Unorm),
+                albedo: false,
                 range: None,
                 depth_format: Some(wgpu::TextureFormat::Depth32Float),
                 depth_bias: Default::default(),

@@ -669,6 +669,7 @@ fn fs_clouds(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 struct GOut {
     @location(0) color: vec4f,
     @location(1) gbuf: vec4f,
+    @location(2) albedo: vec4f,
 }
 
 // With the G-buffer of the SSR: its target is not written (empty mask).
@@ -677,5 +678,6 @@ fn fs_clouds_g(@builtin(position) pos: vec4f) -> GOut {
     var o: GOut;
     o.color = clouds_pixel(pos);
     o.gbuf = vec4f(0.0);
+    o.albedo = vec4f(0.0);
     return o;
 }

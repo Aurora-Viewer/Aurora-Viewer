@@ -879,6 +879,21 @@ fn fs_depth_contact_normal(in: DepthMaskOut, @builtin(front_facing) front: bool)
     return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(records[in.record]));
 }
 
+// What a blended face opaque to the eye adds to the encoded normal's y in
+// Ray Reconstruction's copy of the motion (dlss_guides.wgsl holds the same
+// value): the encoded normal itself lies within 0 and 1.
+const NORMAL_RR_FACE: f32 = 2.0;
+
+// fs_depth_contact_normal with the normal marked (renderer.rs `RrInputs`,
+// `rr_blend`): the guides take this face's normal there.
+@fragment
+fn fs_depth_rr_face(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
+    _ = depth_contact(in.record, in.uv, in.world_pos);
+    let n = depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(records[in.record]));
+    return n + vec4<f32>(0.0, NORMAL_RR_FACE, 0.0, 0.0);
+}
+
 // Within how far of the solid surface behind it a fading blended texel
 // rises out of that surface in the occlusion's depth (m); not at all from
 // twice that.
@@ -1795,6 +1810,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     }
     s.roughness = mix(s.roughness, 1.0, white);
     s.metallic *= 1.0 - white;
+    g_albedo = mix(m.color.rgb, vec3<f32>(1.0), white);
     return s;
 }
 
@@ -1854,7 +1870,13 @@ fn fs_mask(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
 struct GOut {
     @location(0) color: vec4<f32>,
     @location(1) gbuf: vec4<f32>,
+    // the base colour, for DLSS Ray Reconstruction's albedo guides: its
+    // target is there only when that asks for it (AURORA_DLSS_RR)
+    @location(2) albedo: vec4<f32>,
 };
+
+// The base colour the shading took, kept for GOut.albedo.
+var<private> g_albedo: vec3<f32> = vec3<f32>(0.0);
 
 // Variants writing normal / roughness / metallic for screen-space reflections.
 @fragment
@@ -1863,6 +1885,7 @@ fn fs_opaque_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
     var o: GOut;
     o.color = vec4<f32>(s.color.rgb, 1.0);
     o.gbuf = gbuffer(s);
+    o.albedo = vec4<f32>(g_albedo, 1.0);
     return o;
 }
 
@@ -1876,6 +1899,7 @@ fn fs_mask_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
     var o: GOut;
     o.color = vec4<f32>(s.color.rgb, alpha);
     o.gbuf = gbuffer(s);
+    o.albedo = vec4<f32>(g_albedo, 1.0);
     return o;
 }
 
@@ -3952,6 +3976,18 @@ fn fs_impostor_depth(in: SpriteOut) {
     }
 }
 
+// No motion of its own where the card is drawn (Ray Reconstruction's copy
+// of the motion, its motion alone): the pixel is moved by the camera
+// through the card's depth (dlss_motion.wgsl), not by the motion of what
+// lies behind the card.
+@fragment
+fn fs_impostor_still(in: SpriteOut) -> @location(0) vec4<f32> {
+    if (impostor_sample(in).a < 0.5) {
+        discard;
+    }
+    return vec4<f32>(0.0);
+}
+
 @fragment
 fn fs_impostor(in: SpriteOut) -> @location(0) vec4<f32> {
     return impostor_color(in);
@@ -3963,6 +3999,8 @@ fn fs_impostor_g(in: SpriteOut) -> GOut {
     o.color = impostor_color(in);
     // matte, not metallic: no screen-space reflection on the card
     o.gbuf = vec4<f32>(oct_encode(in.normal), 1.0, 0.0);
+    // (the picture was taken lit: its colour stands for the albedo)
+    o.albedo = vec4<f32>(min(o.color.rgb, vec3<f32>(1.0)), 1.0);
     return o;
 }
 
