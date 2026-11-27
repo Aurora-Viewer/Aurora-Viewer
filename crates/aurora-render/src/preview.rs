@@ -442,6 +442,8 @@ pub(crate) struct Cache {
     /// The panorama viewers (panorama.rs), drawn the same way.
     pano: crate::panorama::Cache,
     meshes: crate::preview_mesh::Cache,
+    /// The Picture viewer's pictures drawn through their looks.
+    graded: crate::picture_look::Cache,
 }
 
 type ImageMap = HashMap<(usize, bool), (Option<Weak<Image>>, wgpu::TextureView)>;
@@ -1537,10 +1539,23 @@ impl Cache {
         self.meshes.render(shower, device, encoder, egui, primitives, scale);
         let mut seen = HashSet::new();
         let mut pano_seen = HashSet::new();
+        // one drawing of the pictures' looks a frame (picture_look.rs); the
+        // copies this window's last pass encoded are submitted by now
+        self.graded.begin(shower);
+        let mut graded_drawn = false;
         for primitive in primitives {
             let egui::epaint::Primitive::Callback(callback) = &primitive.primitive else {
                 continue;
             };
+            if let Some(mesh) = self.graded.render(device, queue, encoder, egui, callback, &mut graded_drawn) {
+                if primitive.clip_rect.intersects(callback.rect) {
+                    primitive.primitive = egui::epaint::Primitive::Mesh(mesh);
+                } else {
+                    primitive.primitive = egui::epaint::Primitive::Mesh(egui::Mesh::default());
+                    primitive.clip_rect = egui::Rect::NOTHING;
+                }
+                continue;
+            }
             if let Some(pano) = callback.callback.downcast_ref::<crate::panorama::PanoRegion>() {
                 let rect = callback.rect;
                 if !primitive.clip_rect.intersects(rect) {
@@ -1605,6 +1620,7 @@ impl Cache {
         }
         self.shown.set(shower, seen);
         self.pano.show(shower, pano_seen);
+        self.graded.show(shower);
         self.prune(egui);
     }
 
@@ -1613,7 +1629,11 @@ impl Cache {
     pub fn keep_outside(&mut self, alive: impl Fn(u64) -> bool, egui: &mut egui_wgpu::Renderer) {
         self.meshes.keep_outside(&alive, egui);
         // (each is asked: no `||`, which would stop at the first)
-        let gone = [self.shown.keep_outside(&alive), self.pano.keep_outside(&alive)];
+        let gone = [
+            self.shown.keep_outside(&alive),
+            self.pano.keep_outside(&alive),
+            self.graded.keep_outside(&alive),
+        ];
         if gone.contains(&true) {
             self.prune(egui);
         }
@@ -1630,6 +1650,7 @@ impl Cache {
             }
         });
         self.pano.retain(egui);
+        self.graded.retain(egui);
         // Image UUIDs are immutable; all min/max views share their GPU maps.
         // Weak owners bound the cache to the images still held by previews.
         if let Some(pipeline) = &mut self.pipeline {

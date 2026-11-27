@@ -448,6 +448,7 @@ fn same_callback(a: &egui::PaintCallback, b: &egui::PaintCallback) -> bool {
     crate::preview_mesh::same(a, b)
         .or_else(|| crate::preview::same(a, b))
         .or_else(|| crate::panorama::same(a, b))
+        .or_else(|| crate::picture_look::same(a, b))
         .unwrap_or_else(|| {
             let kind = |c: &egui::PaintCallback| std::any::Any::type_id(&*c.callback);
             kind(a) == kind(b)

@@ -60,6 +60,7 @@ mod packet;
 pub mod panorama;
 mod part_pick;
 mod pick;
+pub mod picture_look;
 pub mod pipeline_cache;
 #[cfg(test)]
 mod portal_tests;
