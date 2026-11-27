@@ -81,7 +81,11 @@ The PRs whose last review is your human's, which every queue leaves out:
     `None`, wait (step 4); `Fail`, read the failing job (step 4).
   - A verdict with a condition (`✅ ready to merge once …`): the condition
     is your human's, in the dialog below.
-  - Otherwise (head reviewed, green, no conflict): its merge, in the dialog.
+  - Before any merge, it is tested again on today's `main`, as a review is
+    (an approval says nothing of what `main` became since): claim it, then
+    steps 3 to 7 (the worktree, `check.ps1`, the demo or grid test, the
+    review naming the head), and only then its merge (step 8), asked in a
+    dialog of its own since step 1 ends before step 2.
 - `kind: decision`, their ⚠️ left a decision open: read what (a hand or grid
   test, a product choice) and put it in the dialog. With `head_reviewed:
   false`, re-review what changed since first, as above. Their answer is
@@ -90,8 +94,9 @@ The PRs whose last review is your human's, which every queue leaves out:
   naming the head when nothing is left (after the test it waited for). A
   test not done yet: nothing to post.
 
-Ask all of it in one dialog, then carry every item to its end (merged,
-posted, re-reviewed) before step 2. **Nothing of step 2 starts while an
+Ask what only your human knows (the conditions, the decisions, the tests
+they owe) in one dialog, then carry every item to its end (tested,
+reviewed, merged or posted) before step 2. **Nothing of step 2 starts while an
 item of step 1 is open**, other than what waits on your human (a test not
 done yet) or on an author.
 
@@ -139,8 +144,11 @@ For each PR claimed, before its CI is asked for:
   pwsh ./scripts/new-task.ps1 -Name review-<n> -Kind chore
   git -C <W> fetch origin pull/<n>/head
   git -C <W> reset --hard FETCH_HEAD
-  git -C <W> merge --no-ff --no-edit origin/main
+  git -C <W> merge --no-ff -m "Merge origin/main into <headRefName>" origin/main
   ```
+
+  The message names the author's branch, not the worktree's: it may be
+  pushed to them (step 6).
 
   The PR's head is `FETCH_HEAD` (`git -C <W> rev-parse FETCH_HEAD`), the
   same as `gh pr view <n> --json headRefOid`; the worktree's `HEAD` is the
@@ -173,8 +181,9 @@ For each PR claimed, before its CI is asked for:
   ```
 
   On their yes, approve each run at `action_required`; on a no, step 9. If
-  your tool refuses the call, give your human the commands. A head pushed by
-  a maintainer runs without an approval.
+  your tool refuses the call, give your human the commands. A head a
+  maintainer pushed may run at once (a branch of this repository) or wait
+  for "Approve and run" all the same (a fork): list its runs.
 
 ## 4. Wait for CI, in the turn
 
@@ -217,14 +226,20 @@ Then **test it in a demo or on the grid**, never skipped, before any
 verdict, whenever the change can be seen or felt in the viewer: a window, a
 rendering, a behaviour, a demo scenario it adds or touches
 (`AURORA_DEMO_*`), or what only the grid shows (network, teleports, voice,
-other residents, permissions on real assets). Ask which in a dialog, one
-question per PR, with what you would run and what to look at, your pick
-first (both when the demo shows part of it and the grid the rest):
+other residents, permissions on real assets). Offer the demo only once you
+know a scenario reaches the change with `AURORA_*` variables alone (read
+the scenario's code and docs/TESTING.md): a setting it needs is never
+changed for a test (AGENTS.md section 4), so a change behind a setting no
+variable sets is a grid test, or a demo viewer your human drives and sets
+back. Ask which in a dialog, one question per PR, with what you would run
+and what to look at, your pick first (both when the demo shows part of it
+and the grid the rest):
 
 - **Demo** (AGENTS.md section 4): the scenarios it touches, from the review
-  worktree, after (the merge) then before (`git -C <W> checkout --detach
-  origin/main`, the same scenarios, then `git -C <W> checkout -` back): one
-  `target/` builds both. Title `"Test review-<n> [AUTOMATION - DO NOT
+  worktree, before (`git -C <W> checkout --detach origin/main`) then after
+  (`git -C <W> checkout -` back to the merge): one `target/` builds both,
+  and the last build is the PR's, ready for a grid test. A scenario the PR
+  adds has no before on `main`: compare with the author's before capture. Title `"Test review-<n> [AUTOMATION - DO NOT
   TOUCH]"` while you drive it alone (and its border on Windows, section
   4). Capture late enough that the world has loaded
   (`AURORA_CAPTURE_FRAMES=1500` on a slow PC; a capture of the loading

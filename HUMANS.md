@@ -134,7 +134,8 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
     review left on a decision (a hand or grid test, a choice). The queue
     leaves them out, so nobody else picks them up. An approval counts for
     the head your review names ("Reviewed head:"): after a push, a merge of
-    main included, the PR is reviewed again first.
+    main included, the PR is reviewed again first, and every approved PR is
+    tested again on today's main before its merge.
   - **With an agent** (`.claude/skills/review-next`): it handles what waits
     on you first, then offers you a selection from the top of the queue
     and claims only what you pick. For each PR it makes a review worktree

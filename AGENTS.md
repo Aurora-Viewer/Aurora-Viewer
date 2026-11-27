@@ -807,7 +807,9 @@ follows the steps below; on Linux the scripts run as `pwsh
    product choice). Ask them once, and carry each to its end (merged,
    re-reviewed, the decision posted) before taking anything new. An
    approval counts for the head it names (``Reviewed head: `<sha>` ``): a
-   head pushed since, a merge of `main` included, is re-reviewed first.
+   head pushed since, a merge of `main` included, is re-reviewed first;
+   and before its merge, an approved PR is tested again on today's `main`
+   (steps 3 to 7), since the approval says nothing of what `main` became.
 2. **The queue, and your human picks.** Its order: re-reviews (a
    maintainer reviewed it and its author answered since), then PRs tied to
    a crash, then fixes (the `fix` label or a `fix(area):` title), then the
