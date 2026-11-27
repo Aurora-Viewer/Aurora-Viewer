@@ -3677,8 +3677,7 @@ mod imp {
                 st.presenter_pauses = 0;
                 // Reflex in low-latency mode, without a frame limit: the
                 // presenter's Fifo already holds the rendered frames to
-                // half the refresh rate, and a limit there drops
-                // generated frames (sl-ngx's cap test, 2026-11-27)
+                // half the refresh rate
                 let reflex = reflex_wanted
                     && lib
                         .latency()
@@ -6451,7 +6450,7 @@ pub(crate) use imp::{opened_for_xr, opening_device, xr_device_extensions, xr_ins
 /// `libsl_ngx.<first 12 digits>.so` in the DLSS folder, loaded before the
 /// plain `libsl_ngx.so`, and built at start when missing ([`update`]).
 #[cfg_attr(not(all(feature = "dlss", target_os = "linux")), allow(dead_code, reason = "Linux's DLSS only"))]
-pub(crate) const SL_NGX_COMMIT: &str = "58cef3a222b7f248e7c639a5a196fcdba2abebf7";
+pub(crate) const SL_NGX_COMMIT: &str = "5b0dd82fada40c01f8c99958184eb411be600326";
 
 /// `libsl_ngx.<commit>.so`: [`SL_NGX_COMMIT`]'s library.
 #[cfg_attr(not(all(feature = "dlss", target_os = "linux")), allow(dead_code, reason = "Linux's DLSS only"))]

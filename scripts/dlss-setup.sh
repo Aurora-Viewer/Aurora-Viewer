@@ -31,7 +31,7 @@ REPO=https://github.com/NVIDIA/DLSS.git
 # sl-ngx (MIT): NVIDIA Streamline's interface for Vulkan on NVIDIA NGX, the
 # library the viewer speaks to. Fetched at this commit, never a branch.
 SL_NGX_REPO=https://github.com/Aurora-Viewer/sl-ngx.git
-SL_NGX_COMMIT=58cef3a222b7f248e7c639a5a196fcdba2abebf7
+SL_NGX_COMMIT=5b0dd82fada40c01f8c99958184eb411be600326
 
 die() { printf 'dlss-setup: %s\n' "$*" >&2; exit 1; }
 
