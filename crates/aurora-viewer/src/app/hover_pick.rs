@@ -53,14 +53,48 @@ impl Question {
 
 /// The question an answer of the GPU speaks for: the pixel asked, seen by
 /// the camera of the frame that drew it. The request leaves with the frame
-/// after the question, whose camera may have moved: measured along the ray
-/// asked, a face drawn after Esc brought the camera back from far away can
-/// lie thousands of kilometres out (#5021). The depth and the reach stay
-/// those asked.
+/// after the question, or later when no read back is free, and the camera
+/// may have moved in between: measured along the ray asked, a face drawn
+/// once the camera is back from far away lies as far out as the camera
+/// was. The depth and the reach stay those asked.
 fn answered(asked: Question, drawn: &aurora_render::Drawn) -> Question {
     Question {
         ray: drawn.ray.unwrap_or(asked.ray),
         ..asked
+    }
+}
+
+/// What the hover keeps of `drawn`, the answer for the pixel `asked`,
+/// measured from the camera that drew it ([`answered`]). `question` is
+/// the pointer's now, at the centre of its pixel, and `ray` the same
+/// unrounded (the CPU's body clearance). The answer for a pixel the
+/// pointer has left is kept too: it tells what is drawn around it
+/// ([`Kept::between`]).
+#[allow(clippy::too_many_arguments)]
+fn keep(
+    scene: &crate::scene::Scene,
+    world: &crate::world::World,
+    asked: Question,
+    drawn: &aurora_render::Drawn,
+    objects: &crate::scene::drawn::DrawnObjects,
+    question: Question,
+    ray: (Vec3, Vec3),
+    now: Instant,
+) -> Kept {
+    let asked = answered(asked, drawn);
+    let here = asked.same_ray(&question);
+    let hit = if here {
+        scene.drawn_hover_of(world, drawn, objects, ray, question.depth, question.far)
+    } else {
+        scene.drawn_hover_of(world, drawn, objects, asked.ray, asked.depth, asked.far)
+    };
+    let question = if here { question } else { asked };
+    Kept {
+        question,
+        hit,
+        at: now,
+        under: scene.drawn_hover_under_of(world, drawn, objects, asked.ray),
+        behind: behind(hit, &question),
     }
 }
 
@@ -80,7 +114,8 @@ struct Kept {
     hit: Hit,
     at: Instant,
     /// The posed object the cursor was on at its pixel and how far along
-    /// the asked ray (`Scene::drawn_hover_under`).
+    /// the ray of the camera that drew it, the asked one when the answer
+    /// has none (`answered`, `Scene::drawn_hover_under`).
     under: Option<(usize, f32)>,
     /// How far (m) behind the opaque depth of its pixel `hit` is: 0 in
     /// front of it.
@@ -309,29 +344,13 @@ impl HoverDrawn {
             let late = now.duration_since(started) >= TIMEOUT;
             if let Some(drawn) = renderer.take_drawn(ticket) {
                 self.pending = None;
-                let asked = answered(asked, &drawn);
                 if !late {
-                    // The answer for a pixel the pointer has left is kept
-                    // too: it tells what is drawn around it (`between`).
-                    let here = asked.same_ray(&question);
                     let started = timed.then(Instant::now);
                     let objects = scene.drawn_objects(&drawn);
                     if let Some(started) = started {
                         self.cost.scan.add(started.elapsed());
                     }
-                    let hit = if here {
-                        scene.drawn_hover_of(world, &drawn, &objects, ray, depth, far)
-                    } else {
-                        scene.drawn_hover_of(world, &drawn, &objects, asked.ray, asked.depth, asked.far)
-                    };
-                    let question = if here { question } else { asked };
-                    self.kept = Some(Kept {
-                        question,
-                        hit,
-                        at: now,
-                        under: scene.drawn_hover_under_of(world, &drawn, &objects, asked.ray),
-                        behind: behind(hit, &question),
-                    });
+                    self.kept = Some(keep(scene, world, asked, &drawn, &objects, question, ray, now));
                     if let Some(started) = started {
                         self.cost.answer.add(started.elapsed());
                     }
@@ -486,6 +505,66 @@ mod tests {
         assert_eq!((a.depth, a.far), (asked.depth, asked.far));
         let a = answered(asked, &aurora_render::Drawn::default());
         assert_eq!((a.ray, a.depth, a.far), (asked.ray, asked.depth, asked.far));
+    }
+
+    /// The same through the scene: a rigged mesh body's face, asked from
+    /// 2^25 m out and drawn by the camera back at the avatar. What the
+    /// hover keeps of the answer is measured along the drawer's ray: the
+    /// face 2.5 m ahead, and the pixels around it on the same surface
+    /// (`between`). Measured along the ray asked, it lay 2^25 m out, and
+    /// the next question from the camera now at the avatar found nothing
+    /// to take for the object under the pointer.
+    #[test]
+    fn what_the_hover_keeps_of_an_answer_is_measured_from_the_camera_that_drew_it() {
+        let (mut world, mut scene, mesh, _) = crate::scene::picking::tests::indexed_scene_with_two_objects();
+        let wearer = world
+            .objects
+            .avatars()
+            .find(|(_, a)| a.full_id != world.agent_id)
+            .map(|(idx, _)| idx);
+        let o = world.objects.get_mut(mesh).unwrap();
+        o.click_action = crate::interaction::code::TOUCH;
+        o.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        scene.gpu[mesh].rigged = true;
+        scene.gpu[mesh].owner_avatar = wearer;
+        let on_body = Vec3::new(2.5, 0.0, 50.0);
+        let drew = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let asked = Question {
+            ray: (Vec3::new(-33_554_432.0, 0.0, 50.0), Vec3::X),
+            depth: Some(on_body),
+            far: 128.0,
+        };
+        let drawn = aurora_render::Drawn {
+            opaque: Some(aurora_render::DrawnFace {
+                record: 0,
+                point: on_body,
+                st: glam::Vec2::splat(0.5),
+                normal: -Vec3::X,
+                binormal: Vec3::Z,
+            }),
+            blend: None,
+            ray: Some(drew),
+        };
+        // the pointer now, a pixel beside the one asked, from the camera
+        // back at the avatar
+        let beside = (Vec3::new(0.0, 0.002, 50.0), Vec3::X);
+        let now = Question {
+            ray: beside,
+            depth: Some(on_body + Vec3::Y * 0.002),
+            far: 128.0,
+        };
+        let objects = scene.drawn_objects(&drawn);
+        let kept = keep(&scene, &world, asked, &drawn, &objects, now, beside, Instant::now());
+        let (under, at) = kept.under.expect("the mesh under the pointer");
+        assert_eq!(under, mesh);
+        assert!((at - 2.5).abs() < 1e-3, "{at}");
+        assert_eq!(kept.question.ray, drew);
+        assert_eq!(kept.between(&now), Some((mesh, on_body + Vec3::Y * 0.002)));
+        // an answer no frame drew is measured along the ray asked, as before
+        let undrawn = aurora_render::Drawn { ray: None, ..drawn };
+        let kept = keep(&scene, &world, asked, &undrawn, &objects, now, beside, Instant::now());
+        assert_eq!(kept.question.ray, asked.ray);
+        assert_eq!(kept.between(&now), None);
     }
 
     #[test]

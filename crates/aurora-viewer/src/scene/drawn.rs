@@ -286,7 +286,8 @@ impl Scene {
     }
 
     /// The posed object the cursor is on at the pixel of an answer, and how
-    /// far along `ray`, the ray asked: what [`Self::drawn_hover_between`]
+    /// far along `ray`, the pointer's ray through the camera that drew the
+    /// answer (hover_pick.rs `answered`): what [`Self::drawn_hover_between`]
     /// takes to be under the pointer still once it has moved. The nearest
     /// opaque face's, or the blended face's in front of it when the answer
     /// gives that one the click: a layer of a mesh body a few millimetres
