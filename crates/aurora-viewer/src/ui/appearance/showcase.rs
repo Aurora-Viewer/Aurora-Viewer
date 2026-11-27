@@ -240,6 +240,10 @@ pub(super) fn show(
         collection_menu(&mut g, p, world, st, entries, shown.len(), favorites, no_picture);
         g.add_space(6.0);
     }
+    // The batch portraits' window at any time (#5025): the banner below
+    // goes once no outfit lacks a picture or its cross is clicked, and the
+    // window takes pictures again too. Over our own outfits of the
+    // collection shown; a folder of My Outfits is named in the window.
     let folder = match filter {
         Filter::Folder(id) => Some(id),
         _ => None,
@@ -1186,14 +1190,16 @@ mod tests {
         actions
     }
 
+    /// The Outfit portraits button stays over the cards once every outfit
+    /// has a picture and the banner is closed (#5025), and opens the batch
+    /// over every outfit shown.
     #[test]
     fn batch_portraits_can_be_reopened_when_all_outfits_have_pictures() {
         let (mut world, mut st) = grouped();
         let (outfits, _, _) = collection(&world, &mut st, Filter::All);
 
         for (index, id) in outfits.iter().enumerate() {
-            world.inventory.folders.get_mut(id).expect("outfit").info.thumbnail =
-                Uuid::from_u128(9000 + index as u128);
+            world.inventory.folders.get_mut(id).expect("outfit").info.thumbnail = Uuid::from_u128(9000 + index as u128);
         }
         world.inventory.generation += 1;
 
@@ -1207,7 +1213,8 @@ mod tests {
 
         let (_, shown) = frame(&ctx, &mut world, &mut st, Vec::new());
         let label = aurora_i18n::tr!("ui-appearance-batch-title");
-        let at = shown.iter()
+        let at = shown
+            .iter()
             .find(|(text, _)| text == label)
             .map(|(_, pos)| *pos + Vec2::new(4.0, 4.0))
             .expect("permanent outfit portraits button");
@@ -1221,6 +1228,9 @@ mod tests {
         )));
     }
 
+    /// The button hands the batch the outfits of the collection shown:
+    /// all, the favorites, those without a picture, or a folder of My
+    /// Outfits with its id.
     #[test]
     fn batch_portraits_respect_the_selected_collection() {
         let (mut world, mut st) = grouped();
@@ -1245,7 +1255,8 @@ mod tests {
 
             let (_, shown) = frame(&ctx, &mut world, &mut st, Vec::new());
             let label = aurora_i18n::tr!("ui-appearance-batch-title");
-            let at = shown.iter()
+            let at = shown
+                .iter()
                 .find(|(text, _)| text == label)
                 .map(|(_, pos)| *pos + Vec2::new(4.0, 4.0))
                 .expect("permanent outfit portraits button");
