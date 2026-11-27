@@ -2795,6 +2795,15 @@ fn water_crash_color(in: WaterParticleOut) -> vec4<f32> {
     let day=clamp(frame.sun_dir.z*2.5,0.15,1.0);
     var alpha=0.0;var lit=0.6;var up=0.5;
     let r=length(in.uv);
+    let view=normalize(frame.camera_pos.xyz-in.world);
+    // in the sun's shadow (taken once here, out of the branches below)
+    let shade=sun_shadow(in.world,vec3<f32>(0.0,0.0,1.0),distance(in.world,frame.camera_pos.xyz),in.clip.xy);
+    // the loose drops of water thrown off a crest (kind 13), drawn as
+    // beads of clear water over its white core (premultiplied, and how
+    // much of the view they cover)
+    var bead=vec3<f32>(0.0);var bead_a=0.0;
+    // how much brighter the sun makes the fine mist (kind 12) than as foam
+    var forward=1.0;
     if(in.kind==9u) {
         // the foam spreading at the foot: a lace of thin strands over a
         // faint veil, its rim torn and ragged. (A disc with blotches cut in
@@ -2826,16 +2835,47 @@ fn water_crash_color(in: WaterParticleOut) -> vec4<f32> {
         let cut=mix(0.78,0.42,in.life);
         let edge=1.0-smoothstep(0.35,1.0,r);
         alpha=edge*edge*smoothstep(cut,cut+0.2,n)*0.55;
+        // The loose drops round it are water, not foam: clear beads a few
+        // millimetres across that mirror the sky at their rims (Fresnel),
+        // show what is behind them bent (a sphere of water is a strong
+        // lens), and catch the sun as a sharp glint, and as a glow when it
+        // is behind them. (Drawn white as the foam is, they read as flecks
+        // of foam thrown up.) Each bead's surface as a sphere facing the
+        // camera, its quad's way across the view taken as the camera's.
         let q=opened*6.0+vec2<f32>(in.seed*31.0,in.seed*17.0);
         let cell=floor(q);
         let at=water_fx_hash(cell);
-        let drop=1.0-smoothstep(0.07,0.13,length(fract(q)-0.5-(at-0.5)*0.6));
-        alpha=max(alpha,drop*step(0.55,water_fx_hash(cell+vec2<f32>(3.7,1.3)).x)*edge*0.55);
+        let d=(fract(q)-0.5-(at-0.5)*0.6)/0.12;
+        let rr=length(d);
+        let drop=(1.0-smoothstep(0.6,1.05,rr))*step(0.55,water_fx_hash(cell+vec2<f32>(3.7,1.3)).x)*edge;
+        if(drop>0.0) {
+            let n=normalize(frame.cam_right.xyz*d.x+frame.cam_up.xyz*d.y+view*sqrt(max(1.0-min(rr*rr,1.0),0.0)));
+            let fresnel=0.02037+0.97963*pow(1.0-max(dot(n,view),0.0),5.0);
+            let refl=reflect(-view,n);
+            let sky=sky_color(vec3<f32>(refl.xy,abs(refl.z)));
+            let glint=frame.sun_color.rgb*frame.sun_dir.w*pow(max(dot(refl,sun),0.0),90.0)*4.0*shade;
+            // the sun through it from behind, focused toward the camera
+            let through=frame.sun_color.rgb*frame.sun_dir.w*pow(max(dot(-view,sun),0.0),6.0)*0.6*shade;
+            // (what is behind, flipped and bent: a few pixels' shift)
+            let suv=clamp(screen_uv(in.clip.xy)-vec2<f32>(d.x,-d.y)*0.004,vec2<f32>(0.001),vec2<f32>(0.999));
+            let behind=textureSampleLevel(scene_tex,lin_clamp,suv,0.0).rgb*vec3<f32>(0.85,0.93,0.95);
+            bead=mix(behind,sky,fresnel)+glint+through;
+            bead_a=drop*0.9;
+        }
         lit=0.85;up=0.9;
     } else if(in.kind==12u) {
-        // spindrift: a soft, torn puff of mist (water_spindrift_particle)
+        // spindrift and the crests' fuzz: a soft, torn puff of fine mist
+        // (water_spindrift_particle, vs_water_crest_mist), with a grain of
+        // its own
         let n=water_fx_noise(in.uv*1.7+vec2<f32>(in.seed*13.0,frame.camera_pos.w*0.4))*0.6+water_fx_noise(in.uv*4.3+vec2<f32>(3.0,in.seed*7.0))*0.4;
-        alpha=exp(-r*r*2.2)*smoothstep(0.3,0.8,n)*0.12;
+        let grain=water_fx_noise(in.uv*11.0+vec2<f32>(in.seed*23.0,frame.camera_pos.w*1.3));
+        alpha=exp(-r*r*2.2)*smoothstep(0.3,0.8,n)*(0.75+0.5*grain)*0.12;
+        // Droplets of mist scatter the sun mostly forward (Mie: drops of
+        // tens of micrometres, g some 0.8): a veil of spray glows against a
+        // low sun and is hardly there with the sun behind the camera, where
+        // lit as foam it was the same from every side. Over an isotropic
+        // particle's (1/4π), held under eight times its light.
+        forward=min(water_hg_phase(dot(-sun,view),0.8)*4.0*PI,8.0)*0.6+0.4;
         lit=0.85;up=0.9;
     } else if(in.kind==10u) {
         // white water streaming down the face in ropes
@@ -2850,19 +2890,22 @@ fn water_crash_color(in: WaterParticleOut) -> vec4<f32> {
         lit=0.8;up=0.8;
     }
     alpha*=in.life;
+    bead_a*=in.life;
     // (faded where it meets what is solid, over a few decimetres: lying on
     // a rock's uneven face it went in and out of it, flickering)
     let solid_depth=scene_depth_at(screen_uv(in.clip.xy));
     if(solid_depth>0.0) {
         let solid=world_from_depth(screen_uv(in.clip.xy),solid_depth);
-        alpha*=clamp((distance(solid,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.35,0.0,1.0);
+        let near=clamp((distance(solid,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.35,0.0,1.0);
+        alpha*=near;bead_a*=near;
     }
-    if(alpha<0.004){discard;}
+    if(alpha<0.004 && bead_a<0.004){discard;}
     // lit as the foam on the water is (water_pixel's foam_light), in the
     // sun's shadow: brighter, it stood out as if fullbright
-    let shade=sun_shadow(in.world,vec3<f32>(0.0,0.0,1.0),distance(in.world,frame.camera_pos.xyz),in.clip.xy);
-    let color=(frame.sky_horizon.rgb*(0.25+0.15*up)+frame.sun_color.rgb*(0.04+lit/PI)*shade*day)*0.8;
-    return vec4<f32>(apply_fog(color,in.world)*alpha,alpha);
+    let color=(frame.sky_horizon.rgb*(0.25+0.15*up)+frame.sun_color.rgb*(0.04+lit/PI)*forward*shade*day)*0.8;
+    // (the beads behind the white of the core where it covers them)
+    let out_a=alpha+bead_a*(1.0-alpha);
+    return vec4<f32>(apply_fog(color,in.world)*alpha+apply_fog(bead,in.world)*bead_a*(1.0-alpha),out_a);
 }
 // A sheet of a crash (water_crash_particle): water first, see-through and
 // mirroring the sky, going white as it is torn and aerated toward its rim
