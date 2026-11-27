@@ -209,6 +209,7 @@ fn legacy_build_collapse_restores_geometry_and_scrolling_keeps_the_tabs_visible(
 
 #[test]
 fn legacy_selection_shows_the_link_or_the_faces_of_one_prim() {
+    use crate::build::face_buttons::FaceButton;
     let mut inspector = legacy();
     for event in crate::demo::selection_cycle_events() {
         inspector.world.apply(event);
@@ -261,7 +262,37 @@ fn legacy_selection_shows_the_link_or_the_faces_of_one_prim() {
     assert!(count >= 3, "a demo root with several faces");
     inspector.tool.faces.insert(key, vec![2, 0]);
     assert_eq!(line(&inspector), Some(faces("0, 2")));
-    assert!(shown(&mut inspector, &faces("0, 2")));
+    // on screen, the face buttons 0 to 8 take the line's place
+    assert!(!shown(&mut inspector, &faces("0, 2")));
+    let texts = inspector.show(vec![]).1;
+    assert!((0..9).all(|face| texts.iter().any(|(t, _)| t == &face.to_string())));
+    assert_eq!(
+        inspector.tool.face_buttons(&inspector.world)[..3],
+        [FaceButton::On, FaceButton::Off, FaceButton::On]
+    );
+    // Invert and All after them
+    let action = |inspector: &Inspector, invert: bool| {
+        inspector
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_face_action", invert))))
+            .expect("drawn in the Legacy style")
+    };
+    let (invert, all) = (action(&inspector, true), action(&inspector, false));
+    assert!(all.left() >= invert.right() && invert.width() > 4.0);
+    inspector.show(vec![egui::Event::PointerMoved(invert.center())]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: invert.center(),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+    }
+    let mut want: Vec<u8> = (0..count as u8).filter(|face| ![0, 2].contains(face)).collect();
+    want.sort_unstable();
+    let mut got = inspector.tool.sel_faces(&inspector.world, root);
+    got.sort_unstable();
+    assert_eq!(got, want, "Invert gives the other faces");
     inspector.tool.faces.insert(key, (0..count as u8).collect());
     assert_eq!(line(&inspector), Some(faces("ALL_SIDES")));
 
@@ -702,4 +733,82 @@ fn legacy_texture_blinn_phong_keeps_rows_apart_at_large_text_size() {
             .unwrap()
     });
     assert!(maps.windows(2).all(|pair| pair[0].bottom() <= pair[1].top() + 1.0));
+}
+
+/// The Create options (human requests, 2026-11-25): the Aurora window has
+/// "Keep creating" and its own Center and Rotate, for every shape, and no
+/// "Copy selection"; the Legacy style's window keeps floater_tools.xml's.
+#[test]
+fn the_aurora_create_window_has_its_own_center_and_rotate_and_the_legacy_one_copy_selection() {
+    let find = |texts: &[(String, egui::Rect)], label: &str| texts.iter().find(|(text, _)| text == label).map(|(_, rect)| rect.center());
+    let mut inspector = Inspector::new();
+    inspector.settings.copy_selection = true;
+    inspector.tool.open_build(Tool::Create);
+    for _ in 0..3 {
+        inspector.show(vec![]);
+    }
+    let window = inspector
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+        .expect("the Create window");
+    // the Create window's own labels ("Rotate" is a main-window word too)
+    let (_, mut texts) = inspector.show(vec![]);
+    texts.retain(|(_, rect)| window.contains_rect(*rect));
+    assert!(find(&texts, aurora_i18n::tr!("build-create-keep-creating")).is_some());
+    assert!(find(&texts, aurora_i18n::tr!("build-ui-tools-copy-selection")).is_none());
+    assert!(find(&texts, aurora_i18n::tr!("build-ui-tools-keep-selection-tool")).is_none());
+    assert!(!inspector.settings.copy_selection, "no copy from a window that has no such option");
+    assert!(find(&texts, aurora_i18n::tr!("build-ui-tools-center")).is_none());
+    let options = |inspector: &Inspector| {
+        let s = &inspector.settings;
+        (s.create_centers, s.create_rotates, s.create_aligns)
+    };
+    // "Copy prim rotation" and "Align to surface" are one or the other
+    for (label, after) in [
+        (aurora_i18n::tr!("build-create-center-on-prim"), (true, false, false)),
+        (aurora_i18n::tr!("build-create-copy-prim-rotation"), (true, true, false)),
+        (aurora_i18n::tr!("build-create-align-to-surface"), (true, false, true)),
+        (aurora_i18n::tr!("build-create-copy-prim-rotation"), (true, true, false)),
+    ] {
+        let at = find(&texts, label).unwrap_or_else(|| panic!("{label}"));
+        click(&mut inspector, at);
+        assert_eq!(options(&inspector), after, "{label} with the cube chosen");
+    }
+    // "Keep creating" turned on puts Create in use
+    inspector.tool.set_tool(Tool::Edit);
+    assert!(!inspector.settings.keep_tool);
+    let (_, mut texts) = inspector.show(vec![]);
+    texts.retain(|(_, rect)| window.contains_rect(*rect));
+    click(
+        &mut inspector,
+        find(&texts, aurora_i18n::tr!("build-create-keep-creating")).expect("Keep creating"),
+    );
+    assert!(inspector.settings.keep_tool);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    assert_eq!(
+        (inspector.settings.copy_centers, inspector.settings.copy_rotates),
+        (BuildSettings::default().copy_centers, BuildSettings::default().copy_rotates),
+        "Copy selection's own options are left alone"
+    );
+
+    let mut inspector = legacy();
+    inspector.settings.copy_centers = false;
+    let rect = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("legacy-build-tool", Tool::Create as u8))))
+        .expect("the Create tool button");
+    click(&mut inspector, rect.center());
+    let (_, texts) = inspector.show(vec![]);
+    assert!(find(&texts, aurora_i18n::tr!("build-ui-tools-keep-selection-tool")).is_some());
+    let copy = find(&texts, aurora_i18n::tr!("build-ui-tools-copy-selection")).expect("Copy selection");
+    assert!(find(&texts, aurora_i18n::tr!("build-create-keep-creating")).is_none());
+    click(&mut inspector, copy);
+    assert!(inspector.settings.copy_selection);
+    let (_, texts) = inspector.show(vec![]);
+    click(
+        &mut inspector,
+        find(&texts, aurora_i18n::tr!("build-ui-tools-center")).expect("Center"),
+    );
+    assert!(inspector.settings.copy_centers);
+    assert!(!inspector.settings.create_centers, "the Legacy style's Center is Copy selection's");
 }

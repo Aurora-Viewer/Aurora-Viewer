@@ -33,6 +33,7 @@ impl InventoryUi {
     /// Cancel the shared cut in every inventory window. Copy remains reusable.
     pub fn cancel_cut(&mut self) {
         if self.cut {
+            self.clipboard_edited = true;
             self.clipboard.clear();
             self.cut = false;
             self.consume_clipboard = false;
@@ -44,16 +45,24 @@ impl InventoryUi {
 
     /// Called before fields consume input, even while Inventory is closed.
     pub fn clipboard_input(&mut self, events: &[egui::Event]) {
+        self.cut_cancelled = false;
         for event in events {
             match event {
                 egui::Event::Key {
                     key: egui::Key::Escape,
                     pressed: true,
                     ..
-                } => self.cancel_cut(),
+                } => {
+                    // this Esc is spent on the cut: the list keeps its selection
+                    self.cut_cancelled |= self.cut;
+                    self.cancel_cut();
+                }
                 egui::Event::Paste(text) => self.clipboard_changed(Some(text)),
                 _ => {}
             }
+        }
+        for window in &mut self.windows {
+            window.state.cut_cancelled = self.cut_cancelled;
         }
     }
 
@@ -111,7 +120,7 @@ pub(super) fn request_focus(ui: &egui::Ui, st: &mut InventoryUi) {
 /// for one more) so the list takes it once nothing is above it.
 pub(super) fn return_focus(ctx: &egui::Context, st: &mut InventoryUi) {
     request_focus_ctx(ctx, st);
-    st.list_focus_frame = Some(ctx.cumulative_frame_nr() + 2);
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) + 2);
     // run those passes now, not at the next input
     ctx.request_repaint();
 }
@@ -127,7 +136,7 @@ type PendingFocus = (egui::Id, u64);
 /// above it is gone. A document lives in a window state of its own, so the
 /// request waits in the context for the list that opened it to take it.
 pub(crate) fn return_focus_to(ctx: &egui::Context, focus: egui::Id) {
-    let at = ctx.cumulative_frame_nr() + 2;
+    let at = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) + 2;
     ctx.data_mut(|d| d.insert_temp(pending_focus_id(), Some((focus, at))));
     ctx.request_repaint();
 }
@@ -140,18 +149,56 @@ pub(super) fn return_document_focus(ctx: &egui::Context, st: &mut InventoryUi) {
 }
 
 fn request_focus_ctx(ctx: &egui::Context, st: &mut InventoryUi) {
-    st.list_focus_frame = Some(ctx.cumulative_frame_nr());
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT));
     ctx.memory_mut(|m| {
         m.request_focus(focus_id(st));
-        m.set_focus_lock_filter(
-            focus_id(st),
-            egui::EventFilter {
-                vertical_arrows: true,
-                horizontal_arrows: true,
-                ..Default::default()
-            },
-        );
+        m.set_focus_lock_filter(focus_id(st), list_filter(st));
     });
+}
+
+/// The keys the focused list keeps from egui's focus moves: the arrows, and
+/// Tab in the split view (`split_tab`).
+fn list_filter(st: &InventoryUi) -> egui::EventFilter {
+    egui::EventFilter {
+        vertical_arrows: true,
+        horizontal_arrows: true,
+        tab: st.other_pane.is_some(),
+        ..Default::default()
+    }
+}
+
+/// The split view: Tab (or Shift+Tab) in one pane's list gives the keyboard
+/// to the other's, as in Dolphin's split view and the two-panel file
+/// managers, rather than to the next widget.
+pub(super) fn split_tab(ctx: &egui::Context, a: &mut InventoryUi, b: &mut InventoryUi) {
+    let (fa, fb) = (focus_id(a), focus_id(b));
+    ctx.memory_mut(|m| {
+        m.set_focus_lock_filter(fa, list_filter(a));
+        m.set_focus_lock_filter(fb, list_filter(b));
+    });
+    let (in_a, in_b) = ctx.memory(|m| (m.has_focus(fa), m.has_focus(fb)));
+    if !(in_a || in_b) || a.rename.is_some() || b.rename.is_some() {
+        return;
+    }
+    let pressed =
+        ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab) | i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab));
+    if pressed {
+        request_focus_ctx(ctx, if in_a { b } else { a });
+    }
+}
+
+fn list_focused_id() -> egui::Id {
+    egui::Id::unique("inventory_list_focused_frame")
+}
+
+/// An inventory list had the keyboard in the last frame drawn (keys reach
+/// the viewer before the frame that draws the list): whether it was the
+/// explorer (`aurora::Frame::explorer`), None when no list had it.
+pub(super) fn list_focused_recently(ctx: &egui::Context) -> Option<bool> {
+    let now = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    ctx.data(|d| d.get_temp::<(u64, bool)>(list_focused_id()))
+        .filter(|(at, _)| at + 1 >= now)
+        .map(|(_, explorer)| explorer)
 }
 
 pub(super) fn list_has_focus(ui: &egui::Ui, st: &InventoryUi) -> bool {
@@ -162,11 +209,52 @@ pub(super) fn list_has_focus(ui: &egui::Ui, st: &InventoryUi) -> bool {
         && !egui::Popup::is_any_open(ui.ctx())
 }
 
+/// A click on a list's empty space selects nothing, as in a file manager, in
+/// every layout and both styles; Ctrl or Shift keep the selection. New
+/// Folder with nothing selected then creates in the inventory's root
+/// (#4740). The Legacy Viewer keeps its selection there
+/// (`LLFolderView::handleMouseDown`), but its "+" New Folder never uses the
+/// selection (`LLPanelMainInventory::doCreate`), where Aurora's does: a
+/// visible difference. A real click only: egui also "clicks" a focused
+/// widget on Enter or Space, which would drop the selection Alt+Enter is
+/// about to open.
+pub(super) fn blank_click(ui: &egui::Ui, st: &mut InventoryUi, response: &egui::Response) {
+    if response.clicked()
+        && ui.input(|i| i.pointer.any_click())
+        && !ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift)
+    {
+        st.selection.clear();
+        st.selected = None;
+        st.focus = None;
+        st.anchor = None;
+    }
+}
+
 /// A stable focus target survives scrolling selected rows out of the viewport.
 /// Register the background before the rows so their clicks take precedence.
 pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     let rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), height));
     let response = ui.interact(rect, focus_id(st), egui::Sense::click());
+    if ui.memory(|m| m.has_focus(focus_id(st))) {
+        let now = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
+        let explorer = st.aurora.is_some_and(|frame| frame.explorer);
+        ui.ctx().data_mut(|d| d.insert_temp(list_focused_id(), (now, explorer)));
+    }
+    // the explorer's right-click on its empty space: the menu of the folder shown (Windows Explorer's
+    // and Dolphin's menu of the empty space)
+    // Recent, Worn and Favorites too, with New into each type's folder
+    // (`context_catalog::build_background`)
+    if response.secondary_clicked()
+        && ui.input(|i| i.pointer.any_click())
+        && st
+            .aurora
+            .is_some_and(|frame| frame.layout != super::aurora::Layout::Compact && (frame.explorer || st.tab != 0))
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        st.row_menu = Some((st.browse, pos));
+        st.background_menu = true;
+    }
+    blank_click(ui, st, &response);
     let leaving = ui.input(|i| {
         i.pointer.any_pressed() && i.pointer.interact_pos().is_none_or(|pos| !rect.contains(pos))
             || i.key_pressed(egui::Key::Tab)
@@ -178,7 +266,7 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     // A document opened from this list closed: take the keyboard back once
     // the window above is gone and no other widget holds it. The window can
     // outlive the close by a pass or two, so the request stays a few passes.
-    let now = ui.ctx().cumulative_frame_nr();
+    let now = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let focused = ui.memory(|m| m.focused());
     if let Some((focus, at)) = ui.ctx().data(|d| d.get_temp::<Option<PendingFocus>>(pending_focus_id())).flatten() {
         if focus == focus_id(st) {
@@ -207,10 +295,41 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
         && ui.is_enabled()
         && st.dialog.is_none()
         && !egui::Popup::is_any_open(ui.ctx())
-        && st.list_focus_frame.is_some_and(|frame| ui.ctx().cumulative_frame_nr() <= frame + 1)
+        && st
+            .list_focus_frame
+            .is_some_and(|frame| ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) <= frame + 1)
         && ui.memory(|m| m.focused().is_none() && m.allows_interaction(ui.layer_id()));
-    if response.clicked() || response.has_focus() || restore {
+    // The list already holds the keyboard: keep its focus-lock filter and the
+    // restore deadline up to date without requesting focus again. A request on
+    // every frame makes egui interrupt the input method each time, so a name
+    // could never be composed (#3889, `controls::ShotNaming`).
+    let focused = response.has_focus();
+    if focused {
+        st.list_focus_frame = Some(now);
+        ui.memory_mut(|m| m.set_focus_lock_filter(focus_id(st), list_filter(st)));
+    }
+    if (response.clicked() && !focused) || restore {
         request_focus(ui, st);
+    }
+    if response.has_focus()
+        && ui.is_enabled()
+        && st.dialog.is_none()
+        && !ui.ctx().text_edit_focused()
+        && !egui::Popup::is_any_open(ui.ctx())
+    {
+        // Offer native composition at the list, as the residents' list does
+        // (ui/people/type_ahead.rs): the type-ahead accepts IME commits, so a
+        // name outside ASCII can be composed and typed.
+        let to_global = ui.ctx().layer_transform_to_global(ui.layer_id()).unwrap_or_default();
+        let cursor = egui::Rect::from_min_size(rect.min, egui::vec2(1.0, ui.spacing().interact_size.y));
+        ui.output_mut(|out| {
+            out.ime = Some(egui::output::IMEOutput {
+                purpose: egui::IMEPurpose::Normal,
+                rect: to_global * rect,
+                cursor_rect: to_global * cursor,
+                should_interrupt_composition: false,
+            });
+        });
     }
 }
 
@@ -234,6 +353,7 @@ pub(super) fn store(ctx: &egui::Context, st: &mut InventoryUi, ids: Vec<Uuid>, c
     }
     st.clipboard = ids;
     st.cut = cut;
+    st.clipboard_edited = true;
     st.consume_clipboard = false;
 }
 
@@ -246,9 +366,13 @@ pub(crate) fn offer(
     ids: Vec<Uuid>,
     cut: bool,
     protected: &HashSet<Uuid>,
+    rlva: &crate::world::rlva::WearLocks,
 ) -> bool {
     let allowed = if cut {
-        !ids.is_empty() && ids.iter().all(|id| rules::relocatable(inv, *id, protected))
+        !ids.is_empty()
+            && ids
+                .iter()
+                .all(|id| rules::relocatable(inv, *id, protected) && rlva.removable(inv, *id))
     } else {
         copy_allowed(inv, &ids)
     };
@@ -281,7 +405,7 @@ pub fn appearance_request(
     let mut actions = Vec::new();
     match request {
         ClipboardRequest::Store { ids, cut } => {
-            if !offer(ctx, inv, st, ids, cut, &prefs.protected) {
+            if !offer(ctx, inv, st, ids, cut, &prefs.protected, &facts.rlva) {
                 st.message = aurora_i18n::tr!("ui-appearance-clipboard-cannot-take").into();
             }
         }
@@ -330,22 +454,44 @@ pub(super) fn paste(
     actions: &mut Vec<InvAction>,
 ) {
     let cut = st.cut && !links;
+    let ids = st.clipboard.clone();
+    if let Some(consume) = paste_ids(inv, &ids, to, cut, links, st, prefs, facts, actions) {
+        st.consume_clipboard = consume;
+    }
+}
+
+/// Paste or Paste as link of `ids` into `to`, by the routes of each place:
+/// the Marketplace's own paste, the outfit folders' rules, the inventory's
+/// elsewhere. A drag that copies or links goes the same way (`drag.rs`).
+/// Returns whether the clipboard is to be consumed once the change lands
+/// (None: the clipboard is not concerned).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn paste_ids(
+    inv: &Inventory,
+    ids: &[Uuid],
+    to: Uuid,
+    cut: bool,
+    links: bool,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) -> Option<bool> {
     if !links && crate::world::marketplace::root(inv).is_some_and(|root| rules::under(inv, to, root)) {
         actions.push(InvAction::MarketplacePaste {
             to,
-            ids: st.clipboard.clone(),
+            ids: ids.to_vec(),
             copy: !cut,
         });
-        return;
+        return None;
     }
     if !links {
-        match crate::world::outfit_paste::plan(inv, &st.clipboard, to, cut, &prefs.protected) {
+        match crate::world::outfit_paste::plan(inv, ids, to, cut, &prefs.protected) {
             Ok(crate::world::outfit_paste::Paste::Inventory) => {}
             Ok(crate::world::outfit_paste::Paste::Edit(change)) => {
-                st.consume_clipboard = cut;
                 st.message.clear();
                 actions.push(InvAction::Edit(change));
-                return;
+                return Some(cut);
             }
             // dropToOutfit into the Current Outfit wears, and leaves the
             // clipboard as it was.
@@ -356,24 +502,23 @@ pub(super) fn paste(
                     replace: true,
                     point: 0,
                 }));
-                return;
+                return None;
             }
             Err(reason) => {
-                st.consume_clipboard = false;
                 st.message = reason;
-                return;
+                return Some(false);
             }
         }
     }
-    match rules::paste(inv, &st.clipboard, to, cut, links, &prefs.protected, &facts.worn) {
+    match rules::paste(inv, ids, to, cut, links, &prefs.protected, &facts.worn) {
         Ok(change) => {
-            st.consume_clipboard = cut;
             st.message.clear();
             actions.push(InvAction::Edit(change));
+            Some(cut)
         }
         Err(reason) => {
-            st.consume_clipboard = false;
             st.message = reason;
+            Some(false)
         }
     }
 }
@@ -400,6 +545,7 @@ pub(super) fn shortcuts(
         return;
     }
     super::keyboard::open_shortcut(ui, inv, st, prefs, facts, actions);
+    super::keyboard::commands(ui, inv, root, st, prefs, facts, actions);
     // egui-winit consumes the physical C/X/V presses and emits these native
     // clipboard events instead. Testing key_pressed(C) would miss real input.
     let mut events = Vec::new();
@@ -422,10 +568,33 @@ pub(super) fn shortcuts(
             continue;
         }
         match event {
+            // Windows: egui-winit turns Shift+Delete into a Cut (its old
+            // Windows meaning); the list's Shift+Delete purges instead
+            egui::Event::Cut
+                if cfg!(target_os = "windows")
+                    && ui.input(|i| i.modifiers.shift && !i.modifiers.command)
+                    && super::shortcuts::get(ui.ctx()).keeps(
+                        &crate::keybinds::Input::key(winit::keyboard::KeyCode::Delete),
+                        false,
+                        true,
+                        false,
+                        true,
+                    ) =>
+            {
+                super::keyboard::purge(inv, st, prefs, facts, actions);
+            }
             egui::Event::Copy | egui::Event::Cut => {
                 let mut ids: Vec<_> = st.selection.iter().copied().collect();
                 ids.sort();
-                offer(ui.ctx(), inv, st, ids, matches!(event, egui::Event::Cut), &prefs.protected);
+                offer(
+                    ui.ctx(),
+                    inv,
+                    st,
+                    ids,
+                    matches!(event, egui::Event::Cut),
+                    &prefs.protected,
+                    &facts.rlva,
+                );
             }
             egui::Event::Paste(text) => {
                 if !holds_marker(st, &text) {
@@ -456,6 +625,9 @@ fn demo_mode() -> Option<&'static str> {
                 || mode.starts_with("search-selection")
                 || mode.starts_with("keyboard")
                 || mode.starts_with("aurora-keyboard")
+                || mode.starts_with("type-ahead-ime")
+                || mode.starts_with("aurora-type-ahead-ime")
+                || matches!(mode.as_str(), "ime" | "aurora-ime")
                 || mode.starts_with("enter")
                 || mode.contains("rename-focus")
                 || mode.contains("rename-window")
@@ -478,7 +650,7 @@ pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) 
         // the list's clip, within a pixel: a row scrolled to the bottom ends
         // on the clip's edge. A wide row runs past the clip sideways.
         let shown = (
-            response.ctx.cumulative_frame_nr(),
+            response.ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT),
             response.interact_rect.height() + 1.0 >= response.rect.height(),
         );
         response.ctx.data_mut(|data| {
@@ -601,6 +773,64 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
         }
         return Vec::new();
     }
+    if mode == "type-ahead-ime" {
+        // Click Materials in the root, then commit "tex" as a Japanese IME
+        // does: Textures is the next match below it.
+        if matches!(frame, 650 | 651)
+            && let Some(pos) =
+                ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, crate::demo::u(19)))))
+        {
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 650,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        if frame == 665 {
+            return vec![egui::Event::Ime(egui::ImeEvent::Commit("tex".into()))];
+        }
+        if frame == 700 {
+            log::info!(
+                "demo inventory type-ahead IME: frame={frame}, selected={:?}, prefix={:?}, list_focus={}",
+                st.selected,
+                st.type_ahead.text(),
+                ctx.memory(|m| m.has_focus(focus_id(st)))
+            );
+        }
+        return Vec::new();
+    }
+    if mode == "ime" {
+        // scripts/test-ime-linux.py: click Animations so the list holds the
+        // keyboard, then leave the keys to the system's input method and log
+        // where they went once a second. No synthetic IME event.
+        if matches!(frame, 650 | 651)
+            && let Some(pos) =
+                ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, crate::demo::u(10)))))
+        {
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 650,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        if frame >= 700 && frame.is_multiple_of(60) {
+            log::info!(
+                "demo inventory ime: frame={frame}, selected={:?}, prefix={:?}, list_focus={}",
+                st.selected.map(|id| id.as_u128()),
+                st.type_ahead.text(),
+                ctx.memory(|m| m.has_focus(focus_id(st)))
+            );
+        }
+        return Vec::new();
+    }
     if mode.starts_with("enter") {
         // Select and reveal the demo object, keep the list's keyboard, then
         // Enter puts it on and a second Enter takes it off once it is worn
@@ -690,7 +920,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
                 log::info!(
                     "demo inventory keyboard down: frame={frame}, selected={:?}, drawn_whole={}",
                     st.selected,
-                    shown.is_some_and(|(drawn, whole)| whole && drawn + 1 >= ctx.cumulative_frame_nr())
+                    shown.is_some_and(|(drawn, whole)| whole && drawn + 1 >= ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
                 );
             }
             if !(660..=688).contains(&frame) || !frame.is_multiple_of(4) {
@@ -1188,6 +1418,47 @@ mod tests {
         }
     }
 
+    /// #4740: a click on the list's empty space selects nothing in every
+    /// layout, so New Folder creates in the root; Ctrl keeps the selection.
+    #[test]
+    fn a_click_on_the_empty_space_selects_nothing_in_every_layout() {
+        for (classic, width) in [(true, 680.0), (false, 440.0), (false, 800.0), (false, 1180.0)] {
+            for ctrl in [false, true] {
+                let mut h = Harness::new();
+                h.classic = classic;
+                super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(width, 950.0));
+                h.st.show_original(&h.world.inventory, id(8100));
+                for _ in 0..4 {
+                    h.frame(Vec::new());
+                }
+                h.select(id(8100), false);
+                assert_eq!(h.st.selected, Some(id(8100)), "{classic}, {width}");
+                // the bottom of the list, below its last row
+                let list = h.ctx.read_response(focus_id(&h.st)).expect("inventory list").rect;
+                let blank = egui::pos2(list.center().x, list.bottom() - 6.0);
+                assert!(
+                    blank.y > h.row(id(8100)).y + 40.0,
+                    "the click must land below the rows: {classic}, {width}"
+                );
+                h.click(
+                    blank,
+                    egui::Modifiers {
+                        ctrl,
+                        command: ctrl,
+                        ..Default::default()
+                    },
+                );
+                if ctrl {
+                    assert_eq!(h.st.selected, Some(id(8100)), "Ctrl keeps it: {classic}, {width}");
+                } else {
+                    assert_eq!(h.st.selected, None, "{classic}, {width}");
+                    assert!(h.st.selection.is_empty(), "{classic}, {width}");
+                    assert!(h.st.anchor.is_none(), "Shift must not extend a cleared selection");
+                }
+            }
+        }
+    }
+
     #[test]
     fn inventory_rename_returns_navigation_to_the_list_in_every_layout() {
         for (classic, width) in [(true, 680.0), (false, 440.0), (false, 800.0), (false, 1180.0)] {
@@ -1279,6 +1550,136 @@ mod tests {
             h.frame(vec![arrow(true, false)]);
             assert_ne!(h.dual.selected, Some(id(8100)));
             assert_eq!(h.st.selected, Some(id(8100)));
+        }
+    }
+
+    /// #4570: a Copy or Cut in the right pane of the dual layout reaches
+    /// the shared clipboard, so it survives the next frame and pastes in
+    /// either pane.
+    #[test]
+    fn dual_pane_copy_and_cut_reach_the_shared_clipboard() {
+        for cut in [false, true] {
+            let mut h = Harness::new();
+            h.prefs.dual_panel = true;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(1400.0, 900.0));
+            h.dual.show_original(&h.world.inventory, id(8100));
+            h.dual.expand_all = Some(true);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let row = h
+                .ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", h.dual.ui_id, id(8100)))))
+                .expect("right pane row");
+            h.click(row.left_center() + egui::vec2(80.0, 0.0), Default::default());
+            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.dual))));
+            assert!(h.st.clipboard.is_empty());
+            h.frame(vec![if cut { Event::Cut } else { Event::Copy }]);
+            h.frame(Vec::new());
+            h.frame(Vec::new());
+            assert_eq!(h.st.clipboard, vec![id(8100)], "cut: {cut}");
+            assert_eq!(h.st.cut, cut);
+            assert_eq!(h.dual.clipboard, vec![id(8100)], "the right pane keeps it too");
+            assert_eq!(h.dual.cut, cut);
+            assert!(holds_marker(&h.st, &id(8100).to_string()), "Ctrl+V finds its marker");
+            h.st.show_original(&h.world.inventory, id(8001));
+            h.st.expand_all = Some(true);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let dest = h
+                .ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", h.st.ui_id, id(8001)))))
+                .expect("left destination row");
+            h.click(dest.left_center() + egui::vec2(80.0, 0.0), Default::default());
+            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st))));
+            let actions = h.paste();
+            let [InvAction::Edit(change)] = &actions[..] else {
+                panic!("one paste in the left pane")
+            };
+            if cut {
+                assert!(change.copies.is_empty());
+                assert!(
+                    matches!(&change.operations[..], [aurora_net::inventory::operations::Operation::Patch { id: item, folder: false, body }] if *item == id(8100) && body["parent_id"].as_uuid() == id(8001))
+                );
+            } else {
+                assert!(change.copies.len() == 1 && change.copies[0].parent == id(8001));
+            }
+        }
+    }
+
+    /// Issue #4765: a fetched empty folder has no caret, and a double-click
+    /// on it selects it without opening it, in both window styles; a folder
+    /// with contents still folds on a double-click.
+    #[test]
+    fn a_double_click_leaves_an_empty_folder_shut_in_both_styles() {
+        let shown = |h: &Harness, n| h.st.plain.rows.iter().find(|row| row.id == id(n)).map(|row| row.kind);
+        for (classic, width) in [(true, 680.0), (false, 440.0)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(width, 950.0));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let empty = &h.world.inventory.folders[&id(8001)];
+            assert!(empty.state == FetchState::Fetched && empty.children.is_empty() && empty.items.is_empty());
+            assert!(h.st.plain.is_open(id(8001)), "{classic}: Expand all left it open");
+            let leaf = rows::Kind::Folder {
+                open: false,
+                branches: false,
+            };
+            assert_eq!(shown(&h, 8001), Some(leaf), "{classic}: shown shut, without a caret");
+            let double_click = |h: &mut Harness, pos: Pos2| {
+                let press = |pressed| Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![Event::PointerMoved(pos), press(true), press(false), press(true), press(false)]);
+                h.frame(Vec::new());
+            };
+            h.st.plain.set_open(id(8001), false);
+            h.frame(Vec::new());
+            let pos = h.row(id(8001));
+            double_click(&mut h, pos);
+            assert_eq!(h.st.selected, Some(id(8001)), "{classic}: the double-click reached the row");
+            assert!(!h.st.plain.is_open(id(8001)), "{classic}: not even left open for later");
+            assert_eq!(shown(&h, 8001), Some(leaf), "{classic}: still shut");
+            assert!(
+                !h.st
+                    .plain
+                    .rows
+                    .iter()
+                    .any(|row| row.id == id(8001) && row.kind == rows::Kind::Empty),
+                "{classic}: no Empty line"
+            );
+            assert!(!h.st.visible.is_empty());
+            let pos = h.row(id(8000));
+            double_click(&mut h, pos);
+            assert_eq!(
+                shown(&h, 8000),
+                Some(rows::Kind::Folder {
+                    open: false,
+                    branches: true
+                }),
+                "{classic}: a folder with contents folds"
+            );
+            if classic {
+                // the Legacy-style single folder window lists 8000 flat:
+                // there an empty folder is gone into, as any other
+                h.st.open_single_folder_window(id(8000));
+                for _ in 0..4 {
+                    h.frame(Vec::new());
+                }
+                let window = h.st.windows.last().expect("single folder window");
+                assert!(window.state.lists_flat());
+                let name = format!("inventory_{}", window.id);
+                let pos = h.row_in(id(8001), &name);
+                double_click(&mut h, pos);
+                let window = h.st.windows.last().expect("single folder window");
+                assert_eq!(window.state.browse, id(8001), "the empty folder is gone into");
+            }
         }
     }
 
@@ -1398,6 +1799,51 @@ mod tests {
         assert_eq!(h.st.selected, Some(id(20_060)));
         assert_eq!(h.st.selection.len(), 61);
         h.row(id(20_060)); // The unfiltered tree shares the same minimal scroll.
+    }
+
+    #[test]
+    fn an_ime_commit_finds_the_row_and_a_click_starts_a_new_prefix() {
+        let mut h = Harness::new();
+        h.select(id(8100), false);
+        h.frame(Vec::new());
+        assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st))), "the click focused the list");
+        // #3889 again: a focus request on every frame interrupted the IME.
+        for _ in 0..5 {
+            h.frame(Vec::new());
+            let ime = h.output.platform_output.ime.expect("the focused list offers composition");
+            assert!(!ime.should_interrupt_composition, "the list must leave the IME composing");
+        }
+
+        h.frame(vec![Event::Ime(egui::ImeEvent::Preedit {
+            text: "でも".into(),
+            active_range_chars: Some(0..2),
+        })]);
+        assert_eq!(h.st.selected, Some(id(8100)), "a preedit does not jump");
+        // "demo t" in English: the demo texture's name up to the first
+        // letter of its second word, as this PC's catalogue names it (the
+        // demo names go through `tr!`: "Texture de démonstration" in French)
+        let texture = aurora_i18n::tr!("world-inventory-demo-demo-texture").to_lowercase();
+        let prefix = match texture.split_once(' ') {
+            Some((first, rest)) => format!("{first} {}", rest.chars().take(1).collect::<String>()),
+            None => texture.clone(),
+        };
+        h.frame(vec![Event::Ime(egui::ImeEvent::Commit(prefix.clone()))]);
+        assert_eq!(h.st.selected, Some(id(8104)), "Demo texture");
+        assert_eq!(h.st.type_ahead.text(), prefix);
+        assert!(h.st.search.is_empty(), "the filter field is untouched");
+
+        // A click on another row starts a new prefix, as LLFolderView::handleMouseDown.
+        h.select(id(8100), false);
+        assert_eq!(h.st.selected, Some(id(8100)));
+        assert!(h.st.type_ahead.text().is_empty());
+
+        // A click on the filter field clears the prefix too (Aurora's choice).
+        let field = h.text(aurora_i18n::tr!("ui-inventory-filter-inventory"));
+        h.click(field.center(), Default::default());
+        assert!(h.st.type_ahead.text().is_empty());
+        h.frame(vec![Event::Text("demo s".into())]);
+        assert_eq!(h.st.search, "demo s");
+        assert!(h.st.type_ahead.text().is_empty(), "the field took the text");
     }
 
     #[test]
@@ -2272,8 +2718,12 @@ mod tests {
             .expect("destination window");
         h.click(root.center(), Default::default());
         assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st.windows[1].state))));
+        let dest_window = h.st.windows[1].id;
         let actions = h.paste();
-        assert!(matches!(&actions[..], [InvAction::Edit(change)] if change.copies.len() == 1 && change.copies[0].parent == id(8001)));
+        // the paste is answered in the window that asked for it (#4700)
+        assert!(matches!(&actions[..], [InvAction::Panel { editor, action }]
+            if *editor == dest_window
+                && matches!(&**action, InvAction::Edit(change) if change.copies.len() == 1 && change.copies[0].parent == id(8001))));
         h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("unrelated_widget")));
         assert!(h.paste().is_empty());
     }

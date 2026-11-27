@@ -24,6 +24,12 @@ pub struct Filters {
     pub exclude_physical: bool,
     pub exclude_temporary: bool,
     pub exclude_probes: bool,
+    /// Kinds the Legacy Viewer can only require, hidden here too (a superset).
+    /// Never in a link: links are shared, and only Aurora would read them.
+    pub exclude_locked: bool,
+    pub exclude_phantom: bool,
+    pub exclude_media: bool,
+    pub exclude_sale: bool,
     pub min_price: i32,
     pub max_price: i32,
     pub min_distance: f32,
@@ -62,6 +68,10 @@ impl Default for Filters {
             exclude_physical: false,
             exclude_temporary: false,
             exclude_probes: false,
+            exclude_locked: false,
+            exclude_phantom: false,
+            exclude_media: false,
+            exclude_sale: false,
             min_price: 0,
             max_price: 999999,
             min_distance: 0.0,
@@ -95,6 +105,18 @@ impl Filters {
         if self.exclude_probes {
             self.probe = false;
         }
+        if self.exclude_locked {
+            self.locked = false;
+        }
+        if self.exclude_phantom {
+            self.phantom = false;
+        }
+        if self.exclude_media {
+            self.media = false;
+        }
+        if self.exclude_sale {
+            self.sale = false;
+        }
         self.click_action = self.click_action.min(9);
         self.min_price = self.min_price.clamp(0, 999999999);
         self.max_price = self.max_price.clamp(self.min_price, 999999999);
@@ -122,6 +144,14 @@ impl Filters {
             }
         }
     }
+    /// Every filter back, the quick search kept.
+    pub fn reset_all_but_query(&mut self) {
+        *self = Self {
+            query: std::mem::take(&mut self.query),
+            ..Self::default()
+        };
+    }
+
     /// Save filter rules, never the current search text (Legacy Save as Default).
     pub fn without_search(&self) -> Self {
         let mut f = self.clone();
@@ -138,7 +168,8 @@ impl Filters {
     }
 }
 
-pub const DEFAULT_COLUMNS: [bool; 10] = [true, true, true, true, true, false, true, false, false, false];
+/// Distance, name, land impact, owner (in the order of `Column::ALL`).
+pub const DEFAULT_COLUMNS: [bool; 10] = [true, true, false, false, true, false, true, false, false, false];
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -353,6 +384,18 @@ mod tests {
         }
         let f = Filters::default();
         assert_eq!(parse(&f.link()), Some(AppLink::AreaSearch(Box::new(f))));
+    }
+
+    #[test]
+    fn area_search_links_carry_no_kind_the_legacy_viewer_cannot_hide() {
+        let f = Filters {
+            exclude_locked: true,
+            exclude_phantom: true,
+            exclude_media: true,
+            exclude_sale: true,
+            ..Default::default()
+        };
+        assert_eq!(f.link(), Filters::default().link());
     }
 
     #[test]

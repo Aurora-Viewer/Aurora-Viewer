@@ -461,6 +461,63 @@ pub(crate) fn matches(source: &str, needle: &str, insensitive: bool) -> Vec<Rang
         .collect()
 }
 
+/// Optional whole-word filtering shared by script and notecard Find / Replace.
+/// Character offsets, not UTF-8 byte offsets, match TextEdit's cursor model.
+/// Underscores belong to identifiers; punctuation and whitespace delimit words.
+/// A rejected match must not hide an overlapping, valid whole-word match.
+pub(crate) fn matches_filtered(source: &str, needle: &str, insensitive: bool, whole_words: bool) -> Vec<Range<usize>> {
+    if !whole_words {
+        return matches(source, needle, insensitive);
+    }
+    if needle.is_empty() {
+        return Vec::new();
+    }
+
+    let chars: Vec<char> = source.chars().collect();
+    let word_char = |c: char| c.is_alphanumeric() || c == '_';
+
+    // Preserve original character boundaries even when Unicode lowercase
+    // expands a character into multiple characters.
+    let mut folded = String::new();
+    let mut boundaries = Vec::with_capacity(chars.len() + 1);
+    for c in &chars {
+        boundaries.push(folded.len());
+        if insensitive {
+            folded.extend(c.to_lowercase());
+        } else {
+            folded.push(*c);
+        }
+    }
+    boundaries.push(folded.len());
+    let needle = if insensitive { needle.to_lowercase() } else { needle.to_owned() };
+
+    let mut result = Vec::new();
+    let mut offset = 0;
+    while offset < folded.len() {
+        let Some(relative) = folded[offset..].find(&needle) else { break };
+        let byte = offset + relative;
+        let end_byte = byte + needle.len();
+
+        let candidate = boundaries
+            .binary_search(&byte)
+            .ok()
+            .zip(boundaries.binary_search(&end_byte).ok())
+            .map(|(start, end)| start..end);
+
+        if let Some(range) = candidate
+            && (range.start == 0 || !word_char(chars[range.start - 1]))
+            && (range.end == chars.len() || !word_char(chars[range.end]))
+        {
+            offset = end_byte;
+            result.push(range);
+        } else {
+            // Advance one character, not the rejected match's full length.
+            offset = byte + folded[byte..].chars().next().unwrap().len_utf8();
+        }
+    }
+    result
+}
+
 pub(crate) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: bool) -> Option<Range<usize>> {
     if up {
         ranges
@@ -478,9 +535,83 @@ pub(crate) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: b
     }
 }
 
+/// LLScrollContainer::autoScroll: a mouse selection held at the edge of the
+/// visible source, or past it, scrolls the view towards the pointer. egui
+/// 0.37 only scrolls a TextEdit to its cursor after a keyboard change, so a
+/// drag never reached the lines outside the view. `visible` is the text's
+/// visible area and `content` the whole laid-out text, both on screen.
+/// Within 16 px of an edge, the rate starts at 260 px/s and gains 156 px/s
+/// every second, up to 1040 px/s: the text editor's scroller (200 and 800
+/// px/s in LLTextBase::LLTextBase, indra/llui/lltextbase.cpp, with
+/// AUTO_SCROLL_RATE_ACCEL's 120) made 30% faster, as a script is often
+/// taller than one view.
+pub(super) fn drag_autoscroll(ui: &egui::Ui, response: &egui::Response, visible: egui::Rect, content: egui::Rect, horizontal: bool) {
+    const MIN_RATE: f32 = 260.0;
+    const MAX_RATE: f32 = 1040.0;
+    const ACCELERATION: f32 = 156.0;
+    const ZONE: f32 = 16.0;
+    let rate_id = response.id.with("drag_autoscroll_rate");
+    let pointer = response.dragged().then(|| ui.input(|i| i.pointer.interact_pos())).flatten();
+    let mut direction = egui::Vec2::ZERO;
+    if let Some(pointer) = pointer {
+        for axis in [0, 1] {
+            if axis == 0 && !horizontal {
+                continue;
+            }
+            let zone = ZONE.min(visible.size()[axis] / 3.0);
+            // Content moving down shows what is above the view.
+            if pointer[axis] < visible.min[axis] + zone && content.min[axis] < visible.min[axis] - 0.5 {
+                direction[axis] = 1.0;
+            } else if pointer[axis] > visible.max[axis] - zone && content.max[axis] > visible.max[axis] + 0.5 {
+                direction[axis] = -1.0;
+            }
+        }
+    }
+    if direction == egui::Vec2::ZERO {
+        ui.ctx().data_mut(|d| d.remove::<f32>(rate_id));
+        return;
+    }
+    let dt = ui.input(|i| i.stable_dt).min(0.1);
+    let rate = ui.ctx().data_mut(|d| {
+        let rate = d.get_temp_mut_or(rate_id, MIN_RATE);
+        let now = *rate;
+        *rate = (*rate + dt * ACCELERATION).min(MAX_RATE);
+        now
+    });
+    ui.scroll_with_delta_animation(direction * rate * dt, egui::style::ScrollAnimation::none());
+    // The pointer may stay still: the next frame extends the selection.
+    ui.ctx().request_repaint();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whole_words_exclude_substrings_but_accept_punctuation_delimiters() {
+        let text = "This hi high hi_there hi-there (hi) \u{E9}hi hi\u{E9}";
+        let found = matches_filtered(text, "hi", true, true);
+        let substrings: Vec<String> = found
+            .iter()
+            .map(|range| text.chars().skip(range.start).take(range.len()).collect())
+            .collect();
+        assert_eq!(substrings, vec!["hi", "hi", "hi"]);
+        // The original partial-word search still includes "hi" inside "This".
+        assert!(matches_filtered(text, "hi", true, false).len() > found.len());
+        assert_eq!(matches_filtered("HI hi Hi", "hi", false, true), vec![3..5]);
+        assert_eq!(matches_filtered("HI hi Hi", "hi", true, true), vec![0..2, 3..5, 6..8]);
+    }
+
+    #[test]
+    fn whole_word_search_checks_overlapping_candidates_and_identifier_boundaries() {
+        assert_eq!(matches_filtered("xab ab ab", "ab ab", false, true), vec![4..9]);
+        assert_eq!(matches_filtered("xAB aB AB", "ab ab", true, true), vec![4..9]);
+        assert_eq!(matches_filtered("hi_there _hi hi_ hi", "hi", false, true), vec![17..19]);
+
+        // Unicode case expansion must still respect original character boundaries.
+        assert!(matches_filtered("İ", "i", true, true).is_empty());
+        assert_eq!(matches_filtered("İ", "i\u{307}", true, true), vec![0..1]);
+    }
 
     #[test]
     fn multiline_indent_keeps_backward_selection_and_excludes_the_final_line_at_column_zero() {

@@ -79,6 +79,9 @@ pub enum ProfileAction {
     },
     /// Chat of one of our groups (double-click in the group list).
     GroupChat(Uuid),
+    /// "Invite to group" (LLAvatarActions::inviteToGroup,
+    /// indra/newview/llavataractions.cpp): group picker then invitation.
+    InviteToGroup(Uuid),
     /// Picks and classifieds: "Show on map" / "Teleport"
     /// (LLFloaterWorldMap::trackLocation, gAgent.teleportViaLocation).
     ShowOnMap(DVec3),
@@ -111,6 +114,11 @@ const TAB_PICKS: usize = 2;
 const TAB_CLASSIFIEDS: usize = 3;
 const TAB_RL: usize = 4;
 const TAB_NOTES: usize = 5;
+/// The classic window's favorite: its description's least height (the
+/// fixed one it had), and what the rows under it are taken to need before
+/// they are first measured (#4986).
+const PICK_DESC_MIN_H: f32 = 80.0;
+const PICK_BELOW_GUESS: f32 = 110.0;
 
 /// Left column of the labels ("Name:", "Key:", "Info:"...), right-aligned.
 const LABEL_W: f32 = 60.0;
@@ -231,6 +239,8 @@ struct Window {
     demo_classified: Option<bool>,
     /// Open a photo once the demo profile reply arrives.
     demo_photo: Option<(PictureSlot, bool)>,
+    /// Demo captures: the classic Picks tab clicks New once it shows.
+    demo_new_pick: bool,
 }
 
 enum CloseChoice {
@@ -279,6 +289,7 @@ impl Window {
             notes_saved: false,
             demo_classified: None,
             demo_photo: None,
+            demo_new_pick: false,
         }
     }
 
@@ -634,6 +645,7 @@ impl ProfileUi {
                 "edit" => w.editing = true,
                 "form" => w.demo_classified = Some(false),
                 "publish" => w.demo_classified = Some(true),
+                "new-pick" => w.demo_new_pick = true,
                 "photo" => w.demo_photo = Some((PictureSlot::SecondLife, false)),
                 "first-photo" => {
                     w.tab = TAB_RL;
@@ -1539,13 +1551,9 @@ fn second_life_tab(
                 if !own {
                     ui.horizontal(|ui| {
                         ui.add_space(LABEL_W - 22.0);
-                        widgets::icon_button(
-                            ui,
-                            p,
-                            "users-plus",
-                            aurora_i18n::tr!("ui-profile-invite-to-group-coming-soon"),
-                            false,
-                        );
+                        if widgets::icon_button(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group"), true) {
+                            actions.push(ProfileAction::InviteToGroup(id));
+                        }
                     });
                 }
             });
@@ -1554,7 +1562,7 @@ fn second_life_tab(
                     .id_salt(("groups", id))
                     .max_height(groups_h - 8.0)
                     .auto_shrink([false, true])
-                    .show(ui, |ui| groups_list(ui, p, world, profile, own, actions));
+                    .show(ui, |ui| groups_list(ui, p, world, profile, own));
             });
         });
         ui.add_space(4.0);
@@ -1580,16 +1588,8 @@ fn second_life_tab(
     w.bottom_h = bottom.response.rect.height();
 }
 
-/// group_list: names as links (double-click: chat of one of our groups,
-/// there is no group profile in Aurora yet).
-fn groups_list(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    world: &World,
-    profile: Option<&AvatarProfile>,
-    own: bool,
-    actions: &mut Vec<ProfileAction>,
-) {
+/// The classic profile group list opens group info on a double-click.
+fn groups_list(ui: &mut egui::Ui, p: &Palette, world: &World, profile: Option<&AvatarProfile>, own: bool) {
     let Some(pr) = profile else {
         loading(ui, p);
         return;
@@ -1607,13 +1607,14 @@ fn groups_list(
     for g in groups {
         let member = world.groups.is_member(&g.id);
         let r = ui.add(egui::Label::new(RichText::new(&g.name).size(12.5).color(p.indigo_light)).sense(egui::Sense::click()));
-        let tip = if member {
-            aurora_i18n::tr!("ui-profile-double-click-group-chat")
+        let r = r.on_hover_text(aurora_i18n::tr!("common-view-info"));
+        if r.double_clicked() {
+            super::group_profile::request_open(ui.ctx(), g.id);
+        }
+        if member {
+            super::menu::context_menu(&r, p, |ui| super::context::group_menu(ui, p, world, g.id));
         } else {
-            aurora_i18n::tr!("ui-profile-group-profile-coming-soon")
-        };
-        if r.on_hover_text(tip).double_clicked() && member {
-            actions.push(ProfileAction::GroupChat(g.id));
+            super::context::group_link_menu(&r, p, world, g.id, Some(&g.name));
         }
     }
 }
@@ -1709,8 +1710,20 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
             } else {
                 aurora_i18n::tr!("ui-profile-add-friend")
             };
-            ui.add_enabled(false, egui::Button::new(friend_label).min_size(size))
-                .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
+            // LLPanelProfileSecondLife::onCommitMenu, "add_friend" and
+            // "remove_friend" (indra/newview/llpanelprofile.cpp): both open
+            // their confirmation (LLAvatarActions::requestFriendshipDialog,
+            // removeFriendDialog); updateButtons shows one or the other and
+            // never disables it
+            if ui.add(egui::Button::new(friend_label).min_size(size)).clicked() {
+                use super::context::CtxAction;
+                let action = if is_friend {
+                    CtxAction::RemoveFriend(id)
+                } else {
+                    CtxAction::AddFriend(id)
+                };
+                super::context::request(ui.ctx(), action);
+            }
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let bw = Vec2::new(col_w - 34.0, 20.0);
@@ -1766,6 +1779,13 @@ fn overflow_menu(
             world.calls.voice_enabled,
         ) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::Call(id));
+        }
+        // menu_profile_other.xml's invite_to_group (LLPanelProfileSecondLife::
+        // onCommitMenu → LLAvatarActions::inviteToGroup, llpanelprofile.cpp):
+        // no enable callback, and never on our own profile (menu_profile_self.xml
+        // has none, mGroupInviteButton->setVisible(!own_profile))
+        if id != world.agent_id && menu::item(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group")) {
+            actions.push(ProfileAction::InviteToGroup(id));
         }
         let block = if blocked {
             aurora_i18n::tr!("common-unblock")
@@ -1899,7 +1919,7 @@ fn feed_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, web: &WebContext) {
 
 /// LLAvatarName::getAccountName ("first.last"), else
 /// LLCacheName::buildUsername from the legacy name.
-fn web_username(world: &World, scope: NameScope, id: &Uuid) -> Option<String> {
+pub(crate) fn web_username(world: &World, scope: NameScope, id: &Uuid) -> Option<String> {
     let names = &world.social.avatar_names;
     if let Some(u) = names.get_in(scope, id).map(|n| n.username.clone()).filter(|u| !u.is_empty()) {
         return Some(u.replace(' ', "."));
@@ -1984,12 +2004,6 @@ fn picks_tab(
         loading(ui, p);
         return;
     };
-    let mut items = pr.picks.clone();
-    if let Some((e, _)) = &w.pick_edit
-        && e.id.is_nil()
-    {
-        items.push((Uuid::nil(), e.name.clone()));
-    }
     if own {
         ui.vertical_centered(|ui| {
             ui.label(
@@ -2003,9 +2017,11 @@ fn picks_tab(
         ui.horizontal(|ui| {
             let creating = w.pick_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil());
             let can_add = pr.picks.len() < picks_limit(world) && !creating && !w.pick_save_waits() && !world.rlva.has("showloc");
+            let demo_click = can_add && std::mem::take(&mut w.demo_new_pick);
             if ui
                 .add_enabled(can_add, egui::Button::new(aurora_i18n::tr!("ui-profile-new")))
                 .clicked()
+                || demo_click
             {
                 w.pick_edit = Some((new_pick(world), PickEdit::default()));
                 w.pick_sel = Some(Uuid::nil());
@@ -2037,6 +2053,10 @@ fn picks_tab(
         });
         ui.add_space(4.0);
     }
+    // Listed after the buttons: a draft New just started is in the list
+    // this frame, so the selection stays on it (#4685).
+    let draft = w.pick_edit.as_ref().map(|(e, _)| e).filter(|e| e.id.is_nil());
+    let items = pick_items(&pr.picks, draft);
     if items.is_empty() {
         ui.add_space(120.0);
         ui.vertical_centered(|ui| {
@@ -2049,9 +2069,7 @@ fn picks_tab(
         });
         return;
     }
-    if w.pick_sel.is_none_or(|s| !items.iter().any(|(id, _)| *id == s)) {
-        w.pick_sel = items.first().map(|(id, _)| *id);
-    }
+    w.pick_sel = listed_pick_sel(w.pick_sel, &items);
     let height = ui.available_height() - 12.0;
     ui.horizontal_top(|ui| {
         let before = w.pick_sel;
@@ -2074,6 +2092,25 @@ fn picks_tab(
             }
         });
     });
+}
+
+/// The classic window's list of picks: the server's, then the one being
+/// created under the nil id, like the tab LLPanelProfilePicks::onClickNewBtn
+/// adds (indra/newview/llpanelprofilepicks.cpp).
+fn pick_items(picks: &[(Uuid, String)], draft: Option<&PickEdit>) -> Vec<(Uuid, String)> {
+    let mut items = picks.to_vec();
+    if let Some(e) = draft {
+        items.push((Uuid::nil(), e.name.clone()));
+    }
+    items
+}
+
+/// The selection kept while it is listed, else the first pick.
+fn listed_pick_sel(sel: Option<Uuid>, items: &[(Uuid, String)]) -> Option<Uuid> {
+    match sel {
+        Some(s) if items.iter().any(|(id, _)| *id == s) => Some(s),
+        _ => items.first().map(|(id, _)| *id),
+    }
 }
 
 /// A new pick at our position (LLPanelProfilePick::setAvatarId, null pick).
@@ -2127,7 +2164,11 @@ fn pick_detail(
     if own && let Some(i) = info {
         w.follow_pick(i);
     }
-    let width = (ui.available_width() - 8.0).min(300.0);
+    // panel_profile_pick.xml: the name, the description and the location
+    // follow the window's width (follows left|right), the picture keeps its
+    // size (follows left|top); every field stopped at 300 px (#4986)
+    let width = (ui.available_width() - 8.0).max(0.0);
+    let picture_w = width.min(300.0);
     ui.set_max_width(width);
     let (snapshot, pos, name, desc) = match (&w.pick_edit, info) {
         (Some((e, _)), _) if own => (e.snapshot, e.pos, e.name.clone(), e.desc.clone()),
@@ -2144,7 +2185,7 @@ fn pick_detail(
         ui,
         p,
         c.images.get(&snapshot),
-        Vec2::new(width, width * 179.0 / 290.0),
+        Vec2::new(picture_w, picture_w * 179.0 / 290.0),
         "user-filled",
         "",
     )
@@ -2168,8 +2209,15 @@ fn pick_detail(
             .strong()
             .color(p.ink),
     );
-    // a fixed height: sizes taken from the space left would grow the window
-    let desc_h = 80.0;
+    // The description takes the height the pane has left (follows all),
+    // 80 px at the least: the pane's bottom is the bottom of the scroll
+    // area it is shown in, less what the rows under the description took
+    // at the frame before. The page is then as tall as the pane, never
+    // more, so the window does not grow from it (#4986).
+    let below_id = ui.scope_id().with(("pick_below", sel));
+    let below = ui.ctx().data(|d| d.get_temp::<f32>(below_id)).unwrap_or(PICK_BELOW_GUESS);
+    let room = ui.clip_rect().bottom() - ui.cursor().top() - below;
+    let desc_h = room.max(PICK_DESC_MIN_H).floor();
     if let (true, Some((e, _))) = (own, w.pick_edit.as_mut()) {
         egui::ScrollArea::vertical()
             .id_salt(("pick_desc", sel))
@@ -2192,6 +2240,7 @@ fn pick_detail(
                 .show(ui, |ui| rich(ui, p, emoji, world, want_names, &desc));
         });
     }
+    let below_top = ui.cursor().top();
     ui.label(
         RichText::new(aurora_i18n::tr!("ui-profile-location-2"))
             .size(12.0)
@@ -2270,6 +2319,13 @@ fn pick_detail(
                 }
             }
         });
+    }
+    // what the rows under the description took, for its height at the next
+    // frame; a change is drawn again at once
+    let taken = (ui.cursor().top() - below_top).max(0.0).ceil();
+    if (taken - below).abs() > 0.5 {
+        ui.ctx().data_mut(|d| d.insert_temp(below_id, taken));
+        ui.ctx().request_discard("pick rows measured");
     }
     if save {
         w.save_pick(actions);
@@ -2586,6 +2642,141 @@ fn notes_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, profile: Option<&Ava
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// New with picks already listed: the draft is listed in the same
+    /// frame, so the selection stays on it instead of going back to the
+    /// first pick (#4685).
+    #[test]
+    fn new_pick_stays_selected_beside_existing_picks() {
+        let picks = vec![
+            (Uuid::from_u128(1), "Beach".to_string()),
+            (Uuid::from_u128(2), "Workshop".to_string()),
+        ];
+        let draft = PickEdit {
+            name: "New pick".into(),
+            ..PickEdit::default()
+        };
+        let items = pick_items(&picks, Some(&draft));
+        assert_eq!(items.last(), Some(&(Uuid::nil(), "New pick".to_string())));
+        assert_eq!(listed_pick_sel(Some(Uuid::nil()), &items), Some(Uuid::nil()));
+        // without the draft (dropped or saved), the first pick is shown
+        let items = pick_items(&picks, None);
+        assert_eq!(listed_pick_sel(Some(Uuid::nil()), &items), Some(Uuid::from_u128(1)));
+        assert_eq!(listed_pick_sel(Some(Uuid::from_u128(2)), &items), Some(Uuid::from_u128(2)));
+        assert_eq!(listed_pick_sel(None, &[]), None);
+    }
+
+    /// One frame of our classic Favorites tab with two picks, New clicked
+    /// (the demo's click, on the button's own path): the draft is selected
+    /// and kept, not replaced by the first pick (#4685).
+    #[test]
+    fn classic_new_pick_beside_existing_picks_is_selected() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(4685);
+        world.profiles.merge_picks(
+            world.agent_id,
+            vec![(Uuid::from_u128(1), "Beach".into()), (Uuid::from_u128(2), "Workshop".into())],
+        );
+        let p = crate::theme::Theme::default().palette();
+        let mut emoji = super::super::emoji::Emoji::load();
+        let images = HashMap::new();
+        let c = TabCtx {
+            p: &p,
+            world: &world,
+            images: &images,
+            own: true,
+        };
+        let mut w = Window::new(world.agent_id);
+        w.tab = TAB_PICKS;
+        w.demo_new_pick = true;
+        let mut actions = Vec::new();
+        Frames::new().run(Vec::new(), &mut |ui: &mut egui::Ui| {
+            picks_tab(ui, &c, &mut emoji, &mut w, &mut HashSet::new(), &mut HashSet::new(), &mut actions);
+        });
+        assert!(!w.demo_new_pick, "New was clicked");
+        assert_eq!(w.pick_sel, Some(Uuid::nil()));
+        assert!(w.pick_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil()), "the draft is kept");
+    }
+
+    #[test]
+    fn classic_profile_double_click_opens_member_and_nonmember_groups() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(4516);
+        let p = crate::theme::Theme::default().palette();
+        let mut emoji = super::super::emoji::Emoji::load();
+        let images = HashMap::new();
+        for (resident, member) in [(world.agent_id, true), (Uuid::from_u128(4517), false)] {
+            let id = Uuid::from_u128(resident.as_u128() + 10);
+            let name = "Builders";
+            world.profiles.merge_groups(
+                resident,
+                vec![aurora_net::profile::ProfileGroup {
+                    id,
+                    name: name.into(),
+                    insignia: Uuid::nil(),
+                }],
+            );
+            if member {
+                world.groups.groups.push(aurora_net::GroupMembership {
+                    id,
+                    name: name.into(),
+                    insignia: Uuid::nil(),
+                    powers: 0,
+                    accept_notices: false,
+                    list_in_profile: true,
+                    contribution: 0,
+                });
+            }
+            let c = TabCtx {
+                p: &p,
+                world: &world,
+                images: &images,
+                own: resident == world.agent_id,
+            };
+            let mut w = Window::new(resident);
+            let mut actions = Vec::new();
+            let mut draw = |ui: &mut egui::Ui| {
+                second_life_tab(
+                    ui,
+                    &c,
+                    &mut emoji,
+                    &images,
+                    &mut w,
+                    "Resident",
+                    &mut HashSet::new(),
+                    &mut HashSet::new(),
+                    &mut actions,
+                    &mut None,
+                );
+            };
+            let mut frames = Frames::new();
+            frames.run(Vec::new(), &mut draw);
+            let texts = frames.run(Vec::new(), &mut draw);
+            let pos = painted(&texts, name).rect.center();
+            for pressed in [true, false, true, false] {
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    &mut draw,
+                );
+            }
+            assert_eq!(
+                super::super::group_profile::take_open_request(&frames.ctx),
+                Some(id),
+                "member {member}"
+            );
+            assert!(!actions.iter().any(|a| matches!(a, ProfileAction::GroupChat(_))));
+        }
+    }
 
     #[test]
     fn classic_pick_and_classified_pictures_open_the_read_only_preview() {
@@ -2910,6 +3101,54 @@ mod tests {
                 "restricted {restricted}: {} request(s)",
                 requests.len()
             );
+            assert!(actions.is_empty());
+        }
+    }
+
+    /// LLPanelProfileSecondLife::onCommitMenu (indra/newview/llpanelprofile.cpp):
+    /// the button asks for the friendship of a stranger and for the removal
+    /// of a friend; both go through the shared actions, which confirm first.
+    #[test]
+    fn classic_profile_friend_button_adds_a_stranger_and_removes_a_friend() {
+        use crate::ui::context::{CtxAction, take_requests};
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = Uuid::from_u128(7);
+        let p = crate::theme::Theme::default().palette();
+        let w = Window::new(id);
+        let mut actions = Vec::new();
+        let mut frames = Frames::new();
+        for is_friend in [false, true] {
+            let label = if is_friend {
+                aurora_i18n::tr!("ui-profile-remove-friend")
+            } else {
+                aurora_i18n::tr!("ui-profile-add-friend")
+            };
+            let mut point = egui::Pos2::ZERO;
+            for _ in 0..2 {
+                let texts = frames.run(Vec::new(), |ui| action_buttons(ui, &p, &world, &w, is_friend, &mut actions));
+                point = painted(&texts, label).rect.center();
+            }
+            for pressed in [true, false] {
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    |ui| action_buttons(ui, &p, &world, &w, is_friend, &mut actions),
+                );
+            }
+            let requests = take_requests(&frames.ctx);
+            match requests.as_slice() {
+                [CtxAction::RemoveFriend(target)] if is_friend => assert_eq!(*target, id),
+                [CtxAction::AddFriend(target)] if !is_friend => assert_eq!(*target, id),
+                other => panic!("friend {is_friend}: {} request(s)", other.len()),
+            }
             assert!(actions.is_empty());
         }
     }

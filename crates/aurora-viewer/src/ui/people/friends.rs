@@ -1,5 +1,5 @@
-//! People â€º Friends in Aurora's look (the People mock-up v2): the friend
-//! list of Conversations â€º Contacts (FSFloaterContacts, fsfloatercontacts.cpp,
+//! People › Friends in Aurora's look (the People mock-up v2): the friend
+//! list of Conversations › Contacts (FSFloaterContacts, fsfloatercontacts.cpp,
 //! panel_fs_contacts_friends.xml) as rich rows, online and offline apart.
 //! Each row carries the three rights we grant, clickable as the list's
 //! boxes are (applyRightsToFriends: the map goes with the online status,
@@ -125,7 +125,7 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
                 aurora_i18n::tr!("common-offline")
             };
             let status = match (f.online, regions.get(&f.id)) {
-                (true, Some(region)) if status.pill() => format!("{state} Â· {region}"),
+                (true, Some(region)) if status.pill() => format!("{state} · {region}"),
                 (true, Some(region)) => region.clone(),
                 _ => state.to_owned(),
             };

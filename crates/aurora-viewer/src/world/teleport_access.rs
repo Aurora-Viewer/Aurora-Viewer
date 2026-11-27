@@ -377,10 +377,15 @@ mod tests {
         });
     }
 
-    /// The session's two events for a refusal.
+    /// The session's two events for a refusal: the TeleportFailed carries
+    /// the same AlertInfo code.
     fn refuse(w: &mut World, code: &str, rating: u8) {
         w.apply(aurora_net::NetEvent::TeleportAccessBlocked(blocked(code, rating)));
-        w.apply(aurora_net::NetEvent::TeleportFailed { reason: "blocked".into() });
+        w.apply(aurora_net::NetEvent::TeleportFailed {
+            reason: "blocked".into(),
+            code: Some(code.into()),
+            region: String::new(),
+        });
     }
 
     fn prompt_id(w: &World) -> (u64, notifications::Data) {
@@ -484,16 +489,42 @@ mod tests {
 
     #[test]
     fn an_ordinary_failure_and_an_adults_only_account_get_no_change() {
-        // no AlertInfo rating: no prompt
+        // no AlertInfo rating: no prompt, the ordinary popup
         let mut w = world("A", SIM_ACCESS_PG);
-        w.apply(aurora_net::NetEvent::TeleportFailed { reason: "no".into() });
+        w.apply(aurora_net::NetEvent::TeleportFailed {
+            reason: "no".into(),
+            code: Some("no".into()),
+            region: String::new(),
+        });
         assert!(w.notifications.list.is_empty());
+        assert!(w.tp_failure.is_some());
         // a moderate account and an adult region: the ratings page
         let mut w = world("M", SIM_ACCESS_MATURE);
         w.teleport_access.sent(&teleport_to(), Uuid::nil(), None, true);
         refuse(&mut w, ENTRY_ACCESS_BLOCKED, SIM_ACCESS_ADULT);
         let (_, data) = prompt_id(&w);
         assert!(matches!(data, notifications::Data::Url(_)));
+    }
+
+    /// process_teleport_failed returns once handle_teleport_access_blocked
+    /// handled the refusal: no CouldNotTeleportReason popup, no chat line.
+    #[test]
+    fn a_rating_refusal_opens_its_prompt_and_no_failure_popup() {
+        let mut w = world("A", SIM_ACCESS_PG);
+        w.teleport_access.sent(&teleport_to(), Uuid::nil(), None, true);
+        let unread = w.chat_unread;
+        refuse(&mut w, ENTRY_ACCESS_BLOCKED, SIM_ACCESS_ADULT);
+        assert!(w.tp_failure.is_none());
+        assert_eq!(w.chat_unread, unread);
+        assert_eq!(w.notifications.list.len(), 1);
+        // the refusal was taken: the next failure is an ordinary one
+        w.apply(aurora_net::NetEvent::TeleportFailed {
+            reason: "Region is full".into(),
+            code: Some("Region is full".into()),
+            region: String::new(),
+        });
+        assert!(w.tp_failure.is_some());
+        assert_eq!(w.notifications.list.len(), 1);
     }
 
     #[test]

@@ -736,9 +736,10 @@ impl Manip {
             }
             EditMode::Stretch | EditMode::Face | EditMode::Align => (f.bounds.half * 2.0).to_array(),
         };
-        if drag.is_some() {
-            readout(p, values);
-        }
+        // at rest too, not only during a drag: LLManipTranslate::render,
+        // LLManipRotate::render and LLManipScale::render call renderXYZ
+        // whenever the handles are drawn (#4716)
+        readout(p, values);
     }
 
     /// LLManipTranslate::render draws guidelines with depth testing before

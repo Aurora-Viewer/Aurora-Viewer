@@ -46,6 +46,11 @@ const FOLLOW_SNAP: f32 = 8.0;
 /// The Director's lens when its depth of field is turned on, and the
 /// f-numbers it can take (a wide aperture blurs the background most).
 pub const DEFAULT_APERTURE: f32 = 2.8;
+/// The motion blur's shutter when it is switched on (°): the cinema's.
+pub const DEFAULT_SHUTTER: f32 = 180.0;
+/// Past 360° the shutter stays open longer than a frame: the long, dreamy
+/// or frantic streaks of a stylised film.
+pub const SHUTTER_RANGE: RangeInclusive<f32> = 1.0..=720.0;
 pub const APERTURE_RANGE: RangeInclusive<f32> = 1.0..=22.0;
 /// The distance it is focused at without a target, and its range (m).
 pub const DEFAULT_FOCUS: f32 = 5.0;
@@ -295,6 +300,10 @@ pub struct Director {
     /// The distance (m) that lens is focused at when the view is not locked
     /// on a target (locked, it focuses on the target).
     pub focus: f32,
+    /// The motion blur of the Director's camera: its shutter angle (°) at
+    /// the film's frame rate; `None`: the viewer's own motion blur, as
+    /// outside the Director.
+    pub motion_blur: Option<f32>,
     /// The fades and the title cards, saved with the track (director_titles.rs).
     pub finish: crate::director_titles::Finish,
 }
@@ -319,6 +328,7 @@ impl Default for Director {
             shake: 0.0,
             dof: None,
             focus: DEFAULT_FOCUS,
+            motion_blur: None,
             finish: Default::default(),
         }
     }

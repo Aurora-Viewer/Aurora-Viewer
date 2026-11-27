@@ -193,6 +193,7 @@ impl Session<'_> {
             NetEvent::InventoryUpdated {
                 folders: update.folders,
                 items,
+                bulk: true,
             },
         );
         if !update.transaction.is_nil() {
@@ -417,6 +418,7 @@ mod tests {
             rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             inventory_previews: Default::default(),
+            inventory_reads: None,
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: Default::default(),
@@ -529,9 +531,17 @@ mod tests {
         }
         // Both inventory services preserve why a record was requested. A
         // late attachment read must use normal creation filing in the model,
-        // rather than the separate AIS orphan-recovery classification.
+        // rather than the separate AIS orphan-recovery classification. Offer
+        // checks must keep fresh results on their private reply channel.
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        for (ais, attachment) in [(true, true), (false, true), (true, false), (false, false)] {
+        for (ais, attachment, private) in [
+            (true, true, false),
+            (false, true, false),
+            (true, false, false),
+            (false, false, false),
+            (true, false, true),
+            (false, false, true),
+        ] {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local inventory service");
             let cap = format!("http://{}", listener.local_addr().expect("address"));
             session.sims.get_mut(&address).expect("sim").caps = Arc::new(HashMap::from([(
@@ -586,7 +596,14 @@ mod tests {
                 socket.write_all(&body).await.expect("response");
                 crate::test_http::finish(socket);
             });
-            session.on_command(if attachment {
+            let (offer_reply, offer_checked) = crossbeam_channel::bounded(1);
+            session.on_command(if private {
+                NetCommand::CheckInventoryOffer {
+                    session: session.session_id(),
+                    items: vec![Uuid::from_u128(103)],
+                    reply: offer_reply,
+                }
+            } else if attachment {
                 NetCommand::FetchAttachmentItems {
                     items: vec![Uuid::from_u128(103)],
                 }
@@ -598,10 +615,20 @@ mod tests {
             });
             let (was_attachment, items) = tokio::time::timeout(Duration::from_secs(5), async {
                 loop {
+                    if private && let Ok(reads) = offer_checked.try_recv() {
+                        assert!(reads.failed.is_empty() && reads.missing.is_empty());
+                        return (false, reads.items);
+                    }
                     while let Ok((_, event)) = received.try_recv() {
                         match event {
-                            NetEvent::AttachmentInventoryItems(items) => return (true, items),
-                            NetEvent::InventoryItems(items) => return (false, items),
+                            NetEvent::AttachmentInventoryItems { items, .. } => {
+                                assert!(!private, "offer check leaked into attachment events");
+                                return (true, items);
+                            }
+                            NetEvent::InventoryItems(items) => {
+                                assert!(!private, "offer check leaked into ordinary inventory events");
+                                return (false, items);
+                            }
                             NetEvent::InventoryItemsFailed { .. } => panic!("local item read failed"),
                             _ => {}
                         }
@@ -616,6 +643,18 @@ mod tests {
             assert!(items[0].parent.is_nil());
             assert_eq!(items[0].owner, agent);
             service.await.expect("service completed");
+            if private {
+                assert!(
+                    !received.try_iter().any(|(_, event)| matches!(
+                        event,
+                        NetEvent::InventoryItems(_)
+                            | NetEvent::AttachmentInventoryItems { .. }
+                            | NetEvent::InventoryItemsMissing { .. }
+                            | NetEvent::InventoryItemsFailed { .. }
+                    )),
+                    "private offer replies must not also enter the model event queue"
+                );
+            }
         }
     }
 }

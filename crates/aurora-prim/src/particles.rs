@@ -615,6 +615,48 @@ impl ParticleSource {
         self.has_last_part = false;
     }
 
+    /// The origin of the positions moved: the source and its particles keep
+    /// their place in the world. Port of LLViewerPartSim::shift and
+    /// LLViewerPartGroup::shift (indra/newview/llviewerpartsim.cpp,
+    /// originally LGPL 2.1), called by LLWorld::shiftRegions.
+    pub fn shift(&mut self, offset: Vec3) {
+        self.pos += offset;
+        self.target_pos += offset;
+        for p in &mut self.particles {
+            p.pos += offset;
+            p.prev_pos += offset;
+        }
+    }
+
+    /// The particles `gone` names by their place leave at once, a ribbon's
+    /// chain patched as when they expire (`update_particles`): those of a
+    /// region that left the world (LLViewerPartSim::cleanupRegion,
+    /// indra/newview/llviewerpartsim.cpp).
+    pub fn remove_particles(&mut self, gone: impl Fn(Vec3) -> bool) {
+        let n = self.particles.len();
+        let mut w = 0;
+        let mut removed_prev: Option<bool> = None;
+        for r in 0..n {
+            let mut p = self.particles[r];
+            if let Some(c) = removed_prev
+                && p.chained
+            {
+                p.chained = c;
+            }
+            if gone(p.pos) {
+                removed_prev = Some(p.chained);
+                if r + 1 == n {
+                    self.has_last_part = false;
+                }
+            } else {
+                self.particles[w] = p;
+                w += 1;
+                removed_prev = None;
+            }
+        }
+        self.particles.truncate(w);
+    }
+
     /// Advance by `dt` seconds (clamped to [`MAX_PARTICLE_DT`] like
     /// `LLViewerPartSim::updateSimulation`): emit bursts, simulate existing
     /// particles and drop expired ones. Each spawned particle decrements
@@ -1377,6 +1419,123 @@ mod tests {
         assert_eq!(newest.axis, Vec3::Z);
         // First of the chain has no width axis (as in LL).
         assert_eq!(ps[0].axis, Vec3::ZERO);
+    }
+
+    /// A ribbon of a few links, its source moving along X.
+    fn ribbon(links: usize) -> (ParticleSource, SourceContext) {
+        let data = PartSysData {
+            crc: 1,
+            pattern: LL_PART_SRC_PATTERN_DROP,
+            burst_rate: 0.05,
+            burst_part_count: 1,
+            part: PartData {
+                flags: LL_PART_RIBBON_MASK,
+                max_age: 10.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut src = ParticleSource::new(data, 3);
+        let mut budget = usize::MAX;
+        let mut ctx = SourceContext::default();
+        for i in 0..links {
+            ctx.pos = Vec3::new(i as f32, 0.0, 0.0);
+            src.update(0.06, &ctx, &mut budget);
+        }
+        (src, ctx)
+    }
+
+    /// LLViewerPartSim::shift: the origin moved, the particles and their
+    /// source moved with it, and the ribbon goes on from the same place.
+    #[test]
+    fn a_shift_moves_the_particles_and_their_source_together() {
+        let (mut src, mut ctx) = ribbon(6);
+        let before: Vec<(Vec3, Vec3)> = src.particles().iter().map(|p| (p.pos, p.prev_pos)).collect();
+        let offset = Vec3::new(-256.0, 512.0, 0.0);
+        src.shift(offset);
+        for (p, (pos, prev)) in src.particles().iter().zip(&before) {
+            assert_eq!((p.pos, p.prev_pos), (*pos + offset, *prev + offset));
+        }
+        // the source seen at its shifted place: the chain is whole
+        ctx.pos += offset;
+        src.update(0.0, &ctx, &mut 0);
+        let ps = src.particles();
+        for w in ps.windows(2) {
+            assert_eq!(w[0].prev_pos, w[1].pos);
+        }
+        assert_eq!(ps[ps.len() - 1].prev_pos, ctx.pos);
+    }
+
+    /// A source that stopped keeps the place it had (its object went with
+    /// the place left, the usual case at a teleport): the particles that
+    /// follow it or are drawn to its target stay there after a shift, where
+    /// an unmoved source would bring them back around the avatar.
+    #[test]
+    fn a_shift_moves_a_stopped_source_with_what_follows_it() {
+        for flags in [LL_PART_FOLLOW_SRC_MASK, LL_PART_TARGET_POS_MASK, LL_PART_TARGET_LINEAR_MASK] {
+            let data = PartSysData {
+                crc: 1,
+                pattern: LL_PART_SRC_PATTERN_DROP,
+                burst_rate: 0.05,
+                burst_part_count: 1,
+                part: PartData {
+                    flags,
+                    max_age: 10.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let ctx = SourceContext {
+                pos: Vec3::new(10.0, 20.0, 30.0),
+                target: Some(Vec3::new(14.0, 20.0, 31.0)),
+                ..Default::default()
+            };
+            let stopped = || {
+                let mut src = ParticleSource::new(data, 5);
+                let mut budget = usize::MAX;
+                src.update(0.06, &ctx, &mut budget);
+                src.stop();
+                src
+            };
+            let offset = Vec3::new(-256.0, 512.0, 0.0);
+            let (mut stayed, mut shifted) = (stopped(), stopped());
+            assert!(!stayed.particles().is_empty());
+            shifted.shift(offset);
+            for src in [&mut stayed, &mut shifted] {
+                src.update(0.1, &SourceContext::default(), &mut 0);
+            }
+            for (a, b) in stayed.particles().iter().zip(shifted.particles()) {
+                assert!(
+                    (a.pos + offset - b.pos).length() < 1e-3,
+                    "flags {flags:#x}: {} then {}",
+                    a.pos,
+                    b.pos
+                );
+            }
+        }
+    }
+
+    /// LLViewerPartSim::cleanupRegion: the particles of a place go at once,
+    /// and the next link of a ribbon whose newest went begins a new chain.
+    #[test]
+    fn the_particles_of_a_place_are_removed_and_a_ribbon_is_cut_there() {
+        let (mut src, ctx) = ribbon(8);
+        let n = src.particles().len();
+        assert!(n >= 6);
+        // the two oldest stay, the others go (the newest with them)
+        let kept: Vec<Vec3> = src.particles()[..2].iter().map(|p| p.pos).collect();
+        let border = (src.particles()[1].pos.x + src.particles()[2].pos.x) * 0.5;
+        src.remove_particles(|at| at.x > border);
+        assert_eq!(src.particles().iter().map(|p| p.pos).collect::<Vec<_>>(), kept);
+        // the next particle begins a new chain: not linked to the survivors
+        let mut budget = usize::MAX;
+        src.update(0.06, &ctx, &mut budget);
+        let newest = *src.particles().last().expect("a new particle");
+        assert!(!newest.chained);
+        // nothing named: nothing removed
+        let all = src.particles().len();
+        src.remove_particles(|_| false);
+        assert_eq!(src.particles().len(), all);
     }
 
     #[test]

@@ -235,6 +235,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         show_transparency: false,
         hidden_types: Default::default(),
         render_type_keys: Default::default(),
+        ui_feature_keys: Default::default(),
         conversation_thumbnails: 0,
     }
 }
@@ -332,6 +333,8 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
                     aurora: true,
                     ..Default::default()
                 },
+                &mut toolbar,
+                &toolbar_settings,
             );
             let (_, _, bottom_top, _) = bars::bottom_bar(
                 ui,
@@ -362,11 +365,12 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
             crate::ui::chat::toasts(
                 ui.ctx(),
                 &p,
+                &mut emoji,
                 &world,
                 &pics,
                 &mut names,
                 &mut wanted,
-                bottom_top,
+                crate::ui::chat::LinesPlace::above(bottom_top),
                 20.0,
                 40,
                 true,

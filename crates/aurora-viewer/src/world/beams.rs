@@ -44,8 +44,8 @@ pub enum Style {
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// ShowSelectionBeam: draw the beams, ours and the others' (they are
-    /// sent either way).
+    /// ShowSelectionBeam: draw beams, ours and the others'. This only
+    /// controls drawing; Hide Editing Beam also stops our beam's sending.
     pub show: bool,
     /// EffectColor (Preferences › Colors): the colour of our beams, as the
     /// others see them too. White by default (the skin's EffectColor).
@@ -197,13 +197,20 @@ impl Beams {
         best.into_values()
     }
 
+    /// Hide our editing beam at once (including a beam already fading out).
+    /// Keep give/drop beams, which have a separate one-shot effect.
+    pub fn hide_own(&mut self, me: Uuid) {
+        self.shown.retain(|_, beam| beam.source != me || !beam.resent);
+        self.own = Own::default();
+    }
+
     /// LLVOAvatarSelf::idleUpdateTractorBeam, once a frame: `aim` is where
     /// our beam points (a global position), none when we neither edit nor
     /// grab. Our beam is shown at once and follows `aim` every frame; what
-    /// to send comes back every `RESEND`.
+    /// to send comes back every `RESEND`. Normal editing stops fade out.
     pub fn update_own(&mut self, me: Uuid, aim: Option<DVec3>, color: [u8; 4], now: Instant) -> Option<Send> {
         let Some(position) = aim else {
-            // mBeam = NULL: the last one fades out on its own
+            // Normal editing stops: let the last beam fade out.
             self.own = Own::default();
             return None;
         };
@@ -401,10 +408,55 @@ mod tests {
         // our echo does not replace it
         beams.receive(first.effect, id(5), Uuid::nil(), [1.0; 3], [255; 4], 0.7, now, |_| true);
         assert_eq!(beams.shown[&first.effect].source, me);
-        // editing stops: nothing sent, the beam fades out; a new one next time
+        // Editing stops normally: nothing sent, the old beam fades out.
         assert!(beams.update_own(me, None, [9, 9, 9, 255], now).is_none());
+        assert!(beams.shown.contains_key(&first.effect));
         let next = beams.update_own(me, Some(aim), [9, 9, 9, 255], now).expect("a new beam");
         assert_ne!(next.effect, first.effect);
+    }
+
+    #[test]
+    fn hiding_editing_beam_prevents_creation_and_removes_existing_beam() {
+        let now = Instant::now();
+        let me = id(1);
+        let aim = DVec3::new(128.0, 128.0, 25.0);
+        let color = [9, 9, 9, 255];
+        let mut beams = Beams::default();
+
+        // Hidden before editing: no local beam or network send.
+        beams.hide_own(me);
+        assert!(beams.shown.is_empty());
+        assert!(beams.own.effect.is_none());
+
+        // Editing with the option off produces a normal local and sent beam.
+        let sent = beams.update_own(me, Some(aim), color, now).expect("visible editing beam");
+        assert!(beams.shown.contains_key(&sent.effect));
+
+        // Enabling Hide Editing Beam removes it immediately, without fading.
+        beams.hide_own(me);
+        assert!(beams.shown.is_empty());
+        assert!(beams.own.effect.is_none());
+        assert!(beams.update_own(me, None, color, now + Duration::from_millis(260)).is_none());
+        assert!(beams.shown.is_empty());
+
+        // Hide only the editing beam; a give/drop beam still works.
+        let give = beams.give(me, id(7), aim, color, now);
+        beams.hide_own(me);
+        assert!(beams.shown.contains_key(&give.effect));
+
+        // Switching it off restores ordinary editing beams.
+        let resumed = beams
+            .update_own(me, Some(aim), color, now + Duration::from_millis(300))
+            .expect("beam restored");
+        assert!(beams.shown.contains_key(&resumed.effect));
+
+        // Even an old beam already fading after normal editing stops is
+        // removed immediately when Hide Editing Beam is switched on.
+        beams.update_own(me, None, color, now + Duration::from_millis(400));
+        assert!(beams.shown.contains_key(&resumed.effect));
+        beams.hide_own(me);
+        assert!(!beams.shown.contains_key(&resumed.effect));
+        assert!(beams.shown.contains_key(&give.effect));
     }
 
     #[test]

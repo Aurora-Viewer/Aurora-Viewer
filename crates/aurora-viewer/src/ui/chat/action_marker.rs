@@ -28,6 +28,7 @@ pub(super) enum Action {
     Map,
     Channel,
     Search,
+    Preferences,
     Blocked,
     Unsupported,
     Place,
@@ -59,6 +60,7 @@ impl Action {
             AppLink::WorldMap { .. } => Self::Map,
             AppLink::Chat { .. } => Self::Channel,
             AppLink::Search { .. } | AppLink::AreaSearch(_) => Self::Search,
+            AppLink::Preferences(_) => Self::Preferences,
             AppLink::Blocked(_) => Self::Blocked,
             AppLink::Unsupported => Self::Unsupported,
         }
@@ -90,6 +92,7 @@ impl Action {
             Self::Event => "calendar-event-filled",
             Self::Map => "map",
             Self::Search => "search-filled",
+            Self::Preferences => "settings-filled",
             Self::Unsupported => "help-circle-filled",
         }
     }
@@ -144,7 +147,7 @@ pub(super) fn link(
             ..emphasis.format(ui.ctx(), size, color)
         },
     );
-    let (origin, galley, response) = egui::Label::new(job).sense(egui::Sense::click()).layout_in_ui(ui);
+    let (origin, galley, response) = super::select::wrapping_label(ui, job.into(), ui.wrap_mode(), egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, ui.is_enabled(), text));
     if ui.is_rect_visible(response.rect) {
         let underline = if response.hovered() || response.has_focus() {

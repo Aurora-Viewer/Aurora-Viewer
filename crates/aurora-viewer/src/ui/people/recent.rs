@@ -1,4 +1,4 @@
-//! People â€º Recent in Aurora's look (the People mock-up v2): the residents
+//! People › Recent in Aurora's look (the People mock-up v2): the residents
 //! we dealt with lately (`world/recent.rs`, LLRecentPeople; the recent tab
 //! of LLPanelPeople, panel_people.xml) as Near you's rows, newest first,
 //! with how long ago and the region we were in. The menu is the avatar
@@ -19,7 +19,7 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &
     super::split(ui, c, data, st, "people-recent-list", list, super::person_sheet);
 }
 
-/// "12 min ago Â· Ahern". Under RLVa @showloc a region the agent is
+/// "12 min ago · Ahern". Under RLVa @showloc a region the agent is
 /// connected to is "(Hidden region)", as every list names it
 /// (RlvUtil::isNearbyRegion, rlvcommon.cpp); one met there under the
 /// restriction was kept without its name (`World::met`).
@@ -29,9 +29,9 @@ fn ago(met: &Met, world: &crate::world::World) -> String {
     if met.region.is_empty() {
         when
     } else if world.rlva_hides_region(&met.region) {
-        format!("{when} Â· {}", aurora_i18n::tr!("rlva-hidden-region"))
+        format!("{when} · {}", aurora_i18n::tr!("rlva-hidden-region"))
     } else {
-        format!("{when} Â· {}", met.region)
+        format!("{when} · {}", met.region)
     }
 }
 

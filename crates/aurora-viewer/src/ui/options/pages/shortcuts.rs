@@ -1,6 +1,7 @@
 //! Preferences › Shortcuts: every rebindable action, two bindings each,
 //! one tab per section of `keybinds::sections` (the chat fields' keys under
-//! Communication, the small sections together under "Other"). The search
+//! Communication, the inventory lists' keys in a tab of their own, the
+//! small sections together under "Other"). The search
 //! of the window finds an action by its name, its section or one of its
 //! keys.
 
@@ -11,9 +12,9 @@ use crate::settings::Settings;
 use std::ops::Range;
 
 /// The first section of each tab with a name of its own: Movement, Camera,
-/// Communication (with the chat fields' keys, the section after it) and
-/// Windows. The sections after the last share "Other".
-const TAB_STARTS: [usize; 4] = [0, 1, 2, 4];
+/// Communication (with the chat fields' keys, the section after it),
+/// Windows and Inventory. The sections after the last share "Other".
+const TAB_STARTS: [usize; 5] = [0, 1, 2, 4, 5];
 
 /// The sections each tab shows, in order.
 fn tab_sections(sections: usize) -> Vec<Range<usize>> {
@@ -119,5 +120,16 @@ mod tests {
         assert_eq!(sections[tabs[1].start].0, aurora_i18n::tr!("common-camera"));
         assert_eq!(sections[tabs[3].clone()].len(), 1);
         assert_eq!(sections[tabs[3].start].0, aurora_i18n::tr!("common-windows"));
+        // the inventory lists' keys, all of them, in their own tab
+        assert_eq!(sections[tabs[4].clone()].len(), 1);
+        let inventory = &sections[tabs[4].start];
+        assert_eq!(inventory.0, aurora_i18n::tr!("common-inventory"));
+        assert!(inventory.1.iter().all(|(a, _)| crate::keybinds::is_inventory(*a)));
+        let all = sections
+            .iter()
+            .flat_map(|(_, list)| list.iter().map(|(a, _)| *a))
+            .filter(|a| crate::keybinds::is_inventory(*a))
+            .count();
+        assert_eq!(inventory.1.len(), all);
     }
 }

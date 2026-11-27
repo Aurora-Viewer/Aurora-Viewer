@@ -956,17 +956,22 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         let nv=max(dot(n,v),0.001);let nl=max(dot(n,l),0.0);
         let fresnel=0.02037+0.97963*pow(1.0-nv,5.0);
         let glint=d_ggx(max(dot(n,half_vec),0.0),0.08)*v_smith(nv,nl,0.08)*nl*0.02;
-        wet_light=(sky_color(reflect(-v,n))*fresnel*0.25+frame.sun_color.rgb*min(glint,2.0)*sh)*wet;
+        wet_light=(sky_color(reflect(-v,n))*fresnel*0.25+frame.sun_color.rgb*sun_glass*min(glint,2.0)*select(sh, shadow_lift(sh), is_classic_sky()))*wet;
     }
     if (is_classic_sky()) {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
-        let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a) + wet_light + albedo*water_caustic_light(in.world_pos,n)*sh, a);
-        var color=hazed*water_scene_light(in.world_pos);
+        // (ll_classic_diffuse, its local lights kept aside for water_scene_lit;
+        // a classic sky's `sh` is not lifted: `sun_shadow` leaves that to
+        // `classic_shadowed`, so the caustics lift it here)
+        let local = ll_local_diffuse(albedo, n, in.world_pos, in.clip.xy);
+        let hazed = ll_haze(ll_classic_sun_ambient(albedo, n, sh, in.clip.xy, a) * ll_final_scale() + local + wet_light + albedo*water_caustic_light(in.world_pos,n)*shadow_lift(sh), a);
+        var color=water_scene_lit(hazed,local*a.atten,in.world_pos);
         if(water_fogs_source(in.world_pos)){color=apply_fog(color,in.world_pos);}
+        else{color=weather_fog(color,in.world_pos);}
         return light_tiles_checked(debug_view(color, in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
     }
     let col = shade_pbr(albedo, 0.0, mix(0.92,0.4,wet), 1.0, n, v, in.world_pos, sh, in.clip.xy, true) + wet_light + albedo*water_caustic_light(in.world_pos,n)*sh;
-    return light_tiles_checked(debug_view(apply_fog(col*water_scene_light(in.world_pos), in.world_pos), in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
+    return light_tiles_checked(debug_view(apply_fog(water_scene_lit(col, shade_pbr_local, in.world_pos), in.world_pos), in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
 }
 
 fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
@@ -979,44 +984,60 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
     surface_occlusion = normal_map_occlusion(geo, material.normal, in.world_pos, 1.0 / in.clip.w);
     screen_share = 1.0;
     contact_share = 1.0;
-    if (material.color.a < material.cutoff) { discard; }
-    let n = material.normal;
-    let v = normalize(frame.camera_pos.xyz - in.world_pos);
-    let dist = distance(in.world_pos, frame.camera_pos.xyz);
-    let sh = sun_shadow(in.world_pos, geo, dist, in.clip.xy);
-    let metal = clamp(material.orm.b, 0.0, 1.0);
-    // pbrterrainF.glsl writes the material's ORM unchanged. Broadening its
-    // roughness from normal derivatives washes out terrain relief.
-    let rough = clamp(material.orm.g, 0.03, 1.0);
-    let ao = select(1.0, material.orm.r, frame.sky_ll.z > 0.5);
-    // pbrterrainF.glsl writes its emissive only with HAS_EMISSIVE
-    let emissive = select(material.emissive, vec3<f32>(0.0), deferred_emissive_off());
-    var color: vec3<f32>;
-    if (is_classic_sky()) {
-        let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
-        color = (ll_classic_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, a)
-            + emissive) * ll_final_scale()
-            + ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
-        color = ll_haze(color + material.color.rgb * water_caustic_light(in.world_pos, n) * sh, a);
-        if (water_fogs_source(in.world_pos)) {
-            color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
+    // The shading only on the branch that keeps the fragment, the discard on
+    // the other (see fs_terrain). `!(a < cutoff)` keeps a NaN alpha, as before.
+    var out: Shaded;
+    if (!(material.color.a < material.cutoff)) {
+        let n = material.normal;
+        let v = normalize(frame.camera_pos.xyz - in.world_pos);
+        let dist = distance(in.world_pos, frame.camera_pos.xyz);
+        let sh = sun_shadow(in.world_pos, geo, dist, in.clip.xy);
+        let metal = clamp(material.orm.b, 0.0, 1.0);
+        // pbrterrainF.glsl writes the material's ORM unchanged. Broadening its
+        // roughness from normal derivatives washes out terrain relief.
+        let rough = clamp(material.orm.g, 0.03, 1.0);
+        let ao = select(1.0, material.orm.r, frame.sky_ll.z > 0.5);
+        // pbrterrainF.glsl writes its emissive only with HAS_EMISSIVE
+        let emissive = select(material.emissive, vec3<f32>(0.0), deferred_emissive_off());
+        var color: vec3<f32>;
+        if (is_classic_sky()) {
+            let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
+            let local = ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
+            color = (ll_classic_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, a)
+                + emissive) * ll_final_scale() + local;
+            // (the caustics lift the classic sky's shadow themselves, as above)
+            color = ll_haze(color + material.color.rgb * water_caustic_light(in.world_pos, n) * shadow_lift(sh), a);
+            if (water_fogs_source(in.world_pos)) {
+                color = apply_fog(water_scene_lit(color, (local + emissive * ll_final_scale()) * a.atten, in.world_pos), in.world_pos);
+            } else {
+                color = weather_fog(color, in.world_pos);
+            }
+        } else {
+            color = shade_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, false) + emissive;
+            let own = shade_pbr_local + emissive;
+            color += material.color.rgb * water_caustic_light(in.world_pos, n) * sh;
+            color = apply_fog(water_scene_lit(color, own, in.world_pos), in.world_pos);
         }
+        color = debug_view(color, in.world_pos, n, dist, in.clip.xy);
+        out = Shaded(vec4<f32>(light_tiles_checked(color, in.world_pos, in.clip.xy), 1.0), n, rough, metal);
     } else {
-        color = shade_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, false) + emissive;
-        color += material.color.rgb * water_caustic_light(in.world_pos, n) * sh;
-        color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
+        discard;
     }
-    color = debug_view(color, in.world_pos, n, dist, in.clip.xy);
-    return Shaded(vec4<f32>(light_tiles_checked(color, in.world_pos, in.clip.xy), 1.0), n, rough, metal);
+    return out;
 }
 
 @fragment
 fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
-    let col = terrain_color(in);
-    if (reflection_clip(in.world_pos)) {
+    // The shading only on the branch that keeps the fragment, the discard
+    // on the other: with the discard after it, Apple's shader compiler on
+    // M3 and later (AGX G15/G16) aborts while emitting this pipeline.
+    var out = vec4<f32>(0.0);
+    if (!reflection_clip(in.world_pos)) {
+        out = vec4<f32>(terrain_color(in), 1.0);
+    } else {
         discard;
     }
-    return vec4<f32>(col, 1.0);
+    return out;
 }
 
 @fragment
@@ -1389,7 +1410,7 @@ const WATER_GLINT_FLOOR: f32 = 0.0000039;
 fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_excluded(in.world_pos)){discard;}
     if(water_fx_on(1u) || water_fx_on(16u)) {
-        let depth=water_interface_depth(in.world_pos);
+        let depth=water_interface_depth(in.clip.w);
         // Single-sample interface coverage must also retain MSAA edge samples.
         let tolerance=0.6*(abs(dpdx(depth))+abs(dpdy(depth)))+0.000001;
         let first=textureLoad(water_interface,vec2<i32>(in.clip.xy),0);
@@ -1422,7 +1443,8 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     // rain prototype: the puddles' rings in the waves themselves, so they
     // bend the reflection and the refraction and ride the waves
     let rain_footprint = max(length(dpdx(in.world_pos.xy)), length(dpdy(in.world_pos.xy)));
-    wavef = vec3<f32>(wavef.xy + rain_water_rings(in.world_pos, rain_footprint), wavef.z);
+    let rain = rain_on_water(in.world_pos, rain_footprint, view_vec.z);
+    wavef = vec3<f32>(wavef.xy + rain.xy, wavef.z);
     var n = wavef * frame.water_normal.xyz;
     n.z *= 2.0;
     let footprint=max(length(dpdx(in.world_pos.xy)),length(dpdy(in.world_pos.xy)));
@@ -1437,7 +1459,9 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_fx_on(1u)) {
         let micro=water_micro(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w,footprint);
         let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
-        n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy,swell.gradient,bed.x));
+        // the rain's slope keeps its own strength: scaled with the waves
+        // (x 0.18), a downpour hardly showed on enhanced water
+        n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow+rain.xy*0.3,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy,swell.gradient,bed.x));
     } else { n=water_unit(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy,swell.gradient,bed.x)); }
     // waterF.glsl: the reflection follows the waves scaled by the EEP normal
     // scale (wave_ibl), the sun glint the unscaled waves flattened with
@@ -1619,6 +1643,9 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
             radiance = mix(radiance, hit.rgb, hit.a);
         }
     }
+    // a downpour's rough surface takes the colour and contrast out of the
+    // reflection
+    radiance = rain_dull(radiance, rain.z * 0.3);
     if (!water_fx_on(512u)) { radiance *= df2.y; }
     if (!legacy_reflects) { radiance = vec3<f32>(0.0); }
 
@@ -1652,7 +1679,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     // smallest step an 8-bit image can show), or the foam.
     var shadow = 1.0;
     if (foam > 0.0 || max(glint_lit.r, max(glint_lit.g, glint_lit.b)) > WATER_GLINT_FLOOR) {
-        shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
+        shadow = shadow_lift(shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist));
     }
     let punctual = glint_lit * shadow;
 
@@ -1677,6 +1704,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         }
         color=mix(color,max(foam_light,vec3<f32>(0.0)),foam*0.9);
     }
+    color = rain_dull(color, rain.w);
     // waterF.glsl: frag_color = min(vec4(1), max(color, vec4(0))). The
     // surface never goes past white before the exposure, and a value that is
     // not a number does not spread through the bloom.
@@ -1697,6 +1725,9 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         // TASKS.md), with calcAtmosphericVars in hazeF's eye space
         // (ll_atmos_eye): in world space its glow put a second sun on the sea.
         color = ll_haze(color, ll_atmos_eye(in.world_pos - frame.camera_pos.xyz));
+        // the weather's fog over the surface, once: what is seen through it
+        // took the water's fog alone (apply_fog)
+        color = weather_fog(color, in.world_pos);
     }
     return vec4<f32>(color, 1.0);
 }
@@ -1711,21 +1742,28 @@ struct WaterDepthOut {
     @builtin(frag_depth) depth:f32,
 };
 
-fn water_physical_depth(world:vec3<f32>)->f32 {
+// The fragment's own 1/w (`@builtin(position).w`) divides, not the w of the
+// interpolated world position: on a sheet that crosses the camera's near
+// plane, a few millimetres away, the interpolated position is a few
+// centimetres off on some drivers (AMD Vulkan), enough to read the water as
+// lying behind what it covers. The raster's 1/w is exact, and the reversed
+// infinite projection's clip z does not depend on the position at all.
+fn water_physical_depth(world:vec3<f32>,inv_w:f32)->f32 {
     let clip=world_clip(world);
-    return clamp(clip.z/max(clip.w,0.000001),0.0,1.0);
+    return clamp(clip.z*inv_w,0.0,1.0);
 }
 
 @fragment
 fn fs_water_unclipped(in:WaterOut)->WaterDepthOut {
-    return WaterDepthOut(water_pixel(in),water_physical_depth(in.world_pos));
+    return WaterDepthOut(water_pixel(in),water_physical_depth(in.world_pos,in.clip.w));
 }
 
-fn water_interface_depth(world:vec3<f32>)->f32 {
+fn water_interface_depth(inv_w:f32)->f32 {
     // Standard near-clamped depth merges all interfaces before near. This
     // ordering retains their true distance, including millimetre crossings.
-    let clip=world_clip(world);
-    return 1.0/(1.0+max(clip.w,0.0));
+    // 1/(1+w) from the fragment's exact 1/w (see water_physical_depth).
+    let w=max(inv_w,0.0);
+    return w/(w+1.0);
 }
 
 struct WaterMaskOut {
@@ -1735,17 +1773,17 @@ struct WaterMaskOut {
 
 @fragment
 fn fs_water_mask(in:WaterOut)->WaterMaskOut {
-    return WaterMaskOut(vec4<f32>(1.0),water_interface_depth(in.world_pos));
+    return WaterMaskOut(vec4<f32>(1.0),water_interface_depth(in.clip.w));
 }
 
 @fragment
 fn fs_water_exclusion(in:VsOut)->WaterMaskOut {
-    return WaterMaskOut(vec4<f32>(0.0,0.0,0.0,1.0),water_interface_depth(in.world_pos));
+    return WaterMaskOut(vec4<f32>(0.0,0.0,0.0,1.0),water_interface_depth(in.clip.w));
 }
 
 @fragment
 fn fs_water_interface(in:WaterOut)->@builtin(frag_depth) f32 {
-    return water_interface_depth(in.world_pos);
+    return water_interface_depth(in.clip.w);
 }
 
 // Event history is small; all droplet/bubble trajectories are evaluated on GPU.
@@ -2356,8 +2394,24 @@ fn rain_ring_detail(footprint: f32) -> f32 {
 }
 
 // Ripple rings: one drop per 0.6 m cell, every 0.9 s at a random time and
-// place; the normal tilts across each ring's expanding crest.
-fn rain_ripples_layer(xy: vec2<f32>, time: f32, cell: f32, period: f32, salt: u32) -> vec2<f32> {
+// place; the normal tilts across each ring's expanding crest. The cells'
+// lattice is turned to an angle of its own for each layer (`salt`: about
+// 25, 65 and 12 degrees off the world's axes, a square lattice repeating
+// every 90; a salt near an axis brings its rows back) and bent
+// by slow noise (up to half a cell each way): square cells along the world's
+// axes set the drops out at an even spacing, which showed as a grid along a
+// lamp's reflection.
+// The bend of the rings' lattice at `xy` (-0.5..0.5 each way), worked
+// out once for all the layers.
+fn rain_ripple_bend(xy: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(water_fx_noise(xy * 0.35 + vec2<f32>(3.7, 9.1)), water_fx_noise(xy * 0.35 + vec2<f32>(11.3, 1.9))) - 0.5;
+}
+
+fn rain_ripples_layer(world_xy: vec2<f32>, time: f32, cell: f32, period: f32, salt: u32, bend: vec2<f32>) -> vec2<f32> {
+    let angle = 0.43 + f32(salt % 1009u) * 0.0061;
+    let ca = cos(angle);
+    let sa = sin(angle);
+    let xy = vec2<f32>(ca * world_xy.x + sa * world_xy.y, ca * world_xy.y - sa * world_xy.x) + bend * cell;
     let base = floor(xy / cell);
     var slope = vec2<f32>(0.0);
     for (var j = -1; j <= 1; j++) {
@@ -2383,34 +2437,80 @@ fn rain_ripples_layer(xy: vec2<f32>, time: f32, cell: f32, period: f32, salt: u3
             slope += d / max(dist, 1e-4) * ring * sin((dist - radius) * 60.0);
         }
     }
-    return slope;
+    // back from the lattice's turn to the world's axes
+    return vec2<f32>(ca * slope.x - sa * slope.y, sa * slope.x + ca * slope.y);
 }
 
-fn rain_ripples(xy: vec2<f32>, time: f32) -> vec2<f32> {
-    return rain_ripples_layer(xy, time, 0.6, 0.9, 0u);
+// The chop of a downpour, as the slope of two layers of smooth noise (about
+// 17 and 10 cm across) drifting different ways, each turned off the world's
+// axes: no crest runs on, so nothing lines up (regular waves, even four at
+// odd angles, still drew bands across a lamp's reflection).
+fn rain_chop_layer(xy: vec2<f32>, angle: f32, scale: f32, drift: vec2<f32>) -> vec2<f32> {
+    let ca = cos(angle);
+    let sa = sin(angle);
+    let p = vec2<f32>(ca * xy.x + sa * xy.y, ca * xy.y - sa * xy.x) * scale + drift;
+    // the slope of water_fx_noise worked out with it, from its four corners
+    let i = floor(p);
+    let f = p - i;
+    let w = f * f * (3.0 - 2.0 * f);
+    let dw = 6.0 * f * (1.0 - f);
+    let a = water_fx_hash(i).x;
+    let b = water_fx_hash(i + vec2<f32>(1.0, 0.0)).x;
+    let c = water_fx_hash(i + vec2<f32>(0.0, 1.0)).x;
+    let d = water_fx_hash(i + vec2<f32>(1.0, 1.0)).x;
+    let k = a - b - c + d;
+    let g = vec2<f32>(dw.x * (b - a + k * w.y), dw.y * (c - a + k * w.x));
+    return vec2<f32>(ca * g.x - sa * g.y, sa * g.x + ca * g.y);
+}
+
+fn rain_chop(xy: vec2<f32>, time: f32) -> vec2<f32> {
+    return (rain_chop_layer(xy, 0.61, 6.0, vec2<f32>(time * 1.7, -time * 1.1))
+        + rain_chop_layer(xy, 2.13, 10.0, vec2<f32>(-time * 2.3, time * 1.9) + 17.0) * 0.7) * 1.1;
 }
 
 // A surface of standing water in rain of strength `heavy`: the rings get
 // denser as it rains harder (two more layers of them, smaller and quicker,
 // come in), and a downpour churns it (a fine, fast chop), so that its
-// reflections break up instead of staying a mirror. `detail`: what the
-// pixels can show of it (`rain_ring_detail`).
+// reflections break up instead of staying a mirror. In a downpour the
+// rings give way to the chop: so many drops land that no single ring
+// stands out. `detail`: what the pixels can show of it (`rain_ring_detail`).
 fn rain_water_churn(xy: vec2<f32>, time: f32, heavy: f32, detail: f32) -> vec2<f32> {
     // the layers the Weather quality draws: one at Low, two at Medium
     let quality = rain_quality();
-    var slope = rain_ripples_layer(xy, time, 0.6, 0.9, 0u);
+    let bend = rain_ripple_bend(xy);
+    var slope = rain_ripples_layer(xy, time, 0.6, 0.9, 0u, bend);
     if (quality >= 1 && heavy > 0.25) {
-        slope += rain_ripples_layer(xy + vec2<f32>(0.21, 0.37), time, 0.37, 0.7, 0x9e3779b9u) * smoothstep(0.25, 0.65, heavy);
+        slope += rain_ripples_layer(xy + vec2<f32>(0.21, 0.37), time, 0.37, 0.7, 0x165667b1u, bend) * smoothstep(0.25, 0.65, heavy);
     }
     if (quality >= 2 && heavy > 0.55) {
-        slope += rain_ripples_layer(xy + vec2<f32>(0.53, 0.11), time, 0.23, 0.55, 0x85ebca6bu) * smoothstep(0.55, 0.95, heavy);
+        slope += rain_ripples_layer(xy + vec2<f32>(0.53, 0.11), time, 0.23, 0.55, 0x85ebca6bu, bend) * smoothstep(0.55, 0.95, heavy);
     }
-    let t = time * 9.0;
-    let chop = vec2<f32>(
-        sin(xy.x * 37.0 + t + sin(xy.y * 23.0 - t * 0.7) * 2.0) + sin(xy.y * 29.0 - t * 1.3),
-        sin(xy.y * 41.0 - t + sin(xy.x * 19.0 + t * 0.8) * 2.0) + sin(xy.x * 31.0 + t * 1.1));
-    slope += chop * 0.18 * heavy * heavy;
+    slope *= 1.0 - 0.5 * smoothstep(0.6, 1.0, heavy);
+    slope += rain_chop(xy, time) * 0.2 * heavy * heavy;
     return slope * detail;
+}
+
+// The mist of a downpour over standing water: the splashes of the drops
+// whiten a thin layer above it, seen the more the flatter it is looked
+// across (the longer the path through it). 0 in light rain.
+fn rain_splash_mist(heavy: f32, view_up: f32) -> f32 {
+    let h = smoothstep(0.35, 1.0, heavy);
+    let path = 0.1 / max(abs(view_up), 0.05);
+    return (1.0 - exp(-path * 2.0 * h)) * 0.25;
+}
+
+// The splash mist dulls what it covers rather than lighting it: by
+// `amount`, its colours go grey at the brightness they had (a mix to the
+// sky's grey lifted the dark water by a fifth), which with the rough
+// surface takes the contrast out of the reflections. A touch of the sky's
+// hue, held near grey: a night or sunset sky would tint the water blue or
+// orange. Dry water (amount 0) is returned as it is.
+fn rain_dull(c: vec3<f32>, amount: f32) -> vec3<f32> {
+    if (amount <= 0.0) { return c; }
+    let lum = vec3<f32>(0.2126, 0.7152, 0.0722);
+    let sky = frame.sky_horizon.rgb * 0.75 + frame.sky_zenith.rgb * 0.25;
+    let hue = select(vec3<f32>(1.0), clamp(sky / max(dot(sky, lum), 1e-4), vec3<f32>(0.8), vec3<f32>(1.25)), dot(sky, lum) > 1e-4);
+    return mix(c, dot(c, lum) * mix(vec3<f32>(1.0), hue, 0.3), amount);
 }
 
 // The screen position of `p` and how far behind what the depth prepass
@@ -2806,6 +2906,9 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     // judged over the area: the blobs' shapes, not the triangles', make the
     // edges; water runs off bumps (a rock's top) and gathers in dips
     var puddle = 0.0;
+    // how far inside the puddle's edge a point is, in the pattern's units
+    // (0 at the edge, about 0.1 a hand's width in): the ice's rim
+    var inside = 0.0;
     let terrain = rain_terrain(world.xy);
     // in snow the switch is the lying snow's: the puddles left are ice,
     // with the Ice setting
@@ -2819,7 +2922,8 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let ts = rain_terrain_shape(world.xy, terrain);
         let pool_level = mix(0.78, 0.53, sqrt(heavy));
         let flat_ground = 1.0 - smoothstep(0.12, 0.25, ts.y);
-        puddle = smoothstep(pool_level, pool_level + 0.05, shape + clamp(ts.x * 5.0, -0.3, 0.3)) * flat_ground;
+        inside = shape + clamp(ts.x * 5.0, -0.3, 0.3) - pool_level;
+        puddle = smoothstep(0.0, 0.05, inside) * flat_ground;
         puddle *= smoothstep(0.15, 0.4, open);
     } else {
         // on a build (a floor, a road, a roof): the screen's rules
@@ -2827,7 +2931,8 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let dip = clamp(-area.w * 4.0, 0.0, 0.15);
         let flat_area = smoothstep(0.95, 0.98, area.z) * select(0.0, 1.0, smooth_area) * (1.0 - smoothstep(0.0, 0.02, area.w))
             * smoothstep(0.985, 0.996, build_level);
-        puddle = smoothstep(pool_level, pool_level + 0.05, shape + dip) * flat_area;
+        inside = shape + dip - pool_level;
+        puddle = smoothstep(0.0, 0.05, inside) * flat_area;
         puddle *= smoothstep(0.15, 0.4, open);
     }
 
@@ -2866,19 +2971,41 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     var color = deeper + sheen + glints;
 
     if (puddle > 0.01 && puddles_frozen()) {
-        // ice: a still, glassy sheet, sharp reflections a little whitened
-        // and bluish, frost at its edges and in patches (its surface rough
-        // there), the lamps in it sharp
-        let frost_n = vec2<f32>(snow_noise(world.xy * 31.0) - 0.5, snow_noise(world.xy * 29.0 + 7.0) - 0.5);
-        let frost = clamp((1.0 - puddle) * 1.6 + smoothstep(0.55, 0.85, snow_noise(world.xy * 4.0)) * 0.6, 0.0, 1.0);
-        let ni = normalize(vec3<f32>(frost_n * 0.05 * (0.3 + frost), 1.0));
+        // ice: a milky, frosted sheet rather than a mirror. Frost grows
+        // from the rim, where the ice is thin and froze first, and thins
+        // toward the middle; over all of it fine feathery crystals, streaks
+        // at two angles (never blots of a coarse noise). The light it
+        // scatters clouds what lies under it; its reflections are faint
+        // but for the grazing ones, the lamps in it soft.
+        let along = max(abs(view.z), 0.05);
+        let footprint = dist * 1.15 * frame.screen.w / along;
+        // the streaks are 46 cycles a metre across, the frost's bumps 31:
+        // gone before a pixel spans half a cycle, else they shimmer
+        let fine = 1.0 - smoothstep(0.004, 0.011, footprint);
+        let fine_n = 1.0 - smoothstep(0.006, 0.016, footprint);
+        let q = world.xy;
+        let qa = vec2<f32>(dot(q, vec2<f32>(0.809, 0.588)), dot(q, vec2<f32>(-0.588, 0.809)));
+        let qb = vec2<f32>(dot(q, vec2<f32>(-0.276, 0.961)), dot(q, vec2<f32>(-0.961, -0.276)));
+        let streak = max(snow_noise(qa * vec2<f32>(7.0, 46.0)), snow_noise(qb * vec2<f32>(7.0, 46.0) + 13.0));
+        // the crystals gather in drifts (a soft noise a metre or two
+        // across), thickest near the rim
+        let drifts = smoothstep(0.35, 0.85, snow_noise(qa * 0.6 + 4.0));
+        let feather = mix(0.3, smoothstep(0.62, 0.97, streak), fine) * (0.25 + 0.75 * drifts);
+        let rim = 1.0 - smoothstep(0.0, 0.14, inside);
+        let frost = clamp(0.12 + rim * 0.75 + feather * (0.25 + 0.4 * rim), 0.0, 1.0);
+        let frost_n = vec2<f32>(snow_noise(q * 31.0) - 0.5, snow_noise(q * 29.0 + 7.0) - 0.5) * fine_n;
+        let ni = normalize(vec3<f32>(frost_n * 0.08 * (0.3 + frost), 1.0));
         let r = reflect(-view, ni);
         let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(ni, view), 0.0), 5.0);
         let mirrored = rain_puddle_reflection(world + vec3<f32>(0.0, 0.0, 0.02), r);
         let ice_tint = vec3<f32>(0.9, 0.95, 1.0);
-        let glass = mix(base * 0.4, mirrored, 0.3 + fresnel * 0.6) * ice_tint + rain_wet_lamps(world, clip, ni, view, 0.015, 0.03);
-        let rime = (frame.sky_zenith.rgb * 0.6 + frame.sky_horizon.rgb * 0.4) * 0.85;
-        let ice = mix(glass, rime, frost * 0.7);
+        let sky_light = frame.sky_zenith.rgb * 0.6 + frame.sky_horizon.rgb * 0.4;
+        // the clouded ice: what is under it, lightened by the light the ice
+        // scatters back
+        let milky = mix(base * 0.55, sky_light * 0.7, 0.35) * ice_tint;
+        let glass = mix(milky, mirrored * ice_tint, 0.08 + fresnel * 0.55) + rain_wet_lamps(world, clip, ni, view, 0.04, 0.08) * 0.6;
+        let rime = sky_light * 0.85 + base * 0.15;
+        let ice = mix(glass, rime, frost * 0.8);
         color = mix(color, ice, puddle);
     } else if (puddle > 0.01) {
         let along = max(abs(dot(view, vec3<f32>(0.0, 0.0, 1.0))), 0.05);
@@ -2889,7 +3016,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(np, view), 0.0), 5.0);
         let mirrored = rain_puddle_reflection(world + vec3<f32>(0.0, 0.0, 0.02), r);
         let pool = mix(base * 0.3, mirrored, 0.35 + fresnel * 0.6) + rain_wet_lamps(world, clip, np, view, 0.025, 0.06 + 0.14 * raining);
-        color = mix(color, pool, puddle);
+        color = mix(color, rain_dull(pool, rain_splash_mist(raining, view.z)), puddle);
     }
     let a = reach * max(smoothstep(0.0, 0.15, heavy), puddle);
     return vec4<f32>(color * a, a);
@@ -3135,6 +3262,9 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     if (cover <= 0.002) { return vec4<f32>(0.0); }
     let view = normalize(cam - world);
     let shade = shadow_factor(world, n, dist);
+    // with the shadow intensity, for what is lit outside the classic sky's
+    // sun (`ll_classic_diffuse` lifts its own, in `classic_shadowed`)
+    let lifted = shadow_lift(shade);
     // the sun as it lights objects (its colour, at most 1), for the glints
     // and the sheen: the sky's own sun colour is far brighter
     let sunlit = frame.sky_obj_light.rgb * frame.sun_dir.w;
@@ -3151,7 +3281,7 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     let radius = max(0.12, pixel * 0.7);
     let point = (1.0 - smoothstep(radius * 0.5, radius, length(fract(cells) - spot))) * min(0.0144 / (radius * radius), 1.0);
     let half = normalize(frame.sun_dir.xyz + view);
-    let glint = step(0.985, g) * point * pow(max(dot(sn, half), 0.0), 40.0) * sunlit * shade * 1.5;
+    let glint = step(0.985, g) * point * pow(max(dot(sn, half), 0.0), 40.0) * sunlit * lifted * 1.5;
     // the hollows a little shaded, the packed snow of a print greyer
     // (deep snow: the lower the view meets it, the more its walls shade it)
     let cavity = (0.86 + 0.14 * height) * (1.0 - 0.4 * pressed) * mix(0.62, 1.0, risen);
@@ -3165,7 +3295,7 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
         let cr = sample_tex_level(color_slot, xy / 1.6, lod);
         albedo = clamp(cr.rgb / 0.93, vec3<f32>(0.6), vec3<f32>(1.15));
         let smooth_ = 1.0 - cr.a;
-        sheen = sunlit * shade * pow(max(dot(sn, half), 0.0), mix(12.0, 60.0, smooth_)) * smooth_ * 0.25;
+        sheen = sunlit * lifted * pow(max(dot(sn, half), 0.0), mix(12.0, 60.0, smooth_)) * smooth_ * 0.25;
     }
     // lit as the terrain beside it is (the classic sky's atmospherics and
     // haze, or the PBR shading, the lamps with them), its albedo about
@@ -3176,8 +3306,9 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     if (is_classic_sky()) {
         let a = ll_atmos(world - cam);
         color = ll_haze(ll_classic_diffuse(base, sn, world, shade, clip, a) + sheen + glint, a);
+        color = weather_fog(color, world);
     } else {
-        color = apply_fog(shade_pbr(base, 0.0, 0.85, 1.0, sn, view, world, shade, clip, false) + sheen + glint, world);
+        color = apply_fog(shade_pbr(base, 0.0, 0.85, 1.0, sn, view, world, lifted, clip, false) + sheen + glint, world);
     }
     return vec4<f32>(color * cover, cover);
 }
@@ -3284,7 +3415,8 @@ fn fs_rain_wet(in: RainWetOut) -> @location(0) vec4<f32> {
     if (rain_debug > 0.5) { return rain_debug_color(world); }
     if (on_deep_snow(world)) { discard; }
     let n = rain_depth_normal(uv, world);
-    let out = with_snow(rain_wet_surface(in.clip.xy, uv, world, n, 0.6, true, 1.0), snow_cover(in.clip.xy, world, n));
+    // (the wet ground through the weather's fog; the snow lying fogs itself)
+    let out = with_snow(weather_fog_layer(rain_wet_surface(in.clip.xy, uv, world, n, 0.6, true, 1.0), world), snow_cover(in.clip.xy, world, n));
     if (out.a < 0.01) { discard; }
     return out;
 }
@@ -3369,7 +3501,7 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
     var out: vec4<f32>;
     if (cleared) {
         let flat_n = rain_depth_normal(uv, world);
-        out = with_snow(rain_wet_surface(in.clip.xy, uv, world, flat_n, 0.6, true, 1.0), snow_cover(in.clip.xy, world, flat_n));
+        out = with_snow(weather_fog_layer(rain_wet_surface(in.clip.xy, uv, world, flat_n, 0.6, true, 1.0), world), snow_cover(in.clip.xy, world, flat_n));
     } else {
         var n = rain_oct_decode(g.xy);
         if (dot(n, frame.camera_pos.xyz - world) < 0.0) { n = -n; }
@@ -3387,22 +3519,38 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
         if (frame.rain_wet.w > 0.0 && n.z + 0.1 >= 0.5) {
             level = min(rain_build_level(uv, world, n), n.z + 0.1);
         }
-        out = with_snow(rain_wet_surface(in.clip.xy, uv, world, n, porosity, false, level), snow_cover(in.clip.xy, world, n));
+        out = with_snow(weather_fog_layer(rain_wet_surface(in.clip.xy, uv, world, n, porosity, false, level), world), snow_cover(in.clip.xy, world, n));
     }
     if (out.a < 0.01) { discard; }
     return out;
 }
 
 // ------------------------------------------------- rain on water (prototype)
-// The puddles' rings (`rain_ripples`) as a slope added to the water's waves
-// (`water_pixel`): open to the sky, within reach, above the water.
-fn rain_water_rings(world: vec3<f32>, footprint: f32) -> vec2<f32> {
+// The rain on the water (`water_pixel`), open to the sky: xy the puddles'
+// rings and chop (`rain_water_churn`) as a slope added to its waves, within
+// 45 m (past it the pixels are too coarse to show them); z how much a
+// downpour dulls its reflection (0..1), out to 200 m, standing for the
+// roughness too fine to draw there; w its splash mist (`rain_splash_mist`). Light rain draws rings on a clear surface; a
+// downpour roughens and greys it, as rain on a lake does.
+fn rain_on_water(world: vec3<f32>, footprint: f32, view_up: f32) -> vec4<f32> {
     let heavy = rain_liquid();
-    if (heavy <= 0.0) { return vec2<f32>(0.0); }
-    let reach = 1.0 - smoothstep(30.0, 45.0, distance(world, frame.camera_pos.xyz));
-    if (reach <= 0.0) { return vec2<f32>(0.0); }
-    let open = 1.0 - rain_sheltered_slanted(world + vec3<f32>(0.0, 0.0, 0.1));
-    return rain_water_churn(world.xy, frame.camera_pos.w, heavy, rain_ring_detail(footprint)) * (0.35 * sqrt(heavy) * reach * open);
+    if (heavy <= 0.0) { return vec4<f32>(0.0); }
+    let dist = distance(world, frame.camera_pos.xyz);
+    let far = 1.0 - smoothstep(120.0, 200.0, dist);
+    if (far <= 0.0) { return vec4<f32>(0.0); }
+    // the shelter map is read near only (its lookup over all the water out
+    // to 200 m cost a fifth of a millisecond): farther, water under a roof
+    // is too small to tell from the open
+    var open = far;
+    if (dist < 60.0) {
+        open *= mix(1.0 - rain_sheltered_slanted(world + vec3<f32>(0.0, 0.0, 0.1)), 1.0, smoothstep(45.0, 60.0, dist));
+    }
+    let reach = 1.0 - smoothstep(30.0, 45.0, dist);
+    var slope = vec2<f32>(0.0);
+    if (reach > 0.0) {
+        slope = rain_water_churn(world.xy, frame.camera_pos.w, heavy, rain_ring_detail(footprint)) * (0.35 * sqrt(heavy) * reach * open);
+    }
+    return vec4<f32>(slope, smoothstep(0.35, 1.0, heavy) * open, rain_splash_mist(heavy, view_up) * open);
 }
 
 

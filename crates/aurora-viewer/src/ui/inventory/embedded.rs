@@ -11,7 +11,7 @@ use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 pub fn save_focused(ctx: &egui::Context) -> bool {
     ctx.memory(|m| m.focused()).is_some_and(|id| {
         ctx.data(|d| d.get_temp::<u64>(id.with("document_save_frame")))
-            .is_some_and(|frame| frame + 1 >= ctx.cumulative_frame_nr())
+            .is_some_and(|frame| frame + 1 >= ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
     })
 }
 
@@ -281,7 +281,7 @@ pub(super) fn editor(
         ..Default::default()
     };
     if output.response.has_focus() {
-        let frame = ui.ctx().cumulative_frame_nr();
+        let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
         ui.ctx().data_mut(|data| data.insert_temp(id.with("document_save_frame"), frame));
         result.save = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
     }
@@ -341,14 +341,15 @@ pub(super) fn editor(
                 id.with(("attachment", index)),
                 egui::Sense::click_and_drag(),
             );
-            // LLViewerTextEditor::handleMouseUp opens items on a single click.
-            if response.clicked() {
-                result.open = Some(marker);
-            }
             // handleHover begins a drag past the threshold. Only an object
             // has somewhere to go here: the world (dropObject).
-            if response.drag_started() && attachment.item.asset_type == 6 {
+            if super::drag::begins(ui, &response) && attachment.item.asset_type == 6 {
                 result.drag = Some(marker);
+            }
+            // LLViewerTextEditor::handleMouseUp opens items on a single
+            // click, never on the release of a drag.
+            if response.clicked() && !super::drag::dragged_this_press(ui.ctx()) {
+                result.open = Some(marker);
             }
             response
                 .clone()
@@ -407,13 +408,15 @@ pub(super) fn preview(
     )
     .show(ctx, p, &mut open, |ui| {
         st.wanted_images.insert(item.asset_id);
-        if let Some(image) = images.get(&item.asset_id) {
-            ui.add(egui::Image::new(image).max_size(ui.available_size()).fit_to_original_size(1.0));
-        } else {
-            ui.spinner();
-            ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
+        // The description heads the window, as in LLPreviewTexture's
+        // floater_preview_texture.xml; the picture fills the rest and follows
+        // the window's size, like a texture opened from the inventory (it was
+        // capped at the texture's own pixel size).
+        if !item.desc.is_empty() {
+            ui.label(&item.desc);
         }
-        ui.label(&item.desc);
+        let display = crate::ui::texture_library::texture_view::Display::default();
+        crate::ui::texture_library::texture_view::picture(ui, p, images.get(&item.asset_id), None, &display, None);
     });
     if !open {
         st.attachment_preview = None;
@@ -429,7 +432,7 @@ mod tests {
         let output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(700.0, 400.0))),
-                time: Some(ctx.cumulative_frame_nr() as f64 * 0.1),
+                time: Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) as f64 * 0.1),
                 focused: true,
                 events,
                 ..Default::default()

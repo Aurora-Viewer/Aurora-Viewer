@@ -135,6 +135,22 @@ fn int_or_name(v: &Llsd, f: fn(&str) -> i32) -> i32 {
     }
 }
 
+/// A record's thumbnail, when it names one: the `thumbnail` map's asset, or
+/// the flat `thumbnail_id` some records carry instead. Port of the
+/// thumbnail part of LLInventoryCategory::fromLLSD and
+/// LLInventoryItem::fromLLSD (indra/llinventory/llinventory.cpp,
+/// originally LGPL 2.1). Reading the map alone left folders whose record
+/// had the flat field without their picture in the gallery (#4465).
+fn thumbnail_of(v: &Llsd) -> Option<Uuid> {
+    if v.has("thumbnail") {
+        Some(v["thumbnail"]["asset_id"].as_uuid())
+    } else if v.has("thumbnail_id") {
+        Some(v["thumbnail_id"].as_uuid())
+    } else {
+        None
+    }
+}
+
 pub fn folder_from_llsd(v: &Llsd) -> Option<InvFolder> {
     let id = if v.has("category_id") {
         v["category_id"].as_uuid()
@@ -159,8 +175,8 @@ pub fn folder_from_llsd(v: &Llsd) -> Option<InvFolder> {
         version: v["version"].as_i32(),
         favorite: v["favorite"]["toggled"].as_bool(),
         favorite_known: v.has("favorite"),
-        thumbnail: v["thumbnail"]["asset_id"].as_uuid(),
-        thumbnail_known: v.has("thumbnail"),
+        thumbnail: thumbnail_of(v).unwrap_or_default(),
+        thumbnail_known: thumbnail_of(v).is_some(),
     })
 }
 
@@ -196,6 +212,17 @@ pub fn item_from_llsd(v: &Llsd) -> Option<InvItem> {
     } else {
         default_inventory_type(asset_type)
     };
+    // LLInventoryItem::fromLLSD: a server record outside AIS can wrap the
+    // thumbnail and the favorite in "metadata".
+    let metadata = &v["metadata"];
+    let thumbnail = thumbnail_of(v)
+        .or_else(|| {
+            metadata["thumbnail"]
+                .has("asset_id")
+                .then(|| metadata["thumbnail"]["asset_id"].as_uuid())
+        })
+        .unwrap_or_default();
+    let favorite = if v.has("favorite") { &v["favorite"] } else { &metadata["favorite"] };
     Some(InvItem {
         id,
         parent: v["parent_id"].as_uuid(),
@@ -205,9 +232,9 @@ pub fn item_from_llsd(v: &Llsd) -> Option<InvItem> {
         inv_type,
         asset_id,
         flags: v["flags"].as_u32(),
-        favorite: v["favorite"]["toggled"].as_bool(),
-        favorite_known: v.has("favorite"),
-        thumbnail: v["thumbnail"]["asset_id"].as_uuid(),
+        favorite: favorite["toggled"].as_bool(),
+        favorite_known: v.has("favorite") || metadata.has("favorite"),
+        thumbnail,
         base_mask: v["permissions"]["base_mask"].as_u32(),
         owner_mask: v["permissions"]["owner_mask"].as_u32(),
         last_owner: v["permissions"]["last_owner_id"].as_uuid(),
@@ -349,6 +376,41 @@ mod tests {
         }
         let doc = llsd_map! { "item_id" => Uuid::from_u128(1), "type" => 6, "inv_type" => 17 };
         assert_eq!(item_from_llsd(&doc).expect("attachment").inv_type, 17);
+    }
+
+    #[test]
+    fn a_folder_thumbnail_reads_as_a_map_or_a_flat_id() {
+        let picture = Uuid::from_u128(77);
+        let id = Uuid::from_u128(1);
+        let map = llsd_map! { "category_id" => id, "thumbnail" => llsd_map! { "asset_id" => picture } };
+        let flat = llsd_map! { "category_id" => id, "thumbnail_id" => picture };
+        let none = llsd_map! { "category_id" => id };
+        for doc in [map, flat] {
+            let folder = folder_from_llsd(&doc).expect("folder");
+            assert_eq!(folder.thumbnail, picture);
+            assert!(folder.thumbnail_known);
+        }
+        let folder = folder_from_llsd(&none).expect("folder");
+        assert!(folder.thumbnail.is_nil());
+        assert!(!folder.thumbnail_known, "a record without a thumbnail says nothing of it");
+    }
+
+    #[test]
+    fn an_item_thumbnail_and_favorite_read_from_every_form() {
+        let picture = Uuid::from_u128(77);
+        let id = Uuid::from_u128(1);
+        for doc in [
+            llsd_map! { "item_id" => id, "thumbnail" => llsd_map! { "asset_id" => picture } },
+            llsd_map! { "item_id" => id, "thumbnail_id" => picture },
+            llsd_map! { "item_id" => id, "metadata" => llsd_map! { "thumbnail" => llsd_map! { "asset_id" => picture } } },
+        ] {
+            assert_eq!(item_from_llsd(&doc).expect("item").thumbnail, picture);
+        }
+        let wrapped = llsd_map! { "item_id" => id, "metadata" => llsd_map! { "favorite" => llsd_map! { "toggled" => true } } };
+        let item = item_from_llsd(&wrapped).expect("item");
+        assert!(item.favorite && item.favorite_known);
+        let bare = item_from_llsd(&llsd_map! { "item_id" => id }).expect("item");
+        assert!(bare.thumbnail.is_nil() && !bare.favorite && !bare.favorite_known);
     }
 
     #[test]

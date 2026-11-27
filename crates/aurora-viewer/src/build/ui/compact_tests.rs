@@ -10,6 +10,8 @@ mod contents_keyboard_tests;
 mod layout_tests;
 #[path = "legacy_tests.rs"]
 mod legacy_tests;
+#[path = "name_focus_tests.rs"]
+mod name_focus_tests;
 
 /// Whether a painted text is the heading of the former labelled navigation
 /// ("OBJECT"). In Japanese that heading is オブジェクト, the very word of
@@ -120,7 +122,7 @@ fn construction_clears_forbidden_vectors_for_both_styles_and_the_complete_select
         inspector.settings.transform_expanded = true;
         inspector.tool.tab = 5;
         inspector.screen = vec2(1600.0, 1400.0);
-        resize_inspector(&mut inspector, vec2(700.0, 1160.0));
+        resize_inspector(&mut inspector, vec2(700.0, 1190.0));
         let idx = inspector.world.objects.index_of(&inspector.tool.selection[0]).unwrap();
         let id = inspector.world.objects.get(idx).unwrap().full_id;
         for (rights, linked, known, expected) in [
@@ -210,7 +212,7 @@ fn construction_hides_forbidden_geometry_and_feature_parameters() {
         inspector.settings.legacy_window = legacy;
         inspector.settings.transform_expanded = false;
         inspector.screen = vec2(1600.0, 1400.0);
-        resize_inspector(&mut inspector, vec2(700.0, 1160.0));
+        resize_inspector(&mut inspector, vec2(700.0, 1190.0));
         let idx = inspector.world.objects.index_of(&inspector.tool.selection[0]).unwrap();
         let object = inspector.world.objects.get_mut(idx).unwrap();
         object.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_FLEXIBLE;
@@ -530,16 +532,34 @@ fn mesh_inspector_is_interactive_without_modify_and_selection_numbers_stay_with_
     inspector.tool.faces.insert(key, [0, 2, 5].into_iter().collect());
     let (_, texts) = inspector.show(Vec::new());
     for (item, number) in [(Item::Face, "0, 2, 5"), (Item::Linked, "0")] {
+        // the link number is in the "Edit linked parts" option
         let target = inspector
             .ctx
             .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
-            .unwrap();
-        let label = if item == Item::Face {
-            aurora_i18n::tr!("build-compact-face-value", number = number)
-        } else {
-            aurora_i18n::tr!("build-compact-link-value", number = number)
-        };
-        assert!(texts.iter().any(|(text, rect)| text == &label && target.contains_rect(*rect)));
+            .unwrap_or(egui::Rect::EVERYTHING);
+        if item == Item::Face {
+            // the face buttons 0 to 8, those three on
+            assert!((0..9).all(|face| {
+                texts
+                    .iter()
+                    .any(|(text, rect)| text == &face.to_string() && target.contains_rect(*rect))
+            }));
+            let on = inspector
+                .tool
+                .face_buttons(&inspector.world)
+                .map(|state| state == crate::build::face_buttons::FaceButton::On);
+            assert_eq!(
+                on.iter()
+                    .enumerate()
+                    .filter(|(_, on)| **on)
+                    .map(|(face, _)| face)
+                    .collect::<Vec<_>>(),
+                number.split(", ").map(|n| n.parse::<usize>().unwrap()).collect::<Vec<_>>()
+            );
+            continue;
+        }
+        let label = aurora_i18n::tr!("build-compact-link-value", number = number);
+        assert!(texts.iter().any(|(text, rect)| text == &label && target.contains(rect.center())));
     }
     for _ in 0..12 {
         let (next, _) = inspector.show(Vec::new());
@@ -1379,6 +1399,10 @@ struct Inspector {
     text_fonts: Vec<(String, f32)>,
     /// A window drawn before the build tools that takes Escape for itself.
     escape_taken_first: bool,
+    /// The keys the build tools are given as held.
+    mods: Mods,
+    /// The camera's zoom the Focus tool's slider shows.
+    zoom_fraction: f32,
 }
 
 impl Inspector {
@@ -1409,6 +1433,8 @@ impl Inspector {
             inventory_surface: None,
             numeric_drag: None,
             escape_taken_first: false,
+            mods: Mods::default(),
+            zoom_fraction: 0.0,
             native_pixels_per_point: 1.0,
             screen: egui::vec2(1280.0, 900.0),
             text_fonts: Vec::new(),
@@ -1446,7 +1472,7 @@ impl Inspector {
                 images: &Default::default(),
                 media: &mut self.media,
                 scene: &mut self.scene,
-                zoom_fraction: 0.0,
+                zoom_fraction: self.zoom_fraction,
                 property_lines: &mut false,
                 demo: false,
             };
@@ -1456,7 +1482,7 @@ impl Inspector {
                 &mut self.tool,
                 &mut self.world,
                 &mut self.settings,
-                Mods::default(),
+                self.mods,
                 &mut env,
             );
         });
@@ -1606,24 +1632,30 @@ fn construction_large_keeps_each_section_and_tool_inside_a_stable_window() {
 }
 
 #[test]
-fn create_panel_holds_still_at_every_width_around_its_scroll_bar() {
+fn create_window_holds_still_at_every_width() {
     // #1092: the shape grid sized itself from the width left by the scroll
-    // bar, so at widths where only the wider grid overflowed the bar came
-    // and went on every frame and the whole panel jittered.
+    // bar, and the panel jittered where the bar came and went. The Create
+    // window (tool_floaters.rs) now has no scroll bar: its height follows
+    // the grid at every width, and nothing moves from frame to frame.
     let mut inspector = Inspector::new();
-    inspector.tool.set_tool(Tool::Create);
-    let label = aurora_i18n::tr!("build-ui-tools-keep-selection-tool");
+    inspector.tool.open_build(Tool::Create);
+    let label = aurora_i18n::tr!("build-create-keep-creating");
     let place = |texts: &[(String, egui::Rect)]| texts.iter().find(|(text, _)| text == label).map(|(_, rect)| rect.min);
-    // Horizontal navigation and the fixed options reduce the scrolling
-    // viewport. Keep the marker visible while the shape grid crosses the
-    // scroll-bar threshold at the current construction layout's height.
     for width in (300..=450).step_by(3) {
-        resize_inspector(&mut inspector, vec2(width as f32, 820.0));
+        crate::ui::widgets::size_floater(&inspector.ctx, "build_tool_create", vec2(width as f32, 420.0));
+        for _ in 0..5 {
+            inspector.show(vec![]);
+        }
         let first = place(&inspector.show(vec![]).1);
         assert!(first.is_some(), "Create options missing at width {width}");
         for _ in 0..4 {
             assert_eq!(place(&inspector.show(vec![]).1), first, "Create panel moved at width {width}");
         }
+        let window = inspector
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+            .expect("the Create window");
+        assert!((window.width() - width as f32).abs() < 1.0, "{width}: {window:?}");
     }
 }
 
@@ -1823,7 +1855,7 @@ fn navigation_sets_the_resize_floor_and_settings_glyph_stays_square() {
         }
         let glyph = inspector
             .ctx
-            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("compact_icon_glyph", "settings-filled"))))
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("header_summary_icon", "settings-filled"))))
             .unwrap();
         assert_eq!(glyph.width(), glyph.height());
         assert!(window.contains_rect(glyph));
@@ -1967,25 +1999,35 @@ fn material_previews_are_larger_above_their_options_and_open_the_correct_picker(
             .collect();
         for rect in &rects {
             assert!(window.contains_rect(*rect));
-            assert!((78.0..=82.1).contains(&rect.width()));
+            // PBR and Blinn-Phong swatches share one size
+            assert!((54.0..=58.1).contains(&rect.width()), "{rect:?}");
             assert!((rect.width() - rect.height()).abs() < 0.1);
         }
-        assert!((rects[0].top() - rects[1].top()).abs() < 0.1);
-        assert!(rects[0].right() < rects[1].left());
         if pbr {
-            assert!((rects[2].top() - rects[0].top()).abs() < 0.1);
-            assert!(rects[3].top() > rects[0].bottom());
-            assert!((rects[3].left() - rects[0].left()).abs() < 0.1);
-            assert!((rects[4].top() - rects[3].top()).abs() < 0.1);
+            // the material and its base colour, the normal and emissive
+            // maps under them, then the ORM map
+            assert!((rects[0].top() - rects[1].top()).abs() < 0.1);
+            assert!(rects[0].right() < rects[1].left());
+            assert!(rects[2].top() > rects[0].bottom());
+            assert!((rects[2].left() - rects[0].left()).abs() < 0.1);
+            assert!((rects[3].top() - rects[2].top()).abs() < 0.1);
+            assert!(rects[2].right() < rects[3].left());
+            assert!(rects[4].top() > rects[2].bottom());
+            assert!((rects[4].left() - rects[0].left()).abs() < 0.1);
         } else {
-            assert!((rects[2].top() - rects[0].top()).abs() < 0.1);
+            // one column: diffuse, normal, specular
+            for pair in rects.windows(2) {
+                assert!(pair[1].top() > pair[0].bottom());
+                assert!((pair[1].left() - pair[0].left()).abs() < 0.1);
+            }
         }
-        let surface = texts
+        // above the face options, which start with Occlude water
+        let options = texts
             .iter()
-            .find(|(text, _)| text == aurora_i18n::tr!("build-material-surface"))
+            .find(|(text, _)| text == aurora_i18n::tr!("build-ui-texture-occlude-water"))
             .unwrap()
             .1;
-        assert!(rects.iter().all(|rect| rect.bottom() < surface.top()));
+        assert!(rects.iter().all(|rect| rect.bottom() < options.top()));
         let point = rects[1].center();
         inspector.show(vec![egui::Event::PointerMoved(point)]);
         for pressed in [true, false] {
@@ -2137,10 +2179,7 @@ fn pbr_number_scrubbing_keeps_the_chosen_inspector_width() {
 
 #[test]
 fn material_numbers_commit_typed_values_once_without_resetting_the_inspector() {
-    for label in [
-        aurora_i18n::tr!("build-ui-texture-shininess"),
-        aurora_i18n::tr!("common-environment"),
-    ] {
+    for label in [aurora_i18n::tr!("build-legacy-glossiness"), aurora_i18n::tr!("common-environment")] {
         for finish in [egui::Key::Enter, egui::Key::Tab, egui::Key::Escape] {
             let mut inspector = material_inspector();
             inspector.settings.transform_expanded = false;
@@ -2236,6 +2275,28 @@ fn material_numbers_commit_typed_values_once_without_resetting_the_inspector() {
     }
 }
 
+/// Issue #4484: the Blinn-Phong shininess menu (None / Low / Medium / High)
+/// is captioned "Shininess" and the specular exponent "Glossiness", as the
+/// labels "label shininess" and "label glossiness" of panel_tools_texture.xml.
+#[test]
+fn blinn_phong_captions_follow_the_legacy_panel() {
+    let mut inspector = material_inspector();
+    inspector.settings.transform_expanded = false;
+    inspector.tool.tab = 3;
+    for _ in 0..5 {
+        inspector.show(vec![]);
+    }
+    let (_, texts) = inspector.show(vec![]);
+    let caption = |key: &str| texts.iter().find(|(text, _)| text == key).map(|(_, rect)| *rect);
+    let shininess = caption(aurora_i18n::tr!("build-ui-texture-shininess")).expect("a Shininess caption");
+    let glossiness = caption(aurora_i18n::tr!("build-legacy-glossiness")).expect("a Glossiness caption");
+    assert!(shininess.top() < glossiness.top(), "the menu comes before the exponent");
+    assert!(
+        caption(aurora_i18n::tr!("common-brightness")).is_none(),
+        "no Brightness caption on the Blinn-Phong tab"
+    );
+}
+
 #[test]
 fn material_update_keeps_controls_and_focus_until_the_new_material_loads() {
     let mut inspector = material_inspector();
@@ -2299,7 +2360,13 @@ fn material_update_keeps_controls_and_focus_until_the_new_material_loads() {
     );
     Arc::make_mut(inspector.world.objects.get_mut(idx).unwrap().te.as_mut().unwrap()).faces[0].material_id = uuid::Uuid::nil();
     let (_, texts) = inspector.show(vec![]);
-    assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("common-environment")));
+    // without a specular map, glossiness and environment stay in place,
+    // greyed, at their defaults: the controls under them do not move
+    assert!(texts.iter().any(|(text, _)| text == aurora_i18n::tr!("common-environment")));
+    assert!(
+        !texts.iter().any(|(text, _)| text == "46"),
+        "the cleared material's environment is gone"
+    );
 }
 
 #[test]
@@ -2439,6 +2506,69 @@ fn empty_legacy_texture_channels_can_be_selected_and_their_scale_edited() {
             },
             2.5
         );
+    }
+}
+
+#[test]
+fn sphere_dimple_drag_previews_then_sends_the_shape_once() {
+    use aurora_net::{NetCommand, build::BuildCmd};
+    use aurora_prim::params::{LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF};
+
+    for legacy in [false, true] {
+        let mut inspector = Inspector::new();
+        inspector.settings.legacy_window = legacy;
+        inspector.settings.transform_expanded = false;
+        inspector.tool.tab = 5;
+        inspector.screen = vec2(1600.0, 1400.0);
+        let key = inspector.tool.selection[0];
+        let idx = inspector.world.objects.index_of(&key).unwrap();
+        let v = &mut inspector.world.objects.get_mut(idx).unwrap().volume;
+        v.path.curve_type = LL_PCODE_PATH_CIRCLE;
+        v.profile.curve_type = LL_PCODE_PROFILE_CIRCLE_HALF;
+        v.profile.begin = 0.173;
+        let (_, texts) = resize_inspector(&mut inspector, vec2(700.0, 1190.0));
+        let point = texts
+            .iter()
+            .find(|(t, _)| aurora_i18n::parse_number(t) == Some(0.173))
+            .expect("dimple begin")
+            .1
+            .center();
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: Default::default(),
+        };
+        inspector.tool.out.clear();
+        inspector.show(vec![egui::Event::PointerMoved(point)]);
+        inspector.show(vec![button(point, true)]);
+        let end = point + vec2(32.0, 0.0);
+        inspector.show(vec![egui::Event::PointerMoved(point + vec2(14.0, 0.0))]);
+        inspector.show(vec![egui::Event::PointerMoved(end)]);
+        inspector.show(vec![]);
+        let preview = inspector.world.objects.get(idx).unwrap().volume;
+        assert!(preview.profile.begin > 0.173);
+        assert!(
+            inspector
+                .tool
+                .out
+                .iter()
+                .all(|cmd| !matches!(cmd, NetCommand::Build(BuildCmd::SetShape { .. })))
+        );
+        inspector.show(vec![button(end, false)]);
+        inspector.show(vec![]);
+        let sent: Vec<_> = inspector
+            .tool
+            .out
+            .iter()
+            .filter_map(|cmd| match cmd {
+                NetCommand::Build(BuildCmd::SetShape { local_ids, shape, .. }) => Some((local_ids, shape)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sent.len(), 1, "legacy={legacy}");
+        assert_eq!(sent[0].0, &[key.local_id]);
+        assert_eq!(sent[0].1.profile_begin, preview.to_raw().profile_begin);
     }
 }
 
@@ -2776,7 +2906,7 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
             (rect.size() - expanded.size()).length() < 1.0,
             "Switching tool changed the chosen size: {tool:?}"
         );
-        assert_eq!(
+        assert!(
             inspector
                 .tool
                 .ui
@@ -2784,11 +2914,11 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
                 .targets
                 .iter()
                 .any(|(item, panel, _)| { *item == crate::build::layout::Item::Actions && *panel == crate::build::layout::Panel::Footer }),
-            tool == Tool::Create
+            "the options show with every tool, so the bars under them stay in place: {tool:?}"
         );
-        assert_eq!(
+        assert!(
             texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-linked")),
-            tool == Tool::Create
+            "the options show with every tool: {tool:?}"
         );
     }
 }
@@ -3219,6 +3349,119 @@ fn a_pbr_uv_edit_keeps_the_other_component_inherited_from_the_material() {
     }
 }
 
+/// #3885: on the PBR tab, Repeats / meter shows the material's repeats
+/// (getSelectedGLTFMaterialMaxRepeats) and writes the override's texture
+/// transform scale of the picked channel, or all four under "All"
+/// (onCommitGLTFRepeatsPerMeter); the texture entry's repeats, which a PBR
+/// face ignores, stay as they were. The normal map has its own scale:
+/// under "All" the field shows the base color's alone and is not mixed,
+/// as the Legacy Viewer reads it. Both window styles.
+#[test]
+fn pbr_repeats_per_meter_edits_the_material_transforms() {
+    let asset = uuid::Uuid::from_u128(0x3885);
+    let base = aurora_assets::material::TextureTransform {
+        scale: [2.0, 3.0],
+        offset: [0.2, 0.3],
+        rotation: 0.0,
+    };
+    let normal = aurora_assets::material::TextureTransform { scale: [6.0, 6.0], ..base };
+    let transforms = [base, normal, base, base];
+    for legacy in [false, true] {
+        for channel in [0usize, 2] {
+            let case = format!("legacy={legacy} channel={channel}");
+            let mut inspector = material_inspector();
+            inspector.settings.legacy_window = legacy;
+            inspector.tool.tab = 3;
+            inspector.tool.ui.tex_tab = 1;
+            inspector.tool.ui.pbr_channel = channel;
+            let key_ = inspector.tool.selection[0];
+            let idx = inspector.world.objects.index_of(&key_).unwrap();
+            let n = inspector.tool.num_faces(&inspector.world, idx) as u8;
+            let object = inspector.world.objects.get_mut(idx).unwrap();
+            // the same size on every axis: each face shows max(2, 3) / 2
+            object.scale = glam::Vec3::splat(2.0);
+            object.extra.render_materials = vec![(u8::MAX, asset)];
+            let before: Vec<(f32, f32)> = object.te.as_ref().unwrap().faces[..usize::from(n)]
+                .iter()
+                .map(|f| (f.scale_s, f.scale_t))
+                .collect();
+            inspector.scene.materials.insert(
+                asset,
+                aurora_assets::PbrMaterial {
+                    transforms,
+                    ..Default::default()
+                },
+            );
+            inspector.list_contents(idx);
+            inspector.show(vec![]);
+            crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(390.0, 1500.0));
+            for _ in 0..5 {
+                inspector.show(vec![]);
+            }
+            let (_, texts) = inspector.show(vec![]);
+            let caption = aurora_i18n::tr!("build-ui-texture-repeats-meter");
+            // max(2, 3) / 2 for the base color, 6 / 2 for the normal map
+            let want = if channel == 2 { 3.0 } else { 1.5 };
+            let (shown, rect) = row_field(&texts, caption).unwrap_or_else(|| panic!("{case}: no field beside {caption}"));
+            assert!(
+                aurora_i18n::parse_number(&shown).is_some_and(|v| (v as f32 - want).abs() < 1e-5),
+                "{case}: the field shows the material's repeats, not {shown}"
+            );
+            press(&mut inspector, rect.center());
+            inspector.tool.out.clear();
+            inspector.show(vec![egui::Event::Text(aurora_i18n::number_text("4"))]);
+            key(&mut inspector, egui::Key::Enter);
+            inspector.show(vec![]);
+            let edited: Vec<usize> = if channel == 0 { (0..4).collect() } else { vec![channel - 1] };
+            let object = inspector.world.objects.get(idx).unwrap();
+            for face in 0..n {
+                let mut material = aurora_assets::PbrMaterial {
+                    transforms,
+                    ..Default::default()
+                };
+                material.apply_override(&BuildTool::gltf_override(&inspector.world, idx, face));
+                for (c, t) in material.transforms.iter().enumerate() {
+                    let scale = if edited.contains(&c) { [8.0, 8.0] } else { transforms[c].scale };
+                    assert_eq!((t.scale, t.offset), (scale, base.offset), "{case}: face {face} channel {c}");
+                }
+                let f = object.te.as_ref().unwrap().face(usize::from(face));
+                assert_eq!(
+                    (f.scale_s, f.scale_t),
+                    before[usize::from(face)],
+                    "{case}: face {face} keeps its repeats"
+                );
+            }
+            assert!(
+                inspector.tool.out.iter().any(|command| matches!(
+                    command,
+                    aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Cap { cap, .. }) if cap == "ModifyMaterialParams"
+                )),
+                "{case}: the override is sent"
+            );
+        }
+    }
+}
+
+#[test]
+fn gltf_repeats_follow_the_faces_axes() {
+    let t = aurora_assets::material::TextureTransform {
+        scale: [4.0, 2.0],
+        offset: [0.0, 0.0],
+        rotation: 0.0,
+    };
+    let size = glam::Vec3::new(2.0, 4.0, 0.5);
+    // face 0 (top): s along x, t along y: max(4 / 2, 2 / 4)
+    assert_eq!(texture::gltf_max_repeats(&t, size, 0), 2.0);
+    // face 2: s along y, t along z: max(4 / 4, 2 / 0.5)
+    assert_eq!(texture::gltf_max_repeats(&t, size, 2), 4.0);
+    // face 1: s along x, t along z: max(4 / 2, 2 / 0.5)
+    assert_eq!(texture::gltf_max_repeats(&t, size, 1), 4.0);
+    assert_eq!(texture::gltf_repeats_scale(3.0, size, 0), [6.0, 12.0]);
+    assert_eq!(texture::gltf_repeats_scale(3.0, size, 2), [12.0, 1.5]);
+    // a flat axis does not divide by zero
+    assert!(texture::gltf_max_repeats(&t, glam::Vec3::ZERO, 0).is_finite());
+}
+
 /// The value under a row's caption: the first number or "—" to its right,
 /// on the same line.
 fn row_field(texts: &[(String, egui::Rect)], caption: &str) -> Option<(String, egui::Rect)> {
@@ -3345,8 +3588,7 @@ fn typed_value_over_the_other_mixed_texture_fields_reaches_every_face() {
             let caption = match field {
                 Field::Glow => aurora_i18n::tr!("build-ui-texture-glow"),
                 Field::RepeatsPerMeter => aurora_i18n::tr!("build-ui-texture-repeats-meter"),
-                Field::Glossiness if legacy => aurora_i18n::tr!("build-legacy-glossiness"),
-                Field::Glossiness => aurora_i18n::tr!("build-ui-texture-shininess"),
+                Field::Glossiness => aurora_i18n::tr!("build-legacy-glossiness"),
                 Field::Environment => aurora_i18n::tr!("common-environment"),
                 Field::MaskCutoff => aurora_i18n::tr!("build-ui-texture-mask-cutoff"),
             };
@@ -4007,4 +4249,414 @@ fn compact_object_shape_fields_stay_inside_at_large_text_size() {
             );
         }
     }
+}
+
+#[test]
+fn one_selected_object_has_its_contents_listed_whatever_the_tab() {
+    // LLFloaterTools::refresh → LLPanelObjectInventory::refresh: a no-copy
+    // or no-transfer choice can then go into the contents at the first try.
+    use aurora_net::{NetCommand, build::BuildCmd};
+    let mut inspector = Inspector::new();
+    let idx = inspector.tool.contents_target(&inspector.world).unwrap();
+    let object = inspector.world.objects.get(idx).unwrap().full_id;
+    let asked = |tool: &BuildTool, id: uuid::Uuid| {
+        tool.out
+            .iter()
+            .filter(|c| matches!(c, NetCommand::Build(BuildCmd::RequestTaskInventory { object_id, .. }) if *object_id == id))
+            .count()
+    };
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "asked once the object is selected");
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "not again while it loads");
+    inspector.tool.on_task_inventory(&inspector.world, object, Some(1), Vec::new());
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "not again once listed");
+    // Two objects: nothing is listed until a choice needs it.
+    let other = (0..inspector.world.objects.len())
+        .find(|&i| {
+            i != idx && crate::build::root_of(&inspector.world, i) == i && inspector.world.objects.get(i).is_some_and(|o| o.pcode == 9)
+        })
+        .unwrap();
+    let other_id = inspector.world.objects.get(other).unwrap().full_id;
+    inspector
+        .tool
+        .click_select(&mut inspector.world, &inspector.settings, Some(other), true);
+    assert_eq!(inspector.tool.roots(&inspector.world).len(), 2);
+    inspector.tool.out.clear();
+    inspector.show(vec![]);
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object) + asked(&inspector.tool, other_id), 0);
+}
+
+/// One click of the primary button at `pos`, as the pointer gives it.
+fn click_at(inspector: &mut Inspector, pos: egui::Pos2) {
+    inspector.show(vec![egui::Event::PointerMoved(pos)]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }]);
+    }
+    inspector.show(vec![]);
+}
+
+/// The Create window's shape picker (human request, 2026-11-24): its
+/// button arms and puts it down without taking the tool in use, a shape
+/// clicked puts it down, and the shapes captured follow the grass, chosen
+/// by a click and removed from their right-click menu.
+#[test]
+fn the_shape_picker_arms_alone_and_the_captured_shapes_are_chosen_and_removed() {
+    use crate::build::shapes::{CapturedShape, shapes};
+    let mut inspector = Inspector::new();
+    inspector.settings.captured_shapes = vec![CapturedShape {
+        shape: shapes()[10].raw(),
+        scale: [1.0; 3],
+    }];
+    inspector.tool.open_build(Tool::Create);
+    inspector.tool.activate(Tool::Edit);
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    let rect = |inspector: &Inspector, key: &str| inspector.ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(key))).expect(key);
+    let grid = rect(&inspector, "build-create-shapes");
+    let capture = rect(&inspector, "build-create-capture");
+    let cell = (grid.width() - 24.0) / 5.0;
+    assert!(
+        (grid.height() - (cell * 4.0 + 18.0)).abs() < 0.5,
+        "a fourth row for the captured shape and the picker"
+    );
+    assert!(grid.expand(0.5).contains_rect(capture), "{grid:?} {capture:?}");
+    click_at(&mut inspector, capture.center());
+    assert!(inspector.tool.capturing_shape(), "armed");
+    assert_eq!(inspector.tool.tool, Tool::Edit, "the picker leaves Edit in use");
+    click_at(&mut inspector, capture.center());
+    assert!(!inspector.tool.shape_capture, "the button again puts it down");
+    click_at(&mut inspector, capture.center());
+    click_at(&mut inspector, grid.left_top() + vec2(10.0, 10.0));
+    assert!(!inspector.tool.shape_capture, "a shape clicked puts it down");
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    // the captured shape, first of the fourth row
+    let captured = grid.left_top() + vec2(cell * 0.5, (cell + 6.0) * 3.0 + cell * 0.5);
+    click_at(&mut inspector, captured);
+    assert_eq!(inspector.settings.create_shape, shapes().len() + 2);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    inspector.show(vec![egui::Event::PointerMoved(captured)]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: captured,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        }]);
+    }
+    let remove = aurora_i18n::tr!("build-capture-shape-remove");
+    let item = inspector
+        .show(vec![])
+        .1
+        .into_iter()
+        .find(|(text, _)| text == remove)
+        .expect("the captured shape's menu")
+        .1;
+    click_at(&mut inspector, item.center());
+    assert!(inspector.settings.captured_shapes.is_empty());
+    assert_eq!(inspector.settings.create_shape, 0, "its removal chooses the cube");
+}
+
+/// The Focus tool's zoom slider sends a zoom only when the user moves it:
+/// a camera zoom off its 0.01 step was rounded and sent back at every
+/// frame, and a zoom drag went by notches (2026-11-24).
+#[test]
+fn the_focus_zoom_slider_leaves_the_camera_zoom_alone_until_moved() {
+    let mut inspector = Inspector::new();
+    inspector.tool.open_build(Tool::Focus);
+    for zoom in [0.3337, 0.71, 0.0049] {
+        inspector.zoom_fraction = zoom;
+        for _ in 0..4 {
+            inspector.show(vec![]);
+        }
+        assert!(
+            !inspector
+                .tool
+                .ui
+                .requests
+                .iter()
+                .any(|r| matches!(r, super::super::Request::ZoomFraction(_))),
+            "zoom {zoom}: nothing sent"
+        );
+    }
+}
+
+/// The Aurora style's tools in windows of their own (human request,
+/// 2026-11-24): the rail's Create button opens its window beside the main
+/// one, which keeps its section; a press picks the tool in use; the button
+/// again closes the window.
+#[test]
+fn the_rail_tool_buttons_open_and_close_their_own_windows() {
+    use crate::build::layout::Item;
+    let mut inspector = Inspector::new();
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    let button = |inspector: &Inspector, item: Item| {
+        inspector
+            .tool
+            .ui
+            .layout
+            .targets
+            .iter()
+            .find(|(target, _, _)| *target == item)
+            .map(|(_, _, rect)| rect.center())
+            .expect("rail button")
+    };
+    let create = button(&inspector, Item::Create);
+    let section = inspector.tool.tab;
+    click_at(&mut inspector, create);
+    assert!(inspector.tool.tool_window_open(Tool::Create));
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    assert!(inspector.tool.main_open, "the main window stays");
+    assert_eq!(inspector.tool.tab, section);
+    let window = inspector
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+        .expect("the Create window");
+    let (main, texts) = inspector.show(vec![]);
+    let options = texts
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("build-create-keep-creating"))
+        .expect("the Create panel")
+        .1;
+    assert!(window.contains_rect(options), "the panel is in the Create window");
+    assert!(!main.intersects(window), "the window opens beside the main one");
+    assert!(
+        texts
+            .iter()
+            .any(|(text, rect)| text == aurora_i18n::tr!("build-tool-in-use") && window.contains_rect(*rect)),
+        "its title says its tool is the one in use"
+    );
+    // a press in the main window: Edit; in the Create window, a shape
+    // clicked: Create (its title bar leaves Edit)
+    click_at(&mut inspector, main.left_top() + vec2(40.0, 12.0));
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    assert!(inspector.tool.tool_window_open(Tool::Create));
+    click_at(&mut inspector, window.left_top() + vec2(40.0, 12.0));
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    let shapes = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-shapes")))
+        .expect("the shapes");
+    click_at(&mut inspector, shapes.left_top() + vec2(10.0, 10.0));
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    // lit, the rail button closes the window; Edit is back
+    click_at(&mut inspector, create);
+    assert!(!inspector.tool.tool_window_open(Tool::Create));
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    assert!(inspector.tool.open && inspector.tool.main_open);
+}
+
+/// The Create window (human request, 2026-11-24): no "Click in the world
+/// to build" line; the caret at its bottom hides its whole options part, as
+/// the Legacy style's window folds, and shows it again. The window has no
+/// scroll bar: its height follows what it shows, and its left and right
+/// edges resize its width only. The choice is kept in the build settings.
+#[test]
+fn the_create_window_fits_its_content_and_hides_its_options_part() {
+    let mut inspector = Inspector::new();
+    inspector.tool.open_build(Tool::Create);
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    let window = |inspector: &Inspector| {
+        inspector
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+            .expect("the Create window")
+    };
+    let shows = |inspector: &mut Inspector, label: &str| {
+        let rect = window(inspector);
+        inspector
+            .show(vec![])
+            .1
+            .iter()
+            .any(|(text, at)| text == label && rect.contains_rect(*at))
+    };
+    let caret = |inspector: &Inspector| {
+        inspector
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-options-toggle")))
+            .expect("the caret")
+    };
+    // as tall as its content: the caret, last, ends just above its bottom
+    let fits = |inspector: &Inspector| {
+        let (rect, caret) = (window(inspector), caret(inspector));
+        let gap = rect.bottom() - caret.bottom();
+        assert!(
+            (0.0..24.0).contains(&gap),
+            "the window ends at its content: {rect:?}, caret {caret:?}"
+        );
+    };
+    let drag = |inspector: &mut Inspector, start: egui::Pos2, target: egui::Pos2| {
+        inspector.show(vec![egui::Event::PointerMoved(start)]);
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        inspector.show(vec![egui::Event::PointerMoved(target)]);
+        inspector.show(vec![egui::Event::PointerMoved(target)]);
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        for _ in 0..3 {
+            inspector.show(vec![]);
+        }
+    };
+    let keep = aurora_i18n::tr!("build-create-keep-creating");
+    assert!(!shows(
+        &mut inspector,
+        aurora_i18n::tr!("build-ui-tools-click-in-the-world-to-build")
+    ));
+    assert!(shows(&mut inspector, keep), "shown by default");
+    fits(&inspector);
+    let open = window(&inspector);
+    // its bottom edge resizes nothing
+    drag(
+        &mut inspector,
+        open.center_bottom() - vec2(0.0, 1.0),
+        open.center_bottom() + vec2(0.0, 120.0),
+    );
+    assert!(
+        (window(&inspector).size() - open.size()).length() < 1.0,
+        "the bottom edge is no handle"
+    );
+    let at = caret(&inspector).center();
+    click_at(&mut inspector, at);
+    for _ in 0..6 {
+        inspector.show(vec![]);
+    }
+    assert!(!inspector.settings.create_options_shown);
+    assert!(!shows(&mut inspector, keep), "the options part is hidden");
+    let folded = window(&inspector);
+    assert!(folded.height() < open.height() - 40.0, "the window shrinks: {open:?} -> {folded:?}");
+    assert!((folded.width() - open.width()).abs() < 1.0, "at the width it had");
+    fits(&inspector);
+    // folded, its right edge still widens it, its height following
+    let edge = folded.right_center() - vec2(1.0, 0.0);
+    drag(&mut inspector, edge, edge + vec2(80.0, 40.0));
+    let wide = window(&inspector);
+    assert!(
+        wide.width() > folded.width() + 60.0,
+        "its width follows the edge: {folded:?} -> {wide:?}"
+    );
+    assert!(!inspector.settings.create_options_shown, "the drag shows no options");
+    fits(&inspector);
+    let at = caret(&inspector).center();
+    click_at(&mut inspector, at);
+    for _ in 0..6 {
+        inspector.show(vec![]);
+    }
+    assert!(inspector.settings.create_options_shown);
+    assert!(shows(&mut inspector, keep), "shown again");
+    assert!((window(&inspector).width() - wide.width()).abs() < 1.0, "at the width it was given");
+    fits(&inspector);
+    // and its edges narrow it again, down to its minimum, with its options
+    // shown or hidden (the human's report of 2026-11-24)
+    for shown in [true, false] {
+        if inspector.settings.create_options_shown != shown {
+            let at = caret(&inspector).center();
+            click_at(&mut inspector, at);
+            for _ in 0..6 {
+                inspector.show(vec![]);
+            }
+        }
+        let before = window(&inspector);
+        let edge = before.right_center() - vec2(1.0, 0.0);
+        drag(&mut inspector, edge, edge - vec2(70.0, 0.0));
+        let narrow = window(&inspector);
+        assert!(
+            narrow.width() < before.width() - 50.0,
+            "options shown {shown}: the right edge narrows it: {before:?} -> {narrow:?}"
+        );
+        fits(&inspector);
+        let edge = narrow.left_center() + vec2(1.0, 0.0);
+        drag(&mut inspector, edge, edge + vec2(400.0, 0.0));
+        let least = window(&inspector);
+        assert!(
+            (least.width() - 240.0).abs() < 1.0,
+            "options shown {shown}: the left edge narrows it to its minimum: {narrow:?} -> {least:?}"
+        );
+        fits(&inspector);
+        let edge = least.right_center() - vec2(1.0, 0.0);
+        drag(&mut inspector, edge, edge + vec2(120.0, 0.0));
+    }
+}
+
+/// The Create window (human request, 2026-11-24): opened, its tool is the
+/// one in use, its last shape under the pointer in the world; once another
+/// tool took over, only a click on a shape gives it back, not a press
+/// elsewhere in the window (its options, its caret, its title bar).
+#[test]
+fn only_a_shape_clicked_makes_create_the_tool_in_use_again() {
+    let mut inspector = Inspector::new();
+    inspector.tool.open_build(Tool::Create);
+    assert_eq!(inspector.tool.tool, Tool::Create, "in use once opened");
+    inspector.tool.activate(Tool::Edit);
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    let window = inspector
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+        .expect("the Create window");
+    let caret = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-options-toggle")))
+        .expect("the caret");
+    let shapes = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-shapes")))
+        .expect("the shapes");
+    let keep = aurora_i18n::tr!("build-create-keep-creating");
+    let option = inspector
+        .show(vec![])
+        .1
+        .into_iter()
+        .find(|(text, at)| text == keep && window.contains_rect(*at))
+        .expect("the options")
+        .1;
+    // between two shapes, beside the options, on the title bar
+    let gap = egui::pos2(shapes.left() + shapes.width() / 5.0 - 2.0, shapes.top() + 4.0);
+    for at in [gap, option.right_center() + vec2(60.0, 0.0), window.center_top() + vec2(0.0, 14.0)] {
+        click_at(&mut inspector, at);
+        assert_eq!(inspector.tool.tool, Tool::Edit, "a press at {at:?} leaves Edit in use");
+    }
+    let shown = inspector.settings.create_options_shown;
+    click_at(&mut inspector, caret.center());
+    assert_ne!(inspector.settings.create_options_shown, shown, "the caret still works");
+    assert_eq!(inspector.tool.tool, Tool::Edit, "the caret leaves Edit in use");
+    // a shape: Create again, with that shape
+    let third = egui::pos2(shapes.left() + shapes.width() * 0.5, shapes.top() + 10.0);
+    click_at(&mut inspector, third);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    assert_eq!(inspector.settings.create_shape, 2);
+    // that shape clicked again while in use: Create ends, the shape stays
+    // chosen and the window open; clicked once more, Create is back
+    click_at(&mut inspector, third);
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    assert_eq!(inspector.settings.create_shape, 2);
+    assert!(inspector.tool.tool_window_open(Tool::Create));
+    click_at(&mut inspector, third);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    // another shape while in use: Create stays, with it
+    let first = shapes.left_top() + vec2(10.0, 10.0);
+    click_at(&mut inspector, first);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    assert_eq!(inspector.settings.create_shape, 0);
 }

@@ -55,6 +55,7 @@ pub enum Action {
     Paste {
         change: Mutation,
         cut: bool,
+        editor: Uuid,
     },
     /// A Marketplace page, in the Marketplace window.
     OpenMarketplace(String),
@@ -116,6 +117,7 @@ enum Confirm {
         cut: bool,
         prompt: Prompt,
         // Dialog redraws clone Confirm; share the potentially large row order.
+        editor: Uuid,
         after_delete: Option<std::sync::Arc<super::inventory::DeleteSelection>>,
     },
     Paste {
@@ -138,6 +140,9 @@ impl Confirm {
 #[derive(Default)]
 pub struct ListingsUi {
     pub open: bool,
+    /// A question or a window of an inventory command shown in it: it
+    /// expands when minimized, at its next frame (`widgets::open_floater`).
+    shown: bool,
     pub data: MarketplaceData,
     tab: usize,
     filter: String,
@@ -288,9 +293,10 @@ pub fn alert_text(alert: &Alert) -> (String, Option<String>) {
 impl ListingsUi {
     /// LLFloaterMarketplaceListings::onOpen; true when GET /merchant must
     /// be sent (initializeSLM).
-    pub fn open(&mut self) -> bool {
+    pub fn open(&mut self, ctx: &egui::Context) -> bool {
         log::info!("marketplace listings window opened");
-        self.open = true;
+        // shown again, a minimized window expands (LLFloaterReg::showInstance)
+        super::widgets::open_floater(ctx, WINDOW, &mut self.open);
         self.data.initialize()
     }
 
@@ -320,6 +326,9 @@ impl ListingsUi {
         let mut actions = Vec::new();
         if !self.open {
             return actions;
+        }
+        if std::mem::take(&mut self.shown) {
+            super::widgets::open_floater(ctx, WINDOW, &mut self.open);
         }
         panel.begin();
         self.expanded.extend(panel.reveal());
@@ -383,7 +392,9 @@ impl ListingsUi {
         }
         if let (true, Some(root)) = (merchant, root) {
             self.data.fetch_contents(root);
-            if inv.folders.get(&root).is_some_and(|f| f.state != FetchState::Fetched) || ui.ctx().cumulative_pass_nr().is_multiple_of(30) {
+            if inv.folders.get(&root).is_some_and(|f| f.state != FetchState::Fetched)
+                || ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT).is_multiple_of(30)
+            {
                 // LLInventoryModelBackgroundFetch::start(mRootFolderId)
                 request_tree(inv, root);
             }
@@ -957,7 +968,11 @@ impl ListingsUi {
                             self.data.associate_listing(inv, folder, source, id);
                         }
                         Confirm::Inventory {
-                            change, cut, after_delete, ..
+                            change,
+                            cut,
+                            editor,
+                            after_delete,
+                            ..
                         } => {
                             if let Some(selection) = after_delete {
                                 actions.push(Action::Delete(Box::new(super::inventory::DeleteRequest {
@@ -965,7 +980,7 @@ impl ListingsUi {
                                     selection: std::sync::Arc::unwrap_or_clone(selection),
                                 })));
                             } else {
-                                actions.push(Action::Paste { change, cut });
+                                actions.push(Action::Paste { change, cut, editor });
                             }
                         }
                         Confirm::Paste { to, ids, copy, .. } => self.paste_inventory(inv, worn, protected, to, &ids, copy, true, actions),
@@ -1156,9 +1171,22 @@ mod tests {
         inv
     }
 
+    /// Me › Marketplace listings expands the minimized window
+    /// (LLFloaterReg::showInstance → LLFloater::openFloater).
+    #[test]
+    fn the_listings_shown_again_expand() {
+        let ctx = egui::Context::default();
+        let mut ui = ListingsUi::default();
+        ui.open(&ctx);
+        assert!(ui.open);
+        crate::ui::widgets::minimize_floater(&ctx, WINDOW);
+        ui.open(&ctx);
+        assert!(crate::ui::widgets::floater_expand_asked(&ctx, WINDOW));
+    }
+
     fn merchant(inv: &Inventory) -> ListingsUi {
         let mut ui = ListingsUi::default();
-        assert!(ui.open());
+        assert!(ui.open(&egui::Context::default()));
         let mut slm = demo::DemoSlm::new(demo::Mode::Merchant);
         ui.data.set_status(slm.merchant());
         let root = mp::root(inv).unwrap();
@@ -1224,30 +1252,33 @@ mod tests {
         // doToSelected asks before "rename" and "properties" too
         let change =
             crate::world::inventory::actions::patch(&inv, item, aurora_llsd::llsd_map! { "name" => "Renamed" }).expect("name edit");
-        assert!(ui.guard_inventory_change(&inv, change, false, false).is_none());
+        let origin = Uuid::from_u128(102);
+        assert!(ui.guard_inventory_change(&inv, change, false, false, origin).is_none());
         assert!(matches!(
             ui.confirm,
             Some(Confirm::Inventory {
                 prompt: Prompt::ActiveChange,
+                editor,
                 ..
-            })
+            }) if editor == origin
         ));
         assert!(ui.open);
         ui.confirm = None;
         let change = crate::world::inventory::actions::patch(&inv, item, aurora_llsd::llsd_map! { "parent_id" => inv.root }).expect("move");
-        assert!(ui.guard_inventory_change(&inv, change, false, false).is_none());
+        assert!(ui.guard_inventory_change(&inv, change, false, false, origin).is_none());
         assert!(matches!(
             ui.confirm,
             Some(Confirm::Inventory {
                 prompt: Prompt::ActiveChange,
+                editor,
                 ..
-            })
+            }) if editor == origin
         ));
         // the same edits outside an active listing go through
         let idle = Uuid::from_u128(8_400_101);
         let change =
             crate::world::inventory::actions::patch(&inv, idle, aurora_llsd::llsd_map! { "name" => "Renamed" }).expect("name edit");
-        assert!(ui.guard_inventory_change(&inv, change, false, false).is_some());
+        assert!(ui.guard_inventory_change(&inv, change, false, false, origin).is_some());
     }
 
     #[test]
@@ -1411,7 +1442,7 @@ mod tests {
                 Way::Paste => (true, false),
                 Way::Menu => (false, false),
             };
-            let passed = ui.guard_inventory_change(&inv, change, cut, drag).is_some();
+            let passed = ui.guard_inventory_change(&inv, change, cut, drag, Uuid::nil()).is_some();
             match &ui.confirm {
                 Some(Confirm::Inventory { prompt, .. }) => Some(*prompt),
                 _ => {

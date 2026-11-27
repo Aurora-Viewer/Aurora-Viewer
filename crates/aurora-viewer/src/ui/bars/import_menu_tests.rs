@@ -31,8 +31,10 @@ fn click_events(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
     ]
 }
 
+/// Build › Import is a submenu of the imports (human request, 2026-11-26):
+/// hovering it lists them, and a click on one asks for its import.
 #[test]
-fn import_menu_is_in_build_and_requests_the_chooser_toggle_without_a_type_submenu() {
+fn import_menu_is_in_build_and_lists_the_imports_in_its_submenu() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
     theme.apply(&ctx, 1.0);
@@ -93,14 +95,30 @@ fn import_menu_is_in_build_and_requests_the_chooser_toggle_without_a_type_submen
         }
         let (output, _) = frame(Vec::new());
         let import = text_position(&output, aurora_i18n::tr!("import-menu"));
-        for _ in 0..3 {
-            let (output, action) = frame(vec![egui::Event::PointerMoved(import)]);
+        let mut output = output;
+        for _ in 0..4 {
+            let (shown, action) = frame(vec![egui::Event::PointerMoved(import)]);
             assert!(matches!(action, BarAction::None));
-            assert!(!has_text(&output, crate::imports::Choice::Texture.label()));
+            output = shown;
         }
-        frame(click_events(import, true));
-        let (_, action) = frame(click_events(import, false));
-        assert!(matches!(action, BarAction::Import));
+        for label in [
+            aurora_i18n::tr!("import-menu-textures"),
+            aurora_i18n::tr!("import-menu-animations"),
+            aurora_i18n::tr!("import-menu-sounds"),
+            aurora_i18n::tr!("import-menu-materials"),
+            aurora_i18n::tr!("import-menu-meshes"),
+            aurora_i18n::tr!("toolbar-import-advanced"),
+            aurora_i18n::tr!("toolbar-import-local"),
+            aurora_i18n::tr!("import-menu-options"),
+        ] {
+            assert!(has_text(&output, label), "{label}");
+        }
+        let textures = text_position(&output, aurora_i18n::tr!("import-menu-textures"));
+        // along the submenu's row first, so the pointer keeps it open
+        frame(vec![egui::Event::PointerMoved(egui::pos2(textures.x, import.y))]);
+        frame(click_events(textures, true));
+        let (_, action) = frame(click_events(textures, false));
+        assert!(matches!(action, BarAction::ImportType(crate::imports::Choice::Texture)));
         assert!(!has_text(&frame(Vec::new()).0, aurora_i18n::tr!("import-menu")));
     }
 }
@@ -174,4 +192,76 @@ fn contents_menu_opens_the_legacy_content_pages_and_the_message_of_the_day() {
         let (action, _) = click(aurora_i18n::tr!("ui-bars-message-of-the-day"));
         assert_eq!(matches!(action, BarAction::MessageOfTheDay), motd);
     }
+}
+
+/// The toolbar's Import is Build › Import: the import window (the quick
+/// import bar it opened is the import floating block now, human request,
+/// 2026-11-25).
+#[test]
+fn menu_toolbar_import_is_a_ready_command_that_opens_the_import_window() {
+    let ctx = egui::Context::default();
+    let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+    assert!(
+        super::super::toolbar::COMMANDS
+            .iter()
+            .any(|command| command.id == "import" && command.ready)
+    );
+    assert!(matches!(run_command(&ctx, "import", &mut panels), BarAction::Import));
+}
+
+/// The quick import bar's Settings is a toolbar button too, "Advanced import"
+/// opens the import window with all its options, and "Import" is named for
+/// what it shows (human requests, 2026-11-25).
+#[test]
+fn the_import_bar_advanced_import_and_settings_are_toolbar_buttons() {
+    let ctx = egui::Context::default();
+    let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+    for (id, label, expected) in [
+        ("import", "import-menu", BarAction::Import),
+        ("import_advanced", "toolbar-import-advanced", BarAction::ImportAdvanced),
+        ("import_settings", "toolbar-import-settings", BarAction::ImportSettings),
+    ] {
+        let command = crate::ui::toolbar::command(id).expect("in the catalogue");
+        assert!(command.ready, "{id}");
+        assert_eq!(command.key, label, "{id}");
+        let actual = run_command(&ctx, id, &mut panels);
+        assert_eq!(std::mem::discriminant(&actual), std::mem::discriminant(&expected), "{id}");
+    }
+}
+
+#[test]
+fn menu_toolbar_first_batch_dispatches_the_existing_actions_and_windows() {
+    let ctx = egui::Context::default();
+    let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+    for (id, expected) in [
+        ("ik_edit", BarAction::IkEdit),
+        ("build_edit", BarAction::BuildButton(1)),
+        ("build_create", BarAction::BuildButton(2)),
+        ("build_land", BarAction::BuildButton(3)),
+        ("build_focus", BarAction::BuildButton(4)),
+        ("build_grab", BarAction::BuildButton(5)),
+        ("edit_particles", BarAction::EditParticles),
+        ("import", BarAction::Import),
+        ("blender_live", BarAction::BlenderLive),
+        ("buy_currency", BarAction::BuyCurrency),
+        ("stand_up", BarAction::StandUp),
+        ("fly_override", BarAction::ToggleFlyOverride),
+        ("movelock_options", BarAction::MoveLockOptions),
+        ("quickjump", BarAction::ToggleQuickjump),
+        ("movement_enhancer", BarAction::MovementEnhancer),
+    ] {
+        assert!(crate::ui::toolbar::command(id).unwrap().ready, "{id}");
+        let actual = run_command(&ctx, id, &mut panels);
+        assert_eq!(std::mem::discriminant(&actual), std::mem::discriminant(&expected), "{id}");
+        if let BarAction::BuildButton(expected_mode) = expected {
+            assert!(matches!(actual, BarAction::BuildButton(mode) if mode == expected_mode), "{id}");
+        }
+    }
+    panels.experiences = false;
+    panels.money_tracker = false;
+    for id in ["money_tracker", "experiences"] {
+        assert!(crate::ui::toolbar::command(id).unwrap().ready);
+        assert!(matches!(run_command(&ctx, id, &mut panels), BarAction::None));
+    }
+    assert!(panels.money_tracker && panels.experiences);
 }

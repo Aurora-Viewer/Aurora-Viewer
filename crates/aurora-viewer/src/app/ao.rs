@@ -44,6 +44,8 @@ impl App {
         }
         if self.demo && self.frame_count == 360 {
             match self.ao_demo.as_deref() {
+                // the Mini AO window alone, without the manager
+                Some("mini") => self.panels.ao = false,
                 Some(mode) if mode.starts_with("quick") => {
                     self.panels.ao = false;
                     self.toolbar_ui.ao_quick.open = true;
@@ -500,7 +502,7 @@ impl App {
             },
             Action::ShowRecovery(id) => {
                 self.inventory_ui.show_folder(&self.world.inventory, id);
-                self.panels.inventory = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             Action::Edit(change, select) => self.queue_ao_edit(change, select, None),
             Action::EditContainer(change, target) => self.queue_ao_edit(change, None, Some(target)),

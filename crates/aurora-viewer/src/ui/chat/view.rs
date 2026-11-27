@@ -196,6 +196,10 @@ pub struct View {
     filter: String,
     find: String,
     layout: Layout,
+    /// Emotes join their sender's group in the Aurora layout (Preferences >
+    /// Chat), as asked for the next sync and as the rows were built.
+    group_emotes: bool,
+    grouped_emotes: bool,
     first_unread: Option<u64>,
     /// The blocked lines' mode and how many folds were opened.
     blocked: (crate::settings::BlockedChat, usize),
@@ -297,10 +301,12 @@ pub struct Grouping<'a> {
     prev_day: Option<Slt>,
     today: Slt,
     layout: Layout,
+    group_emotes: bool,
 }
 
 /// An emote ("/me waves") is said by its sender's name: in Aurora's
-/// workspace it stands alone, with its own head.
+/// workspace it stands alone, with its own head, unless Preferences > Chat
+/// groups emotes with the sender's messages.
 fn is_emote(line: &ChatLine) -> bool {
     line.text.starts_with("/me ") || line.text.starts_with("/me'")
 }
@@ -317,7 +323,15 @@ impl<'a> Grouping<'a> {
             prev_day: None,
             today,
             layout,
+            group_emotes: false,
         }
+    }
+
+    /// Emotes go through the same sender and time checks as the other
+    /// lines in the Aurora layout, instead of standing alone.
+    pub fn grouping_emotes(mut self, on: bool) -> Grouping<'a> {
+        self.group_emotes = on;
+        self
     }
 
     pub fn look(&mut self, line: &'a ChatLine) -> Look {
@@ -336,7 +350,10 @@ impl<'a> Grouping<'a> {
         }
         let (gap, emotes_alone) = match self.layout {
             Layout::Classic => (GROUP_SECONDS, false),
-            Layout::Aurora | Layout::Compact => (WORKSPACE_GROUP_SECONDS, true),
+            // Compact names the sender on every row, so an emote there already
+            // reads as part of the run: grouping it would only drop a 2 px gap.
+            Layout::Aurora => (WORKSPACE_GROUP_SECONDS, !self.group_emotes),
+            Layout::Compact => (WORKSPACE_GROUP_SECONDS, true),
         };
         let emote = emotes_alone && is_emote(line);
         look.header = emote
@@ -371,6 +388,31 @@ fn estimate(line: &ChatLine, look: Look, width: f32) -> f32 {
         .map(|l| (l.chars().count() as f32 / per_row).ceil().max(1.0))
         .sum::<f32>();
     rows * 18.0 + if look.header { 36.0 } else { 0.0 } + if look.marker.is_some() { 22.0 } else { 0.0 } + GAP
+}
+
+/// The viewport's top on screen. The scroll area rounds its content's
+/// origin (`rect`, egui's `content_max_rect`) to the pixel, not its offset:
+/// `rect.top() + viewport.top()` is up to half a pixel off the area's top,
+/// by an amount that changes with every fractional offset. Rows placed from
+/// it bobbed by a pixel on each frame that measured rows out of sight (a
+/// conversation just opened: the human's report of 2026-11-17). The area
+/// clips its content to its exact top; that one is used when it is the
+/// same place (a window pushed past the screen's top clips higher).
+fn exact_top(ui: &egui::Ui, rect: egui::Rect, viewport: egui::Rect) -> f32 {
+    let rounded = rect.top() + viewport.top();
+    let clip = ui.clip_rect().top();
+    if (clip - rounded).abs() <= 0.5 / ui.pixels_per_point() + 0.01 {
+        clip
+    } else {
+        rounded
+    }
+}
+
+/// `y` on the nearest physical pixel: a row stands on whole pixels, like
+/// the scroll area's own content, and on the same one as long as its exact
+/// place does not move.
+fn snap(y: f32, pixels_per_point: f32) -> f32 {
+    (y * pixels_per_point).round() / pixels_per_point
 }
 
 impl View {
@@ -442,6 +484,12 @@ impl View {
         self.rows[start..].iter().filter(|r| keep(r.line)).count()
     }
 
+    /// Whether emotes join their sender's group in the Aurora layout;
+    /// the rows follow at the next `sync`.
+    pub fn set_group_emotes(&mut self, on: bool) {
+        self.group_emotes = on;
+    }
+
     /// Bring the rows up to date with the conversation. True when the set
     /// of rows matching the find text may have changed.
     pub fn sync(&mut self, s: &Source, width: f32) -> bool {
@@ -454,7 +502,8 @@ impl View {
             || self.filter != s.filter
             || self.find != s.find
             || self.layout != s.layout
-            || self.blocked != (s.blocked.mode, s.blocked.opened.len());
+            || self.blocked != (s.blocked.mode, s.blocked.opened.len())
+            || self.grouped_emotes != self.group_emotes;
         if !layout_changed
             && self.revision == s.clock.revision
             && self.len == s.lines.len()
@@ -481,6 +530,7 @@ impl View {
         s.find.clone_into(&mut self.find);
         self.layout = s.layout;
         self.blocked = (s.blocked.mode, s.blocked.opened.len());
+        self.grouped_emotes = self.group_emotes;
         self.first_unread = s.first_unread;
         self.today = today_key;
 
@@ -488,7 +538,7 @@ impl View {
         self.rows.clear();
         self.hits.clear();
         self.unmeasured = 0;
-        let mut grouping = Grouping::with(today, s.layout);
+        let mut grouping = Grouping::with(today, s.layout).grouping_emotes(self.group_emotes);
         let (shown, folds): (Vec<usize>, Vec<usize>) = blocked_rows(s.lines, first, s.blocked, !s.filter.is_empty())
             .into_iter()
             .filter(|&(i, _)| s.filter.is_empty() || matches(&s.lines[i], s.filter))
@@ -761,16 +811,19 @@ impl View {
                 self.left_end.get_or_insert(first + self.len as u64);
             }
         }
+        // the content's top on screen, unrounded: rows are placed from it
+        let origin = exact_top(ui, rect, viewport) - viewport.top();
         let (base, view_top) = if anchored {
             // the viewport's top once at the end, where the scroll area
             // will be at the next frame
             let top = height - viewport.height();
             self.anchored_top = Some(top);
-            (rect.top() + lift + viewport.top() - top, self.total - viewport.height())
+            (origin + lift + viewport.top() - top, self.total - viewport.height())
         } else {
             self.anchored_top = None;
-            (rect.top() + lift - correction, viewport.top() + correction)
+            (origin + lift - correction, viewport.top() + correction)
         };
+        let ppp = ui.pixels_per_point();
         let view_bottom = view_top + viewport.height();
         if let Some(r) = target.and_then(|t| self.rows.get(t)) {
             // at once: an animated scroll would run over the corrections of
@@ -789,9 +842,10 @@ impl View {
         positions.clear();
         while i < self.rows.len() && self.rows[i].y < view_bottom {
             let row = self.rows[i];
-            let row_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), base + row.y), egui::vec2(width, row.h));
+            let top = base + row.y;
+            let row_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), snap(top, ppp)), egui::vec2(width, row.h));
             if real_pass && row_rect.intersects(ui.clip_rect()) {
-                positions.push((first + row.line as u64, row_rect.top() - rect.top() - viewport.top()));
+                positions.push((first + row.line as u64, top - origin - viewport.top()));
             }
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
@@ -863,6 +917,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         }
     }
 
@@ -1028,6 +1083,34 @@ mod tests {
         let mut g = Grouping::new(today);
         let classic: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
         assert_eq!(classic, [true, true, false, false, true]);
+    }
+
+    /// With emotes grouped (Preferences > Chat), an emote joins its
+    /// sender's group in the Aurora layout and the next line goes on in it;
+    /// another sender's emote and the time gap still open a group. Compact
+    /// and the option off leave each emote alone.
+    #[test]
+    fn grouped_emotes_join_their_senders_group() {
+        let lines = [
+            line("Jane", "one", 0),
+            line("Jane", "/me waves", 10),
+            line("Jane", "after the emote", 20),
+            line("Bob", "/me nods", 30),
+            line("Bob", "/me' s hat falls", 40),
+            line("Bob", "/me laughs", 40 + 480),
+        ];
+        let today = Slt::of(lines[0].time);
+        let mut g = Grouping::with(today, Layout::Aurora).grouping_emotes(true);
+        let looks: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
+        assert_eq!(looks, [true, false, false, true, false, true]);
+        // Compact keeps its rows as they are: the option is the Aurora style's
+        let mut g = Grouping::with(today, Layout::Compact).grouping_emotes(true);
+        let compact: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
+        assert_eq!(compact, [true, true, true, true, true, true]);
+        // off, the default: each emote and the line after it stand alone
+        let mut g = Grouping::with(today, Layout::Aurora);
+        let off: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
+        assert_eq!(off, [true, true, true, true, true, true]);
     }
 
     /// A whisper, then a shout, then a normal line of ours: each under its
@@ -1213,6 +1296,67 @@ mod tests {
         }
         let first = bottoms[1];
         assert!(bottoms[1..].iter().all(|b| (b - first).abs() < 0.5), "{bottoms:?}");
+    }
+
+    /// A conversation just opened measures its rows out of sight a few per
+    /// frame, each a fraction of a point off its estimate, and the scroll
+    /// area follows the end by as much: the messages in sight must stay on
+    /// the same pixels, at the end as away from it. They bobbed by one pixel
+    /// for about a second, the scroll area rounding its content's origin at
+    /// each new fractional offset (the human's report of 2026-11-17).
+    #[test]
+    fn rows_measured_out_of_sight_leave_those_in_sight_on_their_pixels() {
+        measure_rows_per_frame(Some(2));
+        let lines: VecDeque<ChatLine> = (0..120).map(|i| line("Jane", &format!("line {i}"), i * 600)).collect();
+        let clock = LineClock::default();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        // (`scroll_to`: away from the end, row 60 brought in sight)
+        for scroll_to in [None, Some(60)] {
+            let mut view = View::default();
+            if let Some(row) = scroll_to {
+                view.scroll_to(row);
+            }
+            let mut tops = Vec::new();
+            for _ in 0..100 {
+                let mut watched = None;
+                frames.run(Vec::new(), |ui| {
+                    ui.set_max_width(400.0);
+                    crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), ("measure", scroll_to))
+                        .stick_to_bottom(true)
+                        .animated(false)
+                        .auto_shrink([false, false])
+                        .max_height(300.0)
+                        .min_scrolled_height(300.0)
+                        .show_viewport(ui, |ui, viewport| {
+                            let source = Source {
+                                lines: &lines,
+                                clock,
+                                filter: "",
+                                find: "",
+                                layout: Layout::Classic,
+                                first_unread: None,
+                                blocked: Blocked::default(),
+                            };
+                            view.sync(&source, 400.0);
+                            view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+                                // a text line's height, between two pixels
+                                let h = 20.0 + (row.line % 7) as f32 * 0.13;
+                                let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.max_rect().width(), h), egui::Sense::hover());
+                                if painted && row.line == scroll_to.unwrap_or(119) {
+                                    watched = Some(rect.top());
+                                }
+                            });
+                        });
+                });
+                tops.push(watched);
+            }
+            assert!(view.unmeasured == 0, "every row measured within the frames");
+            // (from the second frame: the first brings the row in sight)
+            let settled = tops[2];
+            assert!(settled.is_some());
+            assert!(tops[2..].iter().all(|t| *t == settled), "{scroll_to:?}: {tops:?}");
+        }
+        measure_rows_per_frame(None);
     }
 
     /// Away from the end, the view says how far it is and counts the lines

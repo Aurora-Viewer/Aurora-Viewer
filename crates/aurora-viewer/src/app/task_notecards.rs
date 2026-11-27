@@ -114,19 +114,24 @@ impl App {
             self.rlva_view_blocked(7);
             return;
         }
-        // a preview: the rule of the contents' Open entries, on the raw item
-        if metadata.asset_type != 7
-            && !self
+        // a preview: the rule of the contents' Open entries, on the raw item;
+        // one RLVa keeps closed (@viewtexture) says so
+        if metadata.asset_type != 7 {
+            let raw = self
                 .build
                 .contents
                 .objects
                 .get(&object)
                 .and_then(|inv| inv.items.iter().find(|it| it.item_id == item))
                 .and_then(aurora_net::build::TaskItem::to_inv_item)
-                .zip(self.world.objects.index_of_uuid(&object))
-                .is_some_and(|(raw, idx)| self.build.task_preview_allowed(&self.world, idx, &raw))
-        {
-            return;
+                .zip(self.world.objects.index_of_uuid(&object));
+            let Some((raw, idx)) = raw.filter(|(raw, idx)| self.build.task_preview_offered(&self.world, *idx, raw)) else {
+                return;
+            };
+            if !self.build.task_preview_allowed(&self.world, idx, &raw) {
+                self.rlva_view_blocked(raw.asset_type);
+                return;
+            }
         }
         let download = metadata.asset_type == 7 && metadata.owner_mask & rules::COPY != 0 && !metadata.asset_id.is_nil();
         self.task_notecards.insert((object, item), TaskNotecard::new(metadata));
@@ -233,6 +238,7 @@ impl App {
             if d.state.preview_source.is_some() {
                 d.state.preview_can_edit = allowed;
             }
+            d.state.plays.clone_from(&self.inventory_ui.plays);
             // RLVa's @viewtexture refuses the textures it embeds as well
             d.inventory.rlva_preview_mask = self.world.inventory.rlva_preview_mask;
             if metadata.is_none() {
@@ -269,11 +275,7 @@ impl App {
                 {
                     embedded.push((editor, notecard, marker, copy, object));
                 } else if matches!(action, InvAction::Sound(_) | InvAction::Animation { .. }) {
-                    // the preview's Play buttons: the inventory's own actions,
-                    // and the window remembers what it started
-                    if let InvAction::Animation { asset, local, start } = &action {
-                        d.state.playing = start.then_some((*asset, *local));
-                    }
+                    // the preview's Play buttons: the inventory's own actions
                     forwarded.push(action);
                 }
             }

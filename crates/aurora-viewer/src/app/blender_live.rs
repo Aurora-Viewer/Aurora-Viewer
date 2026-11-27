@@ -59,11 +59,15 @@ impl App {
             && self.imports.pending_files.is_none()
             && self.imports.entries.len() < 512
             && !self.blender_live.import.busy();
+        self.blender_live.update_thumbnails(&self.scene.jobs, &self.world.avatar_lib, ctx);
         if self.blender_live.show(ctx, palette, can_upload) {
             self.blender_live.start_requested = true;
         }
         if std::mem::take(&mut self.blender_live.save_addon) {
             self.blender_live.addon.save(&self.scene.jobs, ctx);
+        }
+        if std::mem::take(&mut self.blender_live.save_maya_addon) {
+            self.blender_live.maya_addon.save(&self.scene.jobs, ctx);
         }
         if let Some(action) = self.blender_live.shape.requested.take() {
             self.send_blender_shape(action);
@@ -103,13 +107,39 @@ impl App {
         for asset in self.blender_live.assets.drain(..) {
             self.scene.retire_preview_mesh(asset);
         }
+        self.scene.release_preview_images();
         self.blender_live.triangles = 0;
         self.blender_live.revision = None;
         self.scene.reset_skeleton(self.world.agent_id, false);
     }
 
     pub(super) fn update_blender_live(&mut self, renderer: &mut aurora_render::Renderer) {
+        // the Avatar tab's bend shows on our avatar (and the Fit lab's
+        // mannequins) while the preview runs or the mannequins stand
+        self.scene.preview_bend = if self.blender_live.running() || self.blender_live.fit.shown {
+            self.blender_live.bend
+        } else {
+            Default::default()
+        };
+        // the Fit lab's own clips (the range of motion, the pelvis anchor),
+        // built here, before a mannequin plays one
+        if self.blender_live.fit.shown && !std::mem::replace(&mut self.blender_live.fit.poses_registered, true) {
+            for (id, clip) in crate::world::fit_poses::animations() {
+                let bound = crate::scene::anim::BoundAnim::bind(clip, &self.world.avatar_lib.rig);
+                self.scene.anims.insert(id, Arc::new(bound));
+            }
+        }
+        let place = std::mem::take(&mut self.blender_live.fit.place);
+        self.world
+            .update_fit_lab(&self.blender_live.fit.wanted(), self.blender_live.fit.motion, place, Instant::now());
         self.blender_live.capture_placements(&mut self.world);
+        self.blender_live.still = self.settings.reduce_motion;
+        if std::mem::take(&mut self.blender_live.undo_requested) {
+            self.blender_live.undo_placement();
+        }
+        if self.blender_live.undo.as_ref().is_some_and(|undo| undo.expired(Instant::now())) {
+            self.blender_live.undo = None;
+        }
         if let Some((source, action)) = self.blender_live.object_action.take() {
             let source = if matches!(
                 action,
@@ -188,6 +218,7 @@ impl App {
             self.blender_live.placements.clear();
             self.blender_live.placement_dirty.clear();
             self.blender_live.object_action = None;
+            self.blender_live.undo = None;
             self.blender_live.world_origin = None;
             self.clear_blender_preview();
         }
@@ -216,11 +247,60 @@ impl App {
             if mode == "plugins" || mode.starts_with("installer-") {
                 self.blender_live.tab = crate::blender_live::Tab::Plugins;
             }
+            // the window's other tabs, for the captures
+            use crate::blender_live::Tab;
+            match std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").unwrap_or_default().as_str() {
+                "place" => self.blender_live.tab = Tab::Place,
+                "avatar" => self.blender_live.tab = Tab::Avatar,
+                "import" => self.blender_live.tab = Tab::Import,
+                "plugins" => self.blender_live.tab = Tab::Plugins,
+                _ => {}
+            }
+            let quick_look = std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "quick-look");
             self.blender_live.installer.demo(&mode);
             if mode.starts_with("shape") {
                 self.demo_blender_shape(mode == "shape-readonly");
             }
-            let fixture = if mode.starts_with("static") {
+            let fixture = if mode == "sleeves" || mode.starts_with("fit-lab") {
+                if mode == "sleeves" {
+                    // the Avatar tab's bend, set, so it shows on the avatar and in Quick look
+                    self.blender_live.bend.elbows = 90.0;
+                    self.blender_live.bend.knees = 60.0;
+                } else {
+                    // the Fit lab's mannequins, in the sleeves: the demo's
+                    // stand-ins for the stock stand, walk and sit on the
+                    // ground, which a grid's asset server gives
+                    let sit = (
+                        crate::world::body::ANIM_SIT_GROUND_CONSTRAINED,
+                        crate::demo::first_person_ground_animation(),
+                    );
+                    for (id, anim) in crate::demo::link::animations().into_iter().chain([sit]) {
+                        let bound = crate::scene::anim::BoundAnim::bind(anim, &self.world.avatar_lib.rig);
+                        self.scene.anims.insert(id, Arc::new(bound));
+                    }
+                    self.blender_live.tab = Tab::Avatar;
+                    self.blender_live.fit.shown = true;
+                    self.blender_live.fit.clip = mode == "fit-lab-clip";
+                    if mode == "fit-lab-sit" || mode == "fit-lab-sit-stand" {
+                        self.blender_live.fit.motion = crate::world::mannequins::Motion::Sit;
+                    }
+                    if mode == "fit-lab-range" {
+                        self.blender_live.fit.motion = crate::world::mannequins::Motion::Range(None);
+                    }
+                    if let Some(name) = mode.strip_prefix("fit-lab-pose-") {
+                        let pose = crate::world::fit_poses::Pose::ALL.into_iter().find(|p| p.key() == name);
+                        self.blender_live.fit.motion = crate::world::mannequins::Motion::Range(pose);
+                    }
+                    if mode == "fit-lab-walk" {
+                        self.blender_live.fit.motion = crate::world::mannequins::Motion::Walk;
+                    }
+                }
+                crate::blender_live::demo_sleeves_fixture(&self.world.avatar_lib.rig)
+            } else if mode == "warnings" {
+                crate::blender_live::demo_warnings_fixture(&self.world.avatar_lib.rig)
+            } else if mode == "static-repaint" {
+                crate::blender_live::demo_repaint_fixture(&self.world.avatar_lib.rig, false)
+            } else if mode.starts_with("static") {
                 crate::blender_live::demo_static_fixture(&self.world.avatar_lib.rig, mode.starts_with("static-linked"))
             } else {
                 crate::blender_live::demo_fixture(&self.world.avatar_lib.rig, mode != "1")
@@ -229,6 +309,9 @@ impl App {
                 Ok(snapshot) if !mode.starts_with("shape") && mode != "lods" => {
                     self.blender_live.receive(snapshot);
                     self.blender_live.owner = Some(self.world.agent_id);
+                    if quick_look && let Some(source) = self.blender_live.selected {
+                        self.blender_live.open_quick_look(source);
+                    }
                     if mode == "objects" {
                         let ids: Vec<_> = self
                             .blender_live
@@ -252,10 +335,75 @@ impl App {
             }
         }
         if let Some(snapshot) = self.blender_live.take_latest() {
+            if self.demo {
+                self.blender_live.arrival = Some((snapshot.revision, Instant::now(), self.frame_count));
+            }
             if let Some(old) = self.blender_live.receive(snapshot) {
                 self.scene.jobs.discard(old);
             }
             self.blender_live.owner = Some(self.world.agent_id);
+        }
+        // `fit-lab-sit-stand`: the mannequins sat on the ground stand up
+        if self.demo && self.frame_count == 520 && std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "fit-lab-sit-stand") {
+            self.blender_live.fit.motion = crate::world::mannequins::Motion::Stand;
+        }
+        // Quick look and the warnings in front of the windows a demo opens over it
+        if self.demo
+            && (400..=440).contains(&self.frame_count)
+            && (std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "quick-look")
+                || std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "warnings" || mode.starts_with("fit-lab")))
+        {
+            crate::ui::widgets::bring_floater_front(&self.egui_ctx, "blender_live");
+        }
+        // the `sweep` tab: Blender sends the selected object again every few
+        // frames, as during a drag, so its card's update sweep keeps running
+        if self.demo
+            && self.frame_count >= 400
+            && self.frame_count.is_multiple_of(8)
+            && std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "sweep")
+            && let Some(source) = self.blender_live.selected
+            && let Some(mut snapshot) = self.blender_live.snapshot.clone()
+        {
+            snapshot.revision += 1;
+            for prepared in snapshot.sources.iter_mut().filter(|s| s.id == source) {
+                prepared.digest = prepared.digest.wrapping_add(1);
+            }
+            if let Some(old) = self.blender_live.receive(snapshot) {
+                self.scene.jobs.discard(old);
+            }
+        }
+        // `static-repaint`: Blender repaints the object's texture, nothing
+        // else, so its card's thumbnail and time follow the new pixels
+        if self.demo && self.frame_count == 600 && std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "static-repaint") {
+            match crate::blender_live::demo_repaint_fixture(&self.world.avatar_lib.rig, true) {
+                Ok(snapshot) => {
+                    if let Some(old) = self.blender_live.receive(snapshot) {
+                        self.scene.jobs.discard(old);
+                    }
+                }
+                Err(error) => self.blender_live.error = Some(error),
+            }
+        }
+        // `static-derez-closed`: the window closes, then the world's menu
+        // derezzes the object, through the same command as the pie menu
+        if self.demo
+            && self.frame_count == 700
+            && std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "static-derez-closed")
+            && let Some(key) = self
+                .blender_live
+                .selected
+                .and_then(|source| self.blender_live.root(source))
+                .and_then(|id| self.world.objects.index_of_uuid(&id))
+                .and_then(|idx| self.world.objects.get(idx))
+                .map(|object| object.key)
+        {
+            self.send(NetCommand::Build(aurora_net::build::BuildCmd::DeRez {
+                handle: key.region,
+                local_ids: vec![key.local_id],
+                destination: aurora_net::build::derez::TAKE_INTO_AGENT_INVENTORY,
+                destination_id: uuid::Uuid::nil(),
+                group_id: uuid::Uuid::nil(),
+            }));
         }
         if self.demo
             && self.frame_count == 450
@@ -285,7 +433,7 @@ impl App {
             };
             if matches!(
                 mode.as_str(),
-                "static" | "static-linked" | "static-linked-child" | "static-linked-menu"
+                "static" | "static-linked" | "static-linked-child" | "static-linked-menu" | "static-derez-closed" | "static-repaint"
             ) && let Some(placement) = self.blender_live.placements.get(&source)
             {
                 let position = if let Some(parent) = placement.parent.and_then(|id| self.blender_live.placements.get(&id)) {
@@ -300,7 +448,13 @@ impl App {
                     &self.settings.camera,
                 );
             }
-            self.blender_live.object_action = Some((source, action));
+            // `static-derez-closed` keeps the camera on the object, unselected,
+            // so its Derez shows
+            if mode == "static-derez-closed" {
+                self.blender_live.open = false;
+            } else {
+                self.blender_live.object_action = Some((source, action));
+            }
         }
         if self.demo
             && self.frame_count == 520
@@ -360,6 +514,28 @@ impl App {
         {
             self.install_blender_snapshot(snapshot, renderer);
         }
+        // demo: how long a revision from the add-on takes to be drawn, its
+        // geometry and textures uploaded (docs/TESTING.md, LiveMesh)
+        if let Some((revision, at, frame)) = self.blender_live.arrival
+            && self.blender_live.revision == Some(revision)
+            && self.blender_live.objects.iter().all(|id| {
+                self.world
+                    .objects
+                    .index_of_uuid(id)
+                    .and_then(|idx| self.scene.gpu.get(idx))
+                    .is_some_and(|gpu| {
+                        !gpu.faces.is_empty()
+                            && matches!(gpu.geom, Some(crate::scene::GeomKey::Mesh { id, .. }) if self.blender_live.assets.contains(&id))
+                    })
+            })
+        {
+            self.blender_live.arrival = None;
+            log::info!(
+                "demo Blender live: revision {revision} drawn {:.1} ms, {} frames after it arrived",
+                at.elapsed().as_secs_f64() * 1000.0,
+                self.frame_count - frame
+            );
+        }
         if self.demo && self.blender_live.demo_started && self.frame_count.is_multiple_of(120) {
             let (appearances, images) = self.scene.preview_appearance_counts();
             let ready = self
@@ -396,6 +572,18 @@ impl App {
         }
     }
 
+    /// The Fit lab's clipping map: on our avatar and the mannequins, over
+    /// the LiveMesh objects we wear and their copies, once this frame's
+    /// row is dressed and its snapshot installed (their object indices).
+    pub(super) fn update_fit_clip(&mut self) {
+        // (never in a photo)
+        let shown = self.blender_live.fit.clip && self.snapshots.capturing.is_none();
+        self.scene.fit_clip = shown.then(|| {
+            let (avatars, garments) = self.world.fit_clip_targets(&self.blender_live.objects);
+            (avatars.into_iter().collect(), garments.into_iter().collect())
+        });
+    }
+
     fn install_blender_snapshot(&mut self, snapshot: Prepared, renderer: &mut aurora_render::Renderer) {
         // Hidden and derezzed sources also retain their current hierarchy.
         let initial: Vec<_> = snapshot
@@ -415,12 +603,20 @@ impl App {
                 placement.position.z = floor + offset;
             }
         }
+        // every image of the snapshot, hidden objects' too: on the GPU, they
+        // need their staged copies no more
+        if !self.scene.install_preview_images(&snapshot.images, renderer) {
+            let scene = &self.scene;
+            self.blender_live
+                .restage_missing(renderer.staging_pool(), |id| scene.has_preview_image(id));
+            return;
+        }
+        let scene = &self.scene;
+        self.blender_live.release_staged(|id| scene.has_preview_image(id));
+        drop(snapshot);
         let Some(snapshot) = self.blender_live.visible_snapshot() else {
             return;
         };
-        if !self.scene.install_preview_images(&snapshot.images, renderer) {
-            return;
-        }
         let Some(parent) = self
             .world
             .objects

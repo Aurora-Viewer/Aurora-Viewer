@@ -39,6 +39,7 @@ pub(super) fn show(
         EditDialog::Properties(..) => aurora_i18n::tr!("ui-inventory-dialogs-object-properties"),
         EditDialog::Delete(_, true) => aurora_i18n::tr!("ui-inventory-dialogs-purge-selection"),
         EditDialog::Delete(_, false) => aurora_i18n::tr!("ui-inventory-dialogs-delete-selection"),
+        EditDialog::DetachDelete(_) => aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
         EditDialog::Empty(_) => aurora_i18n::tr!("common-empty-trash"),
         EditDialog::Ungroup(_) => aurora_i18n::tr!("ui-inventory-dialogs-ungroup-folder"),
         EditDialog::Discard(..) | EditDialog::SaveEmbedded(..) => aurora_i18n::tr!("ui-inventory-dialogs-save-changes"),
@@ -51,7 +52,7 @@ pub(super) fn show(
         dialog,
         EditDialog::Discard(_) | EditDialog::CopyEmbedded(..) | EditDialog::SaveEmbedded(_)
     );
-    let confirmation = matches!(dialog, EditDialog::Delete(..) | EditDialog::Empty(_));
+    let confirmation = matches!(dialog, EditDialog::Delete(..) | EditDialog::DetachDelete(_) | EditDialog::Empty(_));
     let window_id = format!(
         "inventory_{}_{}",
         if properties {
@@ -183,6 +184,11 @@ pub(super) fn show(
                 } else {
                     aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")
                 });
+                // a purge is the one change the inventory's Undo never takes
+                // back (`world::inventory::undo`)
+                if *purge {
+                    ui.label(aurora_i18n::tr!("inventory-purge-no-undo"));
+                }
                 // DeleteItems ignore box; PurgeSelectedItems has none (#2344).
                 if !*purge {
                     ui.add_space(8.0);
@@ -220,10 +226,37 @@ pub(super) fn show(
                     }
                 }
             }
+            // "DeleteWornItems" (notifications.xml): no ignore box.
+            EditDialog::DetachDelete(ids) => {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(if ids.len() == 1 {
+                        aurora_i18n::tr!("ui-inventory-dialogs-delete", value0 = rules::name(inv, ids[0]).to_string())
+                    } else {
+                        aurora_i18n::tr!("ui-inventory-dialogs-delete-the-selected-items", value0 = format!("{}", ids.len()))
+                    })
+                    .strong()
+                    .color(p.ink),
+                );
+                ui.add_space(4.0);
+                ui.label(aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete-body"));
+                if confirmation_buttons(
+                    ui,
+                    p,
+                    st.pending.is_none(),
+                    aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
+                    &mut done,
+                    st.ui_id,
+                ) {
+                    super::delete::start_detach(inv, st, prefs, facts, actions, std::mem::take(ids));
+                    done = true;
+                }
+            }
             EditDialog::Empty(id) => {
                 ui.label(aurora_i18n::tr!(
                     "ui-inventory-dialogs-all-items-in-trash-will-be-permanently-deleted"
                 ));
+                ui.label(aurora_i18n::tr!("inventory-purge-no-undo"));
                 if confirmation_buttons(
                     ui,
                     p,
@@ -592,7 +625,11 @@ fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &s
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(enabled, |ui| {
                 // the Legacy Viewer's default="true" OK: Enter clicks it
-                let response = widgets::default_button_sized(ui, p, label, Vec2::new(120.0, 28.0));
+                // 120 px, wider when the label needs it ("Detach and Delete")
+                let font = widgets::control_font(ui, 12.0);
+                let text = ui.painter().layout_no_wrap(label.to_owned(), font, p.ink).size().x;
+                let width = (text + 2.0 * ui.spacing().button_padding.x + 8.0).max(120.0);
+                let response = widgets::default_button_sized(ui, p, label, Vec2::new(width, 28.0));
                 if cfg!(test) || super::delete::demo_enabled() {
                     ui.ctx()
                         .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_delete_confirm", window)), response.rect.center()));
@@ -628,6 +665,7 @@ pub(super) fn preview(
     let Some(it) = inv.items.get(&id) else {
         st.preview = None;
         super::clipboard::return_document_focus(ctx, st);
+        stop_shown_animation(st, actions);
         return;
     };
     if it.asset_type == 20 {
@@ -670,7 +708,41 @@ pub(super) fn preview(
         size,
     )
     .cascade(crate::ui::widgets::CascadeGroup::inventory(it.asset_type))
+    .rename_title(
+        it.name.clone(),
+        it.asset_type == 7 && editable && rules::renameable(inv, id) && st.pending.is_none() && !st.save_pending,
+    )
     .show(ctx, p, &mut open, |ui| {
+        if it.asset_type == 7 {
+            let editor_id = egui::Id::unique(("inventory_document_text", st.ui_id, id));
+            let holder = ui.interact(
+                ui.available_rect_before_wrap(),
+                editor_id.with("notecard_window_focus"),
+                egui::Sense::focusable_noninteractive(),
+            );
+            // A read-only document owns the shortcut, not an editing caret.
+            // A click on its window also reactivates it after using another
+            // viewer panel, without taking the key from an overlaid floater.
+            // Reactivate the notecard text only for clicks inside its body.
+            // The title's inline rename field shares the window layer and
+            // must retain focus when its caret is moved by clicking.
+            let clicked_here = ui
+                .input(|input| input.pointer.any_pressed().then(|| input.pointer.interact_pos()).flatten())
+                .is_some_and(|pos| holder.rect.contains(pos) && ctx.layer_id_at(pos) == Some(ui.layer_id()));
+            if st.preview_text.as_ref().is_some_and(Result::is_ok)
+                && !ui.is_sizing_pass()
+                && ctx.memory(|memory| memory.top_modal_layer().is_none())
+                && !st.notecard_find.open
+                && (st.notecard_focus_pending || clicked_here)
+            {
+                st.notecard_focus_pending = false;
+                if editable && !st.save_pending && view != super::markdown::View::Markdown {
+                    ctx.memory_mut(|memory| memory.request_focus(editor_id));
+                } else {
+                    holder.request_focus();
+                }
+            }
+        }
         if it.asset_type == 0 {
             st.wanted_images.insert(it.asset_id);
             if let Some(t) = images.get(&it.asset_id) {
@@ -682,8 +754,8 @@ pub(super) fn preview(
                         .fit_to_original_size(1.0)
                         .sense(egui::Sense::click_and_drag()),
                 );
-                if drag_inventory.items.get(&id).is_some_and(|item| item.asset_type == 0) {
-                    response.dnd_set_drag_payload(InvDrag(id));
+                if drag_inventory.items.get(&id).is_some_and(|item| item.asset_type == 0) && super::drag::begins(ui, &response) {
+                    egui::DragAndDrop::set_payload(ui.ctx(), InvDrag(id));
                 }
                 ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_texture_preview", st.ui_id, id)), response.rect));
             } else {
@@ -715,8 +787,8 @@ pub(super) fn preview(
                 prefs.notecard_view = view;
                 let editor = egui::Id::unique(("inventory_document_text", st.ui_id, id));
                 ctx.memory_mut(|m| {
-                    m.request_focus(if view == super::markdown::View::Markdown {
-                        editor.with("markdown")
+                    m.request_focus(if !editable || view == super::markdown::View::Markdown {
+                        editor.with("notecard_window_focus")
                     } else {
                         editor
                     })
@@ -739,10 +811,12 @@ pub(super) fn preview(
                         // LLPreviewNotecard::handleKeyHere: Ctrl+F in the
                         // window opens its find, wherever its keyboard is
                         let preview_id = editor_id.with("markdown");
-                        let mut fields = vec![editor_id, preview_id];
+                        let mut fields = vec![editor_id, preview_id, editor_id.with("notecard_window_focus")];
                         fields.extend(super::find::field_ids(editor_id));
                         fields.extend(super::find::field_ids(preview_id));
                         let shortcut = crate::ui::find_shortcut::take(ui, &fields);
+                        // Ctrl+F always opens or refocuses Find, as in the Legacy Viewer.
+                        let opening = shortcut;
                         // the Markdown view is read-only: its find searches
                         // the text it shows, and replaces nothing
                         if view == super::markdown::View::Markdown {
@@ -750,13 +824,13 @@ pub(super) fn preview(
                                 && let Some(rendered) = st.notecard_markdown.get(ui.ctx(), text)
                             {
                                 let mut shown = rendered.text.clone();
-                                if shortcut {
+                                if opening {
                                     st.notecard_find.begin(ui.ctx(), preview_id, &shown);
                                 }
                                 st.notecard_find.bar(ui, p, preview_id, &mut shown, false);
                             }
                         } else {
-                            if shortcut {
+                            if opening {
                                 st.notecard_find.begin(ui.ctx(), editor_id, text);
                             }
                             find_changed = st.notecard_find.bar(ui, p, editor_id, text, text_editable);
@@ -944,6 +1018,18 @@ pub(super) fn preview(
             }
         }
     });
+    if it.asset_type == 7 {
+        let window = super::document::preview_window_id(st.ui_id, id, it.asset_type);
+        if let Some(name) = widgets::take_title_rename(ctx, &window)
+            && editable
+            && rules::renameable(inv, id)
+            && st.pending.is_none()
+            && !st.save_pending
+            && let Ok(change) = rules::patch(inv, id, llsd_map! { "name" => name })
+        {
+            actions.push(InvAction::Edit(change));
+        }
+    }
     super::embedded::preview(ctx, p, st, images);
     if !open {
         if st.save_pending {
@@ -959,13 +1045,6 @@ pub(super) fn preview(
         // The closed document gives the list that opened it its keyboard
         // back (LLToastAlertPanel restores the focus it saved).
         super::clipboard::return_document_focus(ctx, st);
-        if let Some((asset, local)) = st.playing {
-            actions.push(InvAction::Animation {
-                asset,
-                local,
-                start: false,
-            });
-        }
     }
 }
 
@@ -1025,6 +1104,7 @@ fn animation(
         st.animation_description = Some((it.id, it.desc.clone()));
         st.animation_details = true;
     }
+    st.animation_asset = Some(it.asset_id);
     let mut open = true;
     Floater::new(
         &format!("inventory_preview_{}_{}", st.ui_id, it.id),
@@ -1056,12 +1136,12 @@ fn animation(
             }
         });
         ui.horizontal(|ui| {
-            let playing = st.playing.filter(|(asset, _)| *asset == it.asset_id);
+            let playing = super::plays::playing(&st.plays, it.asset_id);
             for (local, label) in [
                 (false, aurora_i18n::tr!("ui-inventory-dialogs-play-for-everyone")),
                 (true, aurora_i18n::tr!("common-play-locally")),
             ] {
-                let same = playing.is_some_and(|(_, mode)| mode == local);
+                let same = playing.is_some_and(|play| play.local == local);
                 if ui
                     .add_enabled(
                         playing.is_none() || same,
@@ -1139,13 +1219,20 @@ fn animation(
         // The closed document gives the list that opened it its keyboard
         // back (LLToastAlertPanel restores the focus it saved).
         super::clipboard::return_document_focus(ctx, st);
-        if let Some((asset, local)) = st.playing.filter(|(asset, _)| *asset == it.asset_id) {
-            actions.push(InvAction::Animation {
-                asset,
-                local,
-                start: false,
-            });
-        }
+        stop_shown_animation(st, actions);
+    }
+}
+
+/// LLPreviewAnim::onClose: the window stops its own animation, and leaves
+/// those of the other windows playing.
+fn stop_shown_animation(st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
+    let asset = st.animation_asset.take();
+    if let Some(play) = st.plays.iter().find(|play| Some(play.asset) == asset) {
+        actions.push(InvAction::Animation {
+            asset: play.asset,
+            local: play.local,
+            start: false,
+        });
     }
 }
 
@@ -1452,6 +1539,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ctrl_f_refocuses_notecard_find_in_editable_and_read_only_views() {
+        use super::super::NotecardView;
+
+        for can_edit in [true, false] {
+            for view in [NotecardView::Classic, NotecardView::Edit] {
+                let ctx = egui::Context::default();
+                let (inv, mut st) = note_fixture();
+                st.preview_can_edit = can_edit;
+                st.notecard_view = Some(view);
+
+                for _ in 0..5 {
+                    document_frame(&ctx, &inv, &mut st, vec![]);
+                }
+
+                let editor = egui::Id::unique(("inventory_document_text", st.ui_id, st.preview.expect("notecard")));
+                let focus = if can_edit { editor } else { editor.with("notecard_window_focus") };
+
+                ctx.memory_mut(|m| m.request_focus(focus));
+
+                let ctrl_f = || egui::Event::Key {
+                    key: egui::Key::F,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::COMMAND,
+                };
+
+                document_frame(&ctx, &inv, &mut st, vec![ctrl_f()]);
+                assert!(st.notecard_find.open, "{can_edit:?} {view:?}: open");
+
+                document_frame(&ctx, &inv, &mut st, vec![ctrl_f()]);
+                assert!(st.notecard_find.open, "{can_edit:?} {view:?}: repeated Ctrl+F");
+                assert_eq!(
+                    ctx.memory(|m| m.focused()),
+                    Some(editor.with("find_query")),
+                    "{can_edit:?} {view:?}: Find has focus"
+                );
+
+                // Return to the notecard and invoke Find again.
+                ctx.memory_mut(|m| m.request_focus(focus));
+                document_frame(&ctx, &inv, &mut st, vec![ctrl_f()]);
+                assert!(st.notecard_find.open, "{can_edit:?} {view:?}: refocus");
+                assert_eq!(
+                    ctx.memory(|m| m.focused()),
+                    Some(editor.with("find_query")),
+                    "{can_edit:?} {view:?}: Find regains focus"
+                );
+                assert!(!st.preview_dirty);
+            }
+        }
+    }
     #[test]
     fn notecard_view_choices_seed_new_windows_without_overwriting_open_drafts() {
         use super::super::NotecardView;

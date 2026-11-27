@@ -61,6 +61,7 @@ pub(super) fn show(
     prices: &Prices,
     actions: &mut Vec<Action>,
 ) {
+    imports.sync_image_limits(prefs);
     let mut open = imports.open;
     let busy = imports.busy() || imports.confirm;
     let window = imports.window_choice();
@@ -84,7 +85,7 @@ pub(super) fn show(
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(Vec2::new(files_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(files_width);
-                queue::show(ui, p, imports, prefs, height, busy, actions);
+                queue::show(ui, p, imports, height, busy, actions);
             });
             let (separator, _) = ui.allocate_exact_size(Vec2::new(1.0, height), egui::Sense::hover());
             let stroke = if resizing_queue {
@@ -208,6 +209,10 @@ pub(super) fn show(
                                                 metadata_controls(ui, entry);
                                                 ui.add_space(12.0);
                                             }
+                                            if matches!(entry.source, Some(Source::Texture(_) | Source::Material { .. })) {
+                                                image_size_limit(ui, entry, prefs);
+                                                ui.add_space(8.0);
+                                            }
                                             if matches!(entry.source, Some(Source::Mesh(_))) {
                                                 let remaining_height = (height - (ui.cursor().top() - detail_top)).max(100.0);
                                                 mesh_panel::show(ui, p, entry, prefs, actions, remaining_height, |ui, entry| {
@@ -233,7 +238,6 @@ pub(super) fn show(
                                                         image,
                                                         entry.empty_alpha,
                                                         &mut entry.options,
-                                                        prefs,
                                                         &entry.preview,
                                                         actions,
                                                         &mut entry.preview_generation,
@@ -431,6 +435,13 @@ pub(super) fn show(
                                                             &mut entry.view,
                                                             compact,
                                                         );
+                                                        for (slot, old_map) in old_maps.iter().enumerate() {
+                                                            if *old_map != images[slot].as_ref().map(|image| image.key)
+                                                                || maps::ids(&old)[slot] != maps::ids(value)[slot]
+                                                            {
+                                                                entry.material_map_requests[slot] = None;
+                                                            }
+                                                        }
                                                         if old != *value
                                                             || old_shape != entry.material_shape
                                                             || old_maps != images.each_ref().map(|image| image.as_ref().map(|i| i.key))

@@ -202,6 +202,14 @@ impl Popped {
         self.windows.iter().any(|w| w.conversation == conversation && !w.hidden)
     }
 
+    #[cfg(test)]
+    pub(super) fn focus_requested(&self, conversation: Option<Uuid>) -> bool {
+        self.windows
+            .iter()
+            .find(|w| w.conversation == conversation && !w.hidden)
+            .is_some_and(|w| w.view.conv_focus_request)
+    }
+
     /// Put the window of `conversation` away, or show it back; false when
     /// it has none.
     pub(super) fn set_hidden(&mut self, conversation: Option<Uuid>, hidden: bool) -> bool {
@@ -289,12 +297,105 @@ pub(super) fn one_picker(st: &mut ChatUi) {
 /// `one_picker` has closed the other.
 pub(super) fn claim_picker(ctx: &egui::Context) -> bool {
     let id = egui::Id::unique("conversation_emoji_picker_frame");
-    let frame = ctx.cumulative_pass_nr();
+    let frame = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let free = ctx.data(|d| d.get_temp::<u64>(id)) != Some(frame);
     if free {
         ctx.data_mut(|d| d.insert_temp(id, frame));
     }
     free
+}
+
+/// A press away from the emoji or GIF picker drawn as `picker` (its
+/// `Area`) closes it (#4867), as it does the chat bar's (`bars/dock.rs`)
+/// and the Legacy Viewer's emoji picker, an `auto_close` floater
+/// (LLFloater::goneFromFront, indra/llui/llfloater.cpp, originally LGPL
+/// 2.1): a mouse button going down anywhere else, a drag and a right click
+/// included, or the focus going to another window of the viewer, whose
+/// pointer this window never sees (`outside::focus_went_elsewhere`). On
+/// the pass it first shows, only a press after the click that opened it
+/// counts. Not a left press on `buttons` (its own and the other picker's,
+/// which open or close it on their click; a right press there opens the
+/// button's menu, away from this picker), nor a press on a menu open over
+/// it: an emoji's favourite menu, a field's right-click menu
+/// (`text_menu.rs`), a submenu (`menu::is_menu_layer`). A toast, in the
+/// foreground too, is not a menu. The keyboard a widget of the picker
+/// holds leaves with it: a press on the world gives the keyboard up before
+/// the pass (`release_world_keyboard`), and the picker's search, finding
+/// it free, takes it back as it draws; kept, it would hold the world's
+/// next key.
+pub(super) fn pressed_away(ctx: &egui::Context, picker: &egui::Response, buttons: &[egui::Rect]) -> bool {
+    let away = landed_away(ctx, picker, buttons);
+    if away
+        && let Some(id) = ctx.memory(|m| m.focused())
+        && ctx.read_response(id).is_some_and(|r| r.layer_id == picker.layer_id)
+    {
+        ctx.memory_mut(|m| m.surrender_focus(id));
+    }
+    away
+}
+
+/// Whether this pass's input closes `picker` ([`pressed_away`]).
+fn landed_away(ctx: &egui::Context, picker: &egui::Response, buttons: &[egui::Rect]) -> bool {
+    let id = picker.id.with("pressed_away_pass");
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
+    let focus = crate::outside::focused_window(ctx);
+    let seen = ctx.data_mut(|d| {
+        let last = d.get_temp::<(u64, Option<egui::ViewportId>)>(id);
+        d.insert_temp(id, (pass, focus));
+        last.filter(|(last, _)| last + 1 == pass)
+    });
+    if let Some((_, was)) = seen
+        && crate::outside::focus_went_elsewhere(ctx.viewport_id(), was, focus)
+    {
+        return true;
+    }
+    // each press's own position: a release in the same pass (a quick tap, a
+    // slow frame) has already cleared `PointerState::press_origin`, and a
+    // slow frame may hold a press in the picker and then one away
+    let events: Vec<(egui::Pos2, egui::PointerButton, bool)> = ctx.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::PointerButton { pos, button, pressed, .. } => Some((*pos, *button, *pressed)),
+                _ => None,
+            })
+            .collect()
+    });
+    // on the pass it first shows, the click that opened it ends with the
+    // first release, and a press after it (a slow frame) is a press away
+    let from = match seen {
+        Some(_) => 0,
+        None => events.iter().position(|e| !e.2).map_or(events.len(), |i| i + 1),
+    };
+    let mut presses = events[from..].iter().filter(|e| e.2).map(|&(pos, button, _)| (pos, button));
+    presses.any(|(pos, button)| match ctx.layer_id_at(pos) {
+        // a menu's area takes its popup's id (egui::Popup::show); a menu
+        // opened with a bool or a submenu is known by its popup's body
+        Some(layer) if layer == picker.layer_id || egui::Popup::is_id_open(ctx, layer.id) || crate::ui::menu::is_menu_layer(ctx, layer) => {
+            false
+        }
+        _ => !(button == egui::PointerButton::Primary && buttons.iter().any(|b| b.expand(4.0).contains(pos))),
+    })
+}
+
+/// The pickers close when the conversation shown changes, or the Contacts
+/// tab takes its place, however it happened (a tab, a name's menu, a
+/// conversation that asked for the front): a picker belongs to the field
+/// it opened from. The conversations in their own window never change
+/// theirs. Called when the window's pass starts, and again just before its
+/// pane draws, after what changes the conversation during the pass
+/// (`select_main`, Ctrl+W, a tab). A picker open before the window's first
+/// pass (`AURORA_DEMO_EMOJI_PICKER`, `AURORA_DEMO_GIFS`) stays open.
+pub(super) fn pickers_follow_view(st: &mut ChatUi) {
+    if window().is_some() {
+        return;
+    }
+    let view = (st.selected, st.contacts);
+    if st.picker_view.is_some_and(|seen| seen != view) {
+        st.emoji_open = false;
+        st.gif_open = false;
+    }
+    st.picker_view = Some(view);
 }
 
 /// `conversation:<uuid>`, or `conversation:nearby` for the nearby chat.
@@ -444,7 +545,9 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
         floater.min_size = floater.min_size.max(MIN_SIZE);
         w.view.swap(st);
         WINDOW.with(|cell| cell.set(Some(w.conversation)));
+        let (conversation, minimized) = (w.conversation, crate::ui::widgets::floater_minimized(ctx, &w.floater));
         floater.show(ctx, p, &mut open, |ui| {
+            let focus_before = super::focus_before_body(ui);
             if style.workspace() {
                 let h = ui.available_height().max(MIN_SIZE.y - 40.0);
                 ui.vertical(|ui| {
@@ -459,6 +562,9 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
                 ui.vertical(|ui| {
                     super::classic_pane(ui, p, icons, emoji, pics, gestures, world, st, actions, h, &own_name);
                 });
+            }
+            if !minimized {
+                super::press_focuses_field(ui, focus_before, egui::Id::unique(("conv_input", conversation)));
             }
         });
         WINDOW.with(|cell| cell.set(None));
@@ -642,6 +748,7 @@ mod tests {
                         blocked: false,
                         beyond_range: false,
                         speaker: Default::default(),
+                        private_history: false,
                     },
                 );
             }
@@ -770,6 +877,7 @@ mod tests {
                         blocked: false,
                         beyond_range: false,
                         speaker: Default::default(),
+                        private_history: false,
                     },
                 );
                 kit.st.popped.pop_out(Some(id), false, false, false);
@@ -1058,6 +1166,7 @@ mod tests {
                             blocked: false,
                             beyond_range: false,
                             speaker: Default::default(),
+                            private_history: false,
                         },
                     );
                     kit.world.social.focus_im = Some(JANE);
@@ -1172,6 +1281,7 @@ mod tests {
                     blocked: false,
                     beyond_range: false,
                     speaker: Default::default(),
+                    private_history: false,
                 },
             );
             kit.main_open = true;
@@ -1329,5 +1439,150 @@ mod tests {
         assert_eq!(main_selection(&popped, id(1), &order), None);
         assert!(popped.contains(None));
         assert!(popped.contains(id(1)));
+    }
+
+    /// What closes a picker (#4867), on the pass of the press: a press of
+    /// either button away from it, on a toast or on a card built from menu
+    /// rows, a whole click in one pass, a press away after one in it in the
+    /// same pass, a right press on its buttons (their menu), a press after
+    /// the click that opened it in the pass it first shows, the focus going
+    /// to another window of the viewer. What keeps it: any other press on
+    /// the pass it first shows, a press in it, a left press on its buttons,
+    /// a press on a menu open over it, kept in memory (the favourite menu) or by a
+    /// bool (the field's right-click menu, drawn after the conversations as
+    /// in `App::frame`, so known from the pass before).
+    #[test]
+    fn a_press_away_or_another_window_closes_a_picker() {
+        const PICKER: egui::Pos2 = egui::pos2(100.0, 100.0);
+        const TOAST: egui::Pos2 = egui::pos2(600.0, 20.0);
+        const MENU: egui::Pos2 = egui::pos2(320.0, 120.0);
+        const TEXT_MENU: egui::Pos2 = egui::pos2(450.0, 200.0);
+        const CARD: egui::Pos2 = egui::pos2(650.0, 300.0);
+        let p = crate::theme::Theme::default().palette();
+        let button = egui::Rect::from_min_size(egui::pos2(100.0, 320.0), egui::vec2(24.0, 24.0));
+        let menu = egui::Id::unique("favourite menu");
+        let pass = |ctx: &egui::Context, events: Vec<egui::Event>, text_menu: bool| {
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                events,
+                ..Default::default()
+            };
+            let mut away = false;
+            let mut output = ctx.run_ui(raw, |ui| {
+                let ctx = ui.ctx();
+                egui::Area::new(egui::Id::unique("toast"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(TOAST)
+                    .show(ctx, |ui| ui.allocate_space(egui::vec2(100.0, 40.0)));
+                let picker = egui::Area::new(egui::Id::unique("picker"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(PICKER)
+                    .show(ctx, |ui| ui.allocate_space(egui::vec2(200.0, 200.0)));
+                egui::Popup::new(menu, ctx.clone(), MENU, picker.response.layer_id)
+                    .open_memory(None)
+                    .show(|ui| ui.allocate_space(egui::vec2(80.0, 40.0)));
+                // a hover card of menu rows (the top bar's graphics card)
+                egui::Area::new(egui::Id::unique("card"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(CARD)
+                    .show(ctx, |ui| {
+                        crate::ui::menu::item(ui, &p, "", "Low");
+                        crate::ui::menu::item(ui, &p, "", "High");
+                    });
+                away = pressed_away(ctx, &picker.response, &[button]);
+                // the field's right-click menu (`text_menu.rs`), after
+                let mut open = text_menu;
+                if open {
+                    crate::ui::menu::popup_at(ctx, egui::Id::unique("text menu"), TEXT_MENU, &mut open, &p, |ui| {
+                        crate::ui::menu::item(ui, &p, "", "Copy");
+                        crate::ui::menu::item(ui, &p, "", "Paste");
+                    });
+                }
+            });
+            // no renderer here: the font atlas upload is dropped on purpose
+            output.textures_delta.clear();
+            away
+        };
+        let press = |pos: egui::Pos2, button: egui::PointerButton| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ]
+        };
+        let primary = |pos| press(pos, egui::PointerButton::Primary);
+        let away = egui::pos2(500.0, 400.0);
+        // shown once, the picker and what is over it laid out, then `events`
+        let after_with = |events: Vec<egui::Event>, open_menu: bool, text_menu: bool| {
+            let ctx = egui::Context::default();
+            if open_menu {
+                egui::Popup::open_id(&ctx, menu);
+            }
+            assert!(!pass(&ctx, Vec::new(), text_menu), "nothing happened");
+            assert!(!pass(&ctx, Vec::new(), text_menu), "nothing happened");
+            pass(&ctx, events, text_menu)
+        };
+        let after = |events, open_menu| after_with(events, open_menu, false);
+        let first = egui::Context::default();
+        assert!(!pass(&first, primary(away), false), "the press that opened it");
+        let release = |pos| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        };
+        let mut tap = primary(button.center());
+        tap.push(release(button.center()));
+        assert!(!pass(&egui::Context::default(), tap, false), "the quick click that opened it");
+        let mut then_away = vec![release(button.center())];
+        then_away.extend(primary(away));
+        assert!(
+            pass(&egui::Context::default(), then_away, false),
+            "a press away after the click that opened it, in its first pass"
+        );
+        let mut click_away = vec![release(button.center())];
+        click_away.extend(primary(away));
+        click_away.push(release(away));
+        assert!(
+            pass(&egui::Context::default(), click_away, false),
+            "a click away after the click that opened it, in its first pass"
+        );
+        assert!(after(primary(away), false), "a press away");
+        let mut click = primary(away);
+        click.push(egui::Event::PointerButton {
+            pos: away,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        });
+        assert!(after(click, false), "a press and its release in one pass");
+        assert!(after(press(away, egui::PointerButton::Secondary), false), "a right press away");
+        assert!(after(primary(TOAST + egui::vec2(10.0, 10.0)), false), "a press on a toast");
+        assert!(
+            after(primary(CARD + egui::vec2(10.0, 8.0)), false),
+            "a press on a card of menu rows"
+        );
+        let mut in_then_away = primary(PICKER + egui::vec2(10.0, 10.0));
+        in_then_away.extend(primary(away));
+        assert!(after(in_then_away, false), "a press in it, then one away, in one pass");
+        assert!(!after(primary(PICKER + egui::vec2(10.0, 10.0)), false), "a press in the picker");
+        assert!(!after(primary(button.center()), false), "a press on its button");
+        assert!(
+            after(press(button.center(), egui::PointerButton::Secondary), false),
+            "a right press on its button: the button's menu, not this picker's"
+        );
+        assert!(!after(primary(MENU + egui::vec2(10.0, 10.0)), true), "a press on its menu");
+        assert!(after(primary(MENU + egui::vec2(10.0, 10.0)), false), "where the menu was, closed");
+        let on_text_menu = primary(TEXT_MENU + egui::vec2(10.0, 8.0));
+        assert!(!after_with(on_text_menu.clone(), false, true), "a press on the field's menu");
+        assert!(after(on_text_menu, false), "where the field's menu was, closed");
+        let ctx = egui::Context::default();
+        assert!(!pass(&ctx, Vec::new(), false));
+        crate::outside::focus_for_test(&ctx, Some(egui::Id::unique("people")));
+        assert!(pass(&ctx, Vec::new(), false), "the focus in another window of the viewer");
     }
 }

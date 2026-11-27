@@ -158,7 +158,8 @@ fn run(
             e.tools.file_job = Some(files::open(settings.convert_tabs));
         }
         Command::Export => e.tools.file_job = Some(files::save(e.name.clone(), e.source.clone(), e.lua())),
-        Command::Preferences => prefs.preferences.open = true,
+        // shown again, a minimized window expands (LLFloaterReg::showInstance)
+        Command::Preferences => crate::ui::widgets::open_floater(ctx, super::dialogs::Preferences::WINDOW, &mut prefs.preferences.open),
         Command::External => {
             e.tools.file_snapshot.clone_from(&e.source);
             // the script takes the same file again: the watch of the last
@@ -570,6 +571,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                     String::new()
                 };
                 let insensitive = search.insensitive;
+                let whole_words = search.whole_words;
                 let color_editable = e.loaded && e.can_edit && e.saving.is_none() && e.loading.is_none() && !e.tools.processed;
                 let editable = color_editable && !e.colors.active();
                 let mut scroll = egui::ScrollArea::new([!settings.word_wrap, true]);
@@ -586,9 +588,9 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                             let interactive = e.loaded && (e.can_read || !e.source.is_empty());
                             let lua = e.lua();
                             let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-                                let mut job = e
-                                    .highlighter
-                                    .custom(text.as_str(), p, font.clone(), settings, &query, insensitive, lua);
+                                let mut job =
+                                    e.highlighter
+                                        .custom(text.as_str(), p, font.clone(), settings, &query, insensitive, whole_words, lua);
                                 // panel_script_ed.xml enables wrapping; only the visual rows change.
                                 job.wrap.max_width = if settings.word_wrap { wrap } else { f32::INFINITY };
                                 e.folding.sync(text.as_str());
@@ -632,6 +634,29 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                 e.status = aurora_i18n::tr!("script-selection-edit-failed").into();
                             }
                             e.colors.draw(ui, p, text, &output, &e.highlighter.colors, color_editable);
+                            // The script highlighter already paints every result a subtle amber.
+                            // Make only the active Find result prominent, even while the Find
+                            // floater owns the keyboard focus. Match notecard search styling.
+                            if search.owns(base_id)
+                                && !ui.memory(|m| m.has_focus(id))
+                                && let Some(matches) = e.highlighter.matches_for(text, &query, insensitive, whole_words)
+                                && let Some(range) = search.active_range_from_matches(ui.ctx(), id, matches)
+                            {
+                                let mut shapes = Vec::new();
+                                for rect in crate::ui::chat::range_rects(&output.galley, output.galley_pos, range) {
+                                    if !rect.intersects(output.text_clip_rect) {
+                                        continue;
+                                    }
+                                    let rect = rect.intersect(output.text_clip_rect);
+                                    shapes.push(egui::Shape::rect_stroke(
+                                        rect,
+                                        ui.visuals().widgets.inactive.corner_radius,
+                                        egui::Stroke::new(1.5, p.amber),
+                                        egui::StrokeKind::Outside,
+                                    ));
+                                }
+                                ui.painter().with_clip_rect(output.text_clip_rect).add(egui::Shape::Vec(shapes));
+                            }
                             if editable
                                 && (output.response.changed()
                                     || e.tools.history_cursor != output.cursor_range
@@ -658,6 +683,9 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                 ui.scroll_to_rect(rect, Some(egui::Align::Center));
                             }
                             let left = gutter.left() + viewport.min.x;
+                            let visible = ui.clip_rect().intersect(egui::Rect::everything_right_of(left + 56.0));
+                            let content = egui::Rect::from_min_size(output.galley_pos, output.galley.size());
+                            editing::drag_autoscroll(ui, &output.response, visible, content, !settings.word_wrap);
                             let clip = egui::Rect::from_min_max(
                                 egui::pos2(left, ui.clip_rect().top()),
                                 egui::pos2(left + 56.0, ui.clip_rect().bottom()),
@@ -954,17 +982,19 @@ pub(super) fn search(
         e.tools.scroll_to_cursor |= cursor != editing::cursor(ctx, id);
         return;
     }
-    let (pos, overlap) = Search::placement(ctx, parent, e.tools.body_top, prefer_left);
-    if overlap {
-        let owner = egui::LayerId::new(egui::Order::Middle, parent_id);
-        let child = egui::LayerId::new(egui::Order::Middle, Id::unique(Search::WINDOW));
-        // Dependent ordering, as LLFloater::addDependentFloater: clicking
-        // the script keeps its search above it without covering other windows.
-        ctx.set_sublayer(owner, child);
-        let pressed = ctx.input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten());
-        if search.focus || pressed.is_some_and(|at| ctx.layer_id_at(at) == Some(child)) || ctx.is_being_dragged(child.id.with("move")) {
-            ctx.move_to_top(owner);
-        }
+    let (pos, _overlap) = Search::placement(ctx, parent, e.tools.body_top, prefer_left);
+    // Dependent Find follows its active script parent whether overlapping or
+    // beside it. Do not force Find over unrelated windows when the editor is inactive.
+    let owner = egui::LayerId::new(egui::Order::Middle, parent_id);
+    let child = egui::LayerId::new(egui::Order::Middle, Id::unique(Search::WINDOW));
+    ctx.set_sublayer(owner, child);
+    // A keyboard-focused Find field can remain focused while another window
+    // is explicitly raised. Only an actual interaction with this editor/find
+    // pair (or the initial Find opening) should raise the pair again.
+    let pressed = ctx.input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten());
+    let pressed_here = pressed.is_some_and(|at| matches!(ctx.layer_id_at(at), Some(layer) if layer == owner || layer == child));
+    if (search.focus && pressed.is_none()) || pressed_here || ctx.is_being_dragged(child.id.with("move")) {
+        ctx.move_to_top(owner);
     }
     search.show(
         ctx,
@@ -1331,5 +1361,91 @@ mod tests {
         assert!(!enabled(Command::Paste, e, &ctx, id));
         assert!(!enabled(Command::Cut, e, &ctx, id));
         assert_eq!(e.source, "éあ original");
+    }
+
+    #[test]
+    fn a_drag_selection_held_past_the_view_scrolls_the_source_like_the_legacy_viewer() {
+        use crate::theme::Theme;
+        use aurora_net::scripts::ScriptTarget;
+        use uuid::Uuid;
+
+        let original: String = (0..300).map(|i| format!("llOwnerSay(\"line {i}\");\n")).collect();
+        let ctx = egui::Context::default();
+        let theme = Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let target = ScriptTarget {
+            object: Uuid::nil(),
+            item: Uuid::from_u128(10),
+        };
+        let mut editors = super::super::Editors::default();
+        let request = editors.open(target, "Drag".into(), true, true, 0).expect("load");
+        editors.loaded(request, target, Ok(original.clone()));
+        let e = &mut editors.documents[0];
+        e.tools.reset_history = false;
+        e.tools.focus_start = false;
+        let id = Id::unique("drag_autoscroll_source");
+        let settings = ScriptSettings::default();
+        let mut time = 0.0;
+        let mut frame = |events: Vec<egui::Event>, e: &mut Editor| {
+            time += 1.0 / 60.0;
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(600.0, 400.0))),
+                    focused: true,
+                    time: Some(time),
+                    predicted_dt: 1.0 / 60.0,
+                    events,
+                    ..Default::default()
+                },
+                |ui| source(ui, &p, e, id, &settings, 200.0, &Search::default()),
+            )
+            .textures_delta
+            .clear();
+        };
+        let line = |ctx: &egui::Context| editing::position(&original, editing::cursor(ctx, id).primary.index.0).0;
+        for _ in 0..3 {
+            frame(Vec::new(), e);
+        }
+        let start = egui::pos2(150.0, 20.0);
+        frame(vec![egui::Event::PointerMoved(start)], e);
+        let press = |pressed| egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![press(true)], e);
+        let anchor = editing::cursor(&ctx, id).primary.index;
+        // Inside the view, the selection follows the pointer and nothing scrolls.
+        frame(vec![egui::Event::PointerMoved(egui::pos2(150.0, 100.0))], e);
+        let inside = line(&ctx);
+        for _ in 0..10 {
+            frame(Vec::new(), e);
+        }
+        assert_eq!(line(&ctx), inside, "no scroll away from the edges");
+        // Below the view, held still: the source scrolls and the selection grows.
+        frame(vec![egui::Event::PointerMoved(egui::pos2(150.0, 300.0))], e);
+        let past = line(&ctx);
+        for _ in 0..60 {
+            frame(Vec::new(), e);
+        }
+        let after_one_second = line(&ctx);
+        assert!(after_one_second > past + 3, "{past} -> {after_one_second}");
+        for _ in 0..600 {
+            frame(Vec::new(), e);
+        }
+        assert_eq!(line(&ctx), 300, "the selection reaches the end of the script");
+        // Back above the view: it scrolls up again, still selecting from the start.
+        frame(vec![egui::Event::PointerMoved(egui::pos2(150.0, -20.0))], e);
+        let top = line(&ctx);
+        for _ in 0..60 {
+            frame(Vec::new(), e);
+        }
+        assert!(line(&ctx) < top, "{top} -> {}", line(&ctx));
+        frame(vec![press(false)], e);
+        let selection = editing::cursor(&ctx, id);
+        assert_eq!(selection.secondary.index, anchor, "the selection still starts where the drag began");
+        assert_eq!(e.source, original);
     }
 }

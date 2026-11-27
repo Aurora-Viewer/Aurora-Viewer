@@ -80,8 +80,8 @@ AvatarFeathering,F32,unreviewed,,,Avatar feathering (less is softer)
 AvatarInspectorTooltipDelay,F32,unreviewed,,field `delay`,Seconds before displaying avatar inspector tooltip
 AvatarNameTagMode,S32,unreviewed,,named in Aurora: aurora-viewer/src/ui/quick_prefs.rs:158,Select Avatar Name Tag Mode
 AvatarPhysics,Boolean,unreviewed,,field `avatar_physics`,Enable avatar physics.
-AvatarRotateThresholdFast,F32,unreviewed,,,"Angle between avatar facing and camera facing at which avatar turns to face same direction as camera, when moving fast (degrees)"
-AvatarRotateThresholdSlow,F32,unreviewed,,named in Aurora: aurora-viewer/src/world/body.rs:28,"Angle between avatar facing and camera facing at which avatar turns to face same direction as camera, when moving slowly (degrees)"
+AvatarRotateThresholdFast,F32,in-aurora,,avatar_rotate_threshold_fast,"Angle between avatar facing and camera facing at which avatar turns to face same direction as camera, when moving fast (degrees)"
+AvatarRotateThresholdSlow,F32,in-aurora,,avatar_rotate_threshold_slow,"Angle between avatar facing and camera facing at which avatar turns to face same direction as camera, when moving slowly (degrees)"
 AvatarSitOnAway,Boolean,unreviewed,,field `sit_when_away`,Sit down when marked AFK
 AvatarSitRotation,Quaternion,unreviewed,,,Avatar real sitting rotation used in preset
 AvatarWelcomePack,String,unreviewed,,,Avatar Welcome Pack contents
@@ -747,7 +747,7 @@ FSPaymentInfoInChat,Boolean,check,,named in world/payments: may be built in,"If 
 FSPerfFloaterSmoothingPeriods,U32,not-applicable,,read nowhere in the Legacy sources,Number of periods to smooth the stats over
 FSPermissionDebitDefaultDeny,Boolean,to-add,low,,"If enabled, LSL script debit permission dialogs will default to deny. If disabled, they will default to allow."
 FSPhysicsPresetUser1,String,to-add,low,,full system path to a user provided physics mesh (DAE).
-FSPlayDefaultBentoAnimation,Boolean,check,,named in app/reset_skeleton: may be built in,"If enabled, the viewer will run a default, priority 0 bento animation that poses hands, wings, mouth and tail in a natural position when no "
+FSPlayDefaultBentoAnimation,Boolean,in-aurora,,field `bento_idle`,"If enabled, the viewer will run a default, priority 0 bento animation that poses hands, wings, mouth and tail in a natural position when no "
 FSPoseStandLastSelectedPose,String,not-applicable,,a window's last state; Aurora keeps its own window state,Last selected pose in the pose stand
 FSPoseStandLock,Boolean,to-add,low,,"When enabled, posestand will lock the avatar to the ground."
 FSPoserOnSaveConfirmOverwrite,Boolean,in-aurora,,poser.confirm_overwrite,Whether to confirm overwriting a save file.

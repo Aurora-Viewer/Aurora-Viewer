@@ -1,4 +1,4 @@
-//! People â€º Blocked in Aurora's look (the People mock-up v2): the block
+//! People › Blocked in Aurora's look (the People mock-up v2): the block
 //! list (LLPanelBlockedList, panel_block_list_sidetray.xml, LLMuteList) as
 //! rows, what is blocked of each in pills (everything, or voice, text,
 //! particles, object sounds), each pill a click away from changing it as

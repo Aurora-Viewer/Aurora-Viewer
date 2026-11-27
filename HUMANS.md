@@ -84,7 +84,8 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
 - **`main` is protected**, for everyone, admins included: nobody pushes to it
   directly; everything goes through a PR, then through the merge queue.
 - **CI** (GitHub Actions, on Windows) has two stages:
-  - on each PR, the quick checks: formatting, clippy, secret scan (the
+  - on each PR, the quick checks: formatting, clippy, secret scan, and
+    the translation catalogues' tests, which take seconds (the other
     tests, the agent already ran them on its machine);
   - in the merge queue, everything, tests included, on the PR combined with
     the latest `main`: what lands on `main` is exactly what was tested.
@@ -112,6 +113,22 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
   the team's PRs never wait. To see the
   plan without changing anything: Actions › Review slots › Run workflow
   (dry run ticked), or `./scripts/pr-slots.ps1 -Sweep -DryRun`.
+- **Review queue**: to know which PR of someone else to review next, run
+  `./scripts/review-queue.ps1` (your agents do it before each review). It
+  lists the open PRs in order: **re-reviews** first (you or another
+  maintainer reviewed it and its author answered since: a commit, a
+  comment), then the PRs tied to a **crash** (a linked issue the crash
+  triage signed, or a crash in the title), then the **fixes** (the `fix`
+  label or a `fix(area):` title), then the rest **not reviewed yet**; in
+  each, crash before fix before the rest, then the longest waiting. Several
+  maintainers review at once, so the queue keeps them apart: whoever starts
+  a PR **claims** it (`-Claim <n>`, which makes them its assignee) and the
+  others' queues leave it out until their review is posted; a re-review
+  goes back to the maintainer who wrote the last review for 2 days, then to
+  anyone. `-Release <n>` hands a claimed PR back, `-All` also lists every
+  PR left out with the reason, `-As <login>` shows another maintainer's
+  queue. A claim with no word from its maintainer for 3 days shows in
+  yellow: ask them rather than taking it.
 - **Outside contributors' CI** waits for a maintainer: on their PR, "Approve
   and run" (look first that it does not change `.github/`). Review it only
   once that CI is green and the description is complete.
@@ -181,8 +198,13 @@ below). They check that `main` is green, suggest the number from the labels
 of the PRs merged since the last version, show these PRs, create the tag and
 follow the publication up to the release link. They are also used to
 **delete** a release (you have to type its tag to confirm; `assets-1`, which
-holds the 3D emoji font older commits download, is protected). Write access to the repository is
-required.
+holds the 3D emoji font older commits download, is protected). Only an
+admin of the repository publishes a release, stable or beta: the ruleset of
+the version tags refuses anyone else's stable tag, and the Release and
+Nightly workflows stop a beta tag pushed, or a Nightly run started, by
+anyone else. Deleting a release needs write access. The viewers install
+only what the Release workflow signed ([signed updates](docs/UPDATES.md#signed-updates)):
+a release created or edited by hand on GitHub is never offered to them.
 
 Before the creation is confirmed, two choices set the effect of the update
 for users: **keep or invalidate the cache**, then **keep and migrate the
@@ -329,7 +351,19 @@ action; a repair that does not change the tools keeps the current session.
 
 To check these behaviours without installing or publishing anything:
 `powershell -NoProfile -File scripts/test-tools.ps1` tests the menus in
-hidden Windows consoles and the restart on isolated temporary scripts.
+hidden Windows consoles (a pseudo-terminal on Linux) and the restart on isolated temporary scripts.
+
+**On Linux**, `aurora-tools.sh` is the same tool: same menus, arguments and
+installation in an empty folder; double-clicked, it opens a terminal. It needs
+PowerShell 7 (`pwsh`). What stands for a Windows part: `pacman` or `apt` through
+`sudo` for `winget`, with rustup.rs for Rust where `apt` has no package; a
+terminal window (`$TERMINAL` or a usual one) for the Debug viewer's console;
+`RELEASE/build-release.sh` for the `.bat`; `notify-send` for the notifications;
+desktop entries for the shortcuts; `~/.local/share/auroraviewer/logs` for the
+logs; `wl-clipboard`, `xclip` or `xsel` for the clipboard. Repair installs these
+desktop tools like the others. Claude permissions writes the same rules for the
+Bash tool. `scripts/test-tools.ps1` runs its console tests on a pseudo-terminal
+there (`scripts/test-tools-console.py`, Python 3).
 
 | Choice | What it does |
 |---|---|
@@ -337,13 +371,13 @@ hidden Windows consoles and the restart on isolated temporary scripts.
 | Dev viewer | Your local repository, default profile (the agents' one) |
 | Debug viewer | Your local repository with a console, the debug controls and full debug information (`debugging` profile, its own folder of a few GB) |
 | Demo | The viewer offline, with the choice of an `AURORA_DEMO_*` scenario (read from [docs/TESTING.md](docs/TESTING.md)) |
-| Agent tasks | The folders of `work\`: PR, changes in progress, last build, size; cleanup of those whose PR is merged |
+| Agent tasks | The folders of `work\`: PR, changes in progress, last build, size; cleanup of those whose PR is merged. A task's PR is found whether its branch was pushed to the main repository or to your own fork (PR opened from the fork), as for `end-task.ps1` and the housekeeping of `new-task.ps1` |
 | Disk | The space taken by the builds, and the cleanup (`clean.ps1`) |
 | Viewer logs | Open the folder, read the end of the last log, copy its path for an agent |
 | PR tracking | The live panel (see below) |
 | Manage releases | Create or delete a release (see [Publishing a release](#publishing-a-release)) |
 | Shortcuts | "Aurora Tools" and "Aurora PR" (the PR panel directly) on the Desktop and in the Start menu, with the logo |
-| Claude permissions | Lets your Claude Code agents follow their PRs and CI, post their review and their screenshots, merge their PR, triage the issues and reply to them (`gh pr view / list / checks / comment`, `gh run view / list / watch`, `gh issue list / view / edit / comment / close / reopen`, `merge-pr.ps1`, `pr-captures.ps1`), which auto mode can otherwise refuse them ("auto-approval", "write to an external system", "interference with workloads"). `gh api`, `git push`, `gh pr merge`, the releases and `end-task.ps1` stay without a rule, left to the judgement of auto mode. Adds these rules to your Claude Code settings (`%USERPROFILE%\.claude\settings.json`) without touching the rest, keeping a copy of the former file; the merge queue and the protection of `main` still apply. Run it again after a tools update that adds a rule: only the missing rules are added. Then open a new Claude Code session |
+| Claude permissions | Lets your Claude Code agents follow their PRs and CI, post their review and their screenshots, merge their PR, triage the issues and reply to them (`gh pr view / list / checks / comment`, `gh run view / list / watch`, `gh issue list / view / edit / comment / close / reopen`, `merge-pr.ps1`, `pr-captures.ps1`, `review-queue.ps1`), which auto mode can otherwise refuse them ("auto-approval", "write to an external system", "interference with workloads"). `gh api`, `git push`, `gh pr merge`, the releases and `end-task.ps1` stay without a rule, left to the judgement of auto mode. Adds these rules to your Claude Code settings (`%USERPROFILE%\.claude\settings.json`) without touching the rest, keeping a copy of the former file; the merge queue and the protection of `main` still apply. Run it again after a tools update that adds a rule: only the missing rules are added. Then open a new Claude Code session |
 | Check again | The full table of the environment |
 | Reset the repository | Start again from a fresh clone of the `main` of GitHub: the tool first lists everything that would be lost (uncommitted changes, commits never pushed, stashes, agents' tasks with their changes, ignored files such as a `.env`), refuses if a build or a viewer is running, and does nothing unless you type `RESET`. It then deletes the tasks of `work\` and `RELEASE\`, puts the repository back on `origin/main` (untracked files and builds erased, local branches and stashes deleted), then repairs the environment. Your git identity, your GitHub login and the Legacy Viewer sources are kept |
 

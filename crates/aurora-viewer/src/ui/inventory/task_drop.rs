@@ -5,7 +5,7 @@ use crate::build::task_inventory::{self, TransferKind, TransferRequest};
 use aurora_net::build::TaskItem;
 
 /// The dragged rows, one request each in list order
-/// (LLFolderViewModelInventory::startDrag â†’ beginMultiDrag).
+/// (LLFolderViewModelInventory::startDrag → beginMultiDrag).
 #[derive(Clone)]
 pub struct TaskDrag {
     pub requests: Vec<TransferRequest>,
@@ -51,10 +51,10 @@ impl PendingTransfer {
 /// enclosing surfaces, so the first hovered target owns the feedback this pass.
 /// Firestorm: LLToolDragAndDrop::acceptanceToCursor / handleHover.
 pub fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
-    if !egui::DragAndDrop::has_payload_of_type::<TaskDrag>(ctx) || !ctx.input(|i| i.pointer.primary_down()) {
+    if !egui::DragAndDrop::has_payload_of_type::<TaskDrag>(ctx) || !crate::outside::carry::dragging(ctx) {
         return None;
     }
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     Some(ctx.data_mut(|data| {
         data.get_temp::<(u64, egui::CursorIcon)>(egui::Id::unique("task_inventory_drag_cursor"))
             .filter(|(at, _)| *at == pass)
@@ -63,7 +63,7 @@ pub fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
 }
 
 fn target_cursor(ctx: &egui::Context, cursor: egui::CursorIcon) -> bool {
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|data| {
         let id = egui::Id::unique("task_inventory_drag_cursor");
         if data.get_temp::<(u64, egui::CursorIcon)>(id).is_none_or(|(at, _)| at != pass) {
@@ -137,7 +137,7 @@ pub fn root_drag(world: &World, object: Uuid, items: &[TaskItem], owned: bool) -
 /// the object (move_task_inventory_callback moves each (folder, item) pair);
 /// "Copy to inventory" of the Open window is the one that makes that folder.
 pub fn root_source(ui: &mut egui::Ui, r: &egui::Response, world: &World, object: Uuid, items: &[TaskItem], owned: bool) {
-    if !(r.hovered() || r.drag_started() || r.dragged()) {
+    if !(r.hovered() || r.is_pointer_button_down_on()) {
         return;
     }
     match root_drag(world, object, items, owned) {
@@ -152,7 +152,7 @@ fn begin<E: AsRef<str>>(ui: &mut egui::Ui, r: &egui::Response, object: Uuid, ite
     if let Err(error) = &access {
         r.clone().on_hover_text(error.as_ref());
     }
-    if r.drag_started() {
+    if super::drag::begins(ui, r) {
         if let Ok(Some(kind)) = access {
             let requests = items
                 .iter()
@@ -164,7 +164,7 @@ fn begin<E: AsRef<str>>(ui: &mut egui::Ui, r: &egui::Response, object: Uuid, ite
                     ignore_warning: false,
                 })
                 .collect();
-            r.dnd_set_drag_payload(TaskDrag { requests, kind });
+            egui::DragAndDrop::set_payload(ui.ctx(), TaskDrag { requests, kind });
         } else {
             ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed);
         }
@@ -176,7 +176,7 @@ fn begin<E: AsRef<str>>(ui: &mut egui::Ui, r: &egui::Response, object: Uuid, ite
 pub fn target(ui: &mut egui::Ui, p: &Palette, r: &egui::Response, inv: &Inventory, folder: Uuid, actions: &mut Vec<InvAction>) {
     if demo_enabled() && folder != inv.root {
         // the folder's own row comes before the zones enclosing it
-        let pass = ui.ctx().cumulative_pass_nr();
+        let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
         ui.ctx().data_mut(|d| {
             if d.get_temp::<(u64, egui::Rect)>(demo_target_id(folder))
                 .is_none_or(|(at, _)| at != pass)

@@ -50,7 +50,28 @@ def read_token(port):
     return token
 
 
+# Per-object warnings travel only to a viewer that asked for them: v1 peers
+# reject unknown snapshot fields. Bounded like the viewer's parser.
+MAX_WARNINGS = 64
+MAX_WARNING_TEXT = 512
+
+
+def object_warning(source_id, name, kind, reason):
+    """One entry of the snapshot's `warnings` list: `kind` is "textures" (the
+    object syncs in its plain colour) or "not-sent" (it is not in this
+    revision); `reason` is the untranslated export message."""
+    value = {"name": str(name)[:MAX_WARNING_TEXT], "kind": kind, "reason": str(reason)[:MAX_WARNING_TEXT]}
+    if source_id:
+        value["source_id"] = str(source_id)
+    return value
+
+
 def wire_snapshot(snapshot, features):
+    if "warnings" in snapshot:
+        if "object-warnings" in features and snapshot["warnings"]:
+            snapshot = dict(snapshot, warnings=snapshot["warnings"][:MAX_WARNINGS])
+        else:
+            snapshot = {key: value for key, value in snapshot.items() if key != "warnings"}
     if "static-meshes" not in features and any(mesh.get("joints") == [] for mesh in snapshot.get("meshes", [])):
         raise ValueError("Update Aurora Viewer to preview non-rigged meshes")
     if not {"object-links", "source-ids"}.issubset(features) and any(mesh.get("link") for mesh in snapshot.get("meshes", [])):
@@ -102,6 +123,29 @@ def wire_snapshot(snapshot, features):
 
 class SnapshotSizeError(ValueError):
     pass
+
+
+def lods_frame(prepared, hello):
+    """The LODS frame of prepared import LODs. Four LOD levels written as JSON
+    text can pass 64 MiB for a mesh whose single-LOD COLLADA export is small;
+    a viewer that offers "compressed-lods" receives "ZLIB" and the deflated
+    JSON instead, bounded like compressed snapshots."""
+    raw = json.dumps(prepared, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    limit = min(MAX_BYTES, hello.get("max_bytes", MAX_BYTES)) - 4
+    compressed = "compressed-lods" in hello.get("features", [])
+    if compressed and (len(raw) >= COMPRESS_THRESHOLD or len(raw) > limit):
+        if len(raw) <= min(MAX_DECODED_BYTES, hello.get("max_decoded_bytes", MAX_DECODED_BYTES)):
+            packed = b"ZLIB" + zlib.compress(raw, 1)
+            if len(packed) < len(raw) and len(packed) <= limit:
+                return b"LODS" + packed
+    if len(raw) <= limit:
+        return b"LODS" + raw
+    # As _encode: over the decoded budget or still too large once deflated,
+    # only less geometry helps; a viewer without compressed-lods needs an update.
+    error = ("Prepared LODs exceed the LiveMesh transfer limit; reduce the mesh's geometry" if compressed else
+             "Prepared LODs exceed 64 MiB; update Aurora Viewer to import them")
+    return b"LODS" + json.dumps({"id": prepared["id"], "source": prepared["source"], "error": error},
+                                separators=(",", ":")).encode("utf-8")
 
 
 def _encode(snapshot, hello):
@@ -161,12 +205,26 @@ def prepare_frame(snapshot, hello):
             else:
                 accepted.append(mesh)
                 payload = candidate
+        if issues and "object-warnings" in hello.get("features", []):
+            # the viewer lists what this revision left out, and why
+            dropped = [object_warning(mesh.get("source_id"), mesh["name"], "not-sent",
+                                      issues[mesh.get("source_id", mesh["name"])])
+                       for mesh in snapshot.get("meshes", []) if mesh.get("source_id", mesh["name"]) in issues]
+            try:
+                payload = _encode(dict(_subset(snapshot, accepted),
+                                       warnings=list(snapshot.get("warnings", [])) + dropped), hello)
+            except SnapshotSizeError:
+                pass
         return payload, issues
 
 
 class Client:
-    def __init__(self, port):
+    def __init__(self, port, capabilities=None):
+        """`capabilities` limits the optional controls this client negotiates
+        (shape-transfer, shape-apply, import-lods); None offers every one the
+        viewer has. The Maya plug-in shares this module and names its own."""
         self.port = port
+        self._capabilities = capabilities
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -212,7 +270,7 @@ class Client:
             if self._shape is not None and time.monotonic() - self._shape_received > 30:
                 identity = self._shape.get("id", "") if isinstance(self._shape, dict) else ""
                 self._shape_result = {"type": "shape-result", "id": identity,
-                                      "error": "Switch to Object Mode and send the shape again"}
+                                      "error": "The program was busy (in Blender, switch to Object Mode); send the shape again"}
                 self._shape = None
                 self._wake.set()
             apply_in_pose = pose and isinstance(self._shape, dict) and self._shape.get("action") == "apply"
@@ -229,7 +287,7 @@ class Client:
     def take_import(self, ready=True):
         with self._lock:
             if self._import is not None and time.monotonic() - self._import_received > 30:
-                self._import_result = dict(self._import, error="Switch to Object Mode and click Import again")
+                self._import_result = dict(self._import, error="The program was busy (in Blender, switch to Object Mode); click Import again")
                 self._import = None
                 self._wake.set()
             if not ready:
@@ -307,8 +365,9 @@ class Client:
                             self._rest_axes = hello.get("rest_axes", {})
                             self._features = frozenset(hello.get("features", []))
                         self._set_status("Connected to Aurora", hello["joints"])
-                        if "shape-transfer" in hello.get("features", []):
-                            features = [name for name in ("shape-transfer", "shape-apply", "import-lods") if name in hello.get("features", [])]
+                        features = [name for name in ("shape-transfer", "shape-apply", "import-lods") if name in hello.get("features", [])
+                                    and (self._capabilities is None or name in self._capabilities)]
+                        if "shape-transfer" in hello.get("features", []) and features:
                             payload = json.dumps({"type": "features", "features": features}).encode("utf-8")
                             connection.sendall(struct.pack("<I", len(payload)) + payload)
                             self._reply(reader)
@@ -325,10 +384,7 @@ class Client:
                                 result, self._shape_result = self._shape_result, None
                                 prepared, self._import_result = self._import_result, None
                             if prepared is not None:
-                                payload = b"LODS" + json.dumps(prepared, separators=(",", ":"), allow_nan=False).encode("utf-8")
-                                if len(payload) > MAX_BYTES:
-                                    payload = b"LODS" + json.dumps({"id": prepared["id"], "source": prepared["source"],
-                                        "error": "Prepared LODs exceed 64 MiB"}, separators=(",", ":")).encode("utf-8")
+                                payload = lods_frame(prepared, hello)
                                 # A full four-level decode can outlast an ordinary
                                 # live frame. Keep it on the worker, bounded by the
                                 # viewer's import deadline; close() still interrupts.

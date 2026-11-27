@@ -281,6 +281,19 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
             ui.item_if(icon, label, o.scripts, CtxAction::Scripts { id, action });
         }
     });
+    // Not on the Legacy Viewer's object menu: its closest model is the
+    // attachment's "Show original" (handle_object_show_original,
+    // menu_attachment_self.xml), which keeps its icon and label here and is
+    // greyed out the same way under @showinv (enable_object_show_original,
+    // llviewermenu.cpp). Shown once the properties have named the object.
+    if o.owned && !o.local_preview && !o.name.trim().is_empty() {
+        ui.item_if(
+            "briefcase-filled",
+            aurora_i18n::tr!("ui-context-show-in-inventory"),
+            !o.inventory_hidden,
+            CtxAction::FindInInventory(id),
+        );
+    }
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point, None));
     ui.item(
         "list-details-filled",
@@ -548,6 +561,16 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         aurora_i18n::tr!("common-detach"),
         f.object.detach,
         CtxAction::Detach(key),
+    );
+    // An Aurora addition, in no Legacy menu: the confirmation that Delete
+    // of a worn item asks in Inventory ("DeleteWornItems"), offered on the
+    // worn object. It re-checks body parts, RLVa and the Trash move before
+    // anything comes off.
+    ui.item_if(
+        "trash-x-filled",
+        aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
+        f.object.detach && f.object.attachment_item.is_some_and(|item| !item.is_nil()),
+        CtxAction::DetachDelete(key),
     );
     save_as_submenu(ui, f.object.id);
     ui.separator();
@@ -829,7 +852,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         |ui| {
             ui.item_if(
                 "zoom-scan-filled",
-                aurora_i18n::tr!("ui-context-inspect-all-attachments"),
+                aurora_i18n::tr!("ui-context-inspect-avatar"),
                 f.worn,
                 CtxAction::InspectAvatar(id),
             );
@@ -1124,11 +1147,19 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
             f.worn_shape.is_some(),
             CtxAction::EditWorn(f.worn_shape.unwrap_or_default()),
         );
+        // The whole avatar, in the place of the shape-only "Export shape
+        // XML" it replaces (human choice, 2026-11-25): a shape creator took
+        // that one for the whole appearance, and the whole file holds the
+        // shape too; the shape editor's Export XML button still writes the
+        // shape alone. The Legacy Viewer's "Dump XML" of this menu
+        // (LLVOAvatar::dumpArchetypeXML, menu_pie_avatar_self.xml) shows
+        // only with the DebugAvatarAppearanceMessage setting; Aurora always
+        // shows its entry.
         ui.item_if(
             "file-export",
-            aurora_i18n::tr!("ui-context-export-shape-xml"),
-            f.worn_shape.is_some() && f.shape_xml_export,
-            CtxAction::ExportShapeXml(f.worn_shape.unwrap_or_default()),
+            aurora_i18n::tr!("appearance-xml-export-mine"),
+            f.appearance_xml_export,
+            CtxAction::ExportAppearanceXml,
         );
         ui.item_if(
             "pencil-filled",
@@ -1760,7 +1791,7 @@ mod tests {
             attachment: None,
         };
         // "Inspect" lists what the avatar wears: greyed when it wears nothing in view
-        let inspect = |f: &Facts| find(world_menu(&on_avatar, f, Vec3::ZERO), "ui-context-inspect-all-attachments", false);
+        let inspect = |f: &Facts| find(world_menu(&on_avatar, f, Vec3::ZERO), "ui-context-inspect-avatar", false);
         assert!(!inspect(&Facts::default()).enabled);
         let wearing = Facts {
             worn: true,
@@ -1827,38 +1858,42 @@ mod tests {
     }
 
     #[test]
-    fn the_worn_shape_exports_to_xml_only_when_the_rule_allows_it() {
-        let item = Uuid::from_u128(43);
-        let target = Target::Avatar {
-            id: Uuid::nil(),
-            own: true,
-            attachment: None,
-        };
-        let find = |facts: &Facts| {
+    fn our_whole_appearance_exports_to_xml_after_edit_shape_and_only_from_our_menu() {
+        let mine = aurora_i18n::tr!("appearance-xml-export-mine");
+        let submenu = |own: bool, facts: &Facts| {
+            let target = Target::Avatar {
+                id: Uuid::nil(),
+                own,
+                attachment: None,
+            };
             world_menu(&target, facts, Vec3::ZERO)
                 .into_iter()
-                .find_map(|entry| {
-                    let Kind::Submenu(entries) = entry.kind else { return None };
-                    entries
-                        .into_iter()
-                        .find(|entry| entry.label == aurora_i18n::tr!("ui-context-export-shape-xml"))
+                .filter_map(|entry| match entry.kind {
+                    Kind::Submenu(entries) => Some(entries),
+                    _ => None,
                 })
-                .expect("export action")
+                .find(|entries| entries.iter().any(|entry| entry.label == mine))
         };
-        let allowed = Facts {
-            worn_shape: Some(item),
-            shape_xml_export: true,
+        let ready = Facts {
+            worn_shape: Some(Uuid::from_u128(43)),
+            appearance_xml_export: true,
             ..Default::default()
         };
-        let entry = find(&allowed);
-        assert!(entry.enabled);
-        assert!(matches!(entry.kind, Kind::Action(CtxAction::ExportShapeXml(id)) if id == item));
-        let refused = Facts {
-            shape_xml_export: false,
-            ..allowed
-        };
-        assert!(!find(&refused).enabled, "no modify rights");
-        assert!(!find(&Facts::default()).enabled, "no worn shape");
+        let entries = submenu(true, &ready).expect("our Appearance submenu");
+        let at = entries
+            .iter()
+            .position(|entry| entry.label == mine)
+            .expect("whole appearance export");
+        assert!(
+            matches!(entries[at - 1].kind, Kind::Action(CtxAction::EditWorn(_))),
+            "right after Edit shape, in the place of the shape-only export"
+        );
+        assert!(entries[at].enabled);
+        assert!(matches!(entries[at].kind, Kind::Action(CtxAction::ExportAppearanceXml)));
+        let entries = submenu(true, &Facts::default()).expect("our Appearance submenu");
+        let entry = entries.iter().find(|entry| entry.label == mine).expect("whole appearance export");
+        assert!(!entry.enabled, "appearance not ready, or an export or outfit change runs");
+        assert!(submenu(false, &ready).is_none(), "never on another avatar");
     }
 
     #[test]
@@ -1873,6 +1908,8 @@ mod tests {
             "common-edit",
             "ui-context-edit-pbr-material",
             "common-detach",
+            // ours: Detach and Delete, in no Legacy menu
+            "ui-inventory-dialogs-detach-and-delete",
             "common-save-as>",
             "-",
             "status-sit",
@@ -1938,6 +1975,46 @@ mod tests {
             .into_iter()
             .find(|e| e.label == label)
             .unwrap_or_else(|| panic!("{key} missing"))
+    }
+
+    /// "Show in inventory" of a rezzed object: on the menu of what the agent
+    /// owns itself (never a group-deeded or someone else's object, nor a
+    /// local mesh), greyed out under @showinv, with the attachment's icon.
+    #[test]
+    fn show_in_inventory_of_a_rezzed_object_follows_ownership_and_showinv() {
+        let (me, group, other) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let find = |f: &Facts| {
+            rows(world_menu(&object_target(), f, Vec3::ZERO))
+                .into_iter()
+                .find(|e| matches!(e.kind, Kind::Action(CtxAction::FindInInventory(_))))
+        };
+        let mut f = Facts::default();
+        f.object.name = "Chair".into();
+        // owned: shown and enabled, with the attachment's icon and label
+        f.object.owned = crate::ui::context::owns_rezzed(me, me);
+        let entry = find(&f).expect("owned object has the entry");
+        assert!(entry.enabled);
+        assert_eq!(entry.icon, "briefcase-filled");
+        assert_eq!(entry.label, aurora_i18n::text("ui-context-show-in-inventory"));
+        assert!(matches!(entry.kind, Kind::Action(CtxAction::FindInInventory(id)) if id == ID));
+        // @showinv greys it out
+        f.object.inventory_hidden = true;
+        assert!(!find(&f).expect("still listed under @showinv").enabled);
+        f.object.inventory_hidden = false;
+        // group owned (OwnerID is the group) and someone else's: not listed
+        for owner in [group, other, Uuid::nil()] {
+            f.object.owned = crate::ui::context::owns_rezzed(owner, me);
+            assert!(find(&f).is_none(), "owner {owner} must not offer it");
+        }
+        // a nil agent (not logged in) owns nothing
+        assert!(!crate::ui::context::owns_rezzed(Uuid::nil(), Uuid::nil()));
+        // no name yet (properties not arrived), or a local mesh: not listed
+        f.object.owned = true;
+        f.object.name = " ".into();
+        assert!(find(&f).is_none());
+        f.object.name = "Chair".into();
+        f.object.local_preview = true;
+        assert!(find(&f).is_none());
     }
 
     #[test]
@@ -2188,6 +2265,24 @@ mod tests {
             };
             assert!(!find(world_menu(&target, &friend, Vec3::ZERO), "common-become-friends").enabled);
         }
+    }
+
+    #[test]
+    fn our_attachment_offers_detach_and_delete_once_detach_and_its_item_allow_it() {
+        let key = ObjKey { region: 1, local_id: 42 };
+        let mut f = Facts::default();
+        let menu = |f: &Facts| world_menu(&Target::Attachment { key }, f, Vec3::ZERO);
+        let label = "ui-inventory-dialogs-detach-and-delete";
+        assert!(!row(menu(&f), label).enabled);
+        // detach allowed but no inventory item to delete: still greyed
+        f.object.detach = true;
+        assert!(!row(menu(&f), label).enabled);
+        f.object.attachment_item = Some(Uuid::from_u128(5));
+        let entry = row(menu(&f), label);
+        assert!(entry.enabled && matches!(entry.kind, Kind::Action(CtxAction::DetachDelete(k)) if k == key));
+        // an RLVa remove lock greys it with Detach
+        f.object.detach = false;
+        assert!(!row(menu(&f), label).enabled);
     }
 
     #[test]

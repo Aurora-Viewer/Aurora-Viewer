@@ -319,7 +319,7 @@ fn rlva_privacy_strict_exceptions_landmarks_profile_locations_and_nearby_release
     };
     assert!(!world.rlva_allows_command(&landmark, Uuid::nil()));
     let mut dialog = crate::ui::landmark_create::CreateLandmarkUi::default();
-    assert!(dialog.open(&world, None).is_none() && !dialog.open);
+    assert!(dialog.open(&egui::Context::default(), &world, None).is_none() && !dialog.open);
     let mut pick = PickInfo {
         id: TARGET,
         creator: world.agent_id,
@@ -3636,7 +3636,7 @@ fn rlva_killed_attachment_clears_the_rules_rooted_on_it_but_not_during_a_telepor
     assert!(world.objects.index_of_uuid(&root).is_some(), "a kill during a teleport is ignored");
     assert!(world.rlva.has("fly") && world.rlva.has("jump") && world.rlva.has("alwaysrun"));
     assert!(parity_replies(&mut world.rlva).iter().all(|(channel, _)| *channel != 123));
-    world.apply(NetEvent::TeleportFailed { reason: "no".into() });
+    world.apply(NetEvent::viewer_teleport_failed("no"));
 
     // a child prim killed on its own, before its root: nothing is cleared yet
     world.apply(NetEvent::ObjectsKilled {
@@ -4054,6 +4054,65 @@ fn build_escape_world() -> (crate::world::World, usize, usize) {
     (world, seat, other)
 }
 
+/// LLTaskInvFVBridge::renameItem through `BuildTool::rename_item`: the script
+/// editor's title rename and the Contents panel share one guard, so a locked
+/// attachment (@remattach) keeps the names of its contents.
+#[test]
+fn locked_attachment_prevents_script_rename() {
+    use crate::build::BuildTool;
+    use aurora_net::build::{BuildCmd, TaskItem, perm};
+
+    let (mut world, _, _) = build_escape_world();
+    let chest = worn_attachment(&mut world, 9101, 1);
+    let worn = world
+        .objects
+        .iter()
+        .find(|(_, o)| o.attachment_item_id() == Some(chest))
+        .map(|(i, _)| i)
+        .expect("worn attachment");
+
+    let object = world.objects.get(worn).unwrap().full_id;
+    let item_id = Uuid::from_u128(9102);
+    let mut tool = BuildTool::default();
+
+    tool.contents.objects.entry(object).or_default().items.push(TaskItem {
+        item_id,
+        name: "Original".into(),
+        owner_mask: perm::MODIFY,
+        ..Default::default()
+    });
+
+    // Object permissions must not obscure the RLVa restriction.
+    world.god_level = 1;
+    assert!(tool.contents_items_editable(&world, worn));
+
+    command(&mut world.rlva, A, "@remattach:chest=n");
+    assert!(world.rlva_locked_attachment(worn));
+    assert!(!tool.contents_items_editable(&world, worn));
+
+    tool.rename_item(&world, worn, item_id, "Blocked");
+
+    assert_eq!(tool.contents.objects[&object].items[0].name, "Original");
+    assert!(
+        !tool
+            .out
+            .iter()
+            .any(|command| matches!(command, NetCommand::Build(BuildCmd::UpdateTaskInventory { .. }))),
+        "a locked attachment must not send a rename"
+    );
+
+    command(&mut world.rlva, A, "@remattach:chest=y");
+    assert!(!world.rlva_locked_attachment(worn));
+
+    tool.rename_item(&world, worn, item_id, "Allowed");
+    assert_eq!(tool.contents.objects[&object].items[0].name, "Allowed");
+    assert!(tool.out.iter().any(|command| matches!(
+        command,
+        NetCommand::Build(BuildCmd::UpdateTaskInventory { item, .. })
+            if item.item_id == item_id && item.name == "Allowed"
+    )));
+}
+
 /// LLTaskInvFVBridge::isItemRemovable / isItemMovable, LLPanelContents::getState
 /// and willObjectAcceptInventory: the contents of an attachment that cannot be
 /// taken off, and of the seat under @unsit or @sittp, stay as they are; the
@@ -4189,12 +4248,28 @@ fn rlva_locked_attachment_and_restrained_seat_keep_their_contents_place_and_link
     assert!(world.rlva_locked_attachment(worn) && world.rlva_contents_locked(worn));
     assert!(none(&world, contents(&world, worn)) && none(&world, scripts(&world, worn)) && none(&world, open(&world, worn)));
     assert!(all(&world, transform(&world, worn)), "a locked attachment is still adjusted");
+    // LLTaskInvFVBridge::buildContextMenu greys "Open" out: its notecards
+    // and scripts, not its textures
+    let blocked = |world: &World, i: usize| [7, 10, 0, 1].map(|t| world.rlva_task_open_blocked(i, t));
+    assert_eq!(blocked(&world, worn), [true, true, false, false]);
+    assert_eq!(blocked(&world, other), [false; 4]);
     for i in [seat, other] {
         assert!(!world.rlva_contents_locked(i));
         assert!(all(&world, contents(&world, i)) && all(&world, scripts(&world, i)) && all(&world, open(&world, i)));
     }
     command(&mut world.rlva, A, "@remattach:chest=y");
     assert!(all(&world, contents(&world, worn)) && all(&world, scripts(&world, worn)) && all(&world, open(&world, worn)));
+    // and on any object under @viewnote, @viewscript and @viewtexture
+    for (view, expected) in [
+        ("viewnote", [true, false, false, false]),
+        ("viewscript", [false, true, false, false]),
+        ("viewtexture", [false, false, true, false]),
+    ] {
+        command(&mut world.rlva, A, &format!("@{view}=n"));
+        assert_eq!(blocked(&world, other), expected, "{view}");
+        command(&mut world.rlva, A, &format!("@{view}=y"));
+    }
+    assert_eq!(blocked(&world, worn), [false; 4]);
     // the seat under @sittp: contents and place, not the links (RlvActions::canStand)
     command(&mut world.rlva, A, "@sittp=n");
     assert!(world.rlva_restrained_seat(seat) && world.rlva_contents_locked(seat) && !world.rlva_contents_locked(other));

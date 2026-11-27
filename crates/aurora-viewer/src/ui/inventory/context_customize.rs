@@ -13,9 +13,16 @@ use uuid::Uuid;
 const WIDTH: f32 = 272.0;
 const CONTROL: f32 = 28.0;
 
-fn lost_window_focus(ctx: &egui::Context) -> bool {
+/// The native window `viewport` lost the focus. The menu's own window is
+/// asked, not the pass under way: the inventory finishes its menus in the
+/// viewer's pass, while a menu of a window outside the viewer is drawn in
+/// that window's (#4820: the viewer's window, unfocused while the one
+/// outside was used, closed its sub-menus at every frame).
+fn lost_window_focus(ctx: &egui::Context, viewport: egui::ViewportId) -> bool {
     // A minimized window can lose and regain focus between rendered frames.
-    ctx.input(|i| !i.focused || i.events.iter().any(|event| matches!(event, egui::Event::WindowFocused(false))))
+    ctx.input_for(viewport, |i| {
+        !i.focused || i.events.iter().any(|event| matches!(event, egui::Event::WindowFocused(false)))
+    })
 }
 
 impl super::InventoryUi {
@@ -154,6 +161,8 @@ struct Editor {
 pub(crate) struct State {
     pub(crate) help: std::collections::BTreeMap<String, String>,
     root: Option<(Uuid, Id, String)>,
+    /// The window the menu is drawn in (`lost_window_focus`).
+    viewport: egui::ViewportId,
     frame: u64,
     right_frame: Option<u64>,
     keep_open_frame: Option<u64>,
@@ -203,7 +212,9 @@ impl State {
     /// Dismissal can bypass the popup body (closed inventory, replaced popup,
     /// or a native window move). Editing must end even on those frames.
     pub(crate) fn finish_frame(&mut self, ctx: &egui::Context, profile: &mut Profile) {
-        if self.root.is_some() && (lost_window_focus(ctx) || self.frame != ctx.cumulative_frame_nr()) {
+        if self.root.is_some()
+            && (lost_window_focus(ctx, self.viewport) || self.frame != ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
+        {
             self.dismiss(ctx, profile);
         }
     }
@@ -218,7 +229,10 @@ impl State {
 
     pub(crate) fn prepare(&mut self, ctx: &egui::Context, item: Uuid, root: Id, scope: &str, prefs: &mut super::menu_layout::Preferences) {
         if let Some((previous_item, previous_root, previous_scope)) = &self.root
-            && (*previous_item != item || *previous_root != root || previous_scope != scope || ctx.cumulative_frame_nr() > self.frame + 1)
+            && (*previous_item != item
+                || *previous_root != root
+                || previous_scope != scope
+                || ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) > self.frame + 1)
             && let Some(profile) = prefs.profiles.get_mut(previous_scope)
         {
             // A newly opened menu can reuse the previous popup's ID.
@@ -255,13 +269,14 @@ pub(crate) fn show(
     profile: &mut Profile,
     state: &mut State,
 ) -> Option<usize> {
-    if lost_window_focus(ui.ctx()) {
+    state.viewport = ui.ctx().viewport_id();
+    if lost_window_focus(ui.ctx(), state.viewport) {
         state.dismiss(ui.ctx(), profile);
         ui.close();
         return None;
     }
     menu::distinct_surface(ui);
-    let frame = ui.ctx().cumulative_frame_nr();
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let root = ui.layer_id().id;
     if state.keep_open_frame == Some(frame) {
         menu::keep_parent_open_this_pass(ui);
@@ -622,7 +637,13 @@ impl View<'_> {
                             Kind::Group { direction, .. } => Some(direction == Direction::Vertical),
                             _ => None,
                         };
-                        let response = menu::editable_row(
+                        // the entry's shortcut, from the inventory's one table
+                        let keys = (!self.scope.starts_with("scene:"))
+                            .then(|| super::shortcuts::for_menu_entry(&entry.id))
+                            .flatten()
+                            .and_then(|command| super::shortcuts::label(ui.ctx(), command))
+                            .unwrap_or_default();
+                        let response = menu::editable_row_keys(
                             ui,
                             self.p,
                             self.entry_icon(entry),
@@ -635,6 +656,7 @@ impl View<'_> {
                             },
                             down,
                             !self.profile.locked,
+                            &keys,
                         );
                         self.interact(ui, &response, entry, zone, depth, false);
                     }
@@ -1223,7 +1245,7 @@ impl View<'_> {
         );
         self.state.remember(before, &self.profile.layout);
         if !keep {
-            self.state.keep_open_frame = Some(ui.ctx().cumulative_frame_nr());
+            self.state.keep_open_frame = Some(ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT));
             menu::keep_parent_open_this_pass(ui);
         }
         if open && keep {
@@ -1487,6 +1509,9 @@ mod tests {
         open: bool,
         commands: Vec<usize>,
         shapes: Vec<egui::epaint::ClippedShape>,
+        /// The menu is drawn in a window outside the viewer's (an egui
+        /// viewport of its own, `outside.rs`), which reads the events.
+        outside: bool,
     }
     impl Harness {
         fn new() -> Self {
@@ -1523,7 +1548,19 @@ mod tests {
                 open: true,
                 commands: Vec::new(),
                 shapes: Vec::new(),
+                outside: false,
             };
+            for _ in 0..4 {
+                h.frame(Vec::new(), Modifiers::NONE);
+            }
+            h
+        }
+        /// [`Harness::new`] with the menu in a window outside the viewer's.
+        fn outside() -> Self {
+            let mut h = Self::new();
+            // as `Outside::new`: a viewport is a window of its own
+            h.ctx.set_embed_viewports(false);
+            h.outside = true;
             for _ in 0..4 {
                 h.frame(Vec::new(), Modifiers::NONE);
             }
@@ -1535,60 +1572,106 @@ mod tests {
             let p = crate::theme::Theme::default().palette();
             let mut prefs = super::super::menu_layout::Preferences::default();
             prefs.profiles.insert("shared".into(), std::mem::take(&mut self.profile));
-            let output = crate::ui::login::test_output(
-                self.ctx.run_ui(
+            let screen = egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0));
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                focused: events
+                    .iter()
+                    .rev()
+                    .find_map(|event| {
+                        if let Event::WindowFocused(focused) = event {
+                            Some(*focused)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(true),
+                events,
+                ..Default::default()
+            };
+            fn body(h: &mut Harness, ui: &mut Ui, p: &crate::theme::Palette, prefs: &mut super::super::menu_layout::Preferences) {
+                let target = ui.interact(
+                    egui::Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(50.0, 24.0)),
+                    Id::unique("custom_menu_target"),
+                    Sense::click(),
+                );
+                if target.secondary_clicked() {
+                    h.open = true;
+                }
+                menu::popup_at(
+                    ui.ctx(),
+                    Id::unique("custom_menu_test"),
+                    Pos2::new(100.0, 70.0),
+                    &mut h.open,
+                    p,
+                    |ui| {
+                        h.state.prepare(ui.ctx(), Uuid::from_u128(1), ui.layer_id().id, "shared", prefs);
+                        if let Some(choice) = show(
+                            ui,
+                            p,
+                            Uuid::from_u128(1),
+                            "shared",
+                            &h.entries,
+                            prefs.profiles.get_mut("shared").unwrap(),
+                            &mut h.state,
+                        ) {
+                            h.commands.push(choice);
+                        }
+                    },
+                );
+            }
+            self.shapes = if self.outside {
+                // the pass of the window outside, as `outside.rs` runs it:
+                // inside the viewer's, with the window's own events
+                type Pass = (Option<egui::RawInput>, Option<egui::FullOutput>);
+                let pass: std::rc::Rc<std::cell::RefCell<Pass>> = std::rc::Rc::new(std::cell::RefCell::new((Some(input), None)));
+                let for_pass = pass.clone();
+                egui::Context::set_immediate_viewport_renderer(move |ctx, viewport| {
+                    let egui::ImmediateViewport {
+                        ids, mut viewport_ui_cb, ..
+                    } = viewport;
+                    let raw = for_pass.borrow_mut().0.take().unwrap_or_default();
+                    let info = egui::ViewportInfo {
+                        parent: Some(ids.parent),
+                        inner_rect: raw.screen_rect,
+                        focused: Some(raw.focused),
+                        ..Default::default()
+                    };
+                    let raw = egui::RawInput {
+                        viewport_id: ids.this,
+                        viewports: std::iter::once((ids.this, info)).collect(),
+                        ..raw
+                    };
+                    let out = ctx.run_ui(raw, |ui| viewport_ui_cb(ui));
+                    for_pass.borrow_mut().1 = Some(out);
+                });
+                let id = egui::ViewportId::from_hash_of("menu outside");
+                // the viewer's own window is not focused while the one
+                // outside is used; the inventory finishes its menus in the
+                // viewer's pass (`ui::inventory`)
+                let ctx = self.ctx.clone();
+                crate::ui::login::test_output(ctx.run_ui(
                     egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0))),
-                        focused: events
-                            .iter()
-                            .rev()
-                            .find_map(|event| {
-                                if let Event::WindowFocused(focused) = event {
-                                    Some(*focused)
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(true),
-                        events,
+                        screen_rect: Some(screen),
+                        focused: false,
                         ..Default::default()
                     },
                     |ui| {
-                        let target = ui.interact(
-                            egui::Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(50.0, 24.0)),
-                            Id::unique("custom_menu_target"),
-                            Sense::click(),
-                        );
-                        if target.secondary_clicked() {
-                            self.open = true;
-                        }
-                        menu::popup_at(
-                            ui.ctx(),
-                            Id::unique("custom_menu_test"),
-                            Pos2::new(100.0, 70.0),
-                            &mut self.open,
-                            &p,
-                            |ui| {
-                                self.state
-                                    .prepare(ui.ctx(), Uuid::from_u128(1), ui.layer_id().id, "shared", &mut prefs);
-                                if let Some(choice) = show(
-                                    ui,
-                                    &p,
-                                    Uuid::from_u128(1),
-                                    "shared",
-                                    &self.entries,
-                                    prefs.profiles.get_mut("shared").unwrap(),
-                                    &mut self.state,
-                                ) {
-                                    self.commands.push(choice);
-                                }
-                            },
-                        );
+                        ui.ctx()
+                            .show_viewport_immediate(id, egui::ViewportBuilder::default(), |ui, _| body(self, ui, &p, &mut prefs));
                         self.state.finish_inventory_frame(ui.ctx(), &mut prefs);
                     },
-                ),
-            );
-            self.shapes = output.shapes;
+                ));
+                let out = pass.borrow_mut().1.take().expect("the pass outside ran");
+                crate::ui::login::test_output(out).shapes
+            } else {
+                let ctx = self.ctx.clone();
+                crate::ui::login::test_output(ctx.run_ui(input, |ui| {
+                    body(self, ui, &p, &mut prefs);
+                    self.state.finish_inventory_frame(ui.ctx(), &mut prefs);
+                }))
+                .shapes
+            };
             self.profile = prefs.profiles.remove("shared").unwrap();
         }
         fn click_at(&mut self, pos: Pos2, button: PointerButton) {
@@ -2214,17 +2297,19 @@ mod tests {
         }
     }
 
+    /// In a window outside the viewer too: its own window's focus counts.
     #[test]
     fn window_focus_loss_closes_the_name_editor_relocks_and_restores_right_clicks() {
-        for regained_before_redraw in [false, true] {
-            let mut h = Harness::new();
+        for (outside, regained_before_redraw) in [(false, false), (false, true), (true, false), (true, true)] {
+            let mut h = if outside { Harness::outside() } else { Harness::new() };
             h.drag("rename", "hidden:drop");
             let saved = h.profile.layout.clone();
             h.click("footer:create");
             h.frame(Vec::new(), Modifiers::NONE);
             h.click("editor:Vertical");
             h.frame(Vec::new(), Modifiers::NONE);
-            assert!(h.ctx.text_edit_focused());
+            // (the keyboard focus is read in the viewer's own pass)
+            assert!(outside || h.ctx.text_edit_focused());
             let mut events = vec![Event::WindowFocused(false)];
             if regained_before_redraw {
                 events.push(Event::WindowFocused(true));
@@ -2359,6 +2444,81 @@ mod tests {
                 h.click("rename");
                 assert_eq!(h.commands, if locked { vec![1] } else { vec![] });
             }
+        }
+    }
+
+    /// #4820: in an Inventory window outside the viewer's, the folder menu's
+    /// New icon opened nothing.
+    #[test]
+    fn icon_submenus_open_in_a_window_outside_the_viewer() {
+        for (zone, id) in [("top", "new"), ("bottom", "new-clothing")] {
+            let mut h = Harness::outside();
+            h.profile.locked = true;
+            h.entries.push(Entry {
+                id: id.into(),
+                label: "New...".into(),
+                icon: "plus".into(),
+                enabled: true,
+                checked: None,
+                kind: Kind::Group {
+                    direction: Direction::Horizontal,
+                    open: false,
+                },
+                zone: zone.into(),
+                slot: Some(0),
+            });
+            h.profile.layout.placements.insert("rename".into(), children(id));
+            h.frame(Vec::new(), Modifiers::NONE);
+            assert!(h.state.rects.contains_key(id), "the menu is drawn outside ({zone})");
+            h.click(id);
+            h.frame(Vec::new(), Modifiers::NONE);
+            assert!(h.state.rects.contains_key("rename"), "click did not open {zone} outside");
+            h.click("rename");
+            assert_eq!(h.commands, vec![1], "{zone}");
+        }
+    }
+
+    /// #4820, as seen in the demo: a New… row opened by hovering it, then
+    /// the pointer moved onto its sub-menu, closed it in a window outside.
+    #[test]
+    fn a_hovered_submenu_stays_open_under_the_pointer_in_a_window_outside() {
+        for outside in [false, true] {
+            let mut h = if outside { Harness::outside() } else { Harness::new() };
+            h.profile.locked = true;
+            h.entries.push(Entry {
+                id: "new".into(),
+                label: "New...".into(),
+                icon: "plus".into(),
+                enabled: true,
+                checked: None,
+                kind: Kind::Group {
+                    direction: Direction::Horizontal,
+                    open: false,
+                },
+                zone: TEXT.into(),
+                slot: None,
+            });
+            h.profile.layout.placements.insert("rename".into(), children("new"));
+            h.frame(Vec::new(), Modifiers::NONE);
+            let pos = h.state.rects["new"].center();
+            for _ in 0..30 {
+                h.frame(vec![Event::PointerMoved(pos)], Modifiers::NONE);
+            }
+            assert!(h.state.rects.contains_key("rename"), "hover did not open (outside={outside})");
+            let child = h.state.rects["rename"].center();
+            for step in 1..=8 {
+                let at = pos + (child - pos) * (step as f32 / 8.0);
+                h.frame(vec![Event::PointerMoved(at)], Modifiers::NONE);
+            }
+            for _ in 0..4 {
+                h.frame(vec![Event::PointerMoved(child)], Modifiers::NONE);
+            }
+            assert!(
+                h.state.rects.contains_key("rename"),
+                "the sub-menu closed under the pointer (outside={outside})"
+            );
+            h.click("rename");
+            assert_eq!(h.commands, vec![1], "outside={outside}");
         }
     }
 

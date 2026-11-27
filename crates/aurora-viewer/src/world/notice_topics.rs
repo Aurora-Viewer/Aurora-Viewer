@@ -18,8 +18,13 @@ pub enum Topic {
     /// Anything else: the viewer's own information.
     #[default]
     Info,
-    /// A resident: a friend online or offline, blocked, a bump.
+    /// A resident: blocked, a bump.
     People,
+    /// The radar's alerts: a resident entering or leaving the region, the
+    /// chat range or the draw distance, and friends online or offline
+    /// (CHAT_TYPE_RADAR). The chat keeps them out of the brackets, as
+    /// FSChatHistory::appendMessage does.
+    Radar,
     /// A teleport, its progress or its failure, home.
     Teleport,
     /// An item of the inventory or an object.
@@ -89,6 +94,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         }
     }
 
@@ -97,10 +103,13 @@ mod tests {
         let mut topics = Topics::default();
         let online = notice(0, "Nova Example is online.");
         let tp = notice(1, "Teleporting to Aurora Demo…");
-        topics.note(&online, Topic::People);
+        let bump = notice(2, "Orion Example bumped you.");
+        topics.note(&online, Topic::Radar);
         topics.note(&tp, Topic::Teleport);
-        assert_eq!(topics.of(&online), Topic::People);
+        topics.note(&bump, Topic::People);
+        assert_eq!(topics.of(&online), Topic::Radar);
         assert_eq!(topics.of(&tp), Topic::Teleport);
+        assert_eq!(topics.of(&bump), Topic::People);
         // the same text at another time, another text at the same time
         assert_eq!(topics.of(&notice(5, "Nova Example is online.")), Topic::Info);
         assert_eq!(topics.of(&notice(0, "Orion Example is online.")), Topic::Info);

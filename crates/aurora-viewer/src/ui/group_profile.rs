@@ -445,9 +445,10 @@ impl GroupProfileUi {
     /// opens on its own the first time for the tab the window was asked on.
     fn classic(&mut self, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &view::View, actions: &mut Vec<GroupAction>) {
         let mut pane_actions = Vec::new();
-        // the header of the asked section at the top of the window, counted
-        // from the frame it shows (Administration waits for the group data)
-        let reveal = self.reveal > 0;
+        // Wait for General's profile before anchoring the asked section:
+        // its charter can move that section after a slow reply. Nothing
+        // forces the scroll while it is still loading.
+        let reveal = self.reveal > 0 && v.profile.is_some();
         let mut revealed = false;
         let mut scroll_here = |ui: &mut egui::Ui, open: bool| {
             if reveal && open {
@@ -459,15 +460,7 @@ impl GroupProfileUi {
             .id_salt("group_profile_classic")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let body = egui::Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), 420.0));
-                ui.allocate_rect(body, egui::Sense::hover());
-                let mut pane = ui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(body)
-                        .layout(egui::Layout::top_down(egui::Align::Min)),
-                );
-                pane.set_clip_rect(body.intersect(ui.clip_rect()));
-                super::search::group_details(&mut pane, c, v.id, &v.name, true, &mut pane_actions);
+                super::search::group_details(ui, c, v.id, &v.name, true, &mut pane_actions);
                 ui.add_space(6.0);
                 // the managed members and Administration fit the window under
                 // their header, so that their buttons show with them
@@ -479,7 +472,7 @@ impl GroupProfileUi {
                     if members::manages(v) {
                         members::show(self, &mut part(ui, fit), c, env, v, actions);
                     } else {
-                        members::classic_list(self, ui, c, v);
+                        members::classic_list(self, ui, c, v, fit);
                     }
                 });
                 if administration::visible(v) {

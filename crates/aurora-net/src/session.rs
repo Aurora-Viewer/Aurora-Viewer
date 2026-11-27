@@ -17,6 +17,7 @@ mod god;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
+mod inventory_reads;
 mod inventory_udp;
 mod inventory_updates;
 mod inventory_upload;
@@ -385,6 +386,7 @@ struct Session<'a> {
     inventory_uploads: inventory_upload::Uploads,
     asset_imports: asset_imports::Imports,
     inventory_previews: inventory_preview::Previews,
+    inventory_reads: Option<inventory_reads::Reader>,
     script_transfers: scripts::ScriptTransfers,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
     inventory_copies: inventory_copies::Pending,
@@ -410,26 +412,43 @@ fn emit(sh: &Shared, ev: NetEvent) {
 /// for the items then find their folder instead of Lost And Found.
 fn announce_folder(events: &crate::EventSender, folder: crate::inventory::InvFolder) {
     let _ = events.send(NetEvent::InventoryUpdated {
+        bulk: false,
         folders: vec![folder],
         items: Vec::new(),
     });
 }
 
+/// A `FetchInventory2` item read's timeout: the Legacy Viewer's
+/// `initHttpRequest` (llinventorymodel.cpp, `setTransferTimeout(300)`).
+/// Deliberate difference: one try, where llcorehttp retries on top.
+const LEGACY_ITEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Items read, items the server says do not exist, and failed reads.
-fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads, attachment: bool) {
+fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads, attachment: bool, coalesced: bool) {
     if !reads.items.is_empty() {
-        let _ = events.send(if attachment {
-            NetEvent::AttachmentInventoryItems(reads.items)
+        let _ = events.send(if attachment || coalesced {
+            NetEvent::AttachmentInventoryItems {
+                items: reads.items,
+                coalesced,
+            }
         } else {
             NetEvent::InventoryItems(reads.items)
         });
     }
     if !reads.missing.is_empty() {
-        let _ = events.send(NetEvent::InventoryItemsMissing { items: reads.missing });
+        let _ = events.send(NetEvent::InventoryItemsMissing {
+            items: reads.missing,
+            attachment,
+            coalesced,
+        });
     }
     if !reads.failed.is_empty() {
-        log::warn!("{} inventory item reads failed", reads.failed.len());
-        let _ = events.send(NetEvent::InventoryItemsFailed { items: reads.failed });
+        log::debug!("{} inventory item reads failed", reads.failed.len());
+        let _ = events.send(NetEvent::InventoryItemsFailed {
+            items: reads.failed,
+            attachment,
+            coalesced,
+        });
     }
 }
 
@@ -498,8 +517,12 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     critical_required: critical,
                     bad_credentials,
                     previous_session,
-                    next_server: match e {
-                        LoginError::NextServer(server) => Some(server),
+                    next_server: match &e {
+                        LoginError::NextServer(server) => Some(server.clone()),
+                        _ => None,
+                    },
+                    unencrypted_server: match e {
+                        LoginError::Unencrypted(server) => Some(server),
                         _ => None,
                     },
                 },
@@ -538,6 +561,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     bad_credentials: false,
                     previous_session: false,
                     next_server: None,
+                    unencrypted_server: None,
                 },
             );
             return;
@@ -592,6 +616,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         inventory_uploads: Default::default(),
         asset_imports: Default::default(),
         inventory_previews: Default::default(),
+        inventory_reads: None,
         script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
         inventory_copies: inventory_copies::Pending::default(),
@@ -804,6 +829,7 @@ impl Session<'_> {
         self.main = Some(addr);
         self.set_seed(addr, seed);
         if changed {
+            self.sync_inventory_reader(false);
             self.agent_parcel = None;
             if let Some(sim) = self.sims.get_mut(&addr) {
                 sim.pending_voice = None;
@@ -825,11 +851,14 @@ impl Session<'_> {
     /// asked a second time (requestBaseCapabilitiesCompleteCoro): the first
     /// answer of a neighbour lacks the inventory capabilities, and the
     /// crossing or EstablishAgentCommunication that makes it the agent's
-    /// region repeats its seed (#750).
+    /// region repeats its seed (#750). Every seed (login,
+    /// EstablishAgentCommunication, TeleportFinish, CrossedRegion) gets the
+    /// scheme libcurl would guess here, so one seed has one spelling.
     fn set_seed(&mut self, addr: SocketAddr, seed: String) {
         let Some(sim) = self.sims.get_mut(&addr) else {
             return;
         };
+        let seed = crate::curl_url::ensure_scheme_owned(seed);
         if sim.seed.as_deref() == Some(seed.as_str()) {
             if sim.caps_requested {
                 self.request_caps_again(addr);
@@ -844,6 +873,9 @@ impl Session<'_> {
         sim.caps = Arc::default();
         if let Some(old) = sim.caps_again_task.take() {
             old.abort();
+        }
+        if self.main == Some(addr) {
+            self.sync_inventory_reader(false);
         }
         self.request_caps(addr);
     }
@@ -996,8 +1028,12 @@ impl Session<'_> {
                     let modify_new = !sim.caps.contains_key("ModifyRegion") && caps.contains_key("ModifyRegion");
                     let caps = Arc::new(caps);
                     sim.caps = caps.clone();
-                    emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
-                    let terrain_handle = (sim.handshake_seen && modify_new).then_some(sim.handle);
+                    let handle = sim.handle;
+                    let terrain_handle = (sim.handshake_seen && modify_new).then_some(handle);
+                    if self.main == Some(addr) {
+                        self.sync_inventory_reader(true);
+                    }
+                    emit(self.sh, NetEvent::Capabilities { handle, caps });
                     if let Some(handle) = terrain_handle {
                         self.request_terrain_transforms(handle);
                     }
@@ -1018,6 +1054,7 @@ impl Session<'_> {
                     sim.caps_requested = false;
                 }
                 if self.main == Some(addr) {
+                    self.sync_inventory_reader(true);
                     emit(
                         self.sh,
                         NetEvent::Alert {
@@ -1058,11 +1095,15 @@ impl Session<'_> {
         }
         let caps = Arc::new(caps);
         sim.caps = caps.clone();
-        emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
+        let handle = sim.handle;
+        let features = caps.get("SimulatorFeatures").cloned().map(|u| (handle, u));
+        let terrain_handle = sim.handshake_seen.then_some(handle);
+        if self.main == Some(addr) {
+            self.sync_inventory_reader(true);
+        }
+        emit(self.sh, NetEvent::Capabilities { handle, caps });
         // LLAvatarRenderInfoAccountant::scanNewRegion (setCapabilitiesReceived)
-        self.render_info.new_region(sim.handle, Instant::now());
-        let features = sim.caps.get("SimulatorFeatures").cloned().map(|u| (sim.handle, u));
-        let terrain_handle = sim.handshake_seen.then_some(sim.handle);
+        self.render_info.new_region(handle, Instant::now());
         if let Some(handle) = terrain_handle {
             self.request_terrain_transforms(handle);
         }
@@ -1393,6 +1434,7 @@ impl Session<'_> {
         }
         if self.main == Some(addr) {
             self.main = None;
+            self.sync_inventory_reader(false);
         }
         self.sh.stats.sim_count.store(self.sims.len() as u32, Ordering::Relaxed);
     }
@@ -2489,6 +2531,11 @@ impl Session<'_> {
                 owner,
                 library,
             } => self.fetch_inventory_tree(request, parent, children, depth, owner, library),
+            NetCommand::InventoryItemsKnown { items, owner } => {
+                if let Some(reader) = &self.inventory_reads {
+                    reader.known(owner, &items);
+                }
+            }
             NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner, false, None),
             NetCommand::FetchAttachmentItems { items } => self.fetch_items(items, self.agent_id(), true, None),
             NetCommand::FetchInventoryOrphans { request } => {
@@ -3736,6 +3783,17 @@ impl Session<'_> {
         self.main.and_then(|a| self.sims.get(&a)).and_then(|s| s.caps.get(name).cloned())
     }
 
+    fn sync_inventory_reader(&self, seed_resolved: bool) {
+        if let Some(reader) = &self.inventory_reads {
+            let seed_resolved = seed_resolved
+                || self
+                    .main
+                    .and_then(|addr| self.sims.get(&addr))
+                    .is_some_and(|sim| !sim.caps.is_empty());
+            reader.retarget(self.main_cap("InventoryAPIv3"), seed_resolved);
+        }
+    }
+
     /// LLAgent::sendMaturityPreferenceToServer: always answered, a missing
     /// capability or a failed request as None (handlePreferredMaturityError).
     fn set_maturity_preference(&self, maturity: u8) {
@@ -3905,7 +3963,7 @@ impl Session<'_> {
     }
 
     fn fetch_items(
-        &self,
+        &mut self,
         items: Vec<uuid::Uuid>,
         owner: uuid::Uuid,
         attachment: bool,
@@ -3913,6 +3971,18 @@ impl Session<'_> {
     ) {
         use crate::inventory::ais::ItemReads;
         let ais = (owner == self.agent_id()).then(|| self.main_cap("InventoryAPIv3")).flatten();
+        // Offer verification must read the server afresh and return through
+        // its private channel (#3957). It cannot share or be canceled by
+        // ordinary inventory work that the model already considers known.
+        if offer_reply.is_none()
+            && let Some(cap) = ais.as_deref()
+        {
+            let reader = self
+                .inventory_reads
+                .get_or_insert_with(|| inventory_reads::Reader::new(self.sh.caps_http.clone(), self.sh.events.clone()));
+            reader.enqueue(owner, items, cap.to_owned(), attachment);
+            return;
+        }
         let legacy = self.main_cap("FetchInventory2");
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
@@ -3925,17 +3995,22 @@ impl Session<'_> {
                     all.missing.append(&mut reads.missing);
                     all.failed.append(&mut reads.failed);
                 } else {
-                    send_item_reads(&events, reads, attachment);
+                    send_item_reads(&events, reads, attachment, false);
                 }
             };
             if let Some(cap) = ais {
-                for chunk in items.chunks(16) {
+                for chunk in items.chunks(crate::inventory::ais::ITEM_CHUNK) {
                     receive(crate::inventory::ais::read_items(&http, &cap, owner, chunk).await);
                 }
             } else if let Some(url) = legacy {
                 for chunk in items.chunks(50) {
                     let body = crate::inventory::fetch_items_body(chunk, owner);
-                    let reads = match caps::post_llsd(&http, &url, &body).await {
+                    // (each chunk answers within LEGACY_ITEM_TIMEOUT, so the
+                    // viewer's one-read-at-a-time claim outlasts it)
+                    let posted = tokio::time::timeout(LEGACY_ITEM_TIMEOUT, caps::post_llsd(&http, &url, &body))
+                        .await
+                        .unwrap_or_else(|_| Err(caps::CapsError::Http("timed out".to_owned())));
+                    let reads = match posted {
                         Ok(doc) => crate::inventory::item_reads(&doc, chunk),
                         Err(e) => {
                             log::warn!("item fetch failed: {e}");
@@ -4274,18 +4349,22 @@ impl Session<'_> {
             }
             "TeleportFailed" => {
                 let reason = b["Info"][0]["Reason"].as_str().to_owned();
+                let alert = &b["AlertInfo"][0];
+                let code = alert["Message"].as_str().to_owned();
                 transition::end(
                     Some(transition::Kind::Teleport),
-                    &format!("failed (TeleportFailed: {reason})"),
+                    &format!(
+                        "failed (TeleportFailed: {reason}{})",
+                        if code.is_empty() { String::new() } else { format!(", {code}") }
+                    ),
                     &self.sh.stats,
                 );
                 // handle_teleport_access_blocked: a refusal for the rating
-                let alert = &b["AlertInfo"][0];
                 let extra = crate::teleport_access::extra_bytes(&alert["ExtraParams"]);
-                if let Some(blocked) = crate::teleport_access::from_alert_info(alert["Message"].as_str(), &extra) {
+                if let Some(blocked) = crate::teleport_access::from_alert_info(&code, &extra) {
                     emit(self.sh, NetEvent::TeleportAccessBlocked(blocked));
                 }
-                emit(self.sh, NetEvent::TeleportFailed { reason });
+                emit(self.sh, crate::teleport_failed::event(reason, Some((code, &extra))));
             }
             "DisableSimulator" => {
                 transition::link(|| {
@@ -5453,6 +5532,7 @@ impl Session<'_> {
                 emit(
                     self.sh,
                     NetEvent::InventoryUpdated {
+                        bulk: false,
                         folders: Vec::new(),
                         items,
                     },
@@ -5527,7 +5607,14 @@ impl Session<'_> {
                     })
                     .collect();
                 let delivered = folders.iter().map(|folder: &crate::inventory::InvFolder| folder.id).collect();
-                emit(self.sh, NetEvent::InventoryUpdated { folders, items });
+                emit(
+                    self.sh,
+                    NetEvent::InventoryUpdated {
+                        folders,
+                        items,
+                        bulk: true,
+                    },
+                );
                 if !m.agent_data.transaction_id.is_nil() {
                     emit(
                         self.sh,
@@ -5628,25 +5715,30 @@ impl Session<'_> {
             );
         } else if id == TeleportFailed::ID {
             let m: TeleportFailed = pkt.decode()?;
+            let alert = m
+                .alert_info
+                .first()
+                .map(|info| (field_str(&info.message), info.extra_params.as_slice()));
             transition::end(
                 Some(transition::Kind::Teleport),
-                &format!("failed (TeleportFailed: {})", field_str(&m.info.reason)),
+                &format!(
+                    "failed (TeleportFailed: {}{})",
+                    field_str(&m.info.reason),
+                    alert
+                        .as_ref()
+                        .filter(|(code, _)| !code.is_empty())
+                        .map_or(String::new(), |(code, _)| format!(", {code}"))
+                ),
                 &self.sh.stats,
             );
             // handle_teleport_access_blocked: a refusal for the rating
-            if let Some(blocked) = m
-                .alert_info
-                .first()
-                .and_then(|info| crate::teleport_access::from_alert_info(&field_str(&info.message), &info.extra_params))
+            if let Some(blocked) = alert
+                .as_ref()
+                .and_then(|(code, extra)| crate::teleport_access::from_alert_info(code, extra))
             {
                 emit(self.sh, NetEvent::TeleportAccessBlocked(blocked));
             }
-            emit(
-                self.sh,
-                NetEvent::TeleportFailed {
-                    reason: field_str(&m.info.reason),
-                },
-            );
+            emit(self.sh, crate::teleport_failed::event(field_str(&m.info.reason), alert));
         } else if id == ParcelMediaCommandMessage::ID {
             let m: ParcelMediaCommandMessage = pkt.decode()?;
             let c = &m.command_block;
@@ -7116,6 +7208,7 @@ mod event_queue_tests {
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
+            inventory_reads: None,
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: inventory_copies::Pending::default(),
@@ -7366,6 +7459,32 @@ mod event_queue_tests {
         assert_eq!(session.fetch_without_ais(), None);
         assert_eq!(caps_events(&received), [(20, 4)]);
     }
+
+    /// A seed sent once without its scheme (EstablishAgentCommunication)
+    /// and once with it (the crossing) is the same seed: its capabilities
+    /// stay and it is asked again, as in #750.
+    #[tokio::test]
+    async fn a_seed_with_and_without_its_scheme_is_the_same_seed() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main_addr: SocketAddr = "127.0.0.1:13011".parse().expect("address");
+        let neighbour_addr: SocketAddr = "127.0.0.1:13012".parse().expect("address");
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main_addr, neighbour_addr);
+        let seed = "http://127.0.0.1:9/neighbour-seed";
+        let caps = HashMap::from([("ViewerAsset".to_owned(), "http://127.0.0.1:9/ViewerAsset".to_owned())]);
+
+        session.set_seed(neighbour_addr, "127.0.0.1:9/neighbour-seed".to_owned());
+        assert_eq!(session.sims[&neighbour_addr].seed.as_deref(), Some(seed));
+        // the answer carries the stored spelling: it is not taken for a stale one
+        session.on_caps(neighbour_addr, seed, Ok(caps));
+        assert_eq!(session.sims[&neighbour_addr].caps.len(), 1);
+
+        session.switch_region(20, Some(Ipv4Addr::LOCALHOST), neighbour_addr.port(), seed.to_owned(), (256, 256));
+        assert_eq!(session.main, Some(neighbour_addr));
+        assert_eq!(session.sims[&neighbour_addr].caps.len(), 1);
+        assert!(session.sims[&neighbour_addr].caps_again_task.is_some());
+    }
 }
 
 #[cfg(test)]
@@ -7471,6 +7590,7 @@ mod script_dialog_tests {
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
+            inventory_reads: None,
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: super::inventory_copies::Pending::default(),
