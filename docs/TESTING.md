@@ -4680,7 +4680,7 @@ Movement presentation validation (2026-10-19): final `scripts/check.ps1` green, 
 
 Passage / water-walk validation (2026-10-18): full `scripts/check.ps1` green, 3,573 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. Built the default dev viewer and inspected `.scratch/ao-passage-layout-fr.png`, `ao-passage-layout-rebound-fr.png` and `ao-passage-layout-small-en.png`, compared with `ao-passage-layout-before-fr.png`. Both switches align beneath the run/flight boosts, concise passage text fits its column, default/rebound hints remain current, and swimming controls remain accessible at both viewport sizes. Last-five before/after FR medians: 60 FPS, UI 0.72/0.69 ms and GPU 2.04/2.09 ms; shared desktop load varies, so these are regression observations. Owned logs contain zero errors/panics and only the same synthetic missing-outfit warning. Human acceptance remains required before PR.
 
-Other existing AO modes: interface, interface-group, interface-track, interface-combine, interface-swim, interface-swim-missing, folder-names, folder-names-wait, 1, transitions, off, movement, movement-rebound, swim, swim-missing, firestorm, firestorm-wait, migrate, migrate-done, migrate-swim, migrate-alchemy, migrate-alchemy-done, empty, design-current, design-tabs, design-movement, design-section, design-swim.
+Other existing AO modes: interface, interface-group, interface-track, interface-combine, interface-swim, interface-swim-missing, folder-names, folder-names-wait, 1, transitions, off, movement, movement-rebound, swim, swim-missing, firestorm, firestorm-wait, migrate, migrate-done, migrate-swim, migrate-alchemy, migrate-alchemy-done, empty, unavailable, design-current, design-tabs, design-movement, design-section, design-swim.
 
 
 - **`AURORA_DEMO_PELVIS_CONSTRAINT=1`**: the plaza's avatars that play the
@@ -4737,6 +4737,7 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   animesh alike. Slow Motion Animations slows only our avatar (0.2), the
   others keep the global speed. Nothing is saved: a restart is back at 1.0.
 - **`AURORA_DEMO_AO=interface|interface-group|interface-track|interface-combine|interface-swim|interface-swim-missing`**: approved native AO interface. `interface` has six synthetic standing entries; `interface-group` opens a simultaneous group, `interface-track` an independent cycle, `interface-combine` its guided creation dialog, and `interface-swim` one selected swimming slot with all eight resolved. `interface-swim-missing` removes Floating from that fixture: its state row must show an amber warning triangle, assigned required states a green check, and optional states no marker. The detail pane, compact AO panel and Movement gate share the triangle and missing-animation message; tooltips distinguish missing and assigned required states. No optional-slot counter remains. Test FR/EN, state navigation, single-click selection, row drag insertion/reload, creation from checked main entries, group-member add/remove/order, track cycle isolation, rename and dissociation. Inventory operations use the normal mutation/acknowledgement path against the offline simulator. Examples never seed a user's inventory; all shared theme/font/widget files remain unchanged.
+- **`AURORA_DEMO_AO=unavailable`**: seeds a native AO, then at frame 360 applies the same in-place rename OpenSim sends on a Hypergrid teleport (`#Aurora` becomes `#Aurora (Unavailable)`, version −1). The AO window must still list its set. Inventory opens beside it on that renamed folder. Offline only; a reload while the folder is renamed finds no sets. The Legacy Viewer would make a second `#Firestorm` and `#AO` there; Aurora deliberately makes no twin `#Aurora`.
 - **`AURORA_DEMO_AO=folder-names`**: seeds an existing native AO (including all eight swimming slots) and an empty bridge directory under their previous `AO` / `Bridge` names. The real acknowledged startup edits must rename both to `#Aurora/Aurora AO` and `#Aurora/Aurora Bridge`; the AO selection and links remain unchanged. Opens the real inventory beside the AO after frame 360 with both sibling folders visible; capture at 1050 after bridge provisioning. Regression tests additionally cover an already worn current bridge retaining its folder/item/object identity and valid handshake without another copy/upload/detach, new-name precedence, pending/failed acknowledgements, an authoritative empty old AO and old interrupted-import protection. Human grid validation: confirm the two existing folders are renamed on login, the selected set and animations still work, and a second login creates no duplicate folder or legacy AO import.
 - **`AURORA_DEMO_AO=folder-names-wait`**: uses the same cached old native folders but withholds both inventory services until frame 720. Capture at 450: `AO` and `Bridge` are unchanged, the selected set still works and no metadata edit is sent. Capture at 1200: both folders have their new names and the bridge reaches Ready after its five-second inventory save. The factory must wait beyond its normal timeout if services are delayed, rename an already worn controller without replacing its identities, and still time out a request that was actually sent. The readiness gate is shared with AO startup; running/ready bridge commands continue independently of inventory availability. Offline only.
 - **`AURORA_DEMO_AO=1`**: opens the AO manager, with two standing poses in
@@ -6645,6 +6646,10 @@ append `-edit` for its edit controls or use `chat-drawer-left|chat-drawer-top` f
 an open drawer. Check the draft, Enter/Escape, multiline growth, emoji picker and
 width handle in both bar styles. The first bottom chat block must stay inside the
 same bar and edit region as later blocks, with the same glass and block controls.
+With `AURORA_DEMO_RECENT_EMOJIS=1`, the chat block's island alone stands out of its
+bar's row: over the dock's with `chat-bottom` (the row over the field), under the
+top bar's with `chat-top` (the row under the field, the arrow turned the other way).
+The bar, its other islands and the side bars keep their place and their height.
 
 `AURORA_DEMO_TOOLBAR=chrome|appearance|menu-layout|address|top-drag` exercises the shared
 main-menu catalogue and all four edges without changing saved toolbar settings.
@@ -10751,10 +10756,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1536 the position too, with `rights` the forbidden rights are named at
   1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
   the bell's red counter.
-- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite|lost`**: Contacts
+- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite|lost|sheet|collapsed|groups-sheet|groups-collapsed`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
-  picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). In Aurora's look of People, `groups` opens the Groups pill of the Contacts tab, and the filter fills its search. The detached window has the look of the tab it
+  picker of "Add...". `sheet` opens Friends in a Conversations window
+  wide enough for the contact sheet (900 × 560), its collapse button at the
+  right of the sheet's head; `collapsed` opens the same window with the
+  sheet collapsed: the list takes the whole pane and the expand button ends
+  its toolbar, in the same place. `groups-sheet` and `groups-collapsed` do
+  the same under the Groups pill, whose group sheet the same button
+  collapses. Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). In Aurora's look of People, `groups` opens the Groups pill of the Contacts tab, and the filter fills its search. The detached window has the look of the tab it
   left (#961): People's friends tab in Aurora's look of People with the
   Aurora or Compact conversation style, the contact list otherwise (add
   `AURORA_DEMO_PEOPLE=legacy` to see it). These modes enable the optional Contacts entry for

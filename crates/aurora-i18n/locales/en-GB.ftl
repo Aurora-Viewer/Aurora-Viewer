@@ -643,6 +643,7 @@ import-collision-analyzing = Analysing…
 poser-bridge-disabled = Requests go through the Aurora bridge, turned off in Preferences › Aurora › Behaviour.
 
 poser-hint-position = metres, avatar axes · the chain follows
+poser-hint-position-only = metres, avatar axes · this joint only
 
 poser-hint-scale = factors · centre cube = uniform
 
