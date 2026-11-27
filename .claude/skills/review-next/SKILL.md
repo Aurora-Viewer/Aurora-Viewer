@@ -46,12 +46,12 @@ decisions of step 6.
      waits for is your human's, in the question of step 3 ("Have you done
      the check …?"). Not done yet: it stays approved.
    - `conflict: true`: no CI can test it against `main` (GitHub cannot
-     build the merge), so ask the author to merge main, in a plain comment
-     with no review heading that names the conflicting files (`git
-     merge-tree --write-tree --name-only origin/main <head>`). A `## Changes
-     requested` would leave the PR waiting on them for good, since a merge
-     of main is no answer. It comes back here with a new head, to
-     re-review.
+     build the merge), so ask the author to merge main: a `## Changes
+     requested` (AGENTS.md section 11, like every request to an author)
+     that names the conflicting files (`git merge-tree --write-tree
+     --name-only origin/main <head>`) and asks them to say so in a comment
+     once it is pushed (a merge of main alone is no answer to the queue).
+     Their answer brings it back as a re-review of the merge.
    - `ci`: `Approval`, it joins the approval question of step 3, then the
      wait of step 4; `Run` or `None`, wait (step 4); `Fail`, read the failing job (step 4) and ask the author
      to fix it.
