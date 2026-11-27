@@ -687,16 +687,19 @@ mod tests {
     /// depth.
     #[test]
     fn press_on_an_avatar_face_drawn_far_along_the_ray_ends() {
-        let (world, mut scene, front, _) = super::super::picking::tests::indexed_scene_with_two_objects();
-        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
-        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
-        scene.gpu.resize_with(scene.gpu.len().max(own + 1), Default::default);
-        scene.gpu[own].is_avatar = true;
-        let body_draw = FaceDraw {
-            record: 2,
-            ..scene.gpu[front].faces[0]
+        let with_own_body = || {
+            let (world, mut scene, front, _) = super::super::picking::tests::indexed_scene_with_two_objects();
+            let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+            scene.gpu.resize_with(scene.gpu.len().max(own + 1), Default::default);
+            scene.gpu[own].is_avatar = true;
+            let body_draw = FaceDraw {
+                record: 2,
+                ..scene.gpu[front].faces[0]
+            };
+            scene.gpu[own].faces.push(body_draw);
+            (world, scene)
         };
-        scene.gpu[own].faces.push(body_draw);
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
         for distance in [16_777_216.0_f32, 1.0e9] {
             let point = ray.0 + ray.1 * distance;
             let drawn = Drawn {
@@ -710,7 +713,10 @@ mod tests {
                 blend: None,
                 ray: None,
             };
-            assert_eq!(scene.touch_depth(&world, &drawn, Some(ray), Some(point), 100.0), Some(point));
+            let depth = super::super::picking::tests::walk_ends(with_own_body, move |(world, scene)| {
+                scene.touch_depth(world, &drawn, Some(ray), Some(point), 100.0)
+            });
+            assert_eq!(depth, Some(point), "body drawn {distance} m along the ray");
         }
     }
 
