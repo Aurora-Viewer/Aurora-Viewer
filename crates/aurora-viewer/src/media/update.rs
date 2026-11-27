@@ -23,6 +23,9 @@ pub fn debug_on() -> bool {
 const UPLOAD_BUDGET: usize = 16 << 20;
 const RECENTLY_SHOWN: Duration = Duration::from_secs(60);
 const FLAGS_LOST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a media texture whose layer was refused for good (the page
+/// table full, a size refused) waits before it is made again.
+const REFUSED_RETRY: Duration = Duration::from_secs(2);
 
 fn request_priority(e: &ObjMedia, shown: bool) -> u8 {
     if shown {
@@ -912,6 +915,9 @@ impl MediaManager {
                 // over budget: next frame
                 continue;
             }
+            if fresh && m.texture.retry_at.is_some_and(|at| Instant::now() < at) {
+                continue;
+            }
             if fresh {
                 let black: Vec<u8> = [0u8, 0, 0, 255].repeat((tw * th) as usize);
                 let level = [MipLevel {
@@ -927,8 +933,15 @@ impl MediaManager {
                     None
                 };
                 let Some(slot) = slot else {
+                    // (when video memory may hold its page again; refused
+                    // for good, or that time past, a little later all
+                    // the same)
+                    let now = Instant::now();
+                    let at = renderer.textures.retry_after_refusal().filter(|&at| at > now);
+                    m.texture.retry_at = Some(at.unwrap_or(now + REFUSED_RETRY));
                     continue;
                 };
+                m.texture.retry_at = None;
                 m.texture.slot = slot;
                 m.texture.size = (tw, th);
                 textures.register_local(m.texture.id, slot);

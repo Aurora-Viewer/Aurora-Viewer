@@ -2535,6 +2535,20 @@ impl Scene {
         renderer.cull.objects.set(i, CullObject::NONE);
     }
 
+    /// Slots whose texels the renderer could not stage (app/lost_textures.rs):
+    /// the streamer's textures and the scene's own are sent again. Returns
+    /// the slots none of them holds; the streamer's and the snow detail's
+    /// sent again that video memory refused a layer for go to `refused`.
+    pub fn send_lost_textures(&mut self, slots: &[u32], renderer: &mut Renderer, refused: &mut Vec<u32>) -> Vec<u32> {
+        let mut left = self.textures.send_again(slots, renderer, refused);
+        // (each of these holds two slots, lost together or not)
+        self.banlines.texture_lost(&mut left, renderer);
+        self.snow_detail.texture_lost(&mut left, renderer, refused);
+        self.spinning_cat.texture_lost(&mut left, renderer);
+        left.retain(|&slot| !self.land_overlays.texture_lost(slot));
+        left
+    }
+
     /// Release everything (logout / teleport cleanup).
     pub fn clear(&mut self, renderer: &mut Renderer) {
         self.remote_soles = Default::default();

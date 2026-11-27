@@ -196,6 +196,7 @@ impl App {
             region.terrain_surface.gpu_reset();
         }
         self.media.gpu_reset();
+        self.lost_textures.clear();
         // Blender Live's images first, while the new pool is empty: they are
         // staged here, and no chunk comes back before the next frame
         self.blender_live.gpu_reset(self.scene.textures.staging.clone());

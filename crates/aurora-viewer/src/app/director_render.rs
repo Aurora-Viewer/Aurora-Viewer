@@ -33,7 +33,14 @@ struct Card {
     drawing: Option<Receiver<Option<director_titles::Card>>>,
     /// Its texture's slot and size.
     texture: Option<(u32, u32, u32)>,
+    /// Drawn, its texture refused (video memory full): its texels, tried
+    /// again from that time on.
+    unplaced: Option<(director_titles::Card, Instant)>,
 }
+
+/// How long a card whose texture video memory refused waits before it is
+/// tried again (as the textures whose staging it refused, `LostTextures`).
+const CARD_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The live film's sound, once its recording ends: what gives it to the
 /// picture when the encoder has finished.
@@ -501,27 +508,61 @@ impl App {
                 // (the old card shows until the new one is drawn)
                 card.drawing = Some(rx);
             }
-            let Some(drawing) = &card.drawing else {
+            if let Some(drawing) = &card.drawing {
+                let drawn = match drawing.try_recv() {
+                    Ok(drawn) => drawn,
+                    Err(TryRecvError::Empty) => continue,
+                    Err(TryRecvError::Disconnected) => None,
+                };
+                card.drawing = None;
+                if let Some((slot, ..)) = card.texture.take() {
+                    renderer.free_texture(slot);
+                }
+                card.unplaced = drawn.map(|d| (d, Instant::now()));
+            }
+            // its texture refused, the card keeps its texels and is tried
+            // again, not drawn again
+            let Some(((w, h, rgba), at)) = &card.unplaced else {
                 continue;
             };
-            let drawn = match drawing.try_recv() {
-                Ok(drawn) => drawn,
-                Err(TryRecvError::Empty) => continue,
-                Err(TryRecvError::Disconnected) => None,
-            };
-            card.drawing = None;
-            if let Some((slot, ..)) = card.texture.take() {
-                renderer.free_texture(slot);
+            let now = Instant::now();
+            if now < *at {
+                continue;
             }
-            if let Some((w, h, rgba)) = drawn {
-                let mip = aurora_render::textures::MipLevel {
-                    width: w,
-                    height: h,
-                    data: &rgba,
-                };
-                card.texture = renderer.create_texture(&[mip]).map(|slot| (slot, w, h));
+            let (w, h) = (*w, *h);
+            let mip = aurora_render::textures::MipLevel {
+                width: w,
+                height: h,
+                data: rgba,
+            };
+            match renderer.create_texture(&[mip]) {
+                Some(slot) => {
+                    card.texture = Some((slot, w, h));
+                    card.unplaced = None;
+                }
+                None => {
+                    if let Some((_, at)) = &mut card.unplaced {
+                        *at = now + CARD_RETRY;
+                    }
+                }
             }
         }
+    }
+
+    /// The renderer could not stage this slot's texels: the title card
+    /// holding it is drawn again (`director_cards`).
+    pub(super) fn director_card_lost(&mut self, slot: u32) -> bool {
+        let Some(card) = self
+            .director
+            .films
+            .cards
+            .iter_mut()
+            .find(|c| c.texture.is_some_and(|t| t.0 == slot))
+        else {
+            return false;
+        };
+        card.key = None;
+        true
     }
 
     /// The fades and titles of this frame, drawn into the picture by the

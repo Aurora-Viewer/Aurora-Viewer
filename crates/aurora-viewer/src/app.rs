@@ -120,6 +120,7 @@ mod land_rights;
 mod link_health;
 mod login_favorites;
 mod login_start;
+mod lost_textures;
 mod marketplace_listings;
 mod media_pack;
 mod money_tracker;
@@ -1097,6 +1098,8 @@ pub struct App {
     music_certificate_said: std::collections::HashSet<String>,
     /// Parcel media and media on a prim (web / video plugins).
     media: crate::media::MediaManager,
+    /// Textures the renderer could not stage, waiting to be sent again.
+    lost_textures: lost_textures::LostTextures,
     media_ui: ui::media::MediaUi,
     /// Cursor asked by the focused media page (link hand, text beam).
     media_cursor: Option<egui::CursorIcon>,
@@ -2399,6 +2402,7 @@ impl App {
             crouch_toggle: Default::default(),
             key_to_name: Vec::new(),
             media,
+            lost_textures: Default::default(),
             media_ui: Default::default(),
             media_cursor: None,
             voice: Default::default(),
@@ -12727,6 +12731,7 @@ impl App {
             };
             self.scene.particles.sync_clouds(&clouds);
             self.scene.drop_rez_clouds(&self.world);
+            self.send_lost_textures(&mut gfx.renderer);
             self.scene
                 .banlines
                 .update(&mut gfx.renderer, &self.world, self.settings.maps.ban_lines, self.camera.position);
@@ -15839,9 +15844,10 @@ impl App {
                 self.world.objects.len()
             );
         }
-        // AURORA_DEMO_TEXTURES with AURORA_GPU_OOM: the uploads that waited
+        // AURORA_DEMO_TEXTURES (or the animesh demo) with AURORA_GPU_OOM or
+        // a refused staging buffer: the made textures whose upload waited
         // for video memory get their texels again (`refeed_demo_memory_waits`)
-        if self.demo && self.frame_count.is_multiple_of(30) && crate::demo::texture_stress_count().is_some() {
+        if self.demo && self.frame_count.is_multiple_of(30) {
             self.scene.textures.refeed_demo_memory_waits();
         }
         // AURORA_DEMO_TEXTURES_CHURN=1: stress cubes removed at frame 300

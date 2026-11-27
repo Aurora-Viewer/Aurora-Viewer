@@ -28,7 +28,7 @@
 use crate::upload::{StagedTexture, TexelFormat, UploadQueue};
 use crate::writes::{GpuWrites, TexelDst};
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::num::{NonZeroU32, NonZeroU64};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -73,6 +73,35 @@ pub fn terrain_blend_weights(c: f32, noise: f32) -> [f32; 4] {
     w.map(|v| v / sum)
 }
 const RESERVED: u32 = 7;
+
+/// The texels of a reserved slot, level 0 first.
+fn reserved_levels(slot: u32) -> Option<Vec<(u32, u32, Vec<u8>)>> {
+    let one = |rgba: [u8; 4]| Some(vec![(1, 1, rgba.to_vec())]);
+    match slot {
+        WHITE => one([255, 255, 255, 255]),
+        FLAT_NORMAL => one([128, 128, 255, 255]),
+        BLACK => one([0, 0, 0, 255]),
+        TRANSPARENT => one([0, 0, 0, 0]),
+        PLACEHOLDER => one([148, 148, 156, 255]),
+        MISSING => one([127, 127, 127, 255]),
+        TERRAIN_RAMP => {
+            let ramp: Vec<u8> = TERRAIN_RAMP_PIXELS.iter().flat_map(|&v| [v, v, v, 255]).collect();
+            Some(build_mips(256, 256, ramp, u32::MAX))
+        }
+        _ => None,
+    }
+}
+
+fn mip_levels(levels: &[(u32, u32, Vec<u8>)]) -> Vec<MipLevel<'_>> {
+    levels
+        .iter()
+        .map(|(width, height, data)| MipLevel {
+            width: *width,
+            height: *height,
+            data,
+        })
+        .collect()
+}
 /// The white texture is the first one created: page 0, layer 0. Freed slots
 /// point there, so a stale draw record samples white, never a dropped page.
 const WHITE_LOC: u32 = 0;
@@ -595,7 +624,37 @@ struct Slot {
     /// written ([`PageStore::stamp`]): a reader that cached something made
     /// from them tells a same-size reload from no change.
     revision: AtomicU64,
+    /// Stamped when the slot's layer was last written whole by a write that
+    /// gave it the layer (`create`, `target`) or that cannot be lost (a
+    /// staged chain): a write into part of the layer, or one made in place
+    /// that may be lost too, leaves it ([`Fresh::placed`]).
+    placed: u64,
+    /// The reserved slot it shows while it has no texels of its own: the
+    /// loading placeholder, or the flat normal of a derived normal
+    /// (`create_shared`), kept through every layer it is given.
+    origin: u32,
 }
+
+/// A slot given a layer of its own by a journal write (`create`, a
+/// `replace` of another size): until the frame that carries the write is
+/// answered, the layer may still hold what an earlier texture left there,
+/// should the write not be made (write_staging.rs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Fresh {
+    slot: u32,
+    /// The slot's [`Slot::placed`] once written: one given another layer
+    /// since, written whole by a staged chain, freed or handed out again is
+    /// left alone. Writes made into the layer since do not count: they may
+    /// be lost as well, or cover part of it (a media frame's dirty rect).
+    placed: u64,
+    /// The reserved slot it showed before (the loading placeholder, the
+    /// flat normal of a derived normal…), shown again if the write is lost.
+    back: u32,
+}
+
+/// Frames sent and not answered that keep their fresh slots: more are
+/// never in flight; one never answered does not keep its own.
+const FRESH_FRAMES: usize = 8;
 
 /// Slots, pages and the CPU copy of the location buffer (no bind group).
 struct PageStore {
@@ -646,6 +705,11 @@ struct PageStore {
     /// `TextureTable::maintain` once it is rebuilt.
     retired: Vec<DeadPage>,
     integrated: bool,
+    /// The slots given a layer of their own by this frame's journal
+    /// ([`Fresh`]), and those of the frames sent, by frame index
+    /// (`TextureTable::writes_sent`, `TextureTable::lost_in_frame`).
+    fresh: Vec<Fresh>,
+    fresh_sent: VecDeque<(u64, Vec<Fresh>)>,
 }
 
 /// Pages created since the start: by the caller (the main thread) and by
@@ -699,6 +763,8 @@ impl PageStore {
             spares: Vec::new(),
             retired: Vec::new(),
             integrated,
+            fresh: Vec::new(),
+            fresh_sent: VecDeque::new(),
         }
     }
 
@@ -828,6 +894,14 @@ impl PageStore {
     /// A new page of that size in the table: the spare one the page thread
     /// made if there is one, else created here.
     fn new_page(&mut self, device: &wgpu::Device, key: PageKey) -> Option<u32> {
+        // (no room in the table: nothing is made, rather than a page made
+        // in video memory then dropped, at each texture that asks again)
+        if !self.has_page_room() {
+            if !std::mem::replace(&mut self.warned_full, true) {
+                log::warn!("texture pages: all {} page slots in use", self.page_capacity);
+            }
+            return None;
+        }
         let spare = self.spares.iter().position(|(p, _)| p.key == key);
         let made = match spare {
             Some(_) => None,
@@ -935,7 +1009,7 @@ impl PageStore {
         }
     }
 
-    fn upload(&self, writes: &mut GpuWrites, page: u32, layer: u32, mips: &[MipLevel], count: u32) {
+    fn upload(&self, writes: &mut GpuWrites, slot: u32, page: u32, layer: u32, mips: &[MipLevel], count: u32) {
         let Some(p) = self.page(page) else {
             return;
         };
@@ -949,7 +1023,7 @@ impl PageStore {
                 width: m.width,
                 height: m.height,
             };
-            writes.write_texture(&p.texture, dst, m.data);
+            writes.write_slot_texture(&p.texture, dst, m.data, slot);
         }
     }
 
@@ -969,13 +1043,21 @@ impl PageStore {
             self.free_slots.push(Reverse(slot));
             return None;
         };
-        self.upload(writes, page, layer, mips, key.mips);
+        self.upload(writes, slot, page, layer, mips, key.mips);
+        let revision = self.stamp();
         self.slots[slot as usize] = Some(Slot {
             key,
             page,
             layer,
             shared: false,
-            revision: AtomicU64::new(self.stamp()),
+            revision: AtomicU64::new(revision),
+            placed: revision,
+            origin: PLACEHOLDER,
+        });
+        self.fresh.push(Fresh {
+            slot,
+            placed: revision,
+            back: PLACEHOLDER,
         });
         self.bytes += key.layer_bytes();
         self.live += 1;
@@ -1008,12 +1090,15 @@ impl PageStore {
                 (self.slots.len() - 1) as u32
             }
         };
+        let stamp = self.stamp();
         self.slots[slot as usize] = Some(Slot {
             key,
             page,
             layer,
             shared: true,
-            revision: AtomicU64::new(self.stamp()),
+            revision: AtomicU64::new(stamp),
+            placed: stamp,
+            origin: reserved,
         });
         self.live += 1;
         self.set_loc(slot, pack(page, layer));
@@ -1048,6 +1133,8 @@ impl PageStore {
             layer,
             shared: true,
             revision: AtomicU64::new(stamp),
+            placed: stamp,
+            origin: s.origin,
         };
         self.set_loc(slot, pack(page, layer));
         true
@@ -1058,11 +1145,17 @@ impl PageStore {
         let Some(key) = page_key(mips, self.max_dim) else {
             return false;
         };
-        let Some((page, layer)) = self.target(device, slot, key) else {
+        let Some((page, layer, back)) = self.target(device, slot, key) else {
             return false;
         };
-        self.upload(writes, page, layer, mips, key.mips);
+        self.upload(writes, slot, page, layer, mips, key.mips);
         self.touch(slot);
+        if let Some(back) = back
+            && let Some(Some(s)) = self.slots.get(slot as usize)
+        {
+            let placed = s.placed;
+            self.fresh.push(Fresh { slot, placed, back });
+        }
         true
     }
 
@@ -1076,7 +1169,8 @@ impl PageStore {
         let Some(key) = chain_key(staged.format, staged.levels.iter().map(|l| (l.width, l.height, true)), self.max_dim) else {
             return false;
         };
-        let Some((page, layer)) = self.target(device, slot, key) else {
+        // (its copies are not the journal's: never refused, never fresh)
+        let Some((page, layer, _)) = self.target(device, slot, key) else {
             return false;
         };
         let Some(p) = self.page(page) else {
@@ -1084,15 +1178,28 @@ impl PageStore {
         };
         uploads.copy_to_layer(device, staged, &p.texture, layer, key.mips);
         self.touch(slot);
+        self.written_whole(slot);
         true
+    }
+
+    /// `slot`'s layer was written whole by copies that cannot be lost (a
+    /// staged chain): a journal write into it still waiting for its frame's
+    /// answer no longer takes it back to its reserved slot if lost.
+    fn written_whole(&mut self, slot: u32) {
+        let stamp = self.stamp();
+        if let Some(Some(s)) = self.slots.get_mut(slot as usize) {
+            s.placed = stamp;
+        }
     }
 
     /// The layer that receives `slot`'s new texels of size `key`. Same size:
     /// the slot's layer, overwritten in place (the write is replayed with
     /// this frame: the frames before it keep the old texels). Another size (higher
     /// resolution): a layer of a page of the new size, then the old layer
-    /// is freed.
-    fn target(&mut self, device: &wgpu::Device, slot: u32, key: PageKey) -> Option<(u32, u32)> {
+    /// is freed. With a new layer, the reserved slot the slot showed
+    /// before, or for a slot that had texels of its own, the one it shows
+    /// while it has none ([`Fresh::back`], [`Slot::origin`]).
+    fn target(&mut self, device: &wgpu::Device, slot: u32, key: PageKey) -> Option<(u32, u32, Option<u32>)> {
         if slot < RESERVED || slot as usize >= self.slots.len() {
             return None;
         }
@@ -1100,32 +1207,130 @@ impl PageStore {
             && s.key == key
             && !s.shared
         {
-            return Some((s.page, s.layer));
+            return Some((s.page, s.layer, None));
         }
+        let origin = self.slots[slot as usize].as_ref().map_or(PLACEHOLDER, |s| s.origin);
         let (page, layer) = self.place(device, key, slot)?;
-        let revision = AtomicU64::new(self.stamp());
-        match self.slots[slot as usize].replace(Slot {
+        let stamp = self.stamp();
+        let back = match self.slots[slot as usize].replace(Slot {
             key,
             page,
             layer,
             shared: false,
-            revision,
+            revision: AtomicU64::new(stamp),
+            placed: stamp,
+            origin,
         }) {
             // (the placeholder layer stays: other slots show it)
-            Some(old) if old.shared => {}
+            Some(old) if old.shared => self.reserved_at(old.page, old.layer),
             Some(old) => {
                 self.release(old.page, old.layer);
                 self.bytes = self.bytes.saturating_sub(old.key.layer_bytes());
+                old.origin
             }
             None => {
                 // a freed slot filled again: no longer free
                 self.free_slots.retain(|r| r.0 != slot);
                 self.live += 1;
+                PLACEHOLDER
             }
-        }
+        };
         self.bytes += key.layer_bytes();
         self.set_loc(slot, pack(page, layer));
-        Some((page, layer))
+        Some((page, layer, Some(back)))
+    }
+
+    /// The reserved slot whose layer this is (the loading placeholder if
+    /// none is).
+    fn reserved_at(&self, page: u32, layer: u32) -> u32 {
+        self.page(page)
+            .and_then(|p| p.owners.get(layer as usize).copied())
+            .filter(|&s| s < RESERVED)
+            .unwrap_or(PLACEHOLDER)
+    }
+
+    /// This frame's journal leaves for the render thread as frame `index`:
+    /// its fresh slots wait for the frame's answer.
+    fn writes_sent(&mut self, index: u64) {
+        if self.fresh.is_empty() {
+            return;
+        }
+        while self.fresh_sent.len() >= FRESH_FRAMES {
+            self.fresh_sent.pop_front();
+        }
+        self.fresh_sent.push_back((index, std::mem::take(&mut self.fresh)));
+    }
+
+    /// The answer of frame `index`, with the slots whose texels it could
+    /// not write (`lost`): each of them given a layer of its own by that
+    /// frame shows what it showed before again ([`Fresh::back`]), not what
+    /// an earlier texture left in the layer, and the layer is freed. The
+    /// frames up to it are answered. Returns how many went back.
+    fn lost_in_frame(&mut self, index: u64, lost: &[u32]) -> usize {
+        let mut back = 0;
+        while self.fresh_sent.front().is_some_and(|(i, _)| *i <= index) {
+            let Some((i, fresh)) = self.fresh_sent.pop_front() else {
+                break;
+            };
+            if i != index || lost.is_empty() {
+                continue;
+            }
+            let lost: HashSet<u32> = lost.iter().copied().collect();
+            for f in fresh {
+                if lost.contains(&f.slot) && self.show_back(f) {
+                    back += 1;
+                }
+            }
+        }
+        back
+    }
+
+    /// `f.slot` shows its reserved slot again (`lost_in_frame`), the layer
+    /// of its own freed, as `target` frees one; its owner sends its texels
+    /// again into a new one. False when the slot moved on since (another
+    /// layer, written whole by a staged chain, freed, handed out again) or
+    /// is reserved. Writes made into the layer since do not keep it: in a
+    /// frame after this one (the render thread answers a frame late) they
+    /// may be lost as well, or cover part of it, and those still waiting
+    /// land in the freed layer before any write of its next owner, which
+    /// writes it whole; a texture whose later write did land shows the
+    /// reserved slot until its owner sends it again.
+    fn show_back(&mut self, f: Fresh) -> bool {
+        if f.slot < RESERVED || f.back >= RESERVED {
+            return false;
+        }
+        let Some((key, page, layer)) = self
+            .slots
+            .get(f.back as usize)
+            .and_then(Option::as_ref)
+            .map(|s| (s.key, s.page, s.layer))
+        else {
+            return false;
+        };
+        let stamp = self.stamp();
+        let Some(Some(s)) = self.slots.get_mut(f.slot as usize) else {
+            return false;
+        };
+        if s.shared || s.placed != f.placed {
+            return false;
+        }
+        let origin = s.origin;
+        let old = std::mem::replace(
+            s,
+            Slot {
+                key,
+                page,
+                layer,
+                shared: true,
+                revision: AtomicU64::new(stamp),
+                placed: stamp,
+                origin,
+            },
+        );
+        self.release(old.page, old.layer);
+        self.bytes = self.bytes.saturating_sub(old.key.layer_bytes());
+        self.set_loc(f.slot, pack(page, layer));
+        true
     }
 
     /// Whether new texels of this size for `slot` would need a new page
@@ -1164,12 +1369,12 @@ impl PageStore {
         if slot < RESERVED {
             return false;
         }
-        let Some((key, page, layer)) = self
+        let Some((key, page, layer, placed, origin)) = self
             .slots
             .get(slot as usize)
             .and_then(Option::as_ref)
             .filter(|s| !s.shared)
-            .map(|s| (s.key, s.page, s.layer))
+            .map(|s| (s.key, s.page, s.layer, s.placed, s.origin))
         else {
             return false;
         };
@@ -1206,12 +1411,16 @@ impl PageStore {
                 );
             }
         }
+        // (copied from the old layer: a lost write into it is lost in this
+        // one too, so the slot keeps its `placed`)
         self.slots[slot as usize] = Some(Slot {
             key: small,
             page: dst,
             layer: dst_layer,
             shared: false,
             revision: AtomicU64::new(self.stamp()),
+            placed,
+            origin,
         });
         self.bytes = self.bytes.saturating_sub(key.layer_bytes()) + small.layer_bytes();
         self.set_loc(slot, pack(dst, dst_layer));
@@ -1397,37 +1606,13 @@ impl TextureTable {
         });
         let mut store = PageStore::new_with_integrated(capacity, page_capacity, max_layers, limits.max_texture_dimension_2d, integrated);
         store.bc7 = device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
-        for (slot, rgba) in [
-            (WHITE, [255u8, 255, 255, 255]),
-            (FLAT_NORMAL, [128, 128, 255, 255]),
-            (BLACK, [0, 0, 0, 255]),
-            (TRANSPARENT, [0, 0, 0, 0]),
-            (PLACEHOLDER, [148, 148, 156, 255]),
-            (MISSING, [127, 127, 127, 255]),
-        ] {
-            let created = store.create(
-                device,
-                writes,
-                &[MipLevel {
-                    width: 1,
-                    height: 1,
-                    data: &rgba,
-                }],
-            );
+        for slot in 0..RESERVED {
+            let Some(levels) = reserved_levels(slot) else {
+                continue;
+            };
+            let created = store.create(device, writes, &mip_levels(&levels));
             debug_assert_eq!(created, Some(slot));
         }
-        let ramp: Vec<u8> = TERRAIN_RAMP_PIXELS.iter().flat_map(|&v| [v, v, v, 255]).collect();
-        let ramp_mips = build_mips(256, 256, ramp, u32::MAX);
-        let levels: Vec<_> = ramp_mips
-            .iter()
-            .map(|(w, h, data)| MipLevel {
-                width: *w,
-                height: *h,
-                data,
-            })
-            .collect();
-        let created = store.create(device, writes, &levels);
-        debug_assert_eq!(created, Some(TERRAIN_RAMP));
         debug_assert_eq!(store.loc[WHITE as usize], WHITE_LOC);
         // the reserved slots are not counted in the statistics
         store.live = 0;
@@ -1688,6 +1873,22 @@ impl TextureTable {
         self.store.show_missing(slot)
     }
 
+    /// A reserved slot's texels (white, the flat normal, the terrain ramp…)
+    /// written again where they are, after their staging buffer was refused
+    /// at start-up (`Renderer::take_lost_textures`). False for any other slot.
+    pub fn send_reserved_again(&mut self, writes: &mut GpuWrites, slot: u32) -> bool {
+        let Some(levels) = reserved_levels(slot) else {
+            return false;
+        };
+        let Some(Some(s)) = self.store.slots.get(slot as usize) else {
+            return false;
+        };
+        let (page, layer, count) = (s.page, s.layer, s.key.mips);
+        self.store.upload(writes, slot, page, layer, &mip_levels(&levels), count);
+        self.store.touch(slot);
+        true
+    }
+
     /// Replace the contents of an existing slot (e.g. higher resolution).
     pub fn replace(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, slot: u32, mips: &[MipLevel]) -> bool {
         self.store.replace(device, writes, slot, mips)
@@ -1772,13 +1973,33 @@ impl TextureTable {
             width: w,
             height: h,
         };
-        writes.write_texture(&page.texture, dst, &data[..need]);
+        writes.write_slot_texture(&page.texture, dst, &data[..need], slot);
         self.store.touch(slot);
         true
     }
 
     pub fn free(&mut self, slot: u32) {
         self.store.free(slot);
+    }
+
+    /// The journal of the frame leaves as frame `index` (`writes_sent`):
+    /// the slots it gave a layer of their own wait for that frame's answer.
+    pub fn writes_sent(&mut self, index: u64) {
+        self.store.writes_sent(index);
+    }
+
+    /// The journal of the frame was dropped, not sent (the renderer failed).
+    pub fn writes_dropped(&mut self) {
+        self.store.fresh.clear();
+    }
+
+    /// Frame `index` answered, with the slots whose texels it could not
+    /// write (`Renderer::take_lost_textures`): those it gave a layer of
+    /// their own show the loading placeholder again (or the reserved
+    /// texture they showed before) until sent again, not what an earlier
+    /// texture left in the layer. Returns how many.
+    pub fn lost_in_frame(&mut self, index: u64, lost: &[u32]) -> usize {
+        self.store.lost_in_frame(index, lost)
     }
 
     /// Ask for the `levels` finest levels of a slot to be dropped (memory
@@ -2362,6 +2583,8 @@ mod tests {
                 layer: 0,
                 shared: false,
                 revision: AtomicU64::new(0),
+                placed: 0,
+                origin: PLACEHOLDER,
             }));
         }
         store
@@ -2443,6 +2666,99 @@ mod tests {
         assert_eq!(store.loc[waiting as usize], WHITE_LOC);
         assert_eq!(store.create_placeholder(), Some(waiting));
         assert_eq!(store.loc[waiting as usize], store.loc[PLACEHOLDER as usize]);
+    }
+
+    #[test]
+    fn a_lost_write_into_a_new_layer_shows_what_the_slot_showed_before() {
+        let mut store = bare_store(64, page_capacity(64, true));
+        for (slot, layer) in [(PLACEHOLDER, 4), (FLAT_NORMAL, 1)] {
+            if let Some(Some(s)) = store.slots.get_mut(slot as usize) {
+                s.layer = layer;
+            }
+            store.set_loc(slot, pack(0, layer));
+        }
+        let key = PageKey::of_chain(TexelFormat::Rgba8, 16, 16, 5);
+        // a slot given a layer of its own by a journal write, as `create`
+        // and `target` give one (no page behind it here)
+        let written = |store: &mut PageStore, back: u32| {
+            let slot = store.create_placeholder().expect("slot");
+            let revision = store.stamp();
+            store.slots[slot as usize] = Some(Slot {
+                key,
+                page: 0,
+                layer: 20 + slot,
+                shared: false,
+                revision: AtomicU64::new(revision),
+                placed: revision,
+                origin: back,
+            });
+            store.set_loc(slot, pack(0, 20 + slot));
+            store.bytes += key.layer_bytes();
+            store.fresh.push(Fresh {
+                slot,
+                placed: revision,
+                back,
+            });
+            slot
+        };
+        let [lost, again, whole, kept, freed, normal] =
+            [PLACEHOLDER, PLACEHOLDER, PLACEHOLDER, PLACEHOLDER, PLACEHOLDER, FLAT_NORMAL].map(|back| written(&mut store, back));
+        store.writes_sent(5);
+        assert!(store.fresh.is_empty());
+        // since then: one written into in place (a media frame's dirty
+        // rect, the same frame or the next), one written whole by a staged
+        // chain, one freed and handed out again
+        store.touch(again);
+        store.written_whole(whole);
+        store.free(freed);
+        assert_eq!(store.create_placeholder(), Some(freed));
+        let bytes = store.bytes;
+        let back = store.lost_in_frame(5, &[lost, again, whole, freed, normal, WHITE]);
+        assert_eq!(back, 3);
+        assert_eq!(store.loc[lost as usize], store.loc[PLACEHOLDER as usize]);
+        assert!(store.slots[lost as usize].as_ref().is_some_and(|s| s.shared));
+        assert_eq!(
+            store.loc[normal as usize], store.loc[FLAT_NORMAL as usize],
+            "a derived normal shows the flat normal again"
+        );
+        assert_eq!(store.slots[normal as usize].as_ref().map(|s| s.origin), Some(FLAT_NORMAL));
+        assert_eq!(store.bytes, bytes - 3 * key.layer_bytes(), "their layers are freed");
+        assert_eq!(
+            store.loc[again as usize], store.loc[PLACEHOLDER as usize],
+            "written into since: that write may be lost too, or cover part of the layer"
+        );
+        assert_eq!(
+            store.loc[whole as usize],
+            pack(0, 20 + whole),
+            "written whole since: its texels stand"
+        );
+        assert_eq!(store.loc[kept as usize], pack(0, 20 + kept), "not lost");
+        assert_eq!(store.loc[freed as usize], store.loc[PLACEHOLDER as usize]);
+        assert!(store.fresh_sent.is_empty(), "the frame is answered");
+        // a frame answered without its slots in the list: written, kept
+        let earlier = written(&mut store, PLACEHOLDER);
+        store.writes_sent(6);
+        written(&mut store, PLACEHOLDER);
+        store.writes_sent(7);
+        assert_eq!(store.lost_in_frame(7, &[earlier]), 0);
+        assert_eq!(store.loc[earlier as usize], pack(0, 20 + earlier));
+        assert!(store.fresh_sent.is_empty());
+        // a journal dropped unsent keeps nothing; never more frames than in flight
+        written(&mut store, PLACEHOLDER);
+        store.fresh.clear();
+        for frame in 10..30 {
+            written(&mut store, PLACEHOLDER);
+            store.writes_sent(frame);
+        }
+        assert_eq!(store.fresh_sent.len(), FRESH_FRAMES);
+        assert_eq!(store.fresh_sent.front().map(|f| f.0), Some(30 - FRESH_FRAMES as u64));
+        // never a reserved slot
+        let placed = store.slots[WHITE as usize].as_ref().map(|s| s.placed).unwrap_or(0);
+        assert!(!store.show_back(Fresh {
+            slot: WHITE,
+            placed,
+            back: PLACEHOLDER
+        }));
     }
 
     /// Layers of successive pages of one size, each sized from the
@@ -3271,6 +3587,194 @@ mod tests {
         let again = store.create_placeholder().expect("slot");
         assert!(waiting.contains(&again));
         assert_eq!(store.loc[again as usize], grey_loc);
+    }
+
+    /// A journal write lost (its staging refused, write_staging.rs) into a
+    /// layer it had just given its slot: once the frame is answered, the
+    /// slot shows what it showed before, not the layer's leftovers; the
+    /// texture sent again lands; a write over the slot's own layer leaves
+    /// its older texels; one written into since, in its frame or the next,
+    /// shows the placeholder too; a derived normal's lost upgrade shows the
+    /// flat normal. `cargo test --workspace lost_write -- --ignored`.
+    #[test]
+    #[ignore]
+    fn a_lost_write_into_a_new_layer_shows_the_placeholder_on_the_gpu() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        let max_layers = device.limits().max_texture_array_layers.min(MAX_LAYERS);
+        let mut store = PageStore::new(4096, 64, max_layers, 4096);
+        let mut writes = GpuWrites::default();
+        const GREY: [u8; 4] = [148, 148, 156, 255];
+        for slot in 0..RESERVED {
+            let texel = if slot == PLACEHOLDER { GREY } else { [slot as u8; 4] };
+            let one = [MipLevel {
+                width: 1,
+                height: 1,
+                data: &texel,
+            }];
+            assert_eq!(store.create(&device, &mut writes, &one), Some(slot));
+        }
+        writes.replay(&mut QueueSink(&queue));
+        store.writes_sent(0);
+        assert_eq!(store.lost_in_frame(0, &[]), 0);
+        let chain = |seed: u32| -> Vec<Vec<u8>> { (0..5).map(|l| texels(seed, 16, 16, l)).collect() };
+        let as_mips = |levels: &[Vec<u8>]| -> Vec<(u32, Vec<u8>)> {
+            levels
+                .iter()
+                .enumerate()
+                .map(|(l, d)| (level_dim(16, l as u32), d.clone()))
+                .collect()
+        };
+        let replace = |store: &mut PageStore, writes: &mut GpuWrites, slot: u32, levels: &[Vec<u8>]| {
+            let owned = as_mips(levels);
+            let m: Vec<MipLevel> = owned
+                .iter()
+                .map(|(d, data)| MipLevel {
+                    width: *d,
+                    height: *d,
+                    data,
+                })
+                .collect();
+            store.replace(&device, writes, slot, &m)
+        };
+        let (bytes, used) = (store.bytes, store.page(0).map(|p| p.layers.used()));
+        // first texels of a loading texture, lost: the grey again, its layer freed
+        let waiting = store.create_placeholder().expect("slot");
+        let first = chain(1);
+        assert!(replace(&mut store, &mut writes, waiting, &first));
+        assert_ne!(store.loc[waiting as usize], store.loc[PLACEHOLDER as usize]);
+        writes.clear();
+        store.writes_sent(1);
+        assert_eq!(store.lost_in_frame(1, &[waiting]), 1);
+        assert_eq!(store.loc[waiting as usize], store.loc[PLACEHOLDER as usize]);
+        assert_eq!((store.bytes, store.page(0).map(|p| p.layers.used())), (bytes, used));
+        assert_eq!(read_back(&device, &queue, &store, waiting), vec![GREY.to_vec()]);
+        // sent again, it lands
+        assert!(replace(&mut store, &mut writes, waiting, &first));
+        writes.replay(&mut QueueSink(&queue));
+        store.writes_sent(2);
+        assert_eq!(store.lost_in_frame(2, &[]), 0);
+        assert_eq!(read_back(&device, &queue, &store, waiting), first);
+        // a same-size reload lost: written over in place, its texels stand
+        let loc = store.loc[waiting as usize];
+        assert!(replace(&mut store, &mut writes, waiting, &chain(2)));
+        writes.clear();
+        store.writes_sent(3);
+        assert_eq!(store.lost_in_frame(3, &[waiting]), 0);
+        assert_eq!(store.loc[waiting as usize], loc);
+        assert_eq!(read_back(&device, &queue, &store, waiting), first);
+        // a derived normal lost: the flat normal again
+        let normal = store.create_shared(FLAT_NORMAL).expect("slot");
+        assert!(replace(&mut store, &mut writes, normal, &chain(3)));
+        writes.clear();
+        store.writes_sent(4);
+        assert_eq!(store.lost_in_frame(4, &[normal]), 1);
+        assert_eq!(store.loc[normal as usize], store.loc[FLAT_NORMAL as usize]);
+        // a texture made at once, lost: the loading grey
+        let made = {
+            let owned = as_mips(&chain(4));
+            let m: Vec<MipLevel> = owned
+                .iter()
+                .map(|(d, data)| MipLevel {
+                    width: *d,
+                    height: *d,
+                    data,
+                })
+                .collect();
+            store.create(&device, &mut writes, &m).expect("slot")
+        };
+        writes.clear();
+        store.writes_sent(5);
+        assert_eq!(store.lost_in_frame(5, &[made]), 1);
+        assert_eq!(read_back(&device, &queue, &store, made), vec![GREY.to_vec()]);
+        // made, then written into in the same frame (a media texture: its
+        // black, then its frame's rect), both lost: the loading grey
+        let made_into = |store: &mut PageStore, writes: &mut GpuWrites, seed: u32| {
+            let owned = as_mips(&chain(seed));
+            let m: Vec<MipLevel> = owned
+                .iter()
+                .map(|(d, data)| MipLevel {
+                    width: *d,
+                    height: *d,
+                    data,
+                })
+                .collect();
+            let slot = store.create(&device, writes, &m).expect("slot");
+            store.touch(slot);
+            slot
+        };
+        let media = made_into(&mut store, &mut writes, 5);
+        writes.clear();
+        store.writes_sent(6);
+        assert_eq!(store.lost_in_frame(6, &[media]), 1);
+        assert_eq!(read_back(&device, &queue, &store, media), vec![GREY.to_vec()]);
+        // made in one frame, written into in the next before the first is
+        // answered (the render thread answers a frame late), both lost
+        let late = made_into(&mut store, &mut writes, 6);
+        writes.clear();
+        store.writes_sent(7);
+        store.touch(late);
+        store.writes_sent(8);
+        assert_eq!(store.lost_in_frame(7, &[late]), 1);
+        assert_eq!(store.lost_in_frame(8, &[late]), 0);
+        assert_eq!(read_back(&device, &queue, &store, late), vec![GREY.to_vec()]);
+        // a derived normal whose texels landed, then a lost upgrade to
+        // another size: the flat normal again, not the loading grey
+        assert!(replace(&mut store, &mut writes, normal, &chain(3)));
+        writes.replay(&mut QueueSink(&queue));
+        store.writes_sent(9);
+        assert_eq!(store.lost_in_frame(9, &[]), 0);
+        assert_eq!(read_back(&device, &queue, &store, normal), chain(3));
+        let bigger: Vec<Vec<u8>> = (0..6).map(|l| texels(7, 32, 32, l)).collect();
+        let m: Vec<MipLevel> = bigger
+            .iter()
+            .enumerate()
+            .map(|(l, data)| MipLevel {
+                width: level_dim(32, l as u32),
+                height: level_dim(32, l as u32),
+                data,
+            })
+            .collect();
+        assert!(store.replace(&device, &mut writes, normal, &m));
+        writes.clear();
+        store.writes_sent(10);
+        assert_eq!(store.lost_in_frame(10, &[normal]), 1);
+        assert_eq!(store.loc[normal as usize], store.loc[FLAT_NORMAL as usize]);
+        assert_eq!(read_back(&device, &queue, &store, normal), vec![vec![FLAT_NORMAL as u8; 4]]);
+        // the media texture's owner fills it again whole
+        // (`MediaManager::texture_lost`: its next frame is fresh, a
+        // `replace_texture` of the full size): a layer of its own again, so
+        // `TextureTable::write_region` draws its rects into it
+        assert!(replace(&mut store, &mut writes, media, &chain(5)));
+        writes.replay(&mut QueueSink(&queue));
+        store.writes_sent(11);
+        assert_eq!(store.lost_in_frame(11, &[]), 0);
+        assert!(!store.slots[media as usize].as_ref().expect("slot").shared);
+        assert_eq!(read_back(&device, &queue, &store, media), chain(5));
+        // a page table with no room left: no page is made for a new size
+        // (made then dropped, at each texture that asks again)
+        let mut full = PageStore::new(64, 1, max_layers, 4096);
+        let one = [MipLevel {
+            width: 1,
+            height: 1,
+            data: &GREY,
+        }];
+        assert!(full.create(&device, &mut writes, &one).is_some());
+        let big = vec![7u8; 32 * 32 * 4];
+        let other = [MipLevel {
+            width: 32,
+            height: 32,
+            data: &big,
+        }];
+        let made = full.made.inline;
+        assert!(full.create(&device, &mut writes, &other).is_none());
+        assert_eq!(full.made.inline, made, "no page made");
+        writes.clear();
     }
 
     /// Randomized GPU check of the page store: creations, upgrades to the

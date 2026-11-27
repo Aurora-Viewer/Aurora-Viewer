@@ -2383,6 +2383,9 @@ pub(crate) struct Backend {
     gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
     /// Where the replay of the journal stages its buffer writes.
     write_staging: crate::write_staging::WriteStaging,
+    /// The texture table's slots whose texture writes could not be made
+    /// since the last result (write_staging.rs `Staged::lost`).
+    lost_textures: Vec<u32>,
     /// The surfaces of the interface's windows outside the viewer's
     /// (outside.rs); the window's renderer alone has any.
     outside: crate::outside::Surfaces,
@@ -2481,6 +2484,9 @@ pub(crate) struct BackendInit {
     pub lost: crate::device_lost::DeviceLost,
     /// Each frame's submission, for the frame pacing (pacing.rs).
     pub gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
+    /// The CPU can map little video memory (`vram::SMALL_MAPPABLE_MB`):
+    /// the journal's staging buffers stay small (write_staging.rs).
+    pub small_mappable: bool,
 }
 
 fn skin_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -4279,6 +4285,7 @@ impl Backend {
             anim_clock,
             lost,
             gpu_frames,
+            small_mappable,
         } = init;
         let caps = surface.get_capabilities(&adapter);
         let format = output_format
@@ -5210,7 +5217,12 @@ impl Backend {
             msaa_supported,
             lost,
             gpu_frames,
-            write_staging: Default::default(),
+            write_staging: {
+                let mut staging = crate::write_staging::WriteStaging::default();
+                staging.set_small_mappable(small_mappable);
+                staging
+            },
+            lost_textures: Vec::new(),
             outside: Default::default(),
         };
         r.rebuild_bind_groups();
@@ -8878,6 +8890,7 @@ impl Backend {
             outside: Vec::new(),
             films,
             rt: self.rt.as_ref().map_or(0, |rt| rt.made),
+            lost_textures: std::mem::take(&mut self.lost_textures),
             spent,
         }
     }
@@ -9690,15 +9703,21 @@ impl Backend {
         // cannot be drawn.
         let t_writes = Instant::now();
         let (recorded, counts) = (writes.bytes(), writes.counts());
-        // its buffer writes copied from one staging buffer (write_staging.rs)
+        // its writes copied from staging buffers of its own (write_staging.rs)
         let mut queue_sink = TrackedSink {
             queue: &self.queue,
             lost: &self.lost,
             frame: index,
         };
-        let mut sink = self.write_staging.sink(&self.device, &mut queue_sink, writes.buffer_bytes() as u64);
+        let mut sink = self.write_staging.sink_with_textures(
+            &self.device,
+            &mut queue_sink,
+            writes.buffer_bytes() as u64,
+            writes.texture_staged_bytes(),
+        );
         writes.replay(&mut sink);
-        let staged = sink.finish();
+        let mut staged = sink.finish_staged();
+        crate::write_staging::merge_slots(&mut self.lost_textures, std::mem::take(&mut staged.lost));
         let replay_ms = t_writes.elapsed().as_secs_f32() * 1000.0;
         let upload_cmds = frame_uploads.take_commands();
         let writes_ms = t_writes.elapsed().as_secs_f32() * 1000.0;
@@ -9707,9 +9726,15 @@ impl Backend {
             // textures, megabytes of records, an arena that grows)
             let [buffers, textures, submits] = counts;
             log::info!(
-                "frame writes took {writes_ms:.1} ms: {} KB in {buffers} buffer ({staged} through the journal staging) and \
-                 {textures} texture writes, {submits} submits ({replay_ms:.1} ms), staged copies finished in {:.1} ms",
+                "frame writes took {writes_ms:.1} ms: {} KB in {buffers} buffer ({} through the journal staging) and \
+                 {textures} texture writes ({} through the journal staging, {} through staging buffers of their own, \
+                 {} of them cut in pieces, {} not made and sent again), {submits} submits ({replay_ms:.1} ms), staged copies finished in {:.1} ms",
                 recorded >> 10,
+                staged.buffers,
+                staged.textures,
+                staged.own,
+                staged.split,
+                staged.refused,
                 writes_ms - replay_ms
             );
         }

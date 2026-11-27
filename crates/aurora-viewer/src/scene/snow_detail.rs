@@ -16,6 +16,10 @@ const PACK: u32 = 4096;
 pub struct SnowDetail {
     slot: Option<u32>,
     tried: bool,
+    /// The slots made, packed or not, with their mip chain: sent again
+    /// as it is when the staging refuses it, not decoded again on the main
+    /// thread (two 512 by 512 images, 1.4 MB each with their mips).
+    made: Vec<(u32, Vec<image::RgbaImage>)>,
 }
 
 impl SnowDetail {
@@ -25,8 +29,10 @@ impl SnowDetail {
     pub fn slot(&mut self, renderer: &mut Renderer) -> Option<u32> {
         if !self.tried {
             self.tried = true;
-            let detail = upload(renderer, PNG, "snow detail texture");
-            let color = upload(renderer, COLOR_PNG, "snow colour texture");
+            let detail_made = upload(renderer, PNG, "snow detail texture");
+            let color_made = upload(renderer, COLOR_PNG, "snow colour texture");
+            let (detail, color) = (detail_made.as_ref().map(|m| m.0), color_made.as_ref().map(|m| m.0));
+            self.made = detail_made.into_iter().chain(color_made).collect();
             self.slot = detail.map(|d| match color {
                 Some(c) if d < PACK && c < PACK => d + c * PACK,
                 _ => d,
@@ -34,9 +40,26 @@ impl SnowDetail {
         }
         self.slot
     }
+
+    /// The renderer could not stage the texels of these slots: each of the
+    /// two that is is sent again into its slot (a lost first upload left it
+    /// the loading placeholder, so a layer is taken again, which video
+    /// memory may refuse too); they leave `lost`. One refused again keeps
+    /// its texels and goes to `refused`, to be sent again after a longer
+    /// wait (app/lost_textures.rs): its slot shows the placeholder until
+    /// then.
+    pub fn texture_lost(&mut self, lost: &mut Vec<u32>, renderer: &mut Renderer, refused: &mut Vec<u32>) {
+        for (s, levels) in &self.made {
+            if lost.contains(s) && !renderer.replace_texture(*s, &mip_levels(levels)) {
+                refused.push(*s);
+            }
+        }
+        lost.retain(|s| !self.made.iter().any(|(m, ..)| m == s));
+    }
 }
 
-fn upload(renderer: &mut Renderer, png: &[u8], what: &str) -> Option<u32> {
+/// The image's mip chain, down to 1 texel wide.
+fn levels(png: &[u8], what: &str) -> Option<Vec<image::RgbaImage>> {
     let image = match image::load_from_memory_with_format(png, image::ImageFormat::Png) {
         Ok(i) => i.to_rgba8(),
         Err(e) => {
@@ -55,19 +78,28 @@ fn upload(renderer: &mut Renderer, png: &[u8], what: &str) -> Option<u32> {
         );
         levels.push(next);
     }
-    let mips: Vec<MipLevel> = levels
+    Some(levels)
+}
+
+fn mip_levels(levels: &[image::RgbaImage]) -> Vec<MipLevel<'_>> {
+    levels
         .iter()
         .map(|l| MipLevel {
             width: l.width(),
             height: l.height(),
             data: l.as_raw(),
         })
-        .collect();
-    let slot = renderer.create_texture(&mips);
+        .collect()
+}
+
+/// The image decoded and made a texture: its slot, and its mip chain.
+fn upload(renderer: &mut Renderer, png: &[u8], what: &str) -> Option<(u32, Vec<image::RgbaImage>)> {
+    let levels = levels(png, what)?;
+    let slot = renderer.create_texture(&mip_levels(&levels));
     if slot.is_none() {
         log::warn!("{what}: no slot");
     }
-    slot
+    Some((slot?, levels))
 }
 
 #[cfg(test)]

@@ -137,6 +137,10 @@ struct MediaTexture {
     size: (u32, u32),
     /// Holds a frame: faces may show it.
     ready: bool,
+    /// Its texture refused a layer (video memory or the page table full):
+    /// not made again before then (`upload_textures`), rather than a
+    /// full-size black frame built and dropped every frame.
+    retry_at: Option<Instant>,
 }
 
 pub struct MediaImpl {
@@ -214,6 +218,7 @@ impl MediaImpl {
                 slot: 0,
                 size: (0, 0),
                 ready: false,
+                retry_at: None,
             },
             interest: 0.0,
             distance: 0.0,
@@ -728,8 +733,20 @@ impl MediaManager {
         for m in &mut self.impls {
             m.texture.slot = 0;
             m.texture.ready = false;
+            m.texture.retry_at = None;
         }
         self.pending_free.clear();
+    }
+
+    /// The renderer could not stage this slot's texels: the media holding
+    /// it fills it again from its next frame, whole (`upload_textures`: a
+    /// texture of another size is fresh).
+    pub fn texture_lost(&mut self, slot: u32) -> bool {
+        let Some(m) = self.impls.iter_mut().find(|m| slot != 0 && m.texture.slot == slot) else {
+            return false;
+        };
+        m.texture.size = (0, 0);
+        true
     }
 
     /// SLPlugin / llplugin (searched once per configured folder and per state

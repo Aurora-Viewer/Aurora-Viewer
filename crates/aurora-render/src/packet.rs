@@ -197,6 +197,10 @@ pub(crate) struct FrameResult {
     /// The ray tracer that drew this frame (`RtShadows::made`), 0 without
     /// one: turned off, or still being made.
     pub rt: u32,
+    /// The texture table's slots whose texture writes could not be made
+    /// (no staging buffer for them, write_staging.rs): their textures are
+    /// to be sent again.
+    pub lost_textures: Vec<u32>,
     pub spent: Spent,
 }
 

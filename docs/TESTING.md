@@ -5792,6 +5792,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
 | `AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails, for the whole run or that long, from the start or `after` seconds |
 | `AURORA_GPU_OOM_TARGETS=<seconds>` | Video memory full for the render targets, that long after the start |
+| `AURORA_STAGING_OOM=<KB>` | Video memory full for the staging buffers of the journal's writes of at least that size (`0`: all of them) |
+| `AURORA_STAGING_OOM_SECONDS=<s>` | With `AURORA_STAGING_OOM`: the refusals end that many seconds after the first staging buffer asked for |
 | `AURORA_GPU_OOM_START=<seconds>` | Video memory full while the renderer is made, that long after the start |
 | `AURORA_GPU_OOM_UI=1` | Video memory too full even for the interface's buffers at the start |
 | `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, photo look, RLVa, TAA history), that long |
@@ -6257,7 +6259,8 @@ both open states and the selection count. Capture at frame 620.
   a small value from the start refuses as well. Allocations covered: the
   geometry arena, the
   draw records, the culling tables, the joint palettes and skin bindings,
-  particle and world-label upload buffers, and the texture pages. The
+  particle and world-label upload buffers, the texture pages, and the
+  staging buffers of the journal's writes (`write_staging.rs`). The
   interface's blur and glass count as a texture of the window's size and
   are left out while refused (`interface blur` and `interface glass` in
   the log). With
@@ -6289,6 +6292,45 @@ both open states and the selection count. Capture at frame 620.
   `gpu_cull_growth_keeps_working_buffers_after_oom` as separate filtered
   workspace test processes with `AURORA_GPU_OOM=0`; unset it before the
   normal growth tests.
+- **`AURORA_STAGING_OOM=<KB>`** (demo or grid): every staging buffer
+  `write_staging.rs` asks for of `KB` kilobytes or more is refused, as on
+  a full card (`0`: all of them), for the whole run: those that take a
+  frame's journal and those made for one texture write. It shows what the
+  viewer does with a refusal, not what a driver does on a full card. A
+  refused staging buffer for a frame is asked for again after 2 s, then up
+  to 30 s apart; meanwhile the buffer writes go through the queue and the
+  texture writes into buffers of their own. A refused buffer for a texture
+  write is asked for again for half its rows, and so on down to 64 KB,
+  and the size refused is not asked for again for 2 s: with `256` and
+  `AURORA_DEMO_TEXTURES=3000`, the textures still load, slow frames'
+  `frame writes took` lines count writes `cut in pieces`, and the captures
+  match a run without the variable. Refused at 64 KB (or at its own size,
+  for a smaller one), a texture write is not made, nor any texture write
+  after it in that frame (`journal staging: texture writes not made, a
+  staging buffer of … KB was refused …: their textures are sent again`, at
+  most once every 10 s for each size); a texture written over in its own
+  layer keeps what it showed, one the lost write gave a new layer (its
+  first texels, another size, a media texture's first frame) shows the
+  loading placeholder again once the frame is answered, or the reserved
+  texture it showed before (the flat normal of a derived normal map), and
+  its owner sends it again after 2 s, then up to 30 s apart while the
+  refusals go on (`textures: … sent again after video memory refused their
+  staging buffer`); a streamer texture or the snow detail sent again that
+  video memory has no layer for waits its turn again, and media, the ban
+  lines and the Director's title cards are not made again before video
+  memory may hold their page. With `0` nothing is ever made: the world's textures stay black
+  (in the demo, the plaza's floor, pillars, sculpture and avatars; the sky
+  and the ground draw as usual), the device is not lost and the
+  interface keeps drawing. Before, wgpu made the staging buffer of every
+  texture write itself, and a refusal of it lost the device.
+- **`AURORA_STAGING_OOM_SECONDS=<s>`**: with `AURORA_STAGING_OOM`, the
+  refusals end that many seconds after the first staging buffer asked for
+  (`journal staging: AURORA_STAGING_OOM over, staging buffers are made
+  again`): with `0`, `20` and `AURORA_DEMO_TEXTURES=3000`, the stress
+  cubes are back after the first 2 s wait (their texels come through the
+  staging pool), the plaza's textured objects (floor, pillars, sculpture,
+  avatars) stay black for about 20 s, then every texture is back in its place within the next
+  30 s (`… 0 no longer held`), with no `wgpu error` in the log.
 - **`AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]`**:
   once the loading screen is gone, our avatar and the camera behind it
   turn at that rate (180 if the value is not a number) for the first
@@ -13670,7 +13712,7 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
 | `AURORA_FLEXI_CULL=0` or `alt` | Every flexible prim's mesh swept again each frame, as before, even when no view shows it; `alt`: one second in three |
-| `AURORA_WRITE_STAGING=0` or `alt` | The journal's buffer writes made one by one through the queue, as before, instead of one staging buffer per frame; `alt`: one second in three |
+| `AURORA_WRITE_STAGING=0` or `alt` | The journal's buffer and texture writes made one by one through the queue, as before, instead of staging buffers of the viewer's own; `alt`: one second in three |
 | `AURORA_MOVING_ANCHORS=0` or `alt` | Objects that move by themselves (spin, velocity) and what is linked to them placed by the sync every frame, as before, instead of by the GPU from one anchor per object; `alt`: one second in three |
 | `AURORA_WORN_RANK=own` | Meshes worn by other avatars downloaded in the rank of their own size, not their avatar's, as before |
 | `AURORA_FETCH_SLOTS=<n>` | Asset requests under way at once fixed for this launch (1 to 256), whatever Preferences › Network and cache › Download connections says |
@@ -15133,18 +15175,27 @@ What the inventory must show with these scenarios:
   `alt`: the old way one second in three, `xmode=old` / `xmode=new` at the
   end of the `perf summary` line.
 - **`AURORA_WRITE_STAGING=0`**: the render thread replays the journal of
-  the frame (`writes.rs`) through `Queue::write_buffer`, one call per
-  write, as before; wgpu makes, maps and frees a staging buffer for each of
+  the frame (`writes.rs`) through `Queue::write_buffer` and
+  `Queue::write_texture`, one call per write, as before; wgpu makes, maps and frees a staging buffer for each of
   them. By default the bytes of the frame's buffer writes are copied into
   one staging buffer kept mapped, and one GPU copy per run of writes that
   follow each other is submitted before the frame (`write_staging.rs`).
-  Texture writes still go through the queue. Up to three staging buffers
-  take turns; a frame that writes more than any of them holds goes through
-  the queue while a larger one is made on a thread of its own (the
-  arrival in a region), and one that writes more than 32 MB always does.
-  To read in `perf summary`: `r_resources` (render thread) and
-  `journal_kb`; a slow frame's line `frame writes took` gives how many
-  writes were staged. Nothing should change on screen.
+  Texture writes are staged too, rows padded to 256 bytes: in the
+  frame's staging buffer when they fit beside its buffer writes, otherwise
+  in a staging buffer of their own, kept afterwards for the next ones up to
+  32 MB and 64 buffers in all. Where under 1 GB of video memory is
+  mappable (no Resizable BAR, `AURORA_MAPPABLE_MB`), the texture writes
+  grow the frame's staging buffer to 8 MB at most, and 8 MB and 16 buffers
+  are kept. wgpu loses the device when the staging buffer it makes for
+  a queue texture write is refused; a refusal of the viewer's own is
+  handled (`AURORA_STAGING_OOM`). Up to three staging buffers take turns;
+  a frame whose buffer writes are more than any of them holds sends those
+  through the queue while a larger one is made on a thread of its own (the
+  arrival in a region), and one that writes more than 32 MB into buffers
+  always does. To read in `perf summary`: `r_resources` (render thread)
+  and `journal_kb`; a slow frame's line `frame writes took` gives how many
+  buffer writes were staged and where the texture writes went. Nothing
+  should change on screen.
   `alt`: the old way one second in three, `xmode=old` / `xmode=new` at the
   end of the `perf summary` line.
 - **`AURORA_MOVING_ANCHORS=0`**: an object that moves by itself (a spin

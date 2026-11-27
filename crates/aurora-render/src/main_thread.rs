@@ -354,6 +354,9 @@ pub struct Renderer {
     pub thumbnail_request: Option<u64>,
     /// The small pictures made, until the caller takes them.
     pub thumbnails: Vec<crate::Thumbnail>,
+    /// Slots whose texture writes the render thread could not make, until
+    /// the caller takes them (`take_lost_textures`).
+    lost_textures: Vec<u32>,
     /// The second camera's view to draw after the next frame
     /// (second_view.rs); asked again every frame the window is open.
     pub second_view: Option<crate::second_view::SecondViewJob>,
@@ -742,6 +745,7 @@ impl Renderer {
         let backend = Backend::new(BackendInit {
             vr: vr.clone(),
             gpu_frames: gpu_frames.clone(),
+            small_mappable: mappable_mb.is_some_and(|mb| mb < crate::vram::SMALL_MAPPABLE_MB),
             device: device.clone(),
             queue,
             surface: Arc::new(surface),
@@ -875,6 +879,7 @@ impl Renderer {
             histogram: None,
             thumbnail_request: None,
             thumbnails: Vec::new(),
+            lost_textures: Vec::new(),
             second_view: None,
             lost,
             // one of the list for each renderer of the run (a recovery's
@@ -1414,6 +1419,28 @@ impl Renderer {
         self.textures.write_region(&mut self.writes, slot, x, y, w, h, rgba)
     }
 
+    /// The texture slots whose texels were not written: video memory had
+    /// no staging buffer for a texture write (write_staging.rs). A texture
+    /// written over in place keeps its older texels. One the lost write
+    /// gave a new layer shows the loading placeholder again (or the
+    /// reserved texture it showed before) once the frame is answered: until
+    /// then, a frame or two, what an earlier texture left in the layer. Its
+    /// owner sends it again, through
+    /// `replace_texture` or as when it was made, after a wait (memory is
+    /// short). A slot freed or given to another texture since may be in the
+    /// list: sending that one again costs an upload, nothing more.
+    pub fn take_lost_textures(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.lost_textures)
+    }
+
+    /// A lost slot of the renderer's own (`take_lost_textures`): white, the
+    /// flat normal, the placeholders, the terrain ramp. They are written at
+    /// start-up, before anything else is on the GPU, and sent again here.
+    /// False for a slot of the viewer's.
+    pub fn send_texture_again(&mut self, slot: u32) -> bool {
+        self.textures.send_reserved_again(&mut self.writes, slot)
+    }
+
     pub fn free_texture(&mut self, slot: u32) {
         self.textures.free(slot);
     }
@@ -1471,6 +1498,14 @@ impl Renderer {
         }
         self.films_answered += r.films.len() as u64;
         self.films.append(&mut r.films);
+        // (before the owners send them again: a texture given a layer of
+        // its own by that frame shows the loading grey meanwhile, not what
+        // an earlier texture left in the layer)
+        let back = self.textures.lost_in_frame(r.index, &r.lost_textures);
+        if back > 0 {
+            log::debug!("{back} textures whose texels were not written show the loading placeholder until sent again");
+        }
+        crate::write_staging::merge_slots(&mut self.lost_textures, r.lost_textures.drain(..));
         self.last_stats = r.stats;
         self.rt_made = r.rt;
         self.fresh = true;
@@ -1710,6 +1745,7 @@ impl Renderer {
         if self.failed {
             // nobody replays any more
             self.writes.clear();
+            self.textures.writes_dropped();
             self.fail_picks();
             return stats;
         }
@@ -1717,6 +1753,7 @@ impl Renderer {
         // the memory of an earlier frame) takes its place
         let mut spent = self.spare.pop().unwrap_or_default();
         std::mem::swap(&mut self.writes, &mut spent.writes);
+        self.textures.writes_sent(self.frames);
         spent.lists.copy_from(lists);
         // a photo first: the other captures wait for the next frame (and
         // for the answer of a photo still on the GPU)
