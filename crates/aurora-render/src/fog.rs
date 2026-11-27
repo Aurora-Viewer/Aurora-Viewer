@@ -1537,7 +1537,8 @@ mod tests {
         assert!(((along_x * up.extend(1.0)).y - 1.0).abs() < 1e-4);
         assert!(((along_y * up.extend(1.0)).y - 1.0).abs() < 1e-4);
         // the flow's shader steps cells of the grid's size, the walls' too
-        let wgsl = include_str!("shaders/fog.wgsl");
+        // (a Windows checkout writes the shader with CRLF line ends)
+        let wgsl = include_str!("shaders/fog.wgsl").replace("\r\n", "\n");
         assert!(wgsl.contains("@compute @workgroup_size(4, 4, 4)\nfn flow_step"));
         assert_eq!(std::mem::size_of::<FogU>(), 176);
     }
