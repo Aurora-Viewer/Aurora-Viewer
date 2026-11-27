@@ -1675,7 +1675,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::widgets::toggle_floater(ui.ctx(), super::director::WINDOW, &mut panels.director);
         }
         // Aurora's own: a picture of the computer viewed, changed, turned in 3D
-        if menu::item(ui, p, "photo-edit", aurora_i18n::tr!("picture-viewer-title")) {
+        if menu::command(ui, p, "picture-viewer-title").item("photo-edit", aurora_i18n::tr!("picture-viewer-title")) {
             super::widgets::toggle_floater(ui.ctx(), super::picture_viewer::WINDOW, &mut panels.picture_viewer);
         }
         // Aurora's own: our avatar seen by a camera of its own
