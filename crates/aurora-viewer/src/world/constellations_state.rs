@@ -19,7 +19,7 @@
 //!   while the incoming drawing draws itself in: a set never blinks.
 
 /// Where the reveal stops: past the last texels' reveal time, so that the
-/// pen tip's glow has faded out (env.wgsl `constellation_overlay`).
+/// pen tip's glow has faded out (constellations.wgsl `constellation_overlay`).
 pub const REVEAL_END: f32 = 1.12;
 /// The lines take this share of an engraved figure's stroke (the art's
 /// preview); a figure with no picture spends the whole stroke on them.

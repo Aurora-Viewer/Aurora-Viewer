@@ -3724,7 +3724,7 @@ impl Impostors {
             "{}\n{}\n{}",
             common_shader_for(soft),
             crate::object_shader_source(features),
-            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
+            crate::env_shader_source()
         )
     }
 
@@ -5230,7 +5230,7 @@ impl Backend {
             "{}\n{}\n{}",
             common_shader_for(soft),
             crate::oit_stochastic::without_st(&crate::object_shader_source(device.features())),
-            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
+            crate::env_shader_source()
         );
         let src = crate::blend_exact::scene_source(src, device.features());
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -15025,7 +15025,7 @@ mod tests {
                     "{}\n{}\n{}",
                     crate::common_shader_source(),
                     crate::object_shader_source(device.features()),
-                    crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
+                    crate::env_shader_source()
                 )
                 .into(),
             ),

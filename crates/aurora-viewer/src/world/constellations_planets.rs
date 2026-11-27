@@ -1,8 +1,8 @@
 //! The planets' names over the real night sky (world/planets.rs draws the
 //! planets): a name under each planet drawn, when the Constellations
 //! window's "Planet names" is on, in the constellations' atlas and their names' look and
-//! size (env.wgsl `constellation_planet_names`, a pass of its own: the
-//! figures may be off, or the folder hold none).
+//! size (constellations.wgsl `constellation_planet_names`, a pass of its own:
+//! the figures may be off, or the folder hold none).
 //!
 //! The text is data: `planets.json` of the constellation data, per
 //! planet id (`mercury`…`uranus`) the form of a culture's name
@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Between two names stacked under planets in conjunction (radians,
-/// 0.1°), and the lowest a name goes (the shader's reach, env.wgsl).
+/// 0.1°), and the lowest a name goes (the shader's reach, constellations.wgsl).
 const STACK_GAP: f32 = 0.0017;
 const MAX_DROP: f32 = 0.09;
 

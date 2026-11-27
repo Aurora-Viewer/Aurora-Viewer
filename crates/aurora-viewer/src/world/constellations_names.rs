@@ -133,7 +133,7 @@ const _: () = assert!(MAX_W < 1 << 12 && 512 < 1 << 10);
 
 impl NameImage {
     /// Its width, height and lift in one word, for the figures' names
-    /// (env.wgsl `constellation_overlay` reads it back).
+    /// (constellations.wgsl `constellation_overlay` reads it back).
     pub fn dims(&self) -> u32 {
         (self.size[0] & 0xfff) | (self.size[1] & 0x3ff) << 12 | (self.lift & 0x3ff) << 22
     }

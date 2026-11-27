@@ -11,11 +11,11 @@
 //! culture or set of it, whole, and adds art sets (constellations_catalogue.rs).
 //! It is read at run time, on demand: nothing is read from the network or
 //! written to the grid. The sky shader
-//! draws them next to the stars (aurora-render constellations.rs, env.wgsl
-//! `constellation_overlay`), so they fade with the stars at twilight and
-//! towards the horizon, hide behind clouds, the sun and the moon, and show
-//! in photos (names included); not in the water's or the mirrors'
-//! reflections nor in the reflection probes.
+//! draws them next to the stars (aurora-render constellations.rs,
+//! constellations.wgsl `constellation_overlay`), so they fade with the stars
+//! at twilight and towards the horizon, hide behind clouds, the sun and the
+//! moon, and show in photos (names included); not in the water's or the
+//! mirrors' reflections nor in the reflection probes.
 //!
 //! What runs: nothing while the overlay is off, by day (the sun less than
 //! the darkness setting under the horizon) or with the Legacy Viewer's
@@ -1177,9 +1177,9 @@ const SPOT_SPEED: f32 = 2.0;
 /// A name's spot is chosen again once the sky has turned it this much
 /// (cos 0.25°): nothing runs for a sky that does not move.
 const SPOT_TURN_COS: f32 = 0.999_990_5;
-/// `length(cross(label, zenith))` under which env.wgsl leans a name on the
-/// camera's right (its 0.14, and a little room): within about 8.6° of the
-/// zenith a name turns with the view, so it keeps the fixed drop there
+/// `length(cross(label, zenith))` under which constellations.wgsl leans a name
+/// on the camera's right (its 0.14, and a little room): within about 8.6° of
+/// the zenith a name turns with the view, so it keeps the fixed drop there
 /// (`name_hang`), clear whichever way it turns.
 const ZENITH_LEVEL: f32 = 0.15;
 
@@ -1261,9 +1261,9 @@ pub fn slide(at: Vec2, goal: Vec2, step: f32) -> Vec2 {
 }
 
 /// A name's right and up at its label point `lp` (catalogue frame) as
-/// env.wgsl turns it, level with the horizon for `zenith` (the region's
-/// up in the catalogue frame); `None` near the zenith (`ZENITH_LEVEL`),
-/// where the shader turns it with the camera.
+/// constellations.wgsl turns it, level with the horizon for `zenith` (the
+/// region's up in the catalogue frame); `None` near the zenith
+/// (`ZENITH_LEVEL`), where the shader turns it with the camera.
 pub fn name_axes(lp: Vec3, zenith: Vec3) -> Option<(Vec3, Vec3)> {
     let level = lp.cross(zenith);
     (level.length() >= ZENITH_LEVEL).then(|| {
@@ -1276,9 +1276,9 @@ pub fn name_axes(lp: Vec3, zenith: Vec3) -> Option<(Vec3, Vec3)> {
 /// label point (0 the figure's, d + 1 drawing d's own), as bits; on the
 /// figure's own point, its offset `spot` (radians, its own frame: x right,
 /// y up) behind the top bit, in quarters of its `texel`: x in bits 16..29,
-/// y in bits 0..15, signed (env.wgsl). Bit 30 stays clear, so the word is
-/// never a NaN a driver might rewrite. A figure whose drawing shows, its
-/// set having placed that point clear of the art (`drawn`:
+/// y in bits 0..15, signed (constellations.wgsl). Bit 30 stays clear, so the
+/// word is never a NaN a driver might rewrite. A figure whose drawing shows,
+/// its set having placed that point clear of the art (`drawn`:
 /// `Figure::label_clear_of_drawing`), keeps its name centred.
 pub fn name_spot_word(from: u32, spot: Vec2, texel: f32, drawn: bool) -> f32 {
     if from != 0 || drawn || spot == Vec2::ZERO || texel <= 0.0 || !spot.is_finite() {
@@ -2632,8 +2632,9 @@ mod tests {
         assert_eq!(name_hang(&long, &[0.0]), 0.0);
     }
 
-    /// The offset env.wgsl reads from a name's centre word (radians, x right,
-    /// y up), its own arithmetic: `None` for a label point's number.
+    /// The offset constellations.wgsl reads from a name's centre word
+    /// (radians, x right, y up), its own arithmetic: `None` for a label
+    /// point's number.
     fn spot_of_word(word: f32, texel: f32) -> Option<Vec2> {
         let w = word.to_bits();
         ((w >> 31) != 0).then(|| Vec2::new(((w << 2) as i32 >> 18) as f32, ((w << 16) as i32 >> 16) as f32) * 0.25 * texel)
@@ -2693,8 +2694,9 @@ mod tests {
         let (right, up) = name_axes(Vec3::X, Vec3::Z).expect("on the horizon");
         assert!(right.distance(-Vec3::Y) < 1e-6 && up.distance(Vec3::Z) < 1e-6, "{right} {up}");
         assert!(name_axes(Vec3::new(0.05, 0.0, 1.0).normalize(), Vec3::Z).is_none());
-        // the word: a label point's number as before; an offset as env.wgsl
-        // reads it, to a quarter texel; centred for a placed drawing
+        // the word: a label point's number as before; an offset as
+        // constellations.wgsl reads it, to a quarter texel; centred for a
+        // placed drawing
         let texel = 0.0003;
         assert_eq!(name_spot_word(3, Vec2::new(0.0, -0.01), texel, false).to_bits(), 3);
         assert_eq!(name_spot_word(0, Vec2::new(0.0, -0.01), texel, true).to_bits(), 0);
@@ -2718,8 +2720,8 @@ mod tests {
             );
             assert!(back.distance(clamped) <= 0.2 * texel, "{o} {back}");
         }
-        // env.wgsl reads the word the same way
-        let wgsl = include_str!("../../../aurora-render/src/shaders/env.wgsl");
+        // constellations.wgsl reads the word the same way
+        let wgsl = include_str!("../../../aurora-render/src/shaders/constellations.wgsl");
         assert!(wgsl.contains("vec2<f32>(f32(bitcast<i32>(word << 2u) >> 18u), f32(bitcast<i32>(word << 16u) >> 16u)) * 0.25"));
         assert!(wgsl.contains("/ texel + vec2<f32>(-spot.x, spot.y) +"));
     }

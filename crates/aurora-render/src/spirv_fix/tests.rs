@@ -892,7 +892,7 @@ fn the_scene_module_of_the_stochastic_depth_pass_is_rewritten() {
         crate::oit_stochastic::enable_directive_with(true),
         crate::COMMON_SHADER,
         crate::oit_stochastic::st_object_source_with(&object, true),
-        include_str!("../shaders/env.wgsl")
+        crate::ENV_SHADER
     );
     let wgsl = crate::oit_stochastic::constants_for_overrides(&src, &[("WATER_CLIP", "1u"), ("BLEND_EARLY_DISCARD", "true")]);
     // every declared resource gets a binding of its own (the real layouts

@@ -1,7 +1,7 @@
 //! Constellations over the real night sky: the engraved figures, their
 //! stick lines and their names, drawn by the sky shader next to the stars
-//! (`constellation_overlay` in env.wgsl). Local rendering only: nothing
-//! comes from or goes to the grid.
+//! (`constellation_overlay` in constellations.wgsl). Local rendering only:
+//! nothing comes from or goes to the grid.
 //!
 //! The viewer (aurora-viewer world/constellations.rs) decides what shows and
 //! sends an [`Overlay`] with each frame (`FrameParams::constellations`):
@@ -35,8 +35,8 @@ use std::sync::Arc;
 
 /// Figures the uniform has room for, every culture of the data together
 /// (a figure's number is its place in the viewer's catalogue). Must match
-/// `CONSTELLATION_FIGURES` (env.wgsl). Two `vec4` each: 1536 make the
-/// uniform 49 KiB, within the 64 KiB a uniform binding may have on every
+/// `CONSTELLATION_FIGURES` (constellations.wgsl). Two `vec4` each: 1536 make
+/// the uniform 49 KiB, within the 64 KiB a uniform binding may have on every
 /// GPU (`UNIFORM_LIMIT`); more figures would need their state in a storage
 /// buffer. Only the figures in use are written each frame
 /// (`Overlay::slots`). Drawings have no such limit: their state is in the
@@ -48,7 +48,7 @@ pub const UNIFORM_LIMIT: usize = 64 << 10;
 const _: () = assert!(FRAME_BYTES <= UNIFORM_LIMIT, "the uniform must fit every GPU's binding");
 /// Atlas layers: width, height, mip levels. Pictures of every size share
 /// them, placed in blocks; one larger than a layer never shows (its figure
-/// draws its lines). Must match `CONSTELLATION_ATLAS` (env.wgsl).
+/// draws its lines). Must match `CONSTELLATION_ATLAS` (constellations.wgsl).
 pub const ATLAS_W: u32 = 4096;
 pub const ATLAS_H: u32 = 2048;
 pub const ATLAS_MIPS: u32 = 3;
@@ -62,7 +62,7 @@ pub const MAX_LAYERS: u32 = 6;
 /// GPU memory of one atlas layer with its mips (Rg8).
 pub const ATLAS_LAYER_BYTES: usize = (ATLAS_W * ATLAS_H * 2) as usize * 4 / 3;
 /// Placements are made in blocks of this many texels (aligned for every
-/// mip level). Must match `CONSTELLATION_BLOCK` (env.wgsl).
+/// mip level). Must match `CONSTELLATION_BLOCK` (constellations.wgsl).
 pub const BLOCK: u32 = 64;
 /// How far a name may reach from its label point (radians, 10°): the cells
 /// it is listed in. The viewer keeps a name within it.
@@ -71,12 +71,12 @@ pub const NAME_REACH: f32 = 0.1745;
 /// half-width and soft edge.
 pub const LINE_REACH: f32 = 0.006;
 /// The gap a line leaves at each of its stars (radians, 0.45°), and the
-/// largest share of the line's own length it may take (env.wgsl
+/// largest share of the line's own length it may take (constellations.wgsl
 /// CONSTELLATION_GAP, CONSTELLATION_GAP_SHARE).
 pub const LINE_GAP: f32 = 0.00785;
 pub const LINE_GAP_SHARE: f32 = 0.15;
 
-/// The gap a line of `arc` radians leaves at each end (env.wgsl
+/// The gap a line of `arc` radians leaves at each end (constellations.wgsl
 /// constellation_gap): 0.45°, or `LINE_GAP_SHARE` of a short line, so that
 /// its two gaps never take more than 30 % of it and it stays a line, not a
 /// dash. Lines of 3° and more keep the full gap.
@@ -105,12 +105,12 @@ pub const SHAPE_MIX: f32 = 3.0;
 pub const HEAD_FIGURES: u32 = 1;
 pub const HEAD_PLANET_NAMES: u32 = 2;
 /// The planets that may carry a name (world/planets.rs `Body::ALL`). Must
-/// match `CONSTELLATION_PLANETS` (env.wgsl).
+/// match `CONSTELLATION_PLANETS` (constellations.wgsl).
 pub const PLANET_NAMES: usize = 6;
-/// Bytes of the uniform (`ConstellationFrame` in env.wgsl).
+/// Bytes of the uniform (`ConstellationFrame` in constellations.wgsl).
 pub const FRAME_BYTES: usize = std::mem::size_of::<FrameState>();
 
-/// Kinds of the cell lists' references (top two bits; env.wgsl).
+/// Kinds of the cell lists' references (top two bits; constellations.wgsl).
 const REF_PICTURE: u32 = 0;
 const REF_SEGMENT: u32 = 1;
 const REF_NAME: u32 = 2;
@@ -162,7 +162,7 @@ pub struct Bases {
     pub wide_longest: u32,
 }
 
-/// References the shader reads in one cell at most (env.wgsl
+/// References the shader reads in one cell at most (constellations.wgsl
 /// `CONSTELLATION_MAX_REFS`): a guard against a bad table, well above the
 /// longest list of every culture of the data drawn together.
 pub const MAX_REFS: u32 = 1024;
@@ -347,7 +347,7 @@ fn cell_lists(
             if n.length() < 1e-6 {
                 continue;
             }
-            // the segment's number: two vec4 records each (env.wgsl)
+            // the segment's number: two vec4 records each (constellations.wgsl)
             let index = (segments.len() / 2) as u32;
             let t0 = (l.t0.clamp(0.0, 1.0) * 65535.0).round() as u32;
             let t1 = (l.t1.clamp(0.0, 1.0) * 65535.0).round() as u32;
@@ -393,7 +393,7 @@ pub fn pack_place(layer: u32, bx: u32, by: u32) -> u32 {
     (layer + 1) | bx << 4 | by << 12
 }
 
-/// The uniform (`ConstellationFrame` in env.wgsl).
+/// The uniform (`ConstellationFrame` in constellations.wgsl).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FrameState {
@@ -898,7 +898,7 @@ mod tests {
         assert_eq!(line_gap(0.0), 0.0);
         assert_eq!(line_gap(-0.01), 0.0);
         // the shader's copy
-        let wgsl = include_str!("shaders/env.wgsl");
+        let wgsl = include_str!("shaders/constellations.wgsl");
         assert!(wgsl.contains("const CONSTELLATION_GAP: f32 = 0.00785;"));
         assert!(wgsl.contains("const CONSTELLATION_GAP_SHARE: f32 = 0.15;"));
         assert!(wgsl.contains("return min(CONSTELLATION_GAP, CONSTELLATION_GAP_SHARE * max(arc, 0.0));"));
@@ -1144,7 +1144,7 @@ mod tests {
 
     #[test]
     fn every_culture_together_fits_the_uniform_and_the_shader_agrees() {
-        let wgsl = include_str!("shaders/env.wgsl");
+        let wgsl = include_str!("shaders/constellations.wgsl");
         assert!(wgsl.contains(&format!("const CONSTELLATION_FIGURES: u32 = {MAX_FIGURES}u;")));
         assert!(wgsl.contains(&format!("figures: array<vec4<f32>, {MAX_FIGURES}>,")));
         assert!(wgsl.contains(&format!("names: array<vec4<f32>, {MAX_FIGURES}>,")));
