@@ -520,7 +520,10 @@ fn kept(back: Back, n: vec3<f32>) -> Kept {
 
 // The light of last frame's half resolution pixels around where the
 // surface at `back` was whose history averaged `FRESH_FRAMES` or more, any
-// face but the sky's: their luminance's mean without the brightest, so
+// face but the sky's, at about its distance (as `kept`'s leaves around: a
+// twig before a shadowed wall was held to the wall's light, and a lit face
+// a turn of the view uncovered behind a dark one to the dark one's), their
+// luminance's mean without the brightest, so
 // that one speck among them does not raise it; negative with fewer than
 // three of them. Fresh ones are left out: held to their own level, a
 // foliage that stays fresh would darken frame after frame. The 3 x 3 first,
@@ -548,7 +551,9 @@ fn around_within(back: Back, reach: i32) -> f32 {
             if (any(q < vec2<i32>(0)) || any(q >= vec2<i32>(params.half.xy))) {
                 continue;
             }
-            if (textureLoad(prev_guide, q, 0).z <= 0.0 || textureLoad(prev_color, q, 0).a < FRESH_FRAMES) {
+            let z = textureLoad(prev_guide, q, 0).z;
+            if (z <= 0.0 || abs(z - back.expected) >= 2.0 * back.tolerance
+                || textureLoad(prev_color, q, 0).a < FRESH_FRAMES) {
                 continue;
             }
             let l = luma(textureLoad(prev_fed, q, 0).rgb);
