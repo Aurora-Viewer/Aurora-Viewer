@@ -46,28 +46,76 @@ impl App {
         }
         let zoom = self.egui_ctx.zoom_factor();
         let icon = self.window_icon.clone();
+        let display_recovery = self.settings.window_display_recovery;
+        let placements = &mut self.settings.outside_window_placements;
+        let egui_ctx = &self.egui_ctx;
         // (where the system tells a program where its window is: not Wayland)
         let origin = own.inner_position().ok().map(|at| (at, own.scale_factor()));
-        self.outside.reconcile(event_loop, own, renderer, &self.egui_ctx, |ask, was| {
-            let attributes = crate::cli::with_desktop_id(Window::default_attributes())
-                .with_title(ask.title.clone())
-                .with_inner_size(logical(ask.rect.size(), zoom))
-                .with_min_inner_size(logical(if ask.content_sized { ask.rect.size() } else { ask.min_size }, zoom))
-                .with_window_icon(icon.clone())
-                // (the one a recovery replaces does not take the focus
-                // from the window that had it)
-                .with_active(was.is_none_or(|was| was.focused));
-            // (a window sized by its content: the user does not resize it)
-            let attributes = if ask.content_sized {
-                attributes.with_max_inner_size(logical(ask.rect.size(), zoom))
-            } else {
-                attributes
-            };
-            match opens_at(was.and_then(|was| was.at), origin, ask.rect.min, zoom) {
-                Some(at) => attributes.with_position(at),
-                None => attributes,
-            }
-        });
+        let displays = std::cell::OnceCell::new();
+        let home = std::cell::OnceCell::new();
+        self.outside.reconcile(
+            event_loop,
+            own,
+            renderer,
+            egui_ctx,
+            display_recovery,
+            placements,
+            |ask, was, saved| {
+                let attributes = crate::cli::with_desktop_id(Window::default_attributes())
+                    .with_title(ask.title.clone())
+                    .with_inner_size(logical(ask.rect.size(), zoom))
+                    .with_min_inner_size(logical(if ask.content_sized { ask.rect.size() } else { ask.min_size }, zoom))
+                    .with_window_icon(icon.clone())
+                    // (the one a recovery replaces does not take the focus
+                    // from the window that had it)
+                    .with_active(was.is_none_or(|was| was.focused));
+                // (a window sized by its content: the user does not resize it)
+                let attributes = if ask.content_sized {
+                    attributes.with_max_inner_size(logical(ask.rect.size(), zoom))
+                } else {
+                    attributes
+                };
+                let asked = opens_at(was.and_then(|was| was.at), origin, ask.rect.min, zoom);
+                let was_position = was.and_then(|was| was.at).map(|at| (at.x, at.y));
+                let saved_position = was_position.or_else(|| saved.as_ref().and_then(|p| p.position));
+                let position = if asked.is_none() {
+                    None
+                } else if !display_recovery {
+                    saved_position.map(|(x, y)| winit::dpi::PhysicalPosition::new(x, y)).or(asked)
+                } else {
+                    let asked_position = if saved_position.is_none() {
+                        asked.map(|at| (at.x, at.y))
+                    } else {
+                        None
+                    };
+                    let screens = displays.get_or_init(|| {
+                        event_loop
+                            .available_monitors()
+                            .map(|monitor| crate::window_display::Display::from(&monitor))
+                            .collect::<Vec<_>>()
+                    });
+                    let home_index = *home.get_or_init(|| {
+                        let home = own.current_monitor().or_else(|| event_loop.primary_monitor());
+                        crate::window_display::monitor_index(home.as_ref(), screens).unwrap_or(0)
+                    });
+                    let logical_size = logical(ask.rect.size(), zoom);
+                    crate::window_display::restore_placement(
+                        saved.as_ref().and_then(|p| p.display.as_ref()),
+                        saved_position,
+                        asked_position,
+                        (logical_size.width.round() as u32, logical_size.height.round() as u32),
+                        screens,
+                        home_index,
+                    )
+                    .map(|placement| placement.position)
+                    .or(asked)
+                };
+                match position {
+                    Some(at) => attributes.with_position(at),
+                    None => attributes,
+                }
+            },
+        );
         let Some(scenario) = self.outside_demo.as_ref().map(|demo| demo.scenario) else {
             return;
         };
@@ -344,9 +392,28 @@ impl App {
         if self.outside_ctrl_alt_text(id, event) {
             return Went::Outside;
         }
+        if self.gfx.as_ref().is_some_and(|gfx| gfx.window.id() == id)
+            && matches!(
+                event,
+                WindowEvent::MouseInput {
+                    state: ElementState::Released,
+                    button: MouseButton::Left,
+                    ..
+                }
+            )
+        {
+            self.outside.cancel_drag_start();
+        }
         let Some(asked) = self.outside.window_event(id, event) else {
             return Went::Own;
         };
+        if matches!(
+            event,
+            WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } | WindowEvent::Resized(_)
+        ) {
+            self.outside
+                .remember_window_placement(&mut self.settings.outside_window_placements, id);
+        }
         match event {
             // the keyboard is where the focus is: a field of the viewer's
             // own window lets go of it, as when a window inside is clicked

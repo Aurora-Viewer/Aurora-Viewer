@@ -7723,7 +7723,7 @@ impl App {
     /// Remember the normal (not maximized / minimized) window size and
     /// position, 300 ms after the last move / resize: while maximizing,
     /// Windows reports the new geometry before the window reads as maximized.
-    fn record_window_geometry(&mut self) {
+    fn record_window_geometry(&mut self, event_loop: &ActiveEventLoop) {
         let Some(t) = self.geom_changed else {
             return;
         };
@@ -7742,11 +7742,48 @@ impl App {
             return;
         }
         let sf = g.window.scale_factor();
-        self.settings.window_width = (s.width as f64 / sf) as u32;
-        self.settings.window_height = (s.height as f64 / sf) as u32;
-        if let Ok(p) = g.window.outer_position() {
-            self.settings.window_x = Some(p.x);
-            self.settings.window_y = Some(p.y);
+        let logical_size = ((s.width as f64 / sf) as u32, (s.height as f64 / sf) as u32);
+        let mut position = g.window.outer_position().ok().map(|p| (p.x, p.y));
+        let mut display = g
+            .window
+            .current_monitor()
+            .as_ref()
+            .map(crate::window_display::SavedDisplay::from_monitor);
+        if self.settings.window_display_recovery
+            && let Some(current) = position
+        {
+            let monitors: Vec<_> = event_loop.available_monitors().collect();
+            let displays: Vec<_> = monitors.iter().map(crate::window_display::Display::from).collect();
+            if !displays
+                .iter()
+                .any(|d| crate::window_display::titlebar_reachable(d, current.0, current.1))
+            {
+                let home_monitor = g.window.current_monitor().or_else(|| event_loop.primary_monitor());
+                let home = crate::window_display::monitor_index(home_monitor.as_ref(), &displays).unwrap_or(0);
+                if let Some(placement) = crate::window_display::restore_placement(
+                    self.settings.window_display.as_ref(),
+                    self.settings.window_x.zip(self.settings.window_y),
+                    Some(current),
+                    logical_size,
+                    &displays,
+                    home,
+                ) {
+                    if (placement.position.x, placement.position.y) != current {
+                        g.window.set_outer_position(placement.position);
+                        position = Some((placement.position.x, placement.position.y));
+                    }
+                    display = displays.get(placement.monitor_index).map(crate::window_display::Display::saved);
+                }
+            }
+        }
+        self.settings.window_width = logical_size.0;
+        self.settings.window_height = logical_size.1;
+        if let Some((x, y)) = position {
+            self.settings.window_x = Some(x);
+            self.settings.window_y = Some(y);
+        }
+        if let Some(display) = display {
+            self.settings.window_display = Some(display);
         }
     }
 
@@ -18779,6 +18816,8 @@ impl App {
         }
         if res.reset_windows {
             ui::widgets::reset_windows(ctx);
+            self.settings.outside_window_placements.clear();
+            self.settings.save();
             ui::layout::save(ctx);
         }
         if let Some(layout) = res.restore_layout
@@ -22527,16 +22566,37 @@ impl ApplicationHandler for App {
         let capture = capture || forced.is_some();
         let mut pos = None;
         let mut monitor = event_loop.primary_monitor();
-        // last position, only if it is still on a connected screen
-        if let (Some(x), Some(y), false) = (self.settings.window_x, self.settings.window_y, capture) {
-            let on = event_loop.available_monitors().find(|m| {
-                let (p, s) = (m.position(), m.size());
-                // the title bar (top-left corner area) must be reachable
-                x + 40 >= p.x && x + 40 < p.x + s.width as i32 && y + 10 >= p.y && y + 10 < p.y + s.height as i32
-            });
-            if on.is_some() {
-                pos = Some((x, y));
-                monitor = on;
+        if !capture {
+            let monitors: Vec<_> = event_loop.available_monitors().collect();
+            let displays: Vec<_> = monitors.iter().map(crate::window_display::Display::from).collect();
+            let home = crate::window_display::monitor_index(monitor.as_ref(), &displays).unwrap_or(0);
+            let saved_position = self.settings.window_x.zip(self.settings.window_y);
+            let placement = if self.settings.window_display_recovery {
+                crate::window_display::restore_placement(
+                    self.settings.window_display.as_ref(),
+                    saved_position,
+                    saved_position,
+                    (w, h),
+                    &displays,
+                    home,
+                )
+            } else {
+                saved_position.and_then(|(x, y)| {
+                    monitors
+                        .iter()
+                        .position(|m| {
+                            let (p, s) = (m.position(), m.size());
+                            x + 40 >= p.x && x + 40 < p.x + s.width as i32 && y + 10 >= p.y && y + 10 < p.y + s.height as i32
+                        })
+                        .map(|monitor_index| crate::window_display::Placement {
+                            monitor_index,
+                            position: winit::dpi::PhysicalPosition::new(x, y),
+                        })
+                })
+            };
+            if let Some(placement) = placement {
+                pos = Some((placement.position.x, placement.position.y));
+                monitor = monitors.get(placement.monitor_index).cloned();
             }
         }
         // a "normal" size covering the whole screen is a maximized window
@@ -26727,7 +26787,7 @@ impl ApplicationHandler for App {
         if self.settings.window_fullscreen != self.fullscreen_applied {
             self.apply_fullscreen_setting();
         }
-        self.record_window_geometry();
+        self.record_window_geometry(event_loop);
         self.attention_window();
         self.external_links();
         self.game_control_dispatch(event_loop);

@@ -375,7 +375,8 @@ impl App {
         // the new egui renderer has none of egui's textures
         self.egui_replay = true;
         // nor a surface for a window outside the viewer's
-        self.outside.renderer_replaced(&self.egui_ctx);
+        self.outside
+            .renderer_replaced(&self.egui_ctx, &mut self.settings.outside_window_placements);
         Some(started)
     }
 }

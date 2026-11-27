@@ -137,6 +137,7 @@ mod wearable_editor;
 mod weather;
 #[cfg(any(windows, test))]
 mod wide_chars;
+mod window_display;
 mod window_hold;
 mod window_show;
 mod world;
