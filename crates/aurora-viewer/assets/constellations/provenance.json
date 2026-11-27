@@ -1,0 +1,720 @@
+{
+ "about": "Origin marks of this unit's data. sourced: taken from the credited source, only its format or coordinates converted; derived: made from sourced data by a fixed rule; adapted: source content changed by judgement; made: no source content; unknown: not recorded. A figure field resolves as figures[id][field], then default[field], then unknown; a field a figure does not have is not listed. names and readings mark each name and kana reading of the unit's names.json (and culture_name its culture.json); none of the built-in files has a figure name or a reading. \"*\" is the file's own default name.",
+ "default": {},
+ "figures": {
+  "And": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Ant": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Aps": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Aql": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Aqr": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Ara": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Ari": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Aur": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Boo": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "CMa": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "CMi": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "CVn": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Cae": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Cam": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Cap": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Car": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Cas": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Cen": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Cep": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Cet": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Cha": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Cir": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Cnc": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Col": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Com": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "CrA": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "CrB": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Crt": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Cru": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Crv": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Cyg": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Del": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Dor": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Dra": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Equ": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Eri": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "For": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Gem": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Gru": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Her": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Hor": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Hya": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Hyi": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Ind": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "LMi": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Lac": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Leo": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Lep": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Lib": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Lup": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Lyn": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Lyr": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Men": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Mic": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Mon": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Mus": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Nor": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Oct": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Oph": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Ori": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Pav": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Peg": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Per": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Phe": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Pic": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "PsA": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Psc": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Pup": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Pyx": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Ret": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Scl": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Sco": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Sct": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Ser": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Sex": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Sge": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Sgr": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Tau": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Tel": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "TrA": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Tri": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Tuc": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "UMa": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "UMi": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Vel": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Vir": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Vol": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "Vul": {
+   "label": "derived",
+   "lines": "derived"
+  }
+ },
+ "format": 1,
+ "names": {},
+ "notes": {
+  "And": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Ant": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Aps": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Aql": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Aqr": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Ara": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Ari": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Aur": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Boo": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "CMa": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "CMi": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "CVn": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Cae": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Cam": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Cap": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Car": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Cas": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Cen": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Cep": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Cet": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Cha": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Cir": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Cnc": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Col": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Com": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "CrA": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "CrB": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Crt": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Cru": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Crv": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Cyg": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Del": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Dor": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Dra": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Equ": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Eri": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "For": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Gem": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Gru": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Her": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Hor": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Hya": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Hyi": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Ind": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "LMi": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Lac": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Leo": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Lep": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Lib": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Lup": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Lyn": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Lyr": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Men": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Mic": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Mon": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Mus": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Nor": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Oct": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Oph": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Ori": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Pav": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Peg": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Per": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Phe": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Pic": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "PsA": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Psc": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Pup": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Pyx": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Ret": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Scl": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Sco": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Sct": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Ser": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Sex": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Sge": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Sgr": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Tau": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Tel": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "TrA": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Tri": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Tuc": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "UMa": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "UMi": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Vel": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Vir": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Vol": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  },
+  "Vul": {
+   "label": "no label point in lines.json: the viewer places the name at the centre of the figure's segment ends (fixed rule)",
+   "lines": "d3-celestial's lines with every end point moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg here)"
+  }
+ },
+ "planets": {
+  "names": {},
+  "readings": {}
+ },
+ "readings": {},
+ "unit": "western culture (root lines.json, names.json) and planets.json"
+}

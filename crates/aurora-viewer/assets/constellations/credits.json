@@ -1,0 +1,52 @@
+{
+ "credits": [
+  {
+   "holder": "Olaf Frohn (d3-celestial)",
+   "work": "Constellation stick lines of the 88",
+   "licence": "BSD 3-Clause",
+   "url": "https://github.com/ofrohn/d3-celestial",
+   "imported": "2026-11-24",
+   "note": "Copyright (c) 2015, Olaf Frohn. The line patterns follow the IAU and Sky & Telescope constellation charts; no licence text for those charts could be read. Every line end point was moved to the nearest catalogue star (within 0.3 deg; shifts up to 0.005 deg). Its names and name positions are not used: the viewer places each name at the centre of its figure's segment ends."
+  },
+  {
+   "holder": "E. M. Standish and J. G. Williams; published by NASA/JPL Solar System Dynamics",
+   "work": "Keplerian elements for approximate positions of the major planets, Table 1 (1800 AD to 2050 AD), and its method",
+   "licence": "Public domain (SSD FAQ: the data on the site are considered public domain)",
+   "url": "https://ssd.jpl.nasa.gov/planets/approx_pos.html",
+   "imported": "2026-11-25",
+   "note": "Numbers and formulas only. Licence read at https://ssd.jpl.nasa.gov/faq.html."
+  },
+  {
+   "holder": "A. Mallama and J. L. Hilton",
+   "work": "Computing Apparent Planetary Magnitudes for The Astronomical Almanac, Astronomy and Computing 25 (2018), Eqs. 2 to 14",
+   "licence": "arXiv non-exclusive distribution licence for the preprint; only the published coefficients and equation forms are used, no text or code",
+   "url": "https://arxiv.org/abs/1808.01973",
+   "imported": "2026-11-25",
+   "note": "The Mars rotation and season corrections are left out. Uranus' flattening taken as 0.02293 (the fact sheet's value)."
+  },
+  {
+   "holder": "D. G. Simpson, NASA Goddard Space Flight Center",
+   "work": "An Alternative Lunar Ephemeris Model for On-Board Flight Software Use (1998), its review of the Astronomical Almanac's low-precision lunar formulae, Eqs. 1 to 13",
+   "licence": "NTRS record: distribution public, government public use permitted",
+   "url": "https://ntrs.nasa.gov/api/citations/19990040527",
+   "imported": "2026-11-25",
+   "note": "The almanac's low-precision series, not the paper's own Fourier model."
+  },
+  {
+   "holder": "NASA Goddard Space Flight Center, NSSDCA planetary fact sheets",
+   "work": "Saturn's and Uranus' north poles of rotation; Uranus' flattening",
+   "licence": "Not stated on the pages (read on 2026-11-25)",
+   "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/saturnfact.html",
+   "imported": "2026-11-25",
+   "note": "Also https://nssdc.gsfc.nasa.gov/planetary/factsheet/uranusfact.html."
+  },
+  {
+   "holder": "NASA/JPL Solar System Dynamics, Horizons system",
+   "work": "Reference positions, distances, phase angles and magnitudes for the tests (ephemeris DE441), twelve moments 1990 to 2040",
+   "licence": "Public domain (SSD FAQ)",
+   "url": "https://ssd.jpl.nasa.gov/api/horizons.api",
+   "imported": "2026-11-25",
+   "note": "Test data only; nothing of it is drawn."
+  }
+ ]
+}

@@ -197,6 +197,10 @@ struct FrameU {
     /// 1/w, 1/h; 0: `screen`), for the reflections that keep the main
     /// view's `screen` but draw smaller.
     sky_star_pass: [f32; 4],
+    /// The planets and the Sun's and the Moon's discs as drawn (stars.rs
+    /// `StarFrame::planets`, `discs`).
+    sky_planets: [[f32; 4]; crate::constellations::PLANET_SLOTS],
+    sky_discs: [[f32; 4]; 2],
     studio_aurora: [[f32; 4]; 4],
     anim_clock: [u32; 4],
     selection_color: [f32; 4],
@@ -2130,6 +2134,9 @@ pub(crate) struct Backend {
     stars: wgpu::Buffer,
     /// The Milky Way map (stars.rs milky_way_texels), made once.
     milky_way: wgpu::TextureView,
+    /// The constellations over the real sky (constellations.rs): placeholders
+    /// until a figure shows.
+    constellations: crate::constellations::Gpu,
     contact: crate::contact_shadows::ContactShadows,
     /// The volumetric clouds (clouds.rs), made while the setting is on.
     clouds: Option<crate::clouds::Clouds>,
@@ -3717,7 +3724,7 @@ impl Impostors {
             "{}\n{}\n{}",
             common_shader_for(soft),
             crate::object_shader_source(features),
-            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
+            crate::env_shader_source()
         )
     }
 
@@ -4328,6 +4335,11 @@ impl Backend {
                 count: None,
             },
         ];
+        // the constellations' uniform, tables, atlas and sampler (constellations.rs)
+        let frame_entries: Vec<_> = frame_entries
+            .into_iter()
+            .chain(crate::constellations::Gpu::layout_entries())
+            .collect();
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
             entries: &frame_entries,
@@ -4679,6 +4691,7 @@ impl Backend {
             );
             view
         };
+        let constellations = crate::constellations::Gpu::new(&device);
         let groups = Self::make_frame_groups(
             &device,
             &frame_layout,
@@ -4694,6 +4707,7 @@ impl Backend {
             &water_effects,
             &stars,
             &milky_way,
+            &constellations,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -4788,6 +4802,7 @@ impl Backend {
             water_effects,
             stars,
             milky_way,
+            constellations,
             contact,
             clouds: None,
             clouds_now: false,
@@ -5221,7 +5236,7 @@ impl Backend {
             "{}\n{}\n{}",
             common_shader_for(soft),
             crate::oit_stochastic::without_st(&crate::object_shader_source(device.features())),
-            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
+            crate::env_shader_source()
         );
         let src = crate::blend_exact::scene_source(src, device.features());
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -6747,6 +6762,7 @@ impl Backend {
         water_effects: &crate::water_effects::WaterGpu,
         stars: &wgpu::Buffer,
         milky_way: &wgpu::TextureView,
+        constellations: &crate::constellations::Gpu,
     ) -> FrameGroups {
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
@@ -6778,6 +6794,23 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 25,
                         resource: wgpu::BindingResource::TextureView(milky_way),
+                    },
+                    // the constellations (constellations.rs Gpu::layout_entries)
+                    wgpu::BindGroupEntry {
+                        binding: 33,
+                        resource: constellations.frame.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 34,
+                        resource: constellations.tables.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 35,
+                        resource: wgpu::BindingResource::TextureView(&constellations.atlas_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 36,
+                        resource: wgpu::BindingResource::Sampler(&constellations.sampler),
                     },
                     // the soft shadows' mask (main view only; any texture of
                     // the format elsewhere, never read: `Frame.soft.x` is 0)
@@ -7240,6 +7273,7 @@ impl Backend {
             &self.water_effects,
             &self.stars,
             &self.milky_way,
+            &self.constellations,
         );
     }
 
@@ -8310,6 +8344,16 @@ impl Backend {
         u.sky_optics_tex = [s.rainbow_texture, s.halo_texture, 0, 0];
         u.sky_stars = s.stars.uniform();
         u.sky_star_pass = [0.0; 4];
+        // the planets, and where the Sun's and the Moon's discs are drawn
+        // (aurora-viewer world/planets.rs): display only, every light keeps
+        // the environment's sun and moon. A moved moon's direction replaces
+        // `sky_moon`'s, which nothing but its disc reads (env.wgsl
+        // sky_full_at); a hidden disc's textures are left out (they draw
+        // that disc only), and the sun's direction under the ground keeps
+        // its procedural stand-in from drawing (`sky_discs` in the shader)
+        u.sky_planets = s.stars.planets;
+        u.sky_discs = s.stars.discs;
+        crate::constellations::apply_discs(s.stars.discs, &mut u.tex_slots, &mut u.sky_moon);
         u.studio_aurora = s.studio_aurora;
         // (common.wgsl FEATURE_NO_EMISSIVE)
         u.features[0] = if self.settings.hdr { 0 } else { 1 };
@@ -8804,6 +8848,14 @@ impl Backend {
     }
 
     pub fn render(&mut self, mut packet: FramePacket) -> FrameResult {
+        // the constellations' uniform, tables and atlas for this frame,
+        // before anything draws (constellations.rs)
+        if self
+            .constellations
+            .apply(&self.device, &self.queue, packet.params.constellations.as_deref())
+        {
+            self.remake_frame_groups();
+        }
         // the 360° snapshot's panorama, before the frame: projected from the
         // cube the faces filled, its readback begun and answered by a later
         // frame (equirect.rs). The cube is let go once the GPU has the job.
@@ -14980,7 +15032,7 @@ mod tests {
                     "{}\n{}\n{}",
                     crate::common_shader_source(),
                     crate::object_shader_source(device.features()),
-                    crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
+                    crate::env_shader_source()
                 )
                 .into(),
             ),

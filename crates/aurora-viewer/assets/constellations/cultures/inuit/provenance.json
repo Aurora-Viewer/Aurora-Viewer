@@ -1,0 +1,122 @@
+{
+ "about": "Origin marks of this unit's data. sourced: taken from the credited source, only its format or coordinates converted; derived: made from sourced data by a fixed rule; adapted: source content changed by judgement; made: no source content; unknown: not recorded. A figure field resolves as figures[id][field], then default[field], then unknown; a field a figure does not have is not listed. names and readings mark each name and kana reading of the unit's names.json (and culture_name its culture.json); none of the built-in files has a figure name or a reading. \"*\" is the file's own default name.",
+ "culture_name": {
+  "*": "sourced",
+  "ja": "sourced",
+  "nb": "sourced",
+  "pt": "sourced",
+  "pt-BR": "sourced",
+  "zh-Hans": "sourced"
+ },
+ "default": {},
+ "figures": {
+  "iu001": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "iu002": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "iu003": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "iu004": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "iu005": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "iu006": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "iu007": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "iu008": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "iu009": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "iu010": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "iu011": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "iu012": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "iu013": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "iu014": {
+   "label": "derived",
+   "lines": "derived"
+  }
+ },
+ "format": 1,
+ "names": {},
+ "notes": {
+  "iu001": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu002": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu003": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu004": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu005": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu006": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu007": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu008": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu009": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu010": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "iu011": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "iu012": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "iu013": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "iu014": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  }
+ },
+ "readings": {},
+ "unit": "culture inuit"
+}

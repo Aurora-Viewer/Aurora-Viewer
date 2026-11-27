@@ -160,6 +160,19 @@ written anew for Aurora, without its code. Their authors are thanked here.
 | "Three mighty thunders in row" by Nimlos (https://freesound.org/people/Nimlos/sounds/522025/), cut into five clips and cleaned (built into the executable; changes in [README.md](assets/rain/README.md)) | `assets/rain/thunder-*.ogg` | CC0 1.0 |
 | "Snow 004" from ambientCG (https://ambientcg.com/view?id=Snow004), downscaled and packed (built into the executable; changes in [README.md](assets/snow/README.md)) | `assets/snow/snow-normal-height.png`, `assets/snow/snow-color-roughness.png` | CC0 1.0 |
 | "Oiiaioooooiai Cat" by Zhuier (https://sketchfab.com/3d-models/oiiaioooooiai-cat-30d27bf7fb224849b76e208a6eccdb36); changed: texture reduced to 1024 x 1024 and packed with the model into one GLB (built into the executable; changes in [README.md](assets/models/README.md)) | `assets/models/spinning-cat.glb` | CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/) |
+| Constellation stick lines of the 88 constellations — Copyright (c) 2015, Olaf Frohn (d3-celestial, https://github.com/ofrohn/d3-celestial), every line end moved onto the nearest catalogue star; no names, name positions nor stroke timing (`names.json` and `drafts.json` kept empty: the names are the catalogues' `constellation-*`); each source in the folder's `credits.json`, the origin of each part in `provenance.json` (built into the executable; [README.md](crates/aurora-viewer/assets/constellations/README.md)) | `crates/aurora-viewer/assets/constellations/lines.json`, `names.json`, `drafts.json` | BSD-3-Clause (section "Constellation lines by Olaf Frohn" below) |
+| The planets' names: none (each planet's entry kept empty: the names are the catalogues' `planet-*`) (built into the executable; [README.md](crates/aurora-viewer/assets/constellations/README.md)) | `crates/aurora-viewer/assets/constellations/planets.json` | No content |
+| The Stellarium sky culture "Chinese" (https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/chinese): Karrie Berglund (Digitalis Education Solutions, Inc.), from Hong Kong Space Museum star maps; Sun Shuwei, after Yi Shitong (1981); its stick lines; star positions of d3-celestial (Olaf Frohn, https://github.com/ofrohn/d3-celestial); the culture's name in other languages from the Stellarium project's translations (https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-skycultures-descriptions); converted to sky positions and separate segments, label points at the centre of each figure's segment ends where the source gives none; no figure name (`names.json` and `drafts.json` kept empty) (built into the executable; [README.md](crates/aurora-viewer/assets/constellations/README.md)) | `crates/aurora-viewer/assets/constellations/cultures/chinese/` | CC BY-SA 4.0; star positions BSD-3-Clause; the translations GPL-2.0-or-later |
+| The Stellarium sky culture "Egyptian" (https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/egyptian): Karrie Berglund (Digitalis Education Solutions, Inc.), after Juan Antonio Belmonte; misibacsi; its stick lines; star positions of d3-celestial (Olaf Frohn, https://github.com/ofrohn/d3-celestial); the culture's name in other languages from the Stellarium project's translations (https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-skycultures-descriptions); converted to sky positions and separate segments, label points at the centre of each figure's segment ends where the source gives none; no figure name (`names.json` and `drafts.json` kept empty) (built into the executable; [README.md](crates/aurora-viewer/assets/constellations/README.md)) | `crates/aurora-viewer/assets/constellations/cultures/egyptian/` | GNU GPL v2.0 (as the culture's description writes it); star positions BSD-3-Clause; the translations GPL-2.0-or-later |
+| The Stellarium sky culture "Inuit" (https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/inuit), its text and data only (not its illustrations): Karrie Berglund (Digitalis Education Solutions, Inc.), after John MacDonald; its stick lines; star positions of d3-celestial (Olaf Frohn, https://github.com/ofrohn/d3-celestial); the culture's name in other languages from the Stellarium project's translations (https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-skycultures-descriptions); converted to sky positions and separate segments, label points at the centre of each figure's segment ends where the source gives none; no figure name (`names.json` and `drafts.json` kept empty) (built into the executable; [README.md](crates/aurora-viewer/assets/constellations/README.md)) | `crates/aurora-viewer/assets/constellations/cultures/inuit/` | GNU GPL v2.0 (as the culture's description writes it: "Text and data: GNU GPL v2.0"); star positions BSD-3-Clause; the translations GPL-2.0-or-later |
+| The Stellarium sky culture "Japanese" (https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/japanese): Alexander Wolf; Lyu Haocheng, after Shibukawa Harumi (Tenmon Seisho, 1699); its stick lines; star positions of d3-celestial (Olaf Frohn, https://github.com/ofrohn/d3-celestial); converted to sky positions and separate segments, label points at the centre of each figure's segment ends where the source gives none; no figure name (`names.json` and `drafts.json` kept empty), the culture's name too (`culture.json` kept empty) (built into the executable; [README.md](crates/aurora-viewer/assets/constellations/README.md)) | `crates/aurora-viewer/assets/constellations/cultures/japanese/` | CC BY-SA 4.0; star positions BSD-3-Clause |
+| The Stellarium sky culture "Korean" (https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/korean): Jeong Tae-Min; Lyu Haocheng; its stick lines; star positions of d3-celestial (Olaf Frohn, https://github.com/ofrohn/d3-celestial); the culture's name in other languages from the Stellarium project's translations (https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-skycultures-descriptions); converted to sky positions and separate segments, label points at the centre of each figure's segment ends where the source gives none; no figure name (`names.json` and `drafts.json` kept empty) (built into the executable; [README.md](crates/aurora-viewer/assets/constellations/README.md)) | `crates/aurora-viewer/assets/constellations/cultures/korean/` | GNU GPL v2.0 (as the culture's description writes it); star positions BSD-3-Clause; the translations GPL-2.0-or-later |
+| The Stellarium sky culture "Norse (Edda)" (https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/norse_edda): Jakob Eyermann, with Susanne M. Hoffmann; with figures of the culture "Norse" (https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/norse) by Jonas R. Persson; their stick lines; the culture's name in other languages from the Stellarium project's translations (https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-skycultures-descriptions); converted to sky positions and separate segments, label points at the centre of each figure's segment ends where the source gives none; no figure name (`names.json` and `drafts.json` kept empty) (built into the executable; [README.md](crates/aurora-viewer/assets/constellations/README.md)) | `crates/aurora-viewer/assets/constellations/cultures/norse-edda/` | CC BY 4.0; the "Norse" figures CC BY-SA 4.0; the translations GPL-2.0-or-later |
+| Approximate positions of the major planets: the Keplerian elements of Table 1 (1800 AD to 2050 AD) and their method, by E. M. Standish and J. G. Williams, published by NASA/JPL Solar System Dynamics (https://ssd.jpl.nasa.gov/planets/approx_pos.html); numbers and formulas only, written anew (built into the executable) | `crates/aurora-viewer/src/world/planets_ephemeris.rs` | Public domain (the Solar System Dynamics FAQ, https://ssd.jpl.nasa.gov/faq.html: the data on the site are considered public domain) |
+| Apparent planetary magnitudes: A. Mallama and J. L. Hilton, "Computing Apparent Planetary Magnitudes for The Astronomical Almanac", Astronomy and Computing 25 (2018) (https://arxiv.org/abs/1808.01973), the coefficients and equation forms of its Eqs. 2 to 14, without the Mars rotation and season corrections; no text or code (built into the executable) | `crates/aurora-viewer/src/world/planets_ephemeris.rs` | Published coefficients and equation forms only; the preprint is under the arXiv non-exclusive distribution licence |
+| The Moon's position: the Astronomical Almanac's low-precision lunar formulae as reviewed by D. G. Simpson, NASA Goddard Space Flight Center, "An Alternative Lunar Ephemeris Model for On-Board Flight Software Use" (1998, https://ntrs.nasa.gov/api/citations/19990040527), Eqs. 1 to 13 (not the paper's own Fourier model); numbers and formulas only (built into the executable) | `crates/aurora-viewer/src/world/planets_ephemeris.rs` | NTRS record: distribution public, government public use permitted |
+| Saturn's and Uranus' north poles of rotation and Uranus' flattening: NASA Goddard Space Flight Center, NSSDCA planetary fact sheets (https://nssdc.gsfc.nasa.gov/planetary/factsheet/saturnfact.html, https://nssdc.gsfc.nasa.gov/planetary/factsheet/uranusfact.html); numbers only (built into the executable) | `crates/aurora-viewer/src/world/planets_ephemeris.rs` | Not stated on the pages (read on 2026-11-25) |
+| Reference positions, distances, phase angles and magnitudes for the tests, at twelve moments from 1990 to 2040 (ephemeris DE441): NASA/JPL Solar System Dynamics, Horizons system (https://ssd.jpl.nasa.gov/api/horizons.api); test data only, nothing of it is drawn | `crates/aurora-viewer/src/world/planets_reference.rs` | Public domain (the Solar System Dynamics FAQ, https://ssd.jpl.nasa.gov/faq.html) |
 
 Fonts keep their own license (the OFL allows bundling them with software under
 any license). The license texts of the fonts are next to them.
@@ -534,6 +547,42 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Constellation lines by Olaf Frohn
+
+The constellation data built into the viewer
+(`crates/aurora-viewer/assets/constellations/`) takes its western stick
+lines from d3-celestial (<https://github.com/ofrohn/d3-celestial>),
+and the star positions behind the sky cultures' lines from its star files,
+under BSD-3-Clause:
+
+Copyright (c) 2015, Olaf Frohn
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Pose stand by Cinder Roxley
 

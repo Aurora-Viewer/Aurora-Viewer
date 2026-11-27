@@ -1,0 +1,227 @@
+{
+ "about": "Origin marks of this unit's data. sourced: taken from the credited source, only its format or coordinates converted; derived: made from sourced data by a fixed rule; adapted: source content changed by judgement; made: no source content; unknown: not recorded. A figure field resolves as figures[id][field], then default[field], then unknown; a field a figure does not have is not listed. names and readings mark each name and kana reading of the unit's names.json (and culture_name its culture.json); none of the built-in files has a figure name or a reading. \"*\" is the file's own default name.",
+ "culture_name": {
+  "*": "sourced",
+  "de": "sourced",
+  "es": "sourced",
+  "fr": "sourced",
+  "it": "sourced",
+  "ja": "sourced",
+  "nb": "sourced",
+  "pl": "sourced",
+  "pt": "sourced",
+  "pt-BR": "sourced",
+  "ru": "sourced",
+  "tr": "sourced",
+  "uk": "sourced",
+  "zh-Hans": "sourced",
+  "zh-Hant": "sourced"
+ },
+ "default": {},
+ "figures": {
+  "eg001": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg002": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg003": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg004": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg005": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg006": {
+   "label": "derived",
+   "lines": "adapted"
+  },
+  "eg007": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg008": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg009": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg010": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg011": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg012": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg013": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg014": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg015": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg016": {
+   "label": "derived",
+   "lines": "adapted"
+  },
+  "eg017": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg018": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg019": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg020": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg021": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg022": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg023": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg024": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg025": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg026": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg027": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "eg028": {
+   "label": "derived",
+   "lines": "sourced"
+  }
+ },
+ "format": 1,
+ "names": {},
+ "notes": {
+  "eg001": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg002": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg003": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg004": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg005": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg006": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "2 segment(s) dropped: a star of the source not in the star tables"
+  },
+  "eg007": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg008": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg009": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg010": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg011": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg012": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg013": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg014": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg015": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg016": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "1 segment(s) dropped: a star of the source not in the star tables"
+  },
+  "eg017": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg018": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg019": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg020": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg021": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg022": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg023": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg024": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg025": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg026": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg027": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "eg028": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  }
+ },
+ "readings": {},
+ "unit": "culture egyptian"
+}

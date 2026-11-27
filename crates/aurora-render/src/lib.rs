@@ -18,6 +18,7 @@ mod blend_tests;
 mod bloom;
 mod clouds;
 pub mod clouds_noise;
+pub mod constellations;
 mod contact_shadows;
 pub mod curvature;
 mod cutout;
@@ -181,6 +182,9 @@ pub(crate) const COMMON_SHADER: &str = concat!(
     include_str!("shaders/water_spectrum.wgsl")
 );
 
+/// env.wgsl with the constellations it draws (constellations.wgsl).
+pub(crate) const ENV_SHADER: &str = concat!(include_str!("shaders/env.wgsl"), "\n", include_str!("shaders/constellations.wgsl"));
+
 /// Offline material iteration only. Normal viewers always use their baked shaders.
 pub(crate) fn water_shader_source(files: &[&str], baked: &'static str) -> std::borrow::Cow<'static, str> {
     if std::env::var_os("AURORA_DEMO").is_none() || std::env::var("AURORA_DEMO_WATER_SHADERS").as_deref() != Ok("1") {
@@ -205,6 +209,10 @@ pub(crate) fn water_shader_source(files: &[&str], baked: &'static str) -> std::b
 
 pub(crate) fn common_shader_source() -> std::borrow::Cow<'static, str> {
     water_shader_source(&["common.wgsl", "water_spectrum.wgsl"], COMMON_SHADER)
+}
+
+pub(crate) fn env_shader_source() -> std::borrow::Cow<'static, str> {
+    water_shader_source(&["env.wgsl", "constellations.wgsl"], ENV_SHADER)
 }
 
 /// object.wgsl as the device takes it: without the attributes of the early
@@ -278,7 +286,7 @@ mod shader_tests {
             "{}\n{}\n{}",
             crate::COMMON_SHADER,
             include_str!("shaders/object.wgsl"),
-            include_str!("shaders/env.wgsl")
+            crate::ENV_SHADER
         );
         let module = naga::front::wgsl::parse_str(&source).expect("scene shader parses");
         let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
@@ -317,7 +325,7 @@ mod shader_tests {
             "{}\n{}\n{}",
             crate::COMMON_SHADER,
             include_str!("shaders/object.wgsl"),
-            include_str!("shaders/env.wgsl")
+            crate::ENV_SHADER
         );
         validate(&src);
     }
@@ -1179,7 +1187,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
             "{}\n{}\n{}",
             common,
             include_str!("shaders/object.wgsl"),
-            include_str!("shaders/env.wgsl")
+            crate::ENV_SHADER
         ));
         validate(&format!("{}\n{}", common, include_str!("shaders/ssr.wgsl")));
     }

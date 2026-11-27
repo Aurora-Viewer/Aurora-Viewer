@@ -369,14 +369,14 @@ fn chip(ui: &mut egui::Ui, p: &Palette, icon: &str, tint: egui::Color32, text: &
 
 /// The switch on a card's title row, on its right: what it turns on and
 /// its tip.
-struct Head<'a> {
-    on: &'a mut bool,
-    tip: &'a str,
+pub(super) struct Head<'a> {
+    pub(super) on: &'a mut bool,
+    pub(super) tip: &'a str,
 }
 
 /// A card: its icon and title, its switch on the right of the title
 /// (`head`), then its rows, given whether that switch is on.
-fn card<R>(
+pub(super) fn card<R>(
     ui: &mut egui::Ui,
     p: &Palette,
     icon: &str,
@@ -426,7 +426,7 @@ fn switch_row(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &str, tip: &str,
 
 /// A slider under its label, its value in words on the right, and the
 /// words of its two ends under it (`ends`).
-fn slider_row(
+pub(super) fn slider_row(
     ui: &mut egui::Ui,
     p: &Palette,
     (text, tip): (&str, &str),

@@ -328,10 +328,19 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f3
             sum += s.color.rgb * s.pos.w * exp(-0.5 * r2) * (1.0 + depth * wave);
         }
     }
+    // the planets (world/planets.rs), in the real sky only
+    if (!legacy) {
+        sum += sky_planet_points(q, ax, ay, ax2, ay2, pixel);
+    }
     // Preferences › "Star brightness" (1 for the Legacy Viewer's stars)
     var col = sum * max(frame.sky_stars[2].w, 0.0);
     if (frame.sky_stars[1].w > 0.0) {
         col += milky_way(q, ax, ay, pixel) * frame.sky_stars[1].w;
+    }
+    // the constellations and the planets' names, faded with the stars (the
+    // real sky only)
+    if (!legacy) {
+        col += constellation_overlay(q, pixel) + constellation_planet_names(q, pixel);
     }
     return col * gain * extinction * glare;
 }
@@ -432,7 +441,12 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     // 90 % opacity) blew soft halos out to a white disc with stepped rings and
     // a visible quad (#2782).
     var hidden = 0.0;
-    let sd = normalize(frame.sky_sun.xyz);
+    // `sd` draws the sun's disc only: where the real Sun stands, or under
+    // the ground when it is hidden (its textures are then left out, and the
+    // stand-in disc below needs it above the horizon); the light, the haze
+    // and the glow keep frame.sky_sun (world/planets.rs, renderer.rs). The
+    // moon's moved direction comes in `sky_moon` itself.
+    let sd = select(normalize(frame.sky_sun.xyz), frame.sky_discs[0].xyz, frame.sky_discs[0].w > 0.5);
     if (frame.tex_slots.y != 0u) {
         let s = body_disc(d, sd, 0.5, frame.sky_sun.w, frame.tex_slots.y);
         c = mix(c, s.rgb, s.a);
@@ -636,6 +650,7 @@ fn sky_pixel(in: SkyOut) -> vec4<f32> {
             return vec4<f32>(sky_color(vec3<f32>(d.x, d.y, abs(d.z))) * fresnel, 1.0);
         }
     }
+    constellation_sky = true;
     var col = sky_full_at(dir, sky_footprint(in.ndc, dir));
     col += lightning_glow(dir);
     if (camera_underwater()) {

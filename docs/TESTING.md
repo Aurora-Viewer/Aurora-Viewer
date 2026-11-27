@@ -194,6 +194,9 @@ Actual grid login and teleporting are performed by the human.
 | `AURORA_HDR=0\|1` | Overrides "HDR and Emissive" (Graphics › Image) |
 | `AURORA_SSR=0\|1` | Overrides the screen-space reflections |
 | `AURORA_NORMAL_PRECISION=auto\|standard\|high` | Overrides "Reflection precision" (Graphics › Reflections) |
+| `AURORA_CONSTELLATIONS=0\|1` | Turns the constellations over the real sky off or on for a launch |
+| `AURORA_CONSTELLATION_DIR=<folder>` | Reads the constellation data from that folder instead of the profile's |
+| `AURORA_CONSTELLATION_BUILTIN=0` | Leaves the constellation data built into the viewer out for a launch |
 | `AURORA_GRAPHICS_PRESET=potato\|low\|medium\|high\|deluxe` | Applies a graphics level before the overrides above |
 
 `AURORA_DEMO_AVATAR_RENDER_SETTINGS=1` opens World > Avatar render settings
@@ -4959,6 +4962,11 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>[,<milky way>]]` | Where the real sky is seen from, its stars' brightness and the Milky Way's |
 | `AURORA_DEMO_NIGHT_SKY_CLOCK=<longitude>[,<YYYY-MM-DDTHH:MM>]` | The real sky's hour from the clock at this longitude, at a fixed UTC moment if given |
+| `AURORA_DEMO_CONSTELLATIONS=on\|<items>` | The constellations over the real sky, held at a stage if asked |
+| `AURORA_DEMO_CONSTELLATIONS_WINDOW=1` | Opens the Constellations window at the start |
+| `AURORA_DEMO_CONSTELLATION_CREDITS=<pixels>` | Opens the constellations' credits window, its list scrolled that far |
+| `AURORA_DEMO_PLANETS=on\|off\|names` | The planets in the real sky, with their names for `names` |
+| `AURORA_DEMO_SKY_DISCS=real,hide` | The Sun's and the Moon's discs at the real bodies' place (`real`) or not drawn (`hide`) |
 | `AURORA_DEMO_OCCLUSION=1\|edge` | Wall with hidden objects (occlusion test); `edge`: cubes in plain view beside a near wall |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
@@ -5516,6 +5524,151 @@ both open states and the selection count. Capture at frame 620.
   the bright sky; with `AURORA_DEMO_TOD=3` (sunset) only the brighter ones
   show. Capture with `AURORA_DEMO_SNAPSHOT=save:1600x900:png:<folder>` for an
   image without the interface.
+- **`AURORA_DEMO_CONSTELLATIONS=on|<items>`** (with
+  `AURORA_DEMO_NIGHT_SKY=real:<azimuth>,<elevation>`): turns the
+  constellations over the real sky on for this launch (in memory) and, with
+  items separated by commas, `reveal=<0..1>` holds every figure in the field
+  at that share of its pen stroke, `fade=<0..1>` holds them fully drawn at
+  that opacity (fading out), `obsolete` adds the figures no longer counted,
+  `nodrawing`, `nolines` and `nonames` leave out the engravings, the
+  lines or the names, `field=<degrees>` and `font=<points>` set the field
+  around the view and the names' size (5 to 36 points; every art set of
+  the culture shown is used, a figure's drawing coming from the first set,
+  in the sets' order, that has one) (`world/constellations.rs`),
+  `rescan` reads the data folder again
+  every 3 s (a set copied in while the demo runs appears, like
+  the window's Rescan button). The window's newer settings:
+  `figures=<0..1>` the engraved figures' opacity (`nodrawing` is 0),
+  `width=<0.1..3>` the lines' width, `bright=<1..2>` the drawing
+  brightness, `highlight=0|1` the completion pulse (on by default: `0` for
+  a view comparable with the build before it), `pulse=<seconds>` holds
+  every part fully drawn that long after it finished (`0.5`: the pulse at
+  its peak), `colours` a colour per constellation,
+  `sparkles=circle|cross|star|mix` the sparkles at the lines' pen tips
+  (`mix`: each figure one of the three shapes, to compare them in one
+  image), `sparkle_size=<1..5>` and `spin=<turns>`; with `reveal=` the
+  strokes hold half drawn, sparkles at their tips.
+  `AURORA_DEMO_CONSTELLATIONS_WINDOW=1` shows these in the window as well
+  (in memory, never saved). `AURORA_DEMO_CONSTELLATION_CREDITS=<pixels>`
+  opens "Licences and attribution" with its list scrolled that far: the
+  entries are the data's `credits.json` files (its root, built in and the
+  user's, then `cultures/<id>/`, `sets/<id>/`;
+  `world/constellations_credits.rs`); data without them shows the empty
+  line. `zenith=<figure id>` turns the real sky
+  (its place and real time, like `AURORA_DEMO_NIGHT_SKY_CLOCK`) so that
+  this figure's label point is overhead, whatever its declination: with
+  `AURORA_DEMO_NIGHT_SKY=real:0,89`, `zenith=Oct` puts the southern
+  Octans, lines and name, at the top of the view, where its name must
+  stay upright and still. Orion with its name:
+  `AURORA_DEMO_NIGHT_SKY=real:180,30` with `AURORA_DEMO_TOD` at a winter
+  night's hour, or `AURORA_DEMO_NIGHT_SKY_CLOCK=2.35,2026-01-15T23:00`.
+  The southern figures drawn with lines only: `AURORA_DEMO_NIGHT_SKY_PLACE=-33.87`
+  and `real:180,45`. No figure may show in the water's or a mirror's
+  reflection, nor in a reflection probe. The lines of the western
+  culture and six sky cultures are built in
+  (`crates/aurora-viewer/assets/constellations/`, its README;
+  `world/constellations_builtin.rs`), no picture, no figure name and no
+  stroke timing: the western figures and the planets show the
+  catalogues' names, the other cultures' figures none (their Names
+  switch and size are greyed), and every line of a figure draws at once. The user's folder,
+  `constellations` in the configuration folder (the demo's own
+  `demo/constellations`), adds drawing sets and replaces a built-in unit
+  whole (a culture's folder, the root `lines.json`/`names.json` pair,
+  `planets.json`): point `AURORA_CONSTELLATION_DIR=<folder>` at a test
+  copy (`lines.json`, `sets/<set>/set.json`, the figures' JSON and WebP
+  files; `world/constellations_catalogue.rs`).
+  `AURORA_CONSTELLATION_BUILTIN=0` (or `off`, `false`) leaves the built-in
+  data out for the launch: a missing folder then draws nothing and the
+  Constellations window says where it looked; a folder with `lines.json`
+  alone draws lines and names; a damaged picture leaves its figure's
+  lines and name, said once in the log. The log says
+  `constellations: read <source>: ...` (`the built-in data`, with the
+  user's folder and the units it gives, or the folder alone) with the time
+  the small files took,
+  `<figure> (<set>) ready <ms> ms after it was asked` for each picture
+  read on demand, and `constellations: <n> shown, <k> pictures in the
+  atlas (<l> layer(s), <MiB>)` when something starts or stops showing or
+  the atlas changes (each new count alone at the debug level); their CPU time is
+  part of `p_env` of `AURORA_PROFILE`, their GPU time part of
+  `g_terrain_sky` (compare with `AURORA_CONSTELLATIONS=0`).
+  `AURORA_CONSTELLATIONS=0|1` turns them off or on for a launch, whatever
+  the settings say, the demo's included. `AURORA_DEMO_CONSTELLATIONS_WINDOW=1`
+  opens their window (World › Environment › Constellations); with
+  `AURORA_DEMO_WEATHER_WINDOW=night` both windows show, to compare them by
+  eye (same cards, switches, sliders, radii and spacing).
+- **Constellation sets (cultures)**: the data folder's
+  `cultures/<id>/` each make one set of the Constellations window
+  (`western` from `lines.json` and the sets that name no culture), picked
+  one at a time from its drop-down. The one shown draws its lines, names
+  and drawings, every art set of it used; the others are neither drawn,
+  listed in the shader's tables nor read (no setting stored: the western
+  one; a list stored by an older build shows its first id the data has).
+  Items of `AURORA_DEMO_CONSTELLATIONS`, in memory: `cultures=<id>` shows
+  that one (an older `<id>+<id>` shows the first the data has, an empty one
+  the western one); `name_language=<code>` reads the figures' names
+  in that language of each culture's `names.json` (`{"names": {"<code>":
+  {"<figure id>": "<name>"}}}`) instead of the interface's: `ko` shows the
+  Korean names in Hangul, `zh` the Chinese ones in Han, `ja` the Japanese
+  ones, to check that the fonts draw them (boxes are a missing font, never
+  to hide). A name falls back to English, then to the name of its
+  `lines.json`; a figure named nowhere shows no name. `AURORA_DEMO_CONSTELLATIONS_WINDOW=list`
+  opens the window with its constellation sets' drop-down open. The log
+  says `constellations: tables of <n> figures (<cultures>):
+  <KiB>, cell lists of <a> and <b> references at most` each time the
+  culture shown changes the tables. A name that covers one of its own
+  figure's stars at the sky's turn moves to the nearest spot clear of
+  them, in any of 24 directions (straight down first, the shortest move
+  winning: a one-star figure's name with a reading over it goes above
+  the star), at most twice its
+  height away and never so far that its picture leaves the reach the
+  names are found in (a long name already shrunk to that reach stays
+  centred); with none clear it takes the spot that covers the fewest. It
+  keeps its spot while no other covers fewer stars or lies nearer by half
+  its height, chooses again once the sky has turned it a quarter of a degree,
+  slides there at twice its height a second, and takes its spot at once
+  while faded out. Within about 8° of the zenith, where a name turns with
+  the view, it hangs under its stars by the smallest drop that clears
+  them all (a figure of one star, its name under it like a planet's), or
+  stays centred when no drop within twice its height does. A name stays
+  centred when its drawing shows from a set that placed the label point
+  clear of its art (`label_box_deg`, the engravings). A set's own label
+  point (`label_set`) moves the name only
+  with the box it placed there (`label_set_box_deg`); without it the
+  figure's own point and this rule apply. Their cost: `p_env` and `g_terrain_sky` of
+  `AURORA_PROFILE`, with `field=180` for the most at once.
+- **`AURORA_DEMO_PLANETS=on|off|names`** and
+  **`AURORA_DEMO_SKY_DISCS=<items>`** (with `AURORA_DEMO_NIGHT_SKY=real:...`
+  and `AURORA_DEMO_NIGHT_SKY_CLOCK=<longitude>,<YYYY-MM-DDTHH:MM>`): the
+  planets' and the Sun and Moon's switches for this launch, in memory
+  (`world/planets.rs`); unset, the settings' (all four off by default). `names` turns the planets on with
+  their names. The items of `AURORA_DEMO_SKY_DISCS` are `real` (the region's
+  sun and moon discs where the real Sun and Moon stand at that moment and
+  place) and `hide` (no disc; it wins over `real`); an empty value turns
+  both off. Mercury, Venus, Mars, Jupiter, Saturn and Uranus are points
+  like the stars, steady, each in its colour, fading out within 18° of the
+  real Sun; the sky's moment must be within 1800 to 2050 (outside, nothing
+  shows but `hide`). Three views, each `on` then `off`: Venus at the
+  Pleiades, `AURORA_DEMO_NIGHT_SKY=real:278,25` and
+  `AURORA_DEMO_NIGHT_SKY_CLOCK=2.35,2020-04-03T20:00`; Mars at its 2003
+  opposition, `real:178,22` and `2.35,2003-08-28T00:00`; Jupiter and
+  Saturn together, `real:222,12` and `2.35,2020-12-21T17:00`. The real Sun
+  in the night sky: `real:65,14`, `2.35,2026-06-21T05:00` and
+  `AURORA_DEMO_SKY_DISCS=real` (the light, the haze's glow and the
+  constellations' darkness stay the region's). The names come from
+  `planets.json` of the constellation data (built in, or the user's folder's),
+  `{"venus": {"name": "Venus", "names": {"fr": "Vénus", "ja": "金星"}}, ...}`
+  by `mercury`, `venus`, `mars`, `jupiter`, `saturn`, `uranus`; a body
+  or file it lacks, or an entry left empty (`{"name": "", "names": {}}`,
+  the built-in file's), shows the built-in name (the catalogue's, in the
+  interface's language), a language an entry
+  lacks the entry's own `name`. They draw with the
+  constellations off too (`AURORA_CONSTELLATIONS=0`), at the
+  constellations' names' size, below their planet (under the other's name
+  when two planets meet), and never in a reflection.
+  `AURORA_DEMO_CONSTELLATIONS_WINDOW=end` opens the Constellations window
+  scrolled to its Solar system card, showing these switches as the
+  scenario sets them. The log says `night sky: ...` with each planet's altitude
+  and azimuth (and the real sun and moon's) when what shows changes.
 - **`AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>[,<milky way>]]`**: the
   real sky seen from `latitude` (degrees north, negative in the south;
   Preferences › Graphics › Environment › "Sky seen from" set to Custom)

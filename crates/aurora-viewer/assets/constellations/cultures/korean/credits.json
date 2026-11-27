@@ -1,0 +1,44 @@
+{
+ "credits": [
+  {
+   "holder": "Jeong Tae-Min",
+   "work": "Stellarium sky culture 'Korean': original contribution (Cheonsang Yeolcha Bunyajido)",
+   "licence": "GNU GPL v2.0",
+   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/korean",
+   "imported": "2026-11-25",
+   "note": "Licence line of the culture's description: 'GNU GPL v2.0'. Derived data stays GPL v2.0. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Conversion for this viewer'."
+  },
+  {
+   "holder": "Lyu Haocheng",
+   "work": "Stellarium sky culture 'Korean': re-identification of the star map and description",
+   "licence": "GNU GPL v2.0",
+   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/korean",
+   "imported": "2026-11-25",
+   "note": "Licence line: 'GNU GPL v2.0'. The author writes that the identification results 'are not unique'. Derived data stays GPL v2.0. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Conversion for this viewer'."
+  },
+  {
+   "holder": "Olaf Frohn (d3-celestial)",
+   "work": "d3-celestial star and deep-sky positions (stars.6.json, stars.8.json, dsos.6.json)",
+   "licence": "BSD-3-Clause",
+   "url": "https://github.com/ofrohn/d3-celestial",
+   "imported": "2026-11-25",
+   "note": "Used only to turn Hipparcos numbers and DSO names into positions; stars.8.json (magnitude 8 and brighter, same project, same BSD-3-Clause licence) supplies the numbers that stars.6.json lacks (identical positions on all 5044 shared stars). Licence file quoted: 'Copyright (c) 2015, Olaf Frohn. All rights reserved.' Star data of that project derive from the Hipparcos catalogue; positions only are used here. The dsos files were read from the master branch on the import date (not a pinned commit)."
+  },
+  {
+   "holder": "The Stellarium project and its translators",
+   "work": "Translations of the culture's name 'Korean' in culture.json: po/stellarium-skycultures-descriptions/, written as de, es, fr, it, ja, nb, pl, pt, pt-BR, ru, tr, uk, zh-Hans, zh-Hant",
+   "licence": "GPL-2.0-or-later",
+   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-skycultures-descriptions",
+   "imported": "2026-11-25",
+   "note": "Repository licence: COPYING (GNU GPL version 2) at the pinned commit; codemeta.json: '\"license\": \"https://spdx.org/licenses/GPL-2.0-or-later\"'. The .po files carry no licence header of their own."
+  },
+  {
+   "holder": "Conversion for this viewer",
+   "work": "Changes to the imported stick lines and label points",
+   "licence": "No content of its own: changes to the source's data, under the source's licence",
+   "url": "",
+   "imported": "2026-11-26",
+   "note": "Figure ko10B left out (no line in the source). 62 one-star figures (the source writes the star twice) kept as one zero-length line. Label points: the centre of the segment ends, except 3 given by the source. No end point moved."
+  }
+ ]
+}

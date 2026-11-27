@@ -1,0 +1,2271 @@
+{
+ "about": "Origin marks of this unit's data. sourced: taken from the credited source, only its format or coordinates converted; derived: made from sourced data by a fixed rule; adapted: source content changed by judgement; made: no source content; unknown: not recorded. A figure field resolves as figures[id][field], then default[field], then unknown; a field a figure does not have is not listed. names and readings mark each name and kana reading of the unit's names.json (and culture_name its culture.json); none of the built-in files has a figure name or a reading. \"*\" is the file's own default name.",
+ "culture_name": {
+  "*": "sourced",
+  "de": "sourced",
+  "es": "sourced",
+  "fr": "sourced",
+  "it": "sourced",
+  "nb": "sourced",
+  "pl": "sourced",
+  "pt": "sourced",
+  "pt-BR": "sourced",
+  "ru": "sourced",
+  "tr": "sourced",
+  "uk": "sourced",
+  "zh-Hans": "sourced"
+ },
+ "default": {},
+ "figures": {
+  "zh001": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh002": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh003": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh004": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh005": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh006": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh007": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh008": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh009": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh010": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh011": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh012": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh013": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh014": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh015": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh016": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh017": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh018": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh019": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh020": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh021": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh022": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh023": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh024": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh025": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh026": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh027": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh028": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh029": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh030": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh031": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh032": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh033": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh034": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh035": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh036": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh037": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh038": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh039": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh040": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh041": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh042": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh043": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh044": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh045": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh046": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh047": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh048": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh049": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh050": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh051": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh052": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh053": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh054": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh055": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh056": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh057": {
+   "label": "derived",
+   "lines": "adapted"
+  },
+  "zh058": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh059": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh060": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh061": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh062": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh064": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh065": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh066": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh067": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh068": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh069": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh070": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh071": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh072": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh073": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh074": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh075": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh076": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh077": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh078": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh079": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh080": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh081": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh082": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh083": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh084": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh085": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh086": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh087": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh088": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh089": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh090": {
+   "label": "derived",
+   "lines": "adapted"
+  },
+  "zh091": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh093": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh094": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh095": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh096": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh097": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh098": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh099": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh100": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh101": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh102": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh103": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh104": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh105": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh106": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh107": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh108": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh109": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh110": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh111": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh112": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh113": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh114": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh115": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh116": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh117": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh118": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh119": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh120": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh121": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh122": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh123": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh124": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh125": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh126": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh127": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh128": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh129": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh130": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh131": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh132": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh133": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh134": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh135": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh136": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh137": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh138": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh139": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh140": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh141": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh142": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh143": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh144": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh145": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh146": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh147": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh148": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh149": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh151": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh152": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh153": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh154": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh155": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh156": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh157": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh158": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh159": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh160": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh161": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh162": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh163": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh164": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh165": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh167": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh168": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh169": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh171": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh172": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh173": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh174": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh175": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh176": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh177": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh178": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh179": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh180": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh181": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh182": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh183": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh184": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh185": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh186": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh187": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh188": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh189": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh190": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh191": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh192": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh193": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh194": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh195": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh196": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh197": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh198": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh199": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh200": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh201": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh202": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh203": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh204": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh205": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh206": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh207": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh208": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh209": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh210": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh211": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh212": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh213": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh214": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh215": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh216": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh217": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh218": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh219": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh220": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh221": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh222": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh223": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh224": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh225": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh226": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh227": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh228": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh229": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh230": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh231": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh232": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh233": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh234": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh235": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh236": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh237": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh238": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh239": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh240": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh241": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh242": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh243": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh244": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh245": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh246": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh247": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh248": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh249": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh250": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh251": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh252": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh253": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh254": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh255": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh256": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh257": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh258": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh259": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh260": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh261": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh262": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh263": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh265": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh266": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh267": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh268": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh269": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh270": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh271": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh272": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh273": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh274": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh275": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh276": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh277": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh278": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh279": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh280": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh281": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh282": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh283": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh284": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh285": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh286": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh287": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh288": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh289": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh290": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh291": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh292": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh293": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh294": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh295": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh296": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh297": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh298": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh299": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh300": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh301": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh302": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh303": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh304": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh305": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh306": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh307": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh308": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh309": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh310": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "zh311": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh312": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh313": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh314": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh315": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh316": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh317": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "zh318": {
+   "label": "derived",
+   "lines": "sourced"
+  }
+ },
+ "format": 1,
+ "names": {},
+ "notes": {
+  "zh001": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh002": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh003": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh004": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh005": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh006": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh007": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh008": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh009": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh010": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh011": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh012": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh013": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh014": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh015": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh016": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh017": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh018": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh019": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh020": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh021": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh022": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh023": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh024": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh025": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh026": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh027": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh028": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh029": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh030": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh031": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh032": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh033": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh034": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh035": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh036": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh037": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh038": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh039": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh040": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh041": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh042": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh043": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh044": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh045": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh046": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh047": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh048": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh049": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh050": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh051": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh052": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh053": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh054": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh055": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh056": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh057": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "2 segment(s) dropped: a star of the source not in the star tables"
+  },
+  "zh058": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh059": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh060": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh061": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh062": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh064": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh065": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh066": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh067": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh068": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh069": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh070": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh071": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh072": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh073": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh074": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh075": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh076": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh077": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh078": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh079": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh080": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh081": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh082": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh083": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh084": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh085": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh086": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh087": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh088": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh089": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh090": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "2 segment(s) dropped: a star of the source not in the star tables"
+  },
+  "zh091": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh093": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh094": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh095": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh096": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh097": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh098": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh099": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh100": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh101": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh102": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh103": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh104": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh105": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh106": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh107": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh108": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh109": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh110": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh111": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh112": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh113": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh114": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh115": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh116": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh117": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh118": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh119": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh120": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh121": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh122": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh123": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh124": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh125": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh126": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh127": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh128": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh129": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh130": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh131": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh132": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh133": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh134": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh135": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh136": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh137": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh138": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh139": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh140": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh141": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh142": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh143": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh144": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh145": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh146": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh147": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh148": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh149": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh151": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh152": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh153": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh154": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh155": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh156": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh157": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh158": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh159": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh160": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh161": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh162": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh163": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh164": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh165": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh167": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh168": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh169": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh171": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh172": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh173": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh174": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh175": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh176": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh177": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh178": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh179": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh180": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh181": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh182": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh183": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh184": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh185": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh186": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh187": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh188": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh189": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh190": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh191": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh192": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh193": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh194": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh195": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh196": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh197": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh198": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh199": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh200": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh201": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh202": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh203": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh204": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh205": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh206": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh207": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh208": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh209": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh210": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh211": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh212": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh213": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh214": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh215": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh216": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh217": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh218": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh219": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh220": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh221": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh222": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh223": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh224": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh225": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh226": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh227": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh228": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh229": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh230": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh231": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh232": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh233": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh234": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh235": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh236": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh237": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh238": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh239": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh240": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh241": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh242": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh243": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh244": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh245": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh246": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh247": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh248": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh249": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh250": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh251": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh252": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh253": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh254": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh255": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh256": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh257": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh258": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh259": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh260": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh261": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh262": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh263": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh265": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh266": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh267": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh268": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh269": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh270": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh271": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh272": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh273": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh274": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh275": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh276": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh277": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh278": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh279": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh280": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh281": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh282": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh283": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh284": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh285": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh286": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh287": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh288": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh289": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh290": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh291": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh292": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh293": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh294": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh295": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh296": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh297": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh298": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh299": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh300": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh301": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh302": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh303": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh304": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh305": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh306": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh307": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh308": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh309": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "1 zero-length segment(s) dropped (nothing visible lost)"
+  },
+  "zh310": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "zh311": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh312": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh313": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh314": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh315": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh316": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh317": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "zh318": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  }
+ },
+ "readings": {},
+ "unit": "culture chinese"
+}

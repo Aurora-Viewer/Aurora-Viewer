@@ -801,6 +801,19 @@ pub struct Settings {
     /// Brightness of the real sky's Milky Way, 0 (hidden) to 2 times its
     /// map's light.
     pub night_sky_milky_way: f32,
+    /// The constellations over the real sky (world/constellations.rs).
+    pub constellations: crate::world::constellations::ConstellationSettings,
+    /// Mercury, Venus, Mars, Jupiter, Saturn and Uranus where they really
+    /// are among the real sky's stars (world/planets.rs; off by default:
+    /// the real sky looks as before until it is turned on).
+    pub night_sky_planets: bool,
+    /// Their names beside them (the constellation data's `planets.json`).
+    pub night_sky_planet_names: bool,
+    /// The region's sun and moon discs drawn where the real Sun and Moon
+    /// stand at the night sky's moment, or not drawn at all (hidden wins);
+    /// display only, every light keeps the region's.
+    pub night_sky_sun_moon_real: bool,
+    pub night_sky_sun_moon_hidden: bool,
     pub exposure: f32,
     /// Contrast adaptive sharpening (Firestorm RenderCASSharpness, 0.4).
     pub sharpen: f32,
@@ -2571,6 +2584,11 @@ impl Default for Settings {
             night_sky_hour: Default::default(),
             night_sky_gain: crate::world::night_sky::DEFAULT_GAIN,
             night_sky_milky_way: crate::world::night_sky::DEFAULT_MILKY_WAY,
+            constellations: Default::default(),
+            night_sky_planets: false,
+            night_sky_planet_names: false,
+            night_sky_sun_moon_real: false,
+            night_sky_sun_moon_hidden: false,
             exposure: 1.0,
             sharpen: 0.4,
             glow: true,

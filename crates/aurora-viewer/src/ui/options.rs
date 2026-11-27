@@ -813,6 +813,8 @@ pub struct OptionsResult {
     pub open_chat_logs: bool,
     /// Open the World filters window (Graphics › Image).
     pub open_world_look: bool,
+    /// Open the Constellations window (Just for fun's button).
+    pub open_constellations: bool,
     /// Choose another folder for the cache or the transcripts, or go back
     /// to the default one (the app asks for the folder and moves the files).
     pub folder: Option<(Folder, FolderChoice)>,

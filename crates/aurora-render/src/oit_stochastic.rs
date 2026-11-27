@@ -345,7 +345,7 @@ pub(crate) fn st_scene_source(device: &wgpu::Device) -> String {
         enable_directive(device),
         crate::common_shader_source(),
         object,
-        crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
+        crate::env_shader_source()
     )
 }
 
@@ -2443,7 +2443,7 @@ mod tests {
         validate("resolve", include_str!("shaders/oit_stochastic.wgsl"));
         validate("expand", include_str!("shaders/oit_stochastic_expand.wgsl"));
         let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
-        let env = include_str!("shaders/env.wgsl");
+        let env = crate::ENV_SHADER;
         // the scene module, without the passes
         validate("scene", &format!("{}\n{}\n{}", crate::COMMON_SHADER, without_st(&object), env));
         // the method's module, with and without the triangle index
@@ -2473,7 +2473,7 @@ mod tests {
             enable_directive_with(true),
             crate::COMMON_SHADER,
             st_object_source_with(&object, true),
-            include_str!("shaders/env.wgsl")
+            crate::ENV_SHADER
         );
         let src = constants_for_overrides(&src, &[("WATER_CLIP", "1u"), ("BLEND_EARLY_DISCARD", "true")]);
         let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));

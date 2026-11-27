@@ -1886,6 +1886,8 @@ pub struct FrameParams {
     pub photo_scale: f32,
     /// The whole photo's depth around the tiles (`PhotoContext`).
     pub photo_context: PhotoContext,
+    /// The constellations over the real sky (constellations.rs); none: off.
+    pub constellations: Option<std::sync::Arc<crate::constellations::Overlay>>,
     pub camera_pos: Vec3,
     pub near: f32,
     pub far: f32,

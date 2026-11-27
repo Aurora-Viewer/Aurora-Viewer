@@ -846,3 +846,17 @@ notecard-lsl-demo =
     { "    }" }
     { "}" }
     ```
+
+ui-constellations-colours = Colour variation
+
+ui-constellations-colours-tip = Each constellation in a light pastel colour of its own, always the same one, for its lines, picture and name.
+
+ui-constellations-credits = See licences and attribution
+
+ui-constellations-credits-tip = Who the constellation data comes from, and under which licences.
+
+ui-constellations-credits-title = Licences and attribution
+
+ui-constellations-credits-help = The sources of the constellation data, built in and in your profile, as their credits.json files name them: each holder, what was taken from it, its licence, its site and when the data was brought in. Nothing is read from the network; a link opens only when it is an https:// address.
+
+ui-options-night-sky-sun-moon-hidden-help = No sun or moon disc at all. Display only: the light, the sky's colour and glow stay the region's. Wins over the real positions.

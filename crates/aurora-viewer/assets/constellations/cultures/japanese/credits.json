@@ -1,0 +1,36 @@
+{
+ "credits": [
+  {
+   "holder": "Alexander Wolf",
+   "work": "Stellarium sky culture 'Japanese': initial contribution",
+   "licence": "CC BY-SA 4.0",
+   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/japanese",
+   "imported": "2026-11-25",
+   "note": "Licence line of the culture's description: 'CC BY-SA 4.0'. Derived files stay CC BY-SA 4.0. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Conversion for this viewer'."
+  },
+  {
+   "holder": "Lyu Haocheng",
+   "work": "Stellarium sky culture 'Japanese': more than 300 constellations (after Shibukawa Harumi, Tenmon Seisho, 1699) and description",
+   "licence": "CC BY-SA 4.0",
+   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/japanese",
+   "imported": "2026-11-25",
+   "note": "Licence line: 'CC BY-SA 4.0'. Derived files stay CC BY-SA 4.0. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Conversion for this viewer'."
+  },
+  {
+   "holder": "Olaf Frohn (d3-celestial)",
+   "work": "d3-celestial star and deep-sky positions (stars.6.json, stars.8.json, dsos.6.json)",
+   "licence": "BSD-3-Clause",
+   "url": "https://github.com/ofrohn/d3-celestial",
+   "imported": "2026-11-25",
+   "note": "Used only to turn Hipparcos numbers and DSO names into positions; stars.8.json (magnitude 8 and brighter, same project, same BSD-3-Clause licence) supplies the numbers that stars.6.json lacks (identical positions on all 5044 shared stars). Licence file quoted: 'Copyright (c) 2015, Olaf Frohn. All rights reserved.' Star data of that project derive from the Hipparcos catalogue; positions only are used here. The dsos files were read from the master branch on the import date (not a pinned commit)."
+  },
+  {
+   "holder": "Conversion for this viewer",
+   "work": "Changes to the imported stick lines and label points",
+   "licence": "No content of its own: changes to the source's data, under the source's licence",
+   "url": "",
+   "imported": "2026-11-26",
+   "note": "Figure ja09B left out (no line in the source). 2 zero-length segment(s) dropped (nothing visible lost). 73 one-star figures (the source writes the star twice) kept as one zero-length line. Repeated segments dropped: ja12B 1. Label points: the centre of the segment ends, except 11 given by the source. No end point moved."
+  }
+ ]
+}

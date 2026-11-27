@@ -2228,12 +2228,13 @@ fn open_device(
     } else {
         return Err(RenderError::Device("INDIRECT_FIRST_INSTANCE unsupported".into()));
     }
-    // The fragment stage of the world passes reads five storage buffers
-    // (the frame group's 9, 16 and 24, the night sky's stars in stars.rs;
-    // the records; the texture pages), one more than wgpu's downlevel
-    // minimum. Drivers with descriptor indexing give far more: say so here
-    // rather than fail when the pipelines are made.
-    const FRAGMENT_STORAGE_BUFFERS: u32 = 5;
+    // The fragment stage of the world passes reads six storage buffers
+    // (the frame group's 9, 16, 24 and 34, the night sky's stars in
+    // stars.rs and the constellations' tables; the records; the texture
+    // pages), two more than wgpu's downlevel minimum. Drivers with
+    // descriptor indexing give far more: say so here rather than fail when
+    // the pipelines are made.
+    const FRAGMENT_STORAGE_BUFFERS: u32 = 6;
     if alim.max_storage_buffers_per_shader_stage < FRAGMENT_STORAGE_BUFFERS {
         return Err(RenderError::Device(format!(
             "the GPU driver allows {} storage buffers per shader stage, {FRAGMENT_STORAGE_BUFFERS} are needed",

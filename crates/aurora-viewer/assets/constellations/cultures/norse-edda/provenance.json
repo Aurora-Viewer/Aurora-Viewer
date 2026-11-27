@@ -1,0 +1,155 @@
+{
+ "about": "Origin marks of this unit's data. sourced: taken from the credited source, only its format or coordinates converted; derived: made from sourced data by a fixed rule; adapted: source content changed by judgement; made: no source content; unknown: not recorded. A figure field resolves as figures[id][field], then default[field], then unknown; a field a figure does not have is not listed. names and readings mark each name and kana reading of the unit's names.json (and culture_name its culture.json); none of the built-in files has a figure name or a reading. \"*\" is the file's own default name.",
+ "culture_name": {
+  "*": "sourced",
+  "de": "sourced",
+  "es": "sourced",
+  "pt-BR": "sourced",
+  "ru": "sourced",
+  "uk": "sourced",
+  "zh-Hans": "sourced"
+ },
+ "default": {},
+ "figures": {
+  "edAsr": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edBif": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edFis": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edFrS": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edFrV": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edHeim": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edHra": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edMim": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edOxH": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edRat": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edSer": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edThV": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edThi": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edThor": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edToe": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edUlf": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edUrd": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edVan": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "edWell": {
+   "label": "derived",
+   "lines": "derived"
+  }
+ },
+ "format": 1,
+ "names": {},
+ "notes": {
+  "edAsr": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edBif": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edFis": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edFrS": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edFrV": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edHeim": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edHra": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edMim": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edOxH": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edRat": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edSer": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edThV": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edThi": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edThor": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edToe": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edUlf": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edUrd": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edVan": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "edWell": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "4 zero-length segment(s) dropped (nothing visible lost)"
+  }
+ },
+ "readings": {},
+ "unit": "culture norse-edda"
+}

@@ -1,0 +1,36 @@
+{
+ "credits": [
+  {
+   "holder": "Jakob Eyermann, with Susanne M. Hoffmann",
+   "work": "Stellarium sky culture 'Norse (Edda)', contributed as a German studies term paper",
+   "licence": "CC BY 4.0",
+   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/norse_edda",
+   "imported": "2026-11-25",
+   "note": "Licence line of the culture's description: 'CC BY 4.0'. Mentors named there: Sophie Marshall and Susanne M. Hoffmann. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Conversion for this viewer'."
+  },
+  {
+   "holder": "Jonas R. Persson",
+   "work": "Stellarium sky culture 'Norse' (figures reused in 'Norse (Edda)': edThV, edFrV, edAsr, edFis, edToe with identical lines; edUlf partly: 2 of 4 segments)",
+   "licence": "CC BY-SA 4.0",
+   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/skycultures/norse",
+   "imported": "2026-11-25",
+   "note": "Licence line of the 'norse' culture: 'CC BY-SA 4.0'. The Edda description says: 'Several constellations were taken from the Rimtol gloss and thus from Jonas Persson's sky culture Norse'. Treat the listed figures as share-alike. Reference: Persson, J.R. (2017) Norse Constellations, DOI 10.13140/RG.2.2.15662.92483. Stellarium main repository commit e233fa9b3d21e2cafe9c168e6710b627532a7dd4, folder skycultures/; Converted to sky positions and separate segments; other changes: see 'Conversion for this viewer'."
+  },
+  {
+   "holder": "The Stellarium project and its translators",
+   "work": "Translations of the culture's name 'Norse (Edda)': po/stellarium-skycultures-descriptions/{de,es,pt_BR,ru,uk,zh_CN}.po (msgid 'Norse (Edda)', comment 'Norse (Edda) sky culture name'), written in culture.json as de, es, pt-BR, ru, uk, zh-Hans",
+   "licence": "GPL-2.0-or-later",
+   "url": "https://github.com/Stellarium/stellarium/tree/e233fa9b3d21e2cafe9c168e6710b627532a7dd4/po/stellarium-skycultures-descriptions",
+   "imported": "2026-11-25",
+   "note": "Repository licence: COPYING (GNU GPL version 2) at the pinned commit; codemeta.json: '\"license\": \"https://spdx.org/licenses/GPL-2.0-or-later\"'. The .po files carry no licence header of their own."
+  },
+  {
+   "holder": "Conversion for this viewer",
+   "work": "Changes to the imported stick lines and label points",
+   "licence": "No content of its own: changes to the source's data, under the source's licence",
+   "url": "",
+   "imported": "2026-11-26",
+   "note": "4 zero-length segment(s) dropped (nothing visible lost). Label points: the centre of the segment ends. No end point moved."
+  }
+ ]
+}

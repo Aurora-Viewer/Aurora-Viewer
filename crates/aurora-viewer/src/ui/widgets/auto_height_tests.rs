@@ -22,6 +22,10 @@ enum Body {
     PlainScroll(f32),
     /// no scroll area: the floater scrolls it when it is too tall
     Plain(f32),
+    /// the Constellations window's real body, with two cultures' sets
+    Constellations,
+    /// the constellations' credits window, with a list longer than its room
+    ConstellationCredits,
 }
 
 fn pass(ctx: &egui::Context, p: &crate::theme::Palette, screen: Vec2, kind: Kind, body: Body) -> Option<egui::Rect> {
@@ -34,7 +38,11 @@ fn pass(ctx: &egui::Context, p: &crate::theme::Palette, screen: Vec2, kind: Kind
         |ui| {
             let ctx = ui.ctx().clone();
             let room = (super::super::layout::work_area(&ctx).height() - 230.0).max(220.0);
-            let floater = Floater::new(ID, "Test", egui::pos2(100.0, 90.0), Vec2::new(340.0, 560.0));
+            let width = match body {
+                Body::Constellations | Body::ConstellationCredits => super::super::constellations_window::WINDOW_W,
+                _ => 340.0,
+            };
+            let floater = Floater::new(ID, "Test", egui::pos2(100.0, 90.0), Vec2::new(width, 560.0));
             let floater = match kind {
                 Kind::AutoHeight => floater.auto_height(),
                 Kind::Fixed => floater.fixed(),
@@ -52,6 +60,53 @@ fn pass(ctx: &egui::Context, p: &crate::theme::Palette, screen: Vec2, kind: Kind
                 }
                 Body::Plain(content) => {
                     ui.allocate_exact_size(Vec2::new(300.0, content), Sense::hover());
+                }
+                Body::Constellations => {
+                    use crate::world::constellations::{ConstellationSettings, CultureRow, DataStatus, Status};
+                    let culture = |id: &str, left_out: usize| CultureRow {
+                        id: id.into(),
+                        name: id.into(),
+                        constellations: 88,
+                        left_out,
+                        named: true,
+                    };
+                    let data = DataStatus {
+                        reading: false,
+                        cultures: vec![culture("western", 0), culture("other", 3)],
+                        sets: 3,
+                        names_waiting: 12,
+                    };
+                    let mut s = ConstellationSettings::default();
+                    // its solar system card, every row shown
+                    let mut bodies = crate::world::planets::Wanted {
+                        planets: true,
+                        names: true,
+                        real: true,
+                        hidden: false,
+                    };
+                    super::super::constellations_window::body(ui, p, &mut s, &mut bodies, &Status::Daylight { below: 8.0 }, &data);
+                }
+                Body::ConstellationCredits => {
+                    use crate::world::constellations::credits::{Credit, Group, Source, View};
+                    let credit = Credit {
+                        holder: "Example Library".into(),
+                        work: "Star chart scans".into(),
+                        licence: "Example Licence".into(),
+                        url: "https://example.org/".into(),
+                        imported: "2026-11-24".into(),
+                        note: "Courtesy of Example Library".into(),
+                    };
+                    let groups = (0..6)
+                        .map(|k| Group {
+                            source: if k == 0 { Source::General } else { Source::Set(format!("Set {k}")) },
+                            credits: vec![credit.clone(); 3],
+                        })
+                        .collect();
+                    let view = View {
+                        reading: false,
+                        groups: Some(std::sync::Arc::new(groups)),
+                    };
+                    super::super::constellations_window::credits_body(ui, p, &view, None);
                 }
             });
         },
@@ -120,4 +175,10 @@ fn a_plain_body_comes_back() {
         // taller than the room: the floater scrolls it
         assert_same(kind, Body::Plain(1200.0));
     }
+}
+
+#[test]
+fn the_constellations_windows_come_back() {
+    assert_same(Kind::AutoHeight, Body::Constellations);
+    assert_same(Kind::AutoHeight, Body::ConstellationCredits);
 }

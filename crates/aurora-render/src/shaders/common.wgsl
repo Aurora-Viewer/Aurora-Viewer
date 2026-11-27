@@ -79,6 +79,12 @@ struct Frame {
     // axes; w: catalogue (-1 none), Milky Way strength, 0
     sky_stars: array<vec4<f32>, 3>,
     sky_star_pass: vec4<f32>,   // this pass's target: width, height, 1/w, 1/h (0: frame.screen)
+    // the planets (stars.rs StarFrame::planets): [0].x their count, then per
+    // planet its catalogue direction and peak intensity, its colour and
+    // sigma; the Sun's and the Moon's discs as drawn (StarFrame::discs: xyz
+    // the region direction, w 0 the environment's, 1 moved, 2 hidden)
+    sky_planets: array<vec4<f32>, 13>,
+    sky_discs: array<vec4<f32>, 2>,
     studio_aurora: array<vec4<f32>, 4>, // navy/enabled, teal/yaw, violet/time, indigo/white reveal
     anim_clock: vec4<u32>,      // effects clock (rez, portals): x ms (wrapping), y sub-ms fraction (f32 bits); zw the same for texture animations (held while the world is frozen)
     selection_color: vec4<f32>, // selected-face overlay, from the UI palette

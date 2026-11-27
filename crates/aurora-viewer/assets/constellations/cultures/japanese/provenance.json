@@ -1,0 +1,2660 @@
+{
+ "about": "Origin marks of this unit's data. sourced: taken from the credited source, only its format or coordinates converted; derived: made from sourced data by a fixed rule; adapted: source content changed by judgement; made: no source content; unknown: not recorded. A figure field resolves as figures[id][field], then default[field], then unknown; a field a figure does not have is not listed. names and readings mark each name and kana reading of the unit's names.json (and culture_name its culture.json); none of the built-in files has a figure name or a reading. \"*\" is the file's own default name.",
+ "culture_name": {},
+ "default": {},
+ "figures": {
+  "ja01A": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "ja01B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja01C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja01D": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja01E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja01F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja01G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja01H": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "ja01I": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "ja01J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja01K": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja02A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja02B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja02C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja02D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja02E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja02F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja02G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja03A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja03B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja03C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja03D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja03E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja03F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja03G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja03H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja03I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja03J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja03K": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja04A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja04B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja04C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja04D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja04E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja04F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja04G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja04H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja05A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja05Ax2": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja05B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja06B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja06C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja06D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja06E": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja06F": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja07A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja07B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja07C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja08A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja08B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja08C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja08D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja08E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja08F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja08G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja08H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja08I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja08J": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja09A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja09C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja09D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja09E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja09F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja09G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja09H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja09I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja09J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja09K": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja10A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja10B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja10C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja10D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja10E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja10F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja10G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja10H": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja10I": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja10J": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja10K": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja10L": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja10M": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja10N": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja10O": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja10P": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja10Q": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja10R": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja10S": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja10T": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja11A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja11B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja11C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja11D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja11E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja11F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja11G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja11H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja11I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja11J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja12A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja12B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja12C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja12D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja12E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja12F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja12G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja12H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja12I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja12J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja12K": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja13A": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "ja13B": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "ja13C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja13D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja13E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja13F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja13G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja13H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja13I": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja13J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja13K": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja14A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja14B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja14C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja14D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja14E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja14F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja15A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja15B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja15C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja15D": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja15E": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja15F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja15G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja15H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja15I": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja16A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja16B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja16C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja16D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja16E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja16F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja17A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja17B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja17C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja17D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja17E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja17F": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja17G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja18A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja18B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja18C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja18D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja18E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja18F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja18G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja18H": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja18I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja19C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19K": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19L": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19M": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19N": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja19O": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19P": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja19Q": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja20A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja20B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja20C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja21A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja21B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja21C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja21D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja21E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja21F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja21G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja22A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja22C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja22H": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja22I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22K": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22L": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "ja22M": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja22N": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22O": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22P": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22Q": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22R": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja22S": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja22T": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja23A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja23B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja23C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja23D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja23E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja23F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja23G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja24A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja24B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja25A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja25B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja25C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja25D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja25E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja26A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja26B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja27A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja27B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja28A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja28B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja28C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja28D": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja28E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja28F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ja28G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ja28H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH01": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "jaH02": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "jaH03": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH04": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH05": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH06": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH07": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH08": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH09": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH10": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaH11": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaH12": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH13": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH14": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH15": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH16": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH17": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH18": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaH19": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ01": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ02": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ03": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ04": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ05": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ06": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ07": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ08": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ09": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaJ10": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaJ11": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ12": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ13": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ14": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ15": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ16": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ17": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ18": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ19": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ20": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ21": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ22": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ23": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ24": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ25": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ26": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ27": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ28": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ29": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ30": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ31": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ32": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ33": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ34": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ35": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ36": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ37": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ38": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaJ39": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ40": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ41": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ42": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ43": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ44": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ45": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ46": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ47": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ48": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ49": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ50": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ51": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ52": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ53": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ54": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ55": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ56": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ57": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ58": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ59": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ60": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaJ61": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP01": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP02": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP03": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaP04": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaP05": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "jaP06": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "jaP07": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP08": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP09": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaP10": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaP11": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP12": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP13": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP14": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP15": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP16": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaP17": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP18": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP19": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP20": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP21": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP22": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP23": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP24": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP25": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP26": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP27": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP28": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP29": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaP30": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP31": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaP32": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP33": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaP34": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP35": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaP36": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP37": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaP38": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaP39": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS01": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "jaS02": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS03": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaS04": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaS05": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS06": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS07": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS08": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaS09": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaS10": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaS11": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaS12": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaS13": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "jaS14": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS15": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS16": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS17": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS18": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS19": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS20": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS21": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS22": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "jaS23": {
+   "label": "derived",
+   "lines": "sourced"
+  }
+ },
+ "format": 1,
+ "names": {},
+ "notes": {
+  "ja01B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja01C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja01D": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja01E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja01F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja01G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja01J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja01K": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja02A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja02B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja02C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja02D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja02E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja02F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja02G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja03A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja03B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja03C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja03D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja03E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja03F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja03G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja03H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja03I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja03J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja03K": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja04A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja04B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja04C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja04D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja04E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja04F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja04G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja04H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja05A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja05Ax2": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja05B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja06B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja06C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja06D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja06E": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja06F": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja07A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja07B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja07C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja08A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja08B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja08C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja08D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja08E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja08F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja08G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja08H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja08I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja08J": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja09A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja09C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja09D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja09E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja09F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja09G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja09H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja09I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja09J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja09K": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja10A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja10B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "2 zero-length segment(s) dropped (nothing visible lost)"
+  },
+  "ja10C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja10D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja10E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja10F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja10G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja10H": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja10I": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja10J": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja10K": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja10L": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja10M": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja10N": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja10O": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja10P": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja10Q": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja10R": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja10S": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja10T": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja11A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja11B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja11C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja11D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja11E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja11F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja11G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja11H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja11I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja11J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja12A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja12B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "1 repeated segment(s) dropped (nothing visible lost)"
+  },
+  "ja12C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja12D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja12E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja12F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja12G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja12H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja12I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja12J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja12K": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja13C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja13D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja13E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja13F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja13G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja13H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja13I": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja13J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja13K": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja14A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja14B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja14C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja14D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja14E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja14F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja15A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja15B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja15C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja15D": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja15E": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja15F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja15G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja15H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja15I": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja16A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja16B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja16C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja16D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja16E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja16F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja17A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja17B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja17C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja17D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja17E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja17F": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja17G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja18A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja18B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja18C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja18D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja18E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja18F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja18G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja18H": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja18I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja19C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19K": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19L": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19M": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19N": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja19O": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19P": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja19Q": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja20A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja20B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja20C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja21A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja21B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja21C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja21D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja21E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja21F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja21G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja22A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja22C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja22H": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja22I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22K": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22M": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja22N": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22O": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22P": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22Q": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22R": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja22S": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja22T": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja23A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja23B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja23C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja23D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja23E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja23F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja23G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja24A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja24B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja25A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja25B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja25C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja25D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja25E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja26A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja26B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "the source's alternative line set (lines1) not converted; its main lines are"
+  },
+  "ja27A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja27B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja28A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja28B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja28C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja28D": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja28E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja28F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ja28G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ja28H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH03": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH04": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH05": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH06": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH07": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH08": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH09": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH10": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaH11": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaH12": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH13": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH14": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH15": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH16": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH17": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH18": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaH19": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ01": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ02": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ03": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ04": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ05": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ06": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ07": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ08": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ09": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaJ10": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaJ11": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ12": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ13": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ14": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ15": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ16": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ17": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ18": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ19": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ20": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ21": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ22": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ23": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ24": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ25": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ26": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ27": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ28": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ29": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ30": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ31": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ32": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ33": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ34": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ35": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ36": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ37": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ38": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaJ39": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ40": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ41": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ42": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ43": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ44": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ45": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ46": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ47": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ48": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ49": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ50": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ51": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ52": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ53": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ54": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ55": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ56": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ57": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ58": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ59": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ60": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaJ61": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP01": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP02": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP03": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaP04": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaP07": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP08": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP09": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaP10": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaP11": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP12": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP13": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP14": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP15": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP16": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaP17": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP18": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP19": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP20": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP21": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP22": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP23": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP24": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP25": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP26": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP27": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP28": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP29": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaP30": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP31": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaP32": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP33": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaP34": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP35": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaP36": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP37": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaP38": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaP39": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS02": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS03": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaS04": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaS05": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS06": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS07": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS08": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaS09": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaS10": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaS11": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaS12": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaS13": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "jaS14": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS15": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS16": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS17": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS18": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS19": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS20": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS21": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS22": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "jaS23": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  }
+ },
+ "readings": {},
+ "unit": "culture japanese"
+}

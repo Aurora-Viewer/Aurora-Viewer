@@ -1,0 +1,2259 @@
+{
+ "about": "Origin marks of this unit's data. sourced: taken from the credited source, only its format or coordinates converted; derived: made from sourced data by a fixed rule; adapted: source content changed by judgement; made: no source content; unknown: not recorded. A figure field resolves as figures[id][field], then default[field], then unknown; a field a figure does not have is not listed. names and readings mark each name and kana reading of the unit's names.json (and culture_name its culture.json); none of the built-in files has a figure name or a reading. \"*\" is the file's own default name.",
+ "culture_name": {
+  "*": "sourced",
+  "de": "sourced",
+  "es": "sourced",
+  "fr": "sourced",
+  "it": "sourced",
+  "ja": "sourced",
+  "nb": "sourced",
+  "pl": "sourced",
+  "pt": "sourced",
+  "pt-BR": "sourced",
+  "ru": "sourced",
+  "tr": "sourced",
+  "uk": "sourced",
+  "zh-Hans": "sourced",
+  "zh-Hant": "sourced"
+ },
+ "default": {},
+ "figures": {
+  "ko01A": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "ko01B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko01C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko01D": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko01E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko01F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko01G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko01H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko01I": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "ko01J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko01K": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko02A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko02B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko02C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko02D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko02E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko02F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko02G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko03A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko03B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko03C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko03D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko03E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko03F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko03G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko03H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko03I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko03J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko03K": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko04A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko04B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko04C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko04D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko04E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko04F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko04G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko04H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko05A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko05B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko06A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko06B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko06C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko06D": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko06E": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko06F": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko07A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko07B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko07C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko08A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko08B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko08C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko08D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko08E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko08F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko08G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko08H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko08I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko08J": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko09A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko09B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko09C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko09D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko09E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko09F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko09G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko09H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko09I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko09J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko09K": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko10A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko10C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko10D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko10E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko10F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko10G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko10H": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko10I": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko10J": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko10K": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko10L": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko10M": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko10N": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko10O": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko10P": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko10Q": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko10R": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko10S": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko10T": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko11A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko11B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko11C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko11D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko11E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko11F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko11G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko11H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko11I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko11J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko12A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko12B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko12C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko12D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko12E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko12F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko12G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko12H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko12I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko12J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko12K": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko13A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko13B": {
+   "label": "sourced",
+   "lines": "sourced"
+  },
+  "ko13C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko13D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko13E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko13F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko13G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko13H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko13I": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko13J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko13K": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko14A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko14B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko14C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko14D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko14E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko14F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko15A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko15B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko15C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko15D": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko15E": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko15F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko15G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko15H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko15I": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko16A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko16B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko16C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko16D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko16E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko16F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko17A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko17B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko17C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko17D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko17E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko17F": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko17G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko18A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko18B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko18C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko18D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko18E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko18F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko18G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko18H": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko18I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko19C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19K": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19L": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19M": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19N": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko19O": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19P": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko19Q": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko20A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko20B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko20C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko21A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko21B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko21C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko21D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko21E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko21F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko21G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko22A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko22C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22G": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko22H": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko22I": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22J": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22K": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22L": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22M": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko22N": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22O": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22P": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22Q": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22R": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko22S": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko22T": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko23A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko23B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko23C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko23D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko23E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko23F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko24A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko24B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko25A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko25B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko25C": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko25D": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko25E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko26A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko26B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko27A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko27B": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko28A": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko28B": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko28C": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko28D": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "ko28E": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko28F": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko28G": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "ko28H": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH01": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH02": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH03": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH04": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH05": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH06": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH07": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH08": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH09": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH10": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koH11": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koH12": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH13": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH14": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH15": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH16": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH17": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH18": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH19": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koH19x2": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP01": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP02": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP03": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koP04": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koP05": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP06": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP07": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP08": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP09": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koP10": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koP11": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP12": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP13": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP14": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP15": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP16": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koP17": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP18": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP19": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP20": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP21": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP22": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP23": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP24": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP25": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP26": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP27": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP28": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP29": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koP30": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP31": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koP32": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP33": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koP34": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP35": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koP36": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP37": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koP38": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koP39": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS01": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS02": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS03": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koS04": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS05": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS06": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS07": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS08": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS09": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koS10": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koS11": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koS12": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koS13": {
+   "label": "derived",
+   "lines": "derived"
+  },
+  "koS14": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS15": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS16": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS17": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS18": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS19": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS20": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS21": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS22": {
+   "label": "derived",
+   "lines": "sourced"
+  },
+  "koS23": {
+   "label": "derived",
+   "lines": "sourced"
+  }
+ },
+ "format": 1,
+ "names": {},
+ "notes": {
+  "ko01B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko01C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko01D": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko01E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko01F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko01G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko01H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko01J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko01K": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko02A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko02B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko02C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko02D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko02E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko02F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko02G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko03A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko03B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko03C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko03D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko03E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko03F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko03G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko03H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko03I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko03J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko03K": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko04A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko04B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko04C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko04D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko04E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko04F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko04G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko04H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko05A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko05B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko06A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko06B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko06C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko06D": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko06E": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko06F": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko07A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko07B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko07C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko08A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko08B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko08C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko08D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko08E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko08F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko08G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko08H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko08I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko08J": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko09A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko09B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko09C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko09D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko09E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko09F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko09G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko09H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko09I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko09J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko09K": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko10A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko10C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko10D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko10E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko10F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko10G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko10H": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko10I": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko10J": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko10K": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko10L": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko10M": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko10N": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko10O": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko10P": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko10Q": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko10R": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko10S": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko10T": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko11A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko11B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko11C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko11D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko11E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko11F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko11G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko11H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko11I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko11J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko12A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko12B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko12C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko12D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko12E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko12F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko12G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko12H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko12I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko12J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko12K": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko13A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko13C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko13D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko13E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko13F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko13G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko13H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko13I": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko13J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko13K": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko14A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko14B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko14C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko14D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko14E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko14F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko15A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko15B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko15C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko15D": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko15E": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko15F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko15G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko15H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko15I": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko16A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko16B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko16C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko16D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko16E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko16F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko17A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko17B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko17C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko17D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko17E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko17F": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko17G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko18A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko18B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko18C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko18D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko18E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko18F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko18G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko18H": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko18I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko19C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19K": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19L": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19M": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19N": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko19O": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19P": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko19Q": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko20A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko20B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko20C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko21A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko21B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko21C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko21D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko21E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko21F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko21G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko22A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko22C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22G": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko22H": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko22I": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22J": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22K": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22L": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22M": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko22N": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22O": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22P": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22Q": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22R": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko22S": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko22T": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko23A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko23B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko23C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko23D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko23E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko23F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko24A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko24B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko25A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko25B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko25C": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko25D": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko25E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko26A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko26B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko27A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko27B": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko28A": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko28B": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko28C": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko28D": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "ko28E": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko28F": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko28G": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "ko28H": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH01": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH02": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH03": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH04": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH05": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH06": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH07": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH08": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH09": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH10": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koH11": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koH12": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH13": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH14": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH15": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH16": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH17": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH18": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH19": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koH19x2": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP01": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP02": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP03": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koP04": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koP05": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP06": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP07": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP08": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP09": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koP10": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koP11": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP12": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP13": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP14": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP15": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP16": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koP17": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP18": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP19": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP20": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP21": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP22": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP23": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP24": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP25": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP26": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP27": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP28": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP29": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koP30": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP31": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koP32": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP33": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koP34": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP35": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koP36": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP37": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koP38": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koP39": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS01": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS02": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS03": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koS04": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS05": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS06": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS07": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS08": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS09": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koS10": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koS11": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koS12": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koS13": {
+   "label": "centre of the figure's segment ends (fixed rule)",
+   "lines": "a one-star figure kept as one zero-length line (nothing visible lost)"
+  },
+  "koS14": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS15": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS16": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS17": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS18": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS19": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS20": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS21": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS22": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  },
+  "koS23": {
+   "label": "centre of the figure's segment ends (fixed rule)"
+  }
+ },
+ "readings": {},
+ "unit": "culture korean"
+}

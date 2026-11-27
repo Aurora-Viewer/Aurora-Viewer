@@ -1045,6 +1045,8 @@ impl App {
         }
         self.panels.personal_lighting = false;
         self.env_ui.weather_open = false;
+        self.panels.constellations = false;
+        self.panels.constellation_credits = false;
         if self.env_editor.open {
             self.env_editor.close();
             self.world.eep.clear_edit();
