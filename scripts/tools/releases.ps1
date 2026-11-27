@@ -65,7 +65,7 @@ function Show-ReleaseList($Releases) {
 
 function Invoke-Releases {
     $repo = Get-RepoSlug
-    if (-not $repo) { Write-Color '  GitHub repository not found (remote origin).' danger; Wait-Back; return }
+    if (-not $repo) { Write-Color '  GitHub repository not found (no GitHub remote: upstream, origin or the one gh repo set-default chose).' danger; Wait-Back; return }
     while ($true) {
         Show-Logo 'Releases'
         Write-Color "  Repository: $($repo.Slug)" muted

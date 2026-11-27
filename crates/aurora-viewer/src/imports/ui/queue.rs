@@ -1,15 +1,7 @@
 //! One mixed queue; type icons filter visibility without changing upload selection.
 use super::*;
 
-pub(super) fn show(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    imports: &mut Imports,
-    prefs: &mut Preferences,
-    height: f32,
-    busy: bool,
-    actions: &mut Vec<Action>,
-) {
+pub(super) fn show(ui: &mut egui::Ui, p: &Palette, imports: &mut Imports, height: f32, busy: bool, actions: &mut Vec<Action>) {
     // Queue changes must not become a minimum size for the shared window.
     let (bounds, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), egui::Sense::hover());
     let mut pane = ui.new_child(egui::UiBuilder::new().id_salt("import_queue_pane").max_rect(bounds));
@@ -53,17 +45,6 @@ pub(super) fn show(
             }
         });
         ui.add_space(6.0);
-    }
-    if unified
-        && widgets::switch_labeled(ui, p, &mut prefs.icon_bar, aurora_i18n::tr!("import-icon-bar"))
-            .on_hover_text(aurora_i18n::tr!("import-entry-point-help"))
-            .changed()
-    {
-        if prefs.icon_bar {
-            widgets::open_floater(ui.ctx(), launcher::WINDOW, &mut imports.launcher_open);
-        } else {
-            imports.launcher_open = false;
-        }
     }
     let can_choose = !busy && imports.pending_files.is_none();
     let size = Vec2::new(ui.available_width(), 28.0);

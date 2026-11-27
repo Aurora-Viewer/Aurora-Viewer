@@ -17,6 +17,7 @@ mod god;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
+mod inventory_reads;
 mod inventory_udp;
 mod inventory_updates;
 mod inventory_upload;
@@ -385,6 +386,7 @@ struct Session<'a> {
     inventory_uploads: inventory_upload::Uploads,
     asset_imports: asset_imports::Imports,
     inventory_previews: inventory_preview::Previews,
+    inventory_reads: Option<inventory_reads::Reader>,
     script_transfers: scripts::ScriptTransfers,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
     inventory_copies: inventory_copies::Pending,
@@ -416,21 +418,37 @@ fn announce_folder(events: &crate::EventSender, folder: crate::inventory::InvFol
     });
 }
 
+/// A `FetchInventory2` item read's timeout: the Legacy Viewer's
+/// `initHttpRequest` (llinventorymodel.cpp, `setTransferTimeout(300)`).
+/// Deliberate difference: one try, where llcorehttp retries on top.
+const LEGACY_ITEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Items read, items the server says do not exist, and failed reads.
-fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads, attachment: bool) {
+fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads, attachment: bool, coalesced: bool) {
     if !reads.items.is_empty() {
-        let _ = events.send(if attachment {
-            NetEvent::AttachmentInventoryItems(reads.items)
+        let _ = events.send(if attachment || coalesced {
+            NetEvent::AttachmentInventoryItems {
+                items: reads.items,
+                coalesced,
+            }
         } else {
             NetEvent::InventoryItems(reads.items)
         });
     }
     if !reads.missing.is_empty() {
-        let _ = events.send(NetEvent::InventoryItemsMissing { items: reads.missing });
+        let _ = events.send(NetEvent::InventoryItemsMissing {
+            items: reads.missing,
+            attachment,
+            coalesced,
+        });
     }
     if !reads.failed.is_empty() {
-        log::warn!("{} inventory item reads failed", reads.failed.len());
-        let _ = events.send(NetEvent::InventoryItemsFailed { items: reads.failed });
+        log::debug!("{} inventory item reads failed", reads.failed.len());
+        let _ = events.send(NetEvent::InventoryItemsFailed {
+            items: reads.failed,
+            attachment,
+            coalesced,
+        });
     }
 }
 
@@ -598,6 +616,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         inventory_uploads: Default::default(),
         asset_imports: Default::default(),
         inventory_previews: Default::default(),
+        inventory_reads: None,
         script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
         inventory_copies: inventory_copies::Pending::default(),
@@ -810,6 +829,7 @@ impl Session<'_> {
         self.main = Some(addr);
         self.set_seed(addr, seed);
         if changed {
+            self.sync_inventory_reader(false);
             self.agent_parcel = None;
             if let Some(sim) = self.sims.get_mut(&addr) {
                 sim.pending_voice = None;
@@ -853,6 +873,9 @@ impl Session<'_> {
         sim.caps = Arc::default();
         if let Some(old) = sim.caps_again_task.take() {
             old.abort();
+        }
+        if self.main == Some(addr) {
+            self.sync_inventory_reader(false);
         }
         self.request_caps(addr);
     }
@@ -1005,8 +1028,12 @@ impl Session<'_> {
                     let modify_new = !sim.caps.contains_key("ModifyRegion") && caps.contains_key("ModifyRegion");
                     let caps = Arc::new(caps);
                     sim.caps = caps.clone();
-                    emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
-                    let terrain_handle = (sim.handshake_seen && modify_new).then_some(sim.handle);
+                    let handle = sim.handle;
+                    let terrain_handle = (sim.handshake_seen && modify_new).then_some(handle);
+                    if self.main == Some(addr) {
+                        self.sync_inventory_reader(true);
+                    }
+                    emit(self.sh, NetEvent::Capabilities { handle, caps });
                     if let Some(handle) = terrain_handle {
                         self.request_terrain_transforms(handle);
                     }
@@ -1027,6 +1054,7 @@ impl Session<'_> {
                     sim.caps_requested = false;
                 }
                 if self.main == Some(addr) {
+                    self.sync_inventory_reader(true);
                     emit(
                         self.sh,
                         NetEvent::Alert {
@@ -1067,11 +1095,15 @@ impl Session<'_> {
         }
         let caps = Arc::new(caps);
         sim.caps = caps.clone();
-        emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
+        let handle = sim.handle;
+        let features = caps.get("SimulatorFeatures").cloned().map(|u| (handle, u));
+        let terrain_handle = sim.handshake_seen.then_some(handle);
+        if self.main == Some(addr) {
+            self.sync_inventory_reader(true);
+        }
+        emit(self.sh, NetEvent::Capabilities { handle, caps });
         // LLAvatarRenderInfoAccountant::scanNewRegion (setCapabilitiesReceived)
-        self.render_info.new_region(sim.handle, Instant::now());
-        let features = sim.caps.get("SimulatorFeatures").cloned().map(|u| (sim.handle, u));
-        let terrain_handle = sim.handshake_seen.then_some(sim.handle);
+        self.render_info.new_region(handle, Instant::now());
         if let Some(handle) = terrain_handle {
             self.request_terrain_transforms(handle);
         }
@@ -1402,6 +1434,7 @@ impl Session<'_> {
         }
         if self.main == Some(addr) {
             self.main = None;
+            self.sync_inventory_reader(false);
         }
         self.sh.stats.sim_count.store(self.sims.len() as u32, Ordering::Relaxed);
     }
@@ -2498,6 +2531,11 @@ impl Session<'_> {
                 owner,
                 library,
             } => self.fetch_inventory_tree(request, parent, children, depth, owner, library),
+            NetCommand::InventoryItemsKnown { items, owner } => {
+                if let Some(reader) = &self.inventory_reads {
+                    reader.known(owner, &items);
+                }
+            }
             NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner, false, None),
             NetCommand::FetchAttachmentItems { items } => self.fetch_items(items, self.agent_id(), true, None),
             NetCommand::FetchInventoryOrphans { request } => {
@@ -3745,6 +3783,17 @@ impl Session<'_> {
         self.main.and_then(|a| self.sims.get(&a)).and_then(|s| s.caps.get(name).cloned())
     }
 
+    fn sync_inventory_reader(&self, seed_resolved: bool) {
+        if let Some(reader) = &self.inventory_reads {
+            let seed_resolved = seed_resolved
+                || self
+                    .main
+                    .and_then(|addr| self.sims.get(&addr))
+                    .is_some_and(|sim| !sim.caps.is_empty());
+            reader.retarget(self.main_cap("InventoryAPIv3"), seed_resolved);
+        }
+    }
+
     /// LLAgent::sendMaturityPreferenceToServer: always answered, a missing
     /// capability or a failed request as None (handlePreferredMaturityError).
     fn set_maturity_preference(&self, maturity: u8) {
@@ -3914,7 +3963,7 @@ impl Session<'_> {
     }
 
     fn fetch_items(
-        &self,
+        &mut self,
         items: Vec<uuid::Uuid>,
         owner: uuid::Uuid,
         attachment: bool,
@@ -3922,6 +3971,18 @@ impl Session<'_> {
     ) {
         use crate::inventory::ais::ItemReads;
         let ais = (owner == self.agent_id()).then(|| self.main_cap("InventoryAPIv3")).flatten();
+        // Offer verification must read the server afresh and return through
+        // its private channel (#3957). It cannot share or be canceled by
+        // ordinary inventory work that the model already considers known.
+        if offer_reply.is_none()
+            && let Some(cap) = ais.as_deref()
+        {
+            let reader = self
+                .inventory_reads
+                .get_or_insert_with(|| inventory_reads::Reader::new(self.sh.caps_http.clone(), self.sh.events.clone()));
+            reader.enqueue(owner, items, cap.to_owned(), attachment);
+            return;
+        }
         let legacy = self.main_cap("FetchInventory2");
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
@@ -3934,17 +3995,22 @@ impl Session<'_> {
                     all.missing.append(&mut reads.missing);
                     all.failed.append(&mut reads.failed);
                 } else {
-                    send_item_reads(&events, reads, attachment);
+                    send_item_reads(&events, reads, attachment, false);
                 }
             };
             if let Some(cap) = ais {
-                for chunk in items.chunks(16) {
+                for chunk in items.chunks(crate::inventory::ais::ITEM_CHUNK) {
                     receive(crate::inventory::ais::read_items(&http, &cap, owner, chunk).await);
                 }
             } else if let Some(url) = legacy {
                 for chunk in items.chunks(50) {
                     let body = crate::inventory::fetch_items_body(chunk, owner);
-                    let reads = match caps::post_llsd(&http, &url, &body).await {
+                    // (each chunk answers within LEGACY_ITEM_TIMEOUT, so the
+                    // viewer's one-read-at-a-time claim outlasts it)
+                    let posted = tokio::time::timeout(LEGACY_ITEM_TIMEOUT, caps::post_llsd(&http, &url, &body))
+                        .await
+                        .unwrap_or_else(|_| Err(caps::CapsError::Http("timed out".to_owned())));
+                    let reads = match posted {
                         Ok(doc) => crate::inventory::item_reads(&doc, chunk),
                         Err(e) => {
                             log::warn!("item fetch failed: {e}");
@@ -7142,6 +7208,7 @@ mod event_queue_tests {
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
+            inventory_reads: None,
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: inventory_copies::Pending::default(),
@@ -7523,6 +7590,7 @@ mod script_dialog_tests {
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
+            inventory_reads: None,
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: super::inventory_copies::Pending::default(),

@@ -62,6 +62,7 @@ pub mod land;
 pub mod land_buy;
 pub mod land_moderation;
 pub mod landmarks;
+pub mod legacy_lists;
 pub mod lookat;
 pub mod lsl_syntax;
 pub mod lslbridge;
@@ -379,6 +380,17 @@ pub struct ChatLine {
     /// How RLVa's `@shownames` left the resident who wrote the line when it
     /// arrived (`World::rlva_freeze_line`).
     pub speaker: Speaker,
+    /// Read back into a private conversation, in the conversation or on a
+    /// page of its History window, decided when the history loads, where
+    /// the other resident is known (`peer` of `World::history_lines` and
+    /// `World::service_lines`, `World::private_peer`): its sender's name,
+    /// ours included, is looked up each time it is drawn, as a live line's,
+    /// when the name the file gives is that resident's
+    /// (`ui::chat::log_names_resolve`, `cached_line_sender`, #4261). False
+    /// for every other line: the nearby chat's, a group's or a conference's
+    /// history keep the name the file gives, in the conversation and in the
+    /// History window.
+    pub private_history: bool,
 }
 
 impl ChatLine {
@@ -1016,6 +1028,15 @@ fn saved_prefix(timestamp: u32) -> String {
 pub const MAX_REGION_SIZE: u32 = 4096;
 
 impl World {
+    /// At exit: the objects of the live store and of the regions parked
+    /// after a far teleport (`Parked`, kept about 50 s until their
+    /// simulator is removed) are let go without freeing them on the main
+    /// thread (`ObjectStore::leak_at_exit`). Nothing in them saves a file.
+    pub(crate) fn leak_at_exit(&mut self) {
+        self.objects.leak_at_exit();
+        std::mem::forget(std::mem::take(&mut self.parked));
+    }
+
     pub fn add_tracked_region(&mut self, name: &str, label: &str) {
         if self.region_tracker.add(name, label) {
             self.save_tracked_regions();
@@ -1903,7 +1924,17 @@ impl World {
         // OpenSim has no AIS: FetchInventoryDescendents2 reads one level
         self.inventory_background
             .set_legacy(!self.main_has_cap("InventoryAPIv3"), !self.main_has_cap("LibraryAPIv3"));
-        self.inventory_background.pump(&mut self.inventory, self.agent_id)
+        // (items a busy server would not give are asked again after their
+        // pause, whether or not another read comes)
+        self.inventory.expire_given_up(std::time::Instant::now());
+        let commands = self.inventory_background.pump(&mut self.inventory, self.agent_id);
+        self.inventory.set_background_idle(self.inventory_background.is_idle());
+        commands
+    }
+
+    /// The background inventory walk's state (Dev Toolbox N4).
+    pub fn inventory_loading_report(&self) -> String {
+        self.inventory_background.report(&self.inventory, std::time::Instant::now())
     }
 
     /// Persist the fetched inventory (next login skips unchanged folders).
@@ -2691,6 +2722,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         self.notice_topics.note(&line, topic);
         self.push_chat(line);
@@ -2709,6 +2741,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         self.notice_topics.note(&line, topic);
         self.conversation_push(session, line, false);
@@ -3119,7 +3152,7 @@ impl World {
     /// on and only waits out its retry window.
     pub fn outfit_restoring(&self) -> bool {
         self.login.is_some()
-            && !self.outfit.is_done()
+            && (!self.outfit.is_done() || self.outfit.has_pending_login_restore())
             && !self.outfit_attachments_worn()
             && (self.outfit.started()
                 || !self.movement_complete
@@ -3137,7 +3170,7 @@ impl World {
     /// Run the outfit restore and the wears waiting for their items; its
     /// network commands are left in `self.outfit.commands`.
     pub fn update_outfit(&mut self, second_life: bool, now: Instant) {
-        if self.outfit.is_idle() {
+        if !self.outfit.needs_update(now) {
             return;
         }
         let ready = self.demo_outfit_region
@@ -3337,6 +3370,7 @@ impl World {
                 self.anti_spam.reset();
                 // a new session: no script holds a control yet
                 self.script_controls = Default::default();
+                self.agent.rotate_grabbed = false;
                 // the account is known: its transcripts open
                 self.chat_log.login_named(l.agent_id, Some((&l.first_name, &l.last_name)));
                 // LLChatServiceHistory::start, in the account's own folder
@@ -4112,6 +4146,8 @@ impl World {
                 for (take, controls, pass_on) in blocks {
                     self.script_controls.apply(take, controls, pass_on);
                 }
+                // LLAgent::rotateGrabbed, read by AgentState::yaw_by
+                self.agent.rotate_grabbed = self.script_controls.rotate_grabbed();
                 None
             }
             NetEvent::Alert { message } if self.ban_all.mutes_alert(&message, Instant::now()) => {
@@ -4993,16 +5029,13 @@ impl World {
                 None
             }
             NetEvent::InventoryContents(c) => {
-                self.inventory.apply(c);
+                self.inventory.apply_snapshots(c, true);
                 None
             }
             NetEvent::InventoryTreeFetched { request, result } => {
-                let (stale, outcome) = match result {
-                    Ok(contents) => (self.inventory.apply(contents), Ok(())),
-                    Err(error) => (Vec::new(), Err(error)),
-                };
-                self.inventory_background.on_reply(&mut self.inventory, request, &stale, outcome);
-                self.announce_inventory_limit();
+                if self.inventory_background.on_reply(&mut self.inventory, request, result) {
+                    self.announce_inventory_limit();
+                }
                 None
             }
             NetEvent::InventoryFetchFailed { folders, too_big, status } => {
@@ -5020,17 +5053,24 @@ impl World {
                     // on the new region's capabilities (`retry_failed`)
                     for id in folders {
                         if self.inventory_retried.insert(id) {
-                            self.inventory.request(id);
+                            self.inventory.retry(id);
                         }
                     }
                 }
                 None
             }
             NetEvent::InventoryItems(items) => {
+                let ids: Vec<_> = items.iter().map(|item| item.id).collect();
+                self.inventory.items_answered(&ids, false);
                 self.inventory.add_items(items);
                 None
             }
-            NetEvent::AttachmentInventoryItems(items) => {
+            NetEvent::AttachmentInventoryItems { items, coalesced } => {
+                let ids: Vec<_> = items.iter().map(|item| item.id).collect();
+                self.inventory.items_answered(&ids, true);
+                if coalesced {
+                    self.inventory.items_answered(&ids, false);
+                }
                 self.inventory.add_attachment_items(items);
                 None
             }
@@ -5088,13 +5128,28 @@ impl World {
                 }
                 None
             }
-            NetEvent::InventoryItemsFailed { items } => {
-                log::warn!("{} inventory items could not be fetched", items.len());
+            NetEvent::InventoryItemsFailed {
+                items,
+                attachment,
+                coalesced,
+            } => {
+                self.inventory.items_answered(&items, attachment);
+                if coalesced {
+                    self.inventory.items_answered(&items, !attachment);
+                }
                 self.inventory.items_failed(&items);
                 None
             }
-            NetEvent::InventoryItemsMissing { items } => {
-                log::warn!("{} inventory items do not exist (broken links)", items.len());
+            NetEvent::InventoryItemsMissing {
+                items,
+                attachment,
+                coalesced,
+            } => {
+                log::debug!("{} inventory items do not exist (broken links)", items.len());
+                self.inventory.items_answered(&items, attachment);
+                if coalesced {
+                    self.inventory.items_answered(&items, !attachment);
+                }
                 self.inventory.items_missing(items);
                 None
             }
@@ -5476,6 +5531,7 @@ impl World {
             blocked: false,
             beyond_range,
             speaker,
+            private_history: false,
         });
     }
 
@@ -5572,6 +5628,7 @@ impl World {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             };
             let opened = !self.chat_log.conversations.known.contains(&im.from_agent_id);
             let (line_time, line_text) = (line.time, line.text.clone());
@@ -5690,6 +5747,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         });
     }
 
@@ -6795,6 +6853,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let (line_time, line_text) = (line.time, line.text.clone());
         self.conversation_push(to, line, false);
@@ -6838,7 +6897,17 @@ impl World {
     /// Turn the drawn bodies of the standing avatars toward where they face
     /// or travel (LLVOAvatar::updateRootPositionAndRotation). Returns our
     /// own avatar's turn (+1 left, -1 right, 0) for the control flags.
-    pub fn update_bodies(&mut self, now: Instant, dt: f32, cam_at: Vec3, mouselook: bool, step_back: bool, turn_speed: f32) -> i8 {
+    pub fn update_bodies(
+        &mut self,
+        now: Instant,
+        dt: f32,
+        cam_at: Vec3,
+        mouselook: bool,
+        step_back: bool,
+        turn_speed: f32,
+        rotate_threshold_slow: f32,
+        rotate_threshold_fast: f32,
+    ) -> i8 {
         let mut own_turn = 0;
         let mut seen = std::collections::HashSet::new();
         for (_, o) in self.objects.avatars() {
@@ -6869,6 +6938,8 @@ impl World {
                     flying: a.flying,
                     step_back: walking,
                     turn_speed,
+                    rotate_threshold_slow,
+                    rotate_threshold_fast,
                 }
             } else {
                 body::Input {
@@ -6879,6 +6950,11 @@ impl World {
                     flying: false,
                     step_back: walking,
                     turn_speed,
+                    // every avatar drawn, like the turn speed: the Legacy
+                    // Viewer reads both settings for each
+                    // (LLVOAvatar::updateRootPositionAndRotation)
+                    rotate_threshold_slow,
+                    rotate_threshold_fast,
                 }
             };
             let no_rotate = self
