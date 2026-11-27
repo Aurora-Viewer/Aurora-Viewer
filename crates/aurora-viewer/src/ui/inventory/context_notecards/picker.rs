@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 #[derive(Default)]
 pub(crate) struct Picker {
+    owner: Option<&'static str>,
     view: view::ViewCache,
     tree: view::TreeState,
     known: HashSet<Uuid>,
@@ -30,6 +31,13 @@ pub(crate) struct Picker {
 }
 
 impl Picker {
+    pub(crate) fn with_id(owner: &'static str) -> Self {
+        Self {
+            owner: Some(owner),
+            ..Default::default()
+        }
+    }
+
     pub(super) fn reveal(&mut self, item: Uuid) {
         self.reveal = Some(item);
     }
@@ -81,12 +89,15 @@ impl Picker {
         // the normal window layer. Retire the owner popup before opening.
         if !self.focus {
             egui::Popup::close_all(ctx);
+            if let Some(owner) = self.owner {
+                widgets::bring_floater_front(ctx, owner);
+            }
         }
         let mut open = true;
         let mut cancel = false;
         let mut chosen = None;
         widgets::Floater::new(
-            "inventory_menu_notecard_picker",
+            self.owner.unwrap_or("inventory_menu_notecard_picker"),
             aurora_i18n::tr!("inventory-menu-load-notecard"),
             ctx.content_rect().center() - egui::vec2(220.0, 240.0),
             egui::vec2(440.0, 480.0),

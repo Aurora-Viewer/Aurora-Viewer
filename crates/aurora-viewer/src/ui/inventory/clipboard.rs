@@ -627,6 +627,7 @@ fn demo_mode() -> Option<&'static str> {
                 || mode.starts_with("aurora-keyboard")
                 || mode.starts_with("type-ahead-ime")
                 || mode.starts_with("aurora-type-ahead-ime")
+                || matches!(mode.as_str(), "ime" | "aurora-ime")
                 || mode.starts_with("enter")
                 || mode.contains("rename-focus")
                 || mode.contains("rename-window")
@@ -796,6 +797,34 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
             log::info!(
                 "demo inventory type-ahead IME: frame={frame}, selected={:?}, prefix={:?}, list_focus={}",
                 st.selected,
+                st.type_ahead.text(),
+                ctx.memory(|m| m.has_focus(focus_id(st)))
+            );
+        }
+        return Vec::new();
+    }
+    if mode == "ime" {
+        // scripts/test-ime-linux.py: click Animations so the list holds the
+        // keyboard, then leave the keys to the system's input method and log
+        // where they went once a second. No synthetic IME event.
+        if matches!(frame, 650 | 651)
+            && let Some(pos) =
+                ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, crate::demo::u(10)))))
+        {
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 650,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        if frame >= 700 && frame.is_multiple_of(60) {
+            log::info!(
+                "demo inventory ime: frame={frame}, selected={:?}, prefix={:?}, list_focus={}",
+                st.selected.map(|id| id.as_u128()),
                 st.type_ahead.text(),
                 ctx.memory(|m| m.has_focus(focus_id(st)))
             );
@@ -1790,9 +1819,17 @@ mod tests {
             active_range_chars: Some(0..2),
         })]);
         assert_eq!(h.st.selected, Some(id(8100)), "a preedit does not jump");
-        h.frame(vec![Event::Ime(egui::ImeEvent::Commit("demo t".into()))]);
+        // "demo t" in English: the demo texture's name up to the first
+        // letter of its second word, as this PC's catalogue names it (the
+        // demo names go through `tr!`: "Texture de démonstration" in French)
+        let texture = aurora_i18n::tr!("world-inventory-demo-demo-texture").to_lowercase();
+        let prefix = match texture.split_once(' ') {
+            Some((first, rest)) => format!("{first} {}", rest.chars().take(1).collect::<String>()),
+            None => texture.clone(),
+        };
+        h.frame(vec![Event::Ime(egui::ImeEvent::Commit(prefix.clone()))]);
         assert_eq!(h.st.selected, Some(id(8104)), "Demo texture");
-        assert_eq!(h.st.type_ahead.text(), "demo t");
+        assert_eq!(h.st.type_ahead.text(), prefix);
         assert!(h.st.search.is_empty(), "the filter field is untouched");
 
         // A click on another row starts a new prefix, as LLFolderView::handleMouseDown.
@@ -1801,7 +1838,7 @@ mod tests {
         assert!(h.st.type_ahead.text().is_empty());
 
         // A click on the filter field clears the prefix too (Aurora's choice).
-        let field = h.text("Filter inventory");
+        let field = h.text(aurora_i18n::tr!("ui-inventory-filter-inventory"));
         h.click(field.center(), Default::default());
         assert!(h.st.type_ahead.text().is_empty());
         h.frame(vec![Event::Text("demo s".into())]);
