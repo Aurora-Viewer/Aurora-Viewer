@@ -1354,4 +1354,31 @@ mod tests {
         mgr.member_in_flight = None;
         assert!(asked(&mgr.take_commands()).is_empty());
     }
+
+    /// The failure event has to get through `World::apply`, which routes the
+    /// network events to the group data (#4964 review: it was dropped there,
+    /// so the queue waited the whole time-out).
+    #[test]
+    fn a_failed_member_request_frees_the_queue_through_the_world() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (a, b) = (Uuid::from_u128(0xA), Uuid::from_u128(0xB));
+        world.group_data.open(a, false);
+        world.group_data.open(b, false);
+        let asked = |cmds: Vec<NetCommand>| -> Vec<(Uuid, Uuid)> {
+            cmds.into_iter()
+                .filter_map(|c| match c {
+                    NetCommand::GroupMembersRequest { group, request } => Some((group, request)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let first = asked(world.group_data.take_commands());
+        assert_eq!(first.len(), 1, "one request out");
+        assert!(
+            world.apply(NetEvent::GroupMembersFailed { request: first[0].1 }).is_none(),
+            "kept by the world"
+        );
+        let second = asked(world.group_data.take_commands());
+        assert_eq!(second.iter().map(|r| r.0).collect::<Vec<_>>(), [b], "the next one goes at once");
+    }
 }

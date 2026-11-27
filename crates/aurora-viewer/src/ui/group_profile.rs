@@ -1,6 +1,6 @@
 //! Group profile window (LLPanelGroup, indra/newview/llpanelgroup.cpp,
 //! llpanelgroupgeneral.cpp, llpanelgrouproles.cpp, llgroupactions.cpp,
-//! originally LGPL 2.1). A group's name opens it like LLGroupActions::show
+//! fsfloatergroup.cpp, originally LGPL 2.1). A group's name opens it like LLGroupActions::show
 //! (the "group ... inspect" links of Firestorm): "About Land", the build
 //! window, the search results, the People window. One window per group,
 //! like the Legacy Viewer's standalone group floaters (FSFloaterGroup, on by
