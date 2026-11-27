@@ -367,7 +367,7 @@ pub fn seed(world: &mut crate::world::World) {
     let now = std::time::SystemTime::now();
     let here = world.region_name();
     for (who, minutes, region) in [
-        (id(8), 120, here.as_str()),
+        (id(8), if mode() == Some(Mode::Recent) { 2_332 * 60 } else { 120 }, here.as_str()),
         (buddy(101), 64, aurora_i18n::tr!("demo-boreal-lagoon")),
         (id(1), 12, here.as_str()),
         (NOVA, 3, here.as_str()),
