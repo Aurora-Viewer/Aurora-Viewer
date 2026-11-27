@@ -23736,18 +23736,19 @@ impl ApplicationHandler for App {
                 self.group_profile_ui.create.demo(DemoStart { draft, then });
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|lost:
+            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|lost|sheet|collapsed|groups-sheet|groups-collapsed:
             // the Contacts tab of Conversations (or its torn-off window, or
-            // the resident picker of "Add..."); `lost` starts in the state a
-            // restart used to leave: torn off, its tab hidden and its window
-            // never reopened
+            // the resident picker of "Add...", or its friends or groups in a
+            // window wide enough for the sheet, shown or collapsed); `lost` starts
+            // in the state a restart used to leave: torn off, its tab hidden
+            // and its window never reopened
             if let Ok(v) = std::env::var("AURORA_DEMO_CONTACTS") {
                 self.panels.chat = true;
                 self.panels.perf = false;
                 self.chat_ui.contacts = true;
                 self.settings.show_contacts_tab = v != "hidden";
                 self.settings.contacts.tab = match v.as_str() {
-                    "groups" | "groupes" | "invite" => 1,
+                    "groups" | "groupes" | "invite" | "groups-sheet" | "groups-collapsed" => 1,
                     "sets" | "cercles" => 2,
                     _ => 0,
                 };
@@ -23761,6 +23762,12 @@ impl ApplicationHandler for App {
                 }
                 if matches!(v.as_str(), "add" | "ajout") {
                     self.contacts_ui.pick_new_friend();
+                }
+                // only the sheet modes set it: the others keep what the demo
+                // profile saved
+                if matches!(v.as_str(), "sheet" | "collapsed" | "groups-sheet" | "groups-collapsed") {
+                    self.settings.friends_list.sheet_collapsed = v.ends_with("collapsed");
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(900.0, 560.0));
                 }
                 if let Ok(filter) = std::env::var("AURORA_DEMO_CONTACTS_FILTER") {
                     self.contacts_ui.filter_groups(&filter);
