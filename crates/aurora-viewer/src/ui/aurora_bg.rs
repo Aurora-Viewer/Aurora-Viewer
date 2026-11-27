@@ -191,9 +191,11 @@ fn shapes(p: &Palette, rect: Rect, visible: Rect, t: f32, alpha: f32, soft: bool
     let ridge = |out: &mut Vec<Shape>, seed: f32, base: f32, amp: f32, color: Color32, frost: f32| {
         let mut m = Mesh::default();
         let mut caps = Mesh::default();
-        const R: usize = 96;
-        // out of focus, the crest fades in over this height
-        let feather = if soft { h * 0.035 } else { 0.0 };
+        const R: usize = 192;
+        // out of focus, the crest fades in over this height; in focus over
+        // about a pixel, as an antialiased edge (egui does not smooth the
+        // edges of a mesh: the crests showed stair steps)
+        let feather = if soft { h * 0.035 } else { 0.6 };
         // the frosting on the crests: its depth below the crest line
         let cap_depth = h * if soft { 0.02 } else { 0.011 };
         for s in 0..=R {
@@ -210,6 +212,8 @@ fn shapes(p: &Palette, rect: Rect, visible: Rect, t: f32, alpha: f32, soft: bool
             m.vertices.push(v(Pos2::new(x, rect.bottom().max(y + feather)), color));
             if snow > 0.0 {
                 let white = color.lerp_to_gamma(snow_color, frost * snow * snow::cap(height));
+                // the same edge as the crest, then down to the ridge's colour
+                caps.vertices.push(v(Pos2::new(x, y - feather), Color32::TRANSPARENT));
                 caps.vertices.push(v(Pos2::new(x, y + feather), white));
                 caps.vertices.push(v(Pos2::new(x, y + feather + cap_depth), color));
             }
@@ -224,9 +228,11 @@ fn shapes(p: &Palette, rect: Rect, visible: Rect, t: f32, alpha: f32, soft: bool
         out.push(Shape::mesh(m));
         if !caps.vertices.is_empty() {
             for s in 0..R as u32 {
-                let i = s * 2;
-                caps.add_triangle(i, i + 2, i + 1);
-                caps.add_triangle(i + 1, i + 2, i + 3);
+                let i = s * 3;
+                for r in 0..2 {
+                    caps.add_triangle(i + r, i + 3 + r, i + r + 1);
+                    caps.add_triangle(i + r + 1, i + 3 + r, i + 4 + r);
+                }
             }
             out.push(Shape::mesh(caps));
         }

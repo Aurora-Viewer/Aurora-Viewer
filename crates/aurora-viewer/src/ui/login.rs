@@ -618,7 +618,12 @@ fn glass_card<R>(
                 0.13 * strength,
             ),
         ];
-        behind.0.set(behind.1, egui::Shape::Vec(lights.clone()));
+        // The spill fades out on its own: clipped to the card's area (the
+        // sidebar's column), it ended in a straight edge above the cards.
+        behind
+            .0
+            .with_clip_rect(ctx.content_rect())
+            .set(behind.1, egui::Shape::Vec(lights.clone()));
         let mut shapes = super::aurora_bg::frosted_pane(
             p,
             ctx.content_rect(),
