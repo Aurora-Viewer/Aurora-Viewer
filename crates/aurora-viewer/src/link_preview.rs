@@ -267,7 +267,7 @@ impl Clip {
             parsed.set_host(Some("i.imgur.com")).ok()?;
             parsed.set_path(&mp4);
             parsed.set_query(None);
-        } else if !(path.ends_with(".mp4") || path.ends_with(".webm")) {
+        } else if !(path.ends_with(".mp4") || path.ends_with(".webm") || services::snapchat_video_source(&parsed)) {
             return None;
         }
         parsed.set_fragment(None);
@@ -1280,7 +1280,10 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                 return Ok(Content::Post(post, picture));
             }
             let html = text_head(client, &page, "text/html", "</head>").await.0?;
-            if let Some(found) = services::arte_clip(&page, &html).or_else(|| services::adult_clip(&page, &html)) {
+            if let Some(found) = services::arte_clip(&page, &html)
+                .or_else(|| services::snapchat_clip(&page, &html))
+                .or_else(|| services::adult_clip(&page, &html))
+            {
                 return Ok(Content::Clip(fetch_found_clip(client, found).await));
             }
             let title = services::metadata(&html, &["og:title", "twitter:title"]).ok_or(Failure::Unavailable)?;

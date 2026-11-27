@@ -954,6 +954,68 @@ fn reddit_permalink_can_supply_its_own_poster() {
     assert!(from_head(Service::Reddit, &page.replace("external-preview.redd.it", "other.example")).is_none());
 }
 
+/// The Spotlight webpage publishes a signed, public MP4 and its dimensions.
+pub(super) fn snapchat_clip(page: &str, html: &str) -> Option<FoundClip> {
+    let page_url = Url::parse(page).ok()?;
+    if bare_host(&page_url).as_deref() != Some("snapchat.com")
+        || !matches!(segments(&page_url).as_slice(), ["spotlight", _] | [_, "spotlight", _])
+        || metadata(html, &["og:video:type", "twitter:player:stream:content_type"]).as_deref() != Some("video/mp4")
+    {
+        return None;
+    }
+    let clip = head_meta(html).find_map(|(key, value)| {
+        if !matches!(
+            key.to_ascii_lowercase().as_str(),
+            "og:video:secure_url" | "og:video" | "twitter:player:stream"
+        ) || value.len() > 4096
+        {
+            return None;
+        }
+        let url = Url::parse(&unescape(value)).ok()?;
+        if !snapchat_video_source(&url) {
+            return None;
+        }
+        super::Clip::of(url.as_str())
+    })?;
+    Some(FoundClip {
+        clip,
+        title: metadata(html, &["og:title", "twitter:title"])?,
+        channel: metadata(html, &["author", "twitter:creator"]).unwrap_or_default(),
+        posters: publisher_poster(page, html).into_iter().collect(),
+        size: metadata(html, &["og:video:width"])
+            .and_then(|s| s.parse().ok())
+            .zip(metadata(html, &["og:video:height"]).and_then(|s| s.parse().ok())),
+    })
+}
+
+pub(super) fn snapchat_video_source(url: &Url) -> bool {
+    url.host_str() == Some("bolt-gcdn.sc-cdn.net")
+        && url.path().strip_prefix("/bp/").is_some_and(|path| {
+            (1..=128).contains(&path.len())
+                && path.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+                && path != "."
+                && path != ".."
+        })
+}
+
+#[test]
+fn snapchat_uses_the_public_mp4_and_its_publisher_dimensions() {
+    let page = "https://www.snapchat.com/@example/spotlight/Example_12";
+    let html = r#"<meta property="og:title" content="An example">
+      <meta property="og:video" content="https://bolt-gcdn.sc-cdn.net/bp/Clip.27.ID?token=abc&amp;v=2">
+      <meta property="og:video:type" content="video/mp4">
+      <meta property="og:video:width" content="540">
+      <meta property="og:video:height" content="960">"#;
+    let result = snapchat_clip(page, html).unwrap();
+    assert_eq!(
+        result.clip.download_url(),
+        Some("https://bolt-gcdn.sc-cdn.net/bp/Clip.27.ID?token=abc&v=2")
+    );
+    assert_eq!(result.size, Some((540.0, 960.0)));
+    assert!(snapchat_clip(page, &html.replace("sc-cdn.net", "sc-cdn.net.example.org")).is_none());
+    assert!(snapchat_clip(page, &html.replace("video/mp4", "text/html")).is_none());
+}
+
 /// Imgur share pages advertise a cover and, for animated posts, a stream.
 /// Keep galleries and albums as cover cards even when their first item moves.
 pub(super) fn clip_from_head(service: Service, page: &str, html: &str) -> Option<FoundClip> {

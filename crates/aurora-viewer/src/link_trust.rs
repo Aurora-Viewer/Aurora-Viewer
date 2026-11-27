@@ -112,6 +112,8 @@ const TRUSTED: &[&str] = &[
     "tiktok.com",
     "tiktokcdn.com",
     "tiktokcdn-us.com",
+    "snapchat.com",
+    "bolt-gcdn.sc-cdn.net",
     "bilibili.com",
     "framatube.org",
     "arte.tv",

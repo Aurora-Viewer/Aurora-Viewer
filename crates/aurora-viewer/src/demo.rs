@@ -1776,6 +1776,9 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         "imgur" => "https://imgur.com/KDM0UfE",
                         "imgur-photo" => "https://i.imgur.com/KDM0UfE.jpg?fbplay",
                         "imgur-missing" => "https://i.imgur.com/zzq6vRx483Z.jpg",
+                        "snapchat" => {
+                            "https://www.snapchat.com/@valentina340712/spotlight/W7_EDlXWTBiXAEEniNoMPwAAYZ2pqYWh2YWdoAaHbME46AaHbME4MAAAAAA"
+                        }
                         "giphy" => "https://giphy.com/gifs/dance-happy-cute-l0HU3vwj7M52g35Be",
                         "tenor" => "https://tenor.com/view/happy-dance-dan%C3%A7ando-gif-25925999",
                         "tiktok" => "https://www.tiktok.com/@scout2015/video/6718335390845095173",
