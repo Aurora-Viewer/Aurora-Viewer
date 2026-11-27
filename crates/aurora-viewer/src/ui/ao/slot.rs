@@ -184,16 +184,20 @@ impl Editor<'_> {
     /// The picker of animations, into `container` (a group or a layer) or
     /// the main list.
     fn picker(&mut self, container: Option<Uuid>) {
-        self.state.container = container;
+        self.state.pick_into = container;
         self.state.picker = Some(false);
         self.state.folder = crate::world::inventory::actions::system(self.inv, 20).unwrap_or(self.inv.root);
     }
 
     fn body(&mut self, ui: &mut egui::Ui, c: &StateConfig) {
-        // A container that is gone (dissolved, or another slot's) falls back
-        // to the main list; a group stays the picker's target.
+        // A layer shows its tab; a stack just made (`AoUi::finish_editor`)
+        // unfolds in the main list; anything gone (dissolved, or another
+        // slot's) falls back to the main list.
         let track = self.state.container.and_then(|id| c.tracks.iter().find(|t| t.id == id));
-        if track.is_none() && !self.state.container.is_some_and(|id| c.steps.iter().any(|s| s.group && s.id == id)) {
+        if track.is_none() {
+            if let Some(stack) = self.state.container.filter(|id| c.steps.iter().any(|s| s.group && s.id == *id)) {
+                self.state.open_entry = Some(stack);
+            }
             self.state.container = None;
         }
         self.tabs(ui, c, track.map(|t| t.id));
@@ -348,7 +352,10 @@ impl Editor<'_> {
                                     ui.label(aurora_i18n::tr!("ao-turns-every"));
                                     let response = ui.add(
                                         egui::DragValue::new(&mut edit.seconds)
-                                            .range(1.0..=86400.0)
+                                            // (a saved 0.5 s stays as it is:
+                                            // the Legacy Viewer writes `%.2f`)
+                                            .range(0.01..=86400.0)
+                                            .clamp_existing_to_range(false)
                                             .speed(1.0)
                                             .suffix(aurora_i18n::tr!("ao-seconds-suffix")),
                                     );
@@ -390,6 +397,9 @@ impl Editor<'_> {
                             });
                             let label = if order == Order::Manual {
                                 aurora_i18n::tr!("ao-stays-on", name = now.as_str())
+                            } else if order == Order::Shuffle {
+                                // (the next one is drawn at random)
+                                aurora_i18n::tr!("ao-up-next-random").to_owned()
                             } else {
                                 aurora_i18n::tr!("ao-up-next", name = next.as_str())
                             };

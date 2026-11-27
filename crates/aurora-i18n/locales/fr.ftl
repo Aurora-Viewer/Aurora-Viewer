@@ -17011,3 +17011,4 @@ ao-split-stack = Séparer
 ao-add-to-stack = Ajouter à cette pile
 ao-stack-explanation = Ces animations jouent ensemble.
 ao-help-pages = Choisissez un groupe à gauche, puis un emplacement. Glissez des animations de votre inventaire sur un emplacement ; cliquez sur l’une pour la jouer, glissez-la pour changer son ordre. « Combiner… » crée une pile qui joue ensemble ou une couche avec ses propres tours. Les ensembles et leurs options sont gardés dans #Aurora/Aurora AO.
+ao-up-next-random = Suivante : au hasard

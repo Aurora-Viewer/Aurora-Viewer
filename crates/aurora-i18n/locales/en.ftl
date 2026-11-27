@@ -17005,3 +17005,4 @@ ao-split-stack = Split apart
 ao-add-to-stack = Add to this stack
 ao-stack-explanation = These animations play together.
 ao-help-pages = Choose a group on the left, then a slot. Drag animations from your inventory onto a slot; click one to play it, drag it to change its order. “Combine…” makes a stack that plays together or a layer with its own turns. Sets and their options are kept in #Aurora/Aurora AO.
+ao-up-next-random = Next: a random one

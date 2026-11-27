@@ -120,8 +120,13 @@ fn strip(
             quick::save_sits(ui, inv, set, !sits, message_id, out);
         }
         let shown = prefs.swimming && ready;
+        // the reason swimming waits, as the toolbar panel says it
         let tip = if ready {
             aurora_i18n::tr!("movement-swimming")
+        } else if catalog.failed {
+            aurora_i18n::tr!("ao-fetch-failed")
+        } else if catalog.loading {
+            aurora_i18n::tr!("ao-loading")
         } else {
             aurora_i18n::tr!("ao-swim-required")
         };
@@ -142,6 +147,10 @@ fn strip(
     });
     if let Some(message) = ui.data(|d| d.get_temp::<String>(message_id)) {
         ui.label(RichText::new(message).color(p.warn));
+    }
+    // a failed fetch is said under the strip, as the toolbar panel does
+    if catalog.failed {
+        ui.label(RichText::new(aurora_i18n::tr!("ao-fetch-failed")).color(p.warn));
     }
 }
 

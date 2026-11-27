@@ -36,7 +36,8 @@ impl App {
             self.ao_preview_camera.cut();
             return;
         };
-        let blocked = if self.second_camera_job.is_some() || self.panels.second_camera {
+        // (a Second camera window that shows no picture leaves the view)
+        let blocked = if self.second_camera_job.is_some() {
             Some(aurora_i18n::tr!("ao-preview-second-camera"))
         } else {
             match self.second_camera_unavailable() {

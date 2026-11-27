@@ -1509,3 +1509,131 @@ fn a_selection_dragged_from_the_inventory_adds_every_animation_at_once() {
     assert!(out.is_empty(), "a folder in the selection refuses the batch");
     assert_eq!(f.state.message, aurora_i18n::tr!("ao-not-animation"));
 }
+
+/// The order menu covers every saved `:CY` / `:RN` pair, Manual keeping the
+/// random flag; the slider's stops round a typed time to the nearest one.
+#[test]
+fn order_menu_and_slider_stops_map_the_saved_cycle() {
+    use super::slot::{Order, STOPS, stop_of};
+    let cycle = |cycle, random, seconds| Cycle { cycle, random, seconds };
+    assert_eq!(Order::of(&cycle(false, false, 0.0)), Order::Manual);
+    assert_eq!(Order::of(&cycle(false, true, 0.0)), Order::Manual, "random alone never switches");
+    assert_eq!(Order::of(&cycle(true, false, 0.0)), Order::Sequence);
+    assert_eq!(Order::of(&cycle(true, true, 30.0)), Order::Shuffle);
+    let shuffled = cycle(true, true, 20.0);
+    let manual = Order::Manual.apply(&shuffled);
+    assert_eq!(manual, cycle(false, true, 20.0), "Manual keeps the random flag and the time");
+    assert_eq!(Order::Sequence.apply(&manual), cycle(true, false, 20.0));
+    assert_eq!(Order::Shuffle.apply(&manual), cycle(true, true, 20.0));
+    assert_eq!(stop_of(0.0), 0, "Auto");
+    assert_eq!(stop_of(-3.0), 0);
+    assert_eq!(stop_of(12.0), 1);
+    assert_eq!(stop_of(45.1), 4);
+    assert_eq!(stop_of(3600.0), STOPS.len() - 1);
+    for (i, s) in STOPS.iter().enumerate() {
+        assert_eq!(stop_of(*s), i);
+    }
+}
+
+/// Duplicate copies the set it is asked on, and the set in use stays.
+#[test]
+fn duplicating_another_set_copies_it_and_keeps_the_set_in_use() {
+    let mut f = Fixture::new();
+    let mut other = f.catalog.selected(f.account.selected).expect("set").clone();
+    other.id = Uuid::from_u128(0x0e7e);
+    other.name = "Other set".into();
+    other.states.retain(|s, _| *s == State::Walking);
+    f.catalog.sets.push(other.clone());
+    let in_use = f.account.selected;
+    f.state.sets_open = true;
+    f.settle();
+    // the second set's ⋯ menu
+    fn meshes(shape: &egui::Shape, texture: egui::TextureId, out: &mut Vec<egui::Rect>) {
+        match shape {
+            egui::Shape::Mesh(m) if m.texture_id == texture => out.push(m.calc_bounds()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| meshes(s, texture, out)),
+            _ => {}
+        }
+    }
+    let dots = super::super::icons::global("dots").expect("dots").id();
+    let mut found = Vec::new();
+    for shape in f.draw(Vec::new()).1 {
+        meshes(&shape.shape, dots, &mut found);
+    }
+    found.sort_by(|a, b| a.top().total_cmp(&b.top()));
+    let second = *found.get(1).expect("a menu per set");
+    f.click_at(second.center());
+    assert!(f.click(aurora_i18n::tr!("ao-duplicate")).is_empty());
+    assert_eq!(f.account.selected, in_use, "the set in use stays");
+    assert_eq!(f.state.new_dialog, Some(SetDialog::Clone(other.id)));
+    f.state.name = "Copy of other".into();
+    f.settle();
+    let out = f.click(aurora_i18n::tr!("common-save"));
+    let [Action::Create(copy)] = out.as_slice() else {
+        panic!("one set made")
+    };
+    assert_eq!(copy.name, "Copy of other");
+    assert_eq!(copy.states.keys().collect::<Vec<_>>(), [&State::Walking], "the other set's slots");
+    assert_eq!(f.account.selected, in_use);
+}
+
+/// "Add to this stack" picks into the stack once: the slot's own drops and
+/// the next pick go to the main list again.
+#[test]
+fn adding_to_a_stack_does_not_send_later_animations_into_it() {
+    let mut f = Fixture::new();
+    let chosen = std::collections::HashSet::from([steps_of(&f)[0]]);
+    let (change, _) = inventory::editor::combine(
+        &f.inv,
+        f.catalog.selected(f.account.selected).expect("set"),
+        State::Standing,
+        "Together",
+        false,
+        &chosen,
+    )
+    .expect("stack");
+    crate::world::inventory::actions::demo_mutate(&mut f.inv, Uuid::from_u128(1), change).expect("server ack");
+    f.catalog.invalidate();
+    f.catalog.refresh(&mut f.inv);
+    let stack = steps_of(&f).into_iter().find(|id| f.inv.folders.contains_key(id)).expect("stack");
+    f.state.open_entry = Some(stack);
+    f.settle();
+    f.click(aurora_i18n::tr!("ao-add-to-stack"));
+    assert_eq!(f.state.picker, Some(false));
+    assert_eq!(f.state.pick_into, Some(stack));
+    assert_eq!(f.state.container, None, "the slot still shows its main list");
+    f.state.filter = "Type".into();
+    f.settle();
+    let out = f.click("Aurora Type");
+    assert!(matches!(&out[..], [Action::Edit(change, None)] if change.operations.iter().any(|op|
+        matches!(op, Operation::Links { parent, .. } if *parent == stack))));
+    assert_eq!(f.state.pick_into, None);
+    f.settle();
+    f.click(aurora_i18n::tr!("ao-drop-box"));
+    assert_eq!(f.state.pick_into, None, "the drop box picks into the main list");
+}
+
+/// A window saved at the old one-column width opens once at the three
+/// columns' size; a width chosen after that stays.
+#[test]
+fn an_old_narrow_ao_window_widens_once() {
+    let mut f = Fixture::new();
+    // the old window's size, as a saved layout brings it back (below the
+    // new minimum: the narrowest it can be now)
+    super::super::widgets::place_floater(&f.ctx, "ao", egui::pos2(40.0, 40.0), egui::vec2(560.0, 760.0));
+    for _ in 0..10 {
+        f.draw(Vec::new());
+    }
+    // a layout saved before the three columns: not widened yet
+    f.ctx.data_mut(|d| d.remove::<bool>(egui::Id::unique("ao_three_columns")));
+    for _ in 0..10 {
+        f.draw(Vec::new());
+    }
+    let width = |f: &Fixture| f.ctx.memory(|m| m.area_rect(egui::Id::unique("ao"))).expect("AO shown").width();
+    assert!(width(&f) >= 1200.0, "widened: {}", width(&f));
+    super::super::widgets::place_floater(&f.ctx, "ao", egui::pos2(40.0, 40.0), egui::vec2(900.0, 600.0));
+    for _ in 0..10 {
+        f.draw(Vec::new());
+    }
+    assert!(width(&f) < 1000.0, "a width chosen later stays: {}", width(&f));
+}

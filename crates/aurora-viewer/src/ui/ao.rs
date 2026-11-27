@@ -103,6 +103,9 @@ pub struct AoUi {
     confirm_delete: Option<Uuid>,
     /// The entry of the open slot whose details are unfolded.
     open_entry: Option<Uuid>,
+    /// Where the animation picker adds: a stack or a layer of the open
+    /// slot, `None` for its main list.
+    pick_into: Option<Uuid>,
     preview: preview::Preview,
     /// The slot each group had open, to open it again (`page::show`).
     category_states: [Option<State>; category::Category::ALL.len()],
@@ -110,10 +113,11 @@ pub struct AoUi {
     state_focus: Option<State>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SetDialog {
     New,
-    Clone,
+    /// A copy of that set.
+    Clone(Uuid),
 }
 
 impl AoUi {
@@ -181,6 +185,7 @@ impl AoUi {
         self.picker = None;
         self.combination = None;
         self.open_entry = None;
+        self.pick_into = None;
     }
 }
 
@@ -266,6 +271,7 @@ pub fn show(
         state.cycle_edit = None;
         state.combination = None;
         state.open_entry = None;
+        state.pick_into = None;
         state.renaming = None;
         state.confirm_delete = None;
         state.preview = Default::default();
@@ -453,13 +459,14 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
             if widgets::flat_button(ui, p, aurora_i18n::tr!("common-save")).clicked() {
                 match inventory::valid_name(&state.name) {
                     Ok(name) => {
-                        let mut set = if matches!(mode, SetDialog::Clone) {
-                            catalog
-                                .selected(state.selected_set)
+                        let mut set = match mode {
+                            SetDialog::Clone(source) => catalog
+                                .sets
+                                .iter()
+                                .find(|s| s.id == source)
                                 .cloned()
-                                .unwrap_or_else(|| Set::new(name.clone()))
-                        } else {
-                            Set::new(name.clone())
+                                .unwrap_or_else(|| Set::new(name.clone())),
+                            SetDialog::New => Set::new(name.clone()),
                         };
                         set.name = name;
                         set.default = catalog.sets.is_empty();
@@ -577,11 +584,13 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
             if notecard {
                 out.push(Action::Import(id));
             } else if let Some(set) = catalog.selected(state.selected_set) {
-                push(out, state, inventory::add(inv, set, state.state, id, state.container));
+                push(out, state, inventory::add(inv, set, state.state, id, state.pick_into));
             }
             state.picker = None;
+            state.pick_into = None;
         } else if !open {
             state.picker = None;
+            state.pick_into = None;
         }
     }
 }

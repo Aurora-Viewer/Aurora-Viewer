@@ -291,11 +291,10 @@ fn set_row(
                             state.confirm_delete = None;
                         }
                         if super::super::menu::item(ui, p, "copy-filled", aurora_i18n::tr!("ao-duplicate")) {
-                            // Duplicate makes a copy of the set it is asked on.
-                            account.selected = set.id;
-                            state.selected_set = set.id;
+                            // a copy of the set it is asked on, the set in
+                            // use staying the same
                             state.name = set.name.clone();
-                            state.new_dialog = Some(SetDialog::Clone);
+                            state.new_dialog = Some(SetDialog::Clone(set.id));
                         }
                         if super::super::menu::check(ui, p, "login-2", aurora_i18n::tr!("ao-load-at-login"), set.default, true) {
                             set_default(inv, catalog, set, !set.default, state, out);
@@ -355,13 +354,15 @@ fn set_row(
             ui.add(egui::Label::new(aurora_i18n::tr!("ao-delete-set-confirm", set = set.name.as_str())).wrap());
             ui.horizontal(|ui| {
                 let size = Vec2::new(90.0, 26.0);
-                if widgets::action_button(
+                if widgets::action_button_if(
                     ui,
                     p,
                     "trash-filled",
                     aurora_i18n::tr!("common-delete"),
                     widgets::ActionKind::Danger,
                     size,
+                    // (an edit under way would drop it: it waits)
+                    !busy,
                 )
                 .clicked()
                 {
