@@ -289,7 +289,7 @@ pub fn show(
         widen_once(ctx);
     }
     let mut floater = Floater::new("ao", title, egui::pos2(160.0, 90.0), SIZE)
-        .help(aurora_i18n::tr!("ao-help"))
+        .help(aurora_i18n::tr!("ao-help-pages"))
         .title_state(dot, status)
         .action("power", power_tip, &mut power);
     if account.enabled {

@@ -230,7 +230,7 @@ impl Editor<'_> {
             if widgets::icon_button(ui, self.p, "plus", aurora_i18n::tr!("ao-new-layer"), !self.busy()) {
                 let mut dialog = super::combinations::Dialog::new(self.set.id, self.state.state);
                 dialog.track = true;
-                dialog.name = aurora_i18n::tr!("ao-new-track").into();
+                dialog.name = aurora_i18n::tr!("ao-new-layer-name").into();
                 self.state.picker = None;
                 self.state.combination = Some(dialog);
             }
@@ -256,7 +256,7 @@ impl Editor<'_> {
                         self.state.remove = Some(track.id);
                         widgets::bring_floater_front(ui.ctx(), "ao_remove");
                     }
-                    if widgets::flat_button(ui, self.p, aurora_i18n::tr!("ao-dissolve-track")).clicked() {
+                    if widgets::flat_button(ui, self.p, aurora_i18n::tr!("ao-dissolve-layer")).clicked() {
                         self.dissolve(track.id);
                     }
                     if widgets::flat_button(ui, self.p, aurora_i18n::tr!("common-rename")).clicked() {
@@ -483,7 +483,7 @@ impl Editor<'_> {
             })
             .show(ui, |ui| {
                 if step.group {
-                    ui.label(RichText::new(aurora_i18n::tr!("ao-group-explanation")).small().color(self.p.muted));
+                    ui.label(RichText::new(aurora_i18n::tr!("ao-stack-explanation")).small().color(self.p.muted));
                     self.members(ui, c, step.id, &step.members, false);
                 }
                 ui.add_enabled_ui(!self.busy(), |ui| {
@@ -494,7 +494,7 @@ impl Editor<'_> {
                             self.state.preview.show_entry(index);
                         }
                         if step.group {
-                            if widgets::flat_button(ui, self.p, aurora_i18n::tr!("ao-add-group")).clicked() {
+                            if widgets::flat_button(ui, self.p, aurora_i18n::tr!("ao-add-to-stack")).clicked() {
                                 self.picker(Some(step.id));
                             }
                             if widgets::flat_button(ui, self.p, aurora_i18n::tr!("common-rename")).clicked() {
@@ -506,7 +506,7 @@ impl Editor<'_> {
                                     false,
                                 ));
                             }
-                            if widgets::flat_button(ui, self.p, aurora_i18n::tr!("ao-dissolve-group")).clicked() {
+                            if widgets::flat_button(ui, self.p, aurora_i18n::tr!("ao-split-stack")).clicked() {
                                 self.dissolve(step.id);
                             }
                         }

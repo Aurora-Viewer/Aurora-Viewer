@@ -702,7 +702,7 @@ fn guided_combinations_are_cancellable_and_wait_for_acknowledgement() {
     dialog.name = "Together".into();
     dialog.selected.insert(chosen);
     f.settle();
-    let out = f.click(aurora_i18n::tr!("ao-create-group"));
+    let out = f.click(aurora_i18n::tr!("ao-create-stack"));
     assert!(matches!(
         &out[..],
         [Action::EditContainer(_, EditorTarget { container: Some(_), .. })]

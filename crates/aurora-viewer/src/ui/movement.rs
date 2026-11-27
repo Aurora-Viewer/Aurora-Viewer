@@ -1,4 +1,6 @@
-//! Movement settings embedded in the AO manager; animations belong to AO state lists.
+//! Movement settings, the AO window's Movement page: one card per enhancement
+//! (running, flight, obstacle passage, water walk, swimming); animations belong
+//! to the AO slots.
 use super::widgets;
 use crate::{
     keybinds::{Action as KeyAction, Binding, KeyBindings},
@@ -30,48 +32,43 @@ impl MovementUi {
         let down = keys.get(KeyAction::Down);
         let passage_keys = keys.pass_wall_bindings();
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-        ui.label(
-            egui::RichText::new(aurora_i18n::tr!("movement-title"))
-                .strong()
-                .color(p.violet_pale),
-        );
         if status == aurora_i18n::tr!("movement-physics-unavailable") {
             ui.label(egui::RichText::new(status).color(p.violet_pale));
         }
+        // Four cards side by side two by two, then swimming across: each
+        // enhancement is separate, its switch at the top of its card.
         ui.columns(2, |columns| {
-            widgets::switch_labeled(&mut columns[0], p, &mut prefs.running, aurora_i18n::tr!("movement-running"));
-            columns[0].add_enabled_ui(prefs.running, |ui| {
-                ui.add(egui::Slider::new(&mut prefs.run_multiplier, 1.0..=5.0).prefix("×").step_by(0.1))
-                    .on_hover_text(aurora_i18n::tr!("movement-run-speed"));
+            let (left, right) = columns.split_at_mut(1);
+            let (left, right) = (&mut left[0], &mut right[0]);
+            card(left, p, "run", |ui| {
+                widgets::switch_labeled(ui, p, &mut prefs.running, aurora_i18n::tr!("movement-running"));
+                ui.add_enabled_ui(prefs.running, |ui| {
+                    ui.add(egui::Slider::new(&mut prefs.run_multiplier, 1.0..=5.0).prefix("×").step_by(0.1))
+                        .on_hover_text(aurora_i18n::tr!("movement-run-speed"));
+                });
             });
-            widgets::switch_labeled(&mut columns[1], p, &mut prefs.fly_assist, aurora_i18n::tr!("movement-fly-assist"));
-            columns[1].add_enabled_ui(prefs.fly_assist, |ui| {
-                ui.add(egui::Slider::new(&mut prefs.fly_multiplier, 1.0..=5.0).prefix("×").step_by(0.1))
-                    .on_hover_text(aurora_i18n::tr!("movement-flight-speed"));
+            card(right, p, "plane-tilt-filled", |ui| {
+                widgets::switch_labeled(ui, p, &mut prefs.fly_assist, aurora_i18n::tr!("movement-fly-assist"));
+                ui.add_enabled_ui(prefs.fly_assist, |ui| {
+                    ui.add(egui::Slider::new(&mut prefs.fly_multiplier, 1.0..=5.0).prefix("×").step_by(0.1))
+                        .on_hover_text(aurora_i18n::tr!("movement-flight-speed"));
+                });
             });
-        });
-        widgets::divider(ui, p);
-        ui.columns(2, |columns| {
-            let gutter = columns[0].spacing().item_spacing.x * 2.0;
-            let passage = &mut columns[0];
-            let passage_width = (passage.available_width() - gutter).max(0.0);
-            // Columns already reserve their full minimum width. A child scope
-            // keeps an inner text gutter without shifting the right switch.
-            passage.scope(|ui| {
-                ui.set_max_width(passage_width);
+            card(left, p, "arrows-move", |ui| {
                 widgets::switch_labeled(ui, p, &mut prefs.pass_wall, aurora_i18n::tr!("movement-pass-enable"));
                 key_hint(ui, p, Gesture::Tap(&passage_keys), "");
                 ui.label(egui::RichText::new(aurora_i18n::tr!("movement-pass-help")).color(p.muted));
             });
-
-            let water_walk = &mut columns[1];
-            let mut walking = prefs.water_walk;
-            widgets::switch_labeled(water_walk, p, &mut walking, aurora_i18n::tr!("movement-water-walk"));
-            if walking != prefs.water_walk {
-                prefs.set_water_mode(true, walking, self.swim_ready);
-            }
-            key_hint(water_walk, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-walk-crouch"));
-            key_hint(water_walk, p, Gesture::Tap(&up), aurora_i18n::tr!("movement-water-walk-jump"));
+            let swim_ready = self.swim_ready;
+            card(right, p, "walk", |ui| {
+                let mut walking = prefs.water_walk;
+                widgets::switch_labeled(ui, p, &mut walking, aurora_i18n::tr!("movement-water-walk"));
+                if walking != prefs.water_walk {
+                    prefs.set_water_mode(true, walking, swim_ready);
+                }
+                key_hint(ui, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-walk-crouch"));
+                key_hint(ui, p, Gesture::Tap(&up), aurora_i18n::tr!("movement-water-walk-jump"));
+            });
         });
         if !self.message.is_empty() {
             let message = ui.label(&self.message);
@@ -79,58 +76,82 @@ impl MovementUi {
                 message.scroll_to_me(Some(egui::Align::Center));
             }
         }
-        widgets::divider(ui, p);
         if !self.swim_ready {
             prefs.swimming = false;
         }
-        let mut swimming = prefs.swimming;
-        ui.add_enabled_ui(self.swim_ready, |ui| {
-            widgets::switch_labeled(ui, p, &mut swimming, aurora_i18n::tr!("movement-swimming"));
+        let (swim_ready, swim_slots) = (self.swim_ready, self.swim_slots);
+        card(ui, p, "swimming", |ui| {
+            let mut swimming = prefs.swimming;
+            ui.add_enabled_ui(swim_ready, |ui| {
+                widgets::switch_labeled(ui, p, &mut swimming, aurora_i18n::tr!("movement-swimming"));
+            });
+            if swimming != prefs.swimming {
+                prefs.set_water_mode(false, swimming, swim_ready);
+            }
+            if !swim_ready && swim_slots < crate::ao::State::CORE_SWIMMING.len() {
+                super::ao::swimming_warning(ui, p);
+            }
+            ui.add_enabled_ui(prefs.swimming, |ui| {
+                ui.add(
+                    egui::Slider::new(&mut prefs.swim_speed, 0.5..=8.0)
+                        .suffix(" m/s")
+                        .text(aurora_i18n::tr!("movement-swim-speed")),
+                );
+                ui.add(
+                    egui::Slider::new(&mut prefs.float_height, -0.5..=0.5)
+                        .suffix(" m")
+                        .step_by(0.01)
+                        .text(aurora_i18n::tr!("movement-float-height")),
+                )
+                .on_hover_text(aurora_i18n::tr!("movement-float-help"));
+                ui.add_space(ui.spacing().item_spacing.y * 2.0);
+                widgets::checkbox(ui, p, &mut prefs.jump_obstacles, aurora_i18n::tr!("movement-jump-obstacles"));
+            });
+            ui.columns(2, |columns| {
+                let (left, right) = columns.split_at_mut(1);
+                let (left, right) = (&mut left[0], &mut right[0]);
+                key_hint(left, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-submerge"));
+                key_hint(left, p, Gesture::Tap(&up), aurora_i18n::tr!("movement-water-leap"));
+                key_hint(left, p, Gesture::Double(&up), aurora_i18n::tr!("movement-water-takeoff"));
+                key_hint(left, p, Gesture::Tap(&up), aurora_i18n::tr!("movement-water-surface"));
+                widgets::checkbox(right, p, &mut prefs.water_jumps, aurora_i18n::tr!("movement-water-jumps")).on_hover_ui(|ui| {
+                    key_hint(ui, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-jumps-help"));
+                });
+                key_hint(right, p, Gesture::Then(&up, &down), aurora_i18n::tr!("movement-water-dive"));
+                key_hint(right, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-cannonball"));
+            });
         });
-        if swimming != prefs.swimming {
-            prefs.set_water_mode(false, swimming, self.swim_ready);
-        }
-        if !self.swim_ready && self.swim_slots < crate::ao::State::CORE_SWIMMING.len() {
-            super::ao::swimming_warning(ui, p);
-        }
-        ui.add_enabled_ui(prefs.swimming, |ui| {
-            ui.add(
-                egui::Slider::new(&mut prefs.swim_speed, 0.5..=8.0)
-                    .suffix(" m/s")
-                    .text(aurora_i18n::tr!("movement-swim-speed")),
-            );
-            ui.add(
-                egui::Slider::new(&mut prefs.float_height, -0.5..=0.5)
-                    .suffix(" m")
-                    .step_by(0.01)
-                    .text(aurora_i18n::tr!("movement-float-height")),
-            )
-            .on_hover_text(aurora_i18n::tr!("movement-float-help"));
-            ui.add_space(ui.spacing().item_spacing.y * 2.0);
-            widgets::checkbox(ui, p, &mut prefs.jump_obstacles, aurora_i18n::tr!("movement-jump-obstacles"));
-        });
-        key_hint(ui, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-submerge"));
-        key_hint(ui, p, Gesture::Tap(&up), aurora_i18n::tr!("movement-water-leap"));
-        key_hint(ui, p, Gesture::Double(&up), aurora_i18n::tr!("movement-water-takeoff"));
-        key_hint(ui, p, Gesture::Tap(&up), aurora_i18n::tr!("movement-water-surface"));
-        ui.add_space(ui.spacing().item_spacing.y * 2.0);
-        widgets::checkbox(ui, p, &mut prefs.water_jumps, aurora_i18n::tr!("movement-water-jumps")).on_hover_ui(|ui| {
-            key_hint(ui, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-jumps-help"));
-        });
-        key_hint(ui, p, Gesture::Then(&up, &down), aurora_i18n::tr!("movement-water-dive"));
-        key_hint(ui, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-cannonball"));
-        widgets::divider(ui, p);
-        ui.label(aurora_i18n::tr!(
-            "movement-measured-speed",
-            speed = format!("{:.1}", self.measured_speed)
-        ));
+        ui.label(
+            egui::RichText::new(aurora_i18n::tr!(
+                "movement-measured-speed",
+                speed = format!("{:.1}", self.measured_speed)
+            ))
+            .color(p.muted),
+        );
         if !self.motor_status.is_empty() {
-            ui.label(&self.motor_status);
+            ui.label(egui::RichText::new(&self.motor_status).color(p.muted));
         }
         prefs.sanitize();
         actions.changed = *prefs != before;
         actions
     }
+}
+
+/// One enhancement's card: its icon beside its switch at the top, its
+/// settings below, on the shared surface.
+fn card(ui: &mut egui::Ui, p: &Palette, icon: &str, body: impl FnOnce(&mut egui::Ui)) {
+    widgets::surface(ui, p, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal_top(|ui| {
+            widgets::glyph(ui, icon, p.violet_pale, 16.0);
+            ui.vertical(|ui| {
+                // the sliders fill the card, their value beside them
+                ui.spacing_mut().slider_width = (ui.available_width() - 110.0).max(80.0);
+                body(ui);
+            });
+        });
+    });
+    ui.add_space(6.0);
 }
 
 enum Gesture<'a> {
