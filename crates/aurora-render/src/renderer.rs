@@ -3180,6 +3180,15 @@ impl Backend {
 }
 
 impl Backend {
+    /// The weather's fog is drawn over the sky this frame (fog.wgsl
+    /// `fs_fog_sky`): the fog in every tier, the rays only with their
+    /// volume (they have no height fog to fall back on).
+    fn fog_sky_drawn(&self) -> bool {
+        self.fog_terms
+            .as_ref()
+            .is_some_and(|(look, _)| !look.is_rays() || self.fog_volume_now)
+    }
+
     /// Aurora Weather's fog this frame (fog.rs): made while it is on, its
     /// volume's textures while its tier has one (the frame groups bound to
     /// them again when they change). The height fog's terms of every view
@@ -3234,13 +3243,19 @@ impl Backend {
             }
         };
         self.fog_volume_now = fog.volume().is_some();
-        // (before the uniforms: the scene reads the flow grid where it is now)
-        if self.fog_volume_now && !f.cutout {
-            fog.place_flow(f.camera_pos);
+        if look.is_rays() {
+            // the rays' air fills the rooms too: no walls, no shelter map
+            fog.drop_flow();
+            self.fog_shelter = false;
+        } else {
+            // (before the uniforms: the scene reads the flow grid where it is now)
+            if self.fog_volume_now && !f.cutout {
+                fog.place_flow(f.camera_pos);
+            }
+            // the shelter map for the fog drawn, the height fog's too (it keeps
+            // the rooms clear)
+            self.fog_shelter = true;
         }
-        // the shelter map for the fog drawn, the height fog's too (it keeps
-        // the rooms clear)
-        self.fog_shelter = true;
         // (made this frame: the frame groups take its ground)
         if changed || made {
             self.remake_frame_groups();
@@ -8532,7 +8547,9 @@ impl Backend {
         // instead (render_frame)
         if let Some((look, ground)) = &self.fog_terms {
             let forward = crate::light_tiles::view_forward(view);
-            u.fog_look[..4].copy_from_slice(&crate::fog::frame_terms(look, &f.sky, *ground, forward, crate::fog::MODE_HEIGHT));
+            // (the rays are the main view's volume alone: none in the others)
+            let mode = if look.is_rays() { 0.0 } else { crate::fog::MODE_HEIGHT };
+            u.fog_look[..4].copy_from_slice(&crate::fog::frame_terms(look, &f.sky, *ground, forward, mode));
             // the ground the fog lies on, in every view (binding 35)
             if let Some([x, y, side]) = self.fog.as_ref().and_then(|f| f.ground_rect()) {
                 u.fog_look[6] = [x, y, side, 0.0];
@@ -10020,15 +10037,16 @@ impl Backend {
         }
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
+        let rays = self.fog_terms.as_ref().is_some_and(|(look, _)| look.is_rays());
         if self.fog_volume_now {
-            main.fog_look[2][3] = crate::fog::MODE_VOLUME;
+            main.fog_look[2][3] = crate::fog::MODE_VOLUME + if rays { crate::fog::MODE_RAYS } else { 0.0 };
             // the fog's flow grid, for the surfaces in closed rooms
             if let Some(origin) = self.fog.as_ref().and_then(|f| f.flow_grid()) {
                 let d = crate::fog::FLOW_DIMS;
                 main.fog_look[4] = origin.extend(crate::fog::FLOW_CELL).to_array();
                 main.fog_look[5] = [d[0] as f32, d[1] as f32, d[2] as f32, 0.0];
             }
-        } else if self.fog_terms.is_some() && self.rain_shelter_map(f).is_some() {
+        } else if self.fog_terms.is_some() && !rays && self.rain_shelter_map(f).is_some() {
             main.fog_look[2][3] += crate::fog::MODE_SHELTER;
         }
         if f.photo_tile != Mat4::IDENTITY {
@@ -12404,6 +12422,7 @@ impl Backend {
             clouds.skipped(still.is_some());
         }
         mark(&mut encoder, MARK_CLOUDS_END);
+        let fog_sky = self.fog_sky_drawn();
         // ---- Aurora Weather's fog volume (fog.rs): after the shadows it
         // reads, before the scene that reads it; then the sky's pipeline
         mark(&mut encoder, MARK_FOG_BEGIN);
@@ -12464,7 +12483,7 @@ impl Backend {
                 ),
                 _ => fog.skipped(),
             }
-            if self.fog_terms.is_some() {
+            if fog_sky {
                 fog.prepare_sky(
                     &self.device,
                     &self.frame_buffer,
@@ -12561,7 +12580,7 @@ impl Backend {
                     pass.set_bind_group(0, &self.groups.a, &[]);
                 }
                 // the weather's fog over the sky and the clouds: dst * T + L
-                if self.fog_terms.is_some()
+                if self.fog_sky_drawn()
                     && let Some(fog) = &self.fog
                 {
                     fog.draw_sky(&mut pass, scene_samples, scene_gbuf);

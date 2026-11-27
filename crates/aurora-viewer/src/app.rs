@@ -13510,14 +13510,19 @@ impl App {
             curvature: self.settings.planet_radius(),
             look: None,
             look_thumbs: None,
-            fog: self.weather_now.fog_look(
-                self.fog_drift.at,
-                crate::weather::fog::utc_clock(),
-                self.world
-                    .main_region
-                    .map_or([0.0; 2], |h| [(h >> 32) as f64, (h & 0xffff_ffff) as f64]),
-                self.weather_now.quality_index(),
-            ),
+            // the weather's fog, else the sun's and the moon's rays alone
+            // (the fog has its own: never both)
+            fog: self
+                .weather_now
+                .fog_look(
+                    self.fog_drift.at,
+                    crate::weather::fog::utc_clock(),
+                    self.world
+                        .main_region
+                        .map_or([0.0; 2], |h| [(h >> 32) as f64, (h & 0xffff_ffff) as f64]),
+                    self.weather_now.quality_index(),
+                )
+                .or_else(|| crate::weather::fog::sun_rays_look(self.settings.sun_rays, self.settings.sun_rays_strength)),
             clouds: crate::world::env::clouds_frame(
                 self.settings.volumetric_clouds,
                 self.world.main_region,

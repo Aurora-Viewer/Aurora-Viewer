@@ -89,6 +89,21 @@ pub(crate) const MODE_VOLUME: f32 = 2.0;
 /// Added to the mode: the shelter map is drawn for the view's height fog
 /// (common.wgsl `FOG_MODE_SHELTER`).
 pub(crate) const MODE_SHELTER: f32 = 4.0;
+/// Added to the main view's mode: the sun's and the moon's rays alone
+/// (common.wgsl `FOG_MODE_RAYS`): the volume, nothing past it.
+pub(crate) const MODE_RAYS: f32 = 8.0;
+
+/// The rays' air at full strength (`FogLook::rays` 1): what it takes of the
+/// light through it (1/m: 6 % over the volume's 160 m), and what it
+/// scatters of the sun's (1/m, fog.wgsl `fp.look.w`), ten times more. A
+/// scattering above the extinction is no physical air: it shows the light's
+/// shafts without the veil a fog thick enough to show them would lay over
+/// the scene.
+const RAYS_EXTINCTION: f32 = 0.0004;
+const RAYS_SCATTER: f32 = 0.004;
+/// Their lean toward the light (Henyey-Greenstein g): bright looking toward
+/// the sun, faint across its shafts, none away from it.
+const RAYS_ANISOTROPY: f32 = 0.6;
 
 /// The volume's froxels (x, y, slices) and its far end (m) for the
 /// weather's quality (0 low, 1 medium, 2 high).
@@ -147,12 +162,23 @@ pub fn ground_level_at(ground: &FogGround, xy: Vec2) -> Option<f32> {
 /// height fog's terms in every view, `forward` its camera's axis, `mode`
 /// the view's (`MODE_*`).
 pub(crate) fn frame_terms(look: &FogLook, sky: &SkyParams, ground_level: f32, forward: Vec3, mode: f32) -> [[f32; 4]; 4] {
-    let sigma = base_extinction(look.density) * if look.from_sky { sky_factor(sky) } else { 1.0 };
-    let color = look.color.unwrap_or([1.0; 3]);
     let (dims, far) = grid(look.quality);
+    // the rays' air: even at every height (all of it left high up), white,
+    // lit by the sun or the moon alone
+    let (sigma, height, high, color, lean) = if look.is_rays() {
+        (RAYS_EXTINCTION * look.rays.min(1.0), 1.0, 1.0, [1.0; 3], RAYS_ANISOTROPY)
+    } else {
+        (
+            base_extinction(look.density) * if look.from_sky { sky_factor(sky) } else { 1.0 },
+            look.height.max(0.1),
+            HIGH_SHARE,
+            look.color.unwrap_or([1.0; 3]),
+            look.anisotropy.clamp(0.0, 0.95),
+        )
+    };
     [
-        [sigma, look.height.max(0.1), ground_level, HIGH_SHARE],
-        [color[0], color[1], color[2], look.anisotropy.clamp(0.0, 0.95)],
+        [sigma, height, ground_level, high],
+        [color[0], color[1], color[2], lean],
         [NEAR, far, dims[2] as f32, mode],
         [1.0 / (far / NEAR).ln(), forward.x, forward.y, forward.z],
     ]
@@ -468,6 +494,9 @@ struct Last {
     camera: Vec3,
     forward: Vec3,
     dims: [u32; 3],
+    /// It was the rays' air (`FogLook::is_rays`): the fog's history is
+    /// not the rays', nor theirs the fog's.
+    rays: bool,
 }
 
 pub struct Fog {
@@ -896,7 +925,8 @@ impl Fog {
         let vp = proj * rotation;
         let forward = crate::light_tiles::view_forward(view);
         // the last frame's clip space of a position relative to this camera
-        let (prev_vp, share) = match self.last.filter(|l| l.dims == dims && !still) {
+        let rays = look.is_rays();
+        let (prev_vp, share) = match self.last.filter(|l| l.dims == dims && l.rays == rays && !still) {
             Some(l) => (
                 l.vp * Mat4::from_translation(camera - l.camera),
                 history_share(l.forward.angle_between(forward), (camera - l.camera).length()),
@@ -923,9 +953,11 @@ impl Fog {
                 // a still: its samples at its froxels' centres (no history to
                 // average a jitter)
                 if still { 1.0 } else { 0.0 },
-                0.0,
+                // the rays' scattering (0: the fog)
+                if rays { RAYS_SCATTER * look.rays.min(1.0) } else { 0.0 },
             ],
-            noise: noise.extend(NOISE_STRENGTH).to_array(),
+            // (the rays' air has no wisps)
+            noise: noise.extend(if rays { 0.0 } else { NOISE_STRENGTH }).to_array(),
             ground,
             flow: match self.flow_grid() {
                 Some(o) => o.extend(FLOW_CELL).to_array(),
@@ -937,7 +969,13 @@ impl Fog {
         if still {
             self.last = None;
         } else {
-            self.last = Some(Last { vp, camera, forward, dims });
+            self.last = Some(Last {
+                vp,
+                camera,
+                forward,
+                dims,
+                rays,
+            });
         }
 
         let now = 1 - self.flip;
@@ -1109,6 +1147,12 @@ impl Fog {
     /// dropped, the next volume starts afresh.
     pub fn skipped(&mut self) {
         self.last = None;
+        self.drop_flow();
+    }
+
+    /// No flow grid: the rays' air has no walls (the sun's shafts come in
+    /// through the windows), and nothing reads it.
+    pub fn drop_flow(&mut self) {
         // (the flow's grid is placed again, its fog started afresh; the
         // stamp keeps growing: the old walls never read as walls again)
         self.flow.origin = None;
@@ -1466,6 +1510,7 @@ mod tests {
             drift: [0.0; 2],
             clock: 0.0,
             region_origin: [0.0; 2],
+            rays: 0.0,
         };
         let t = frame_terms(&look, &SkyParams::default(), 21.0, Vec3::X, MODE_VOLUME);
         assert_eq!(t[0], [base_extinction(0.4), 6.0, 21.0, HIGH_SHARE]);
@@ -1487,6 +1532,27 @@ mod tests {
             MODE_HEIGHT,
         );
         assert_eq!(own[1][..3], [1.0, 0.0, 0.5]);
+        // the rays' air: thin, even at every height, white, whatever the
+        // card's density, height, colour and the sky's haze
+        let hazy = SkyParams {
+            haze_density: 4.0,
+            ..SkyParams::default()
+        };
+        let rays = FogLook {
+            rays: 0.5,
+            density: 1.0,
+            from_sky: true,
+            color: Some([1.0, 0.0, 0.5]),
+            ..look
+        };
+        assert!(rays.is_rays() && !look.is_rays());
+        let r = frame_terms(&rays, &hazy, 21.0, Vec3::X, MODE_VOLUME);
+        assert_eq!(r[0], [RAYS_EXTINCTION * 0.5, 1.0, 21.0, 1.0]);
+        assert_eq!(r[1], [1.0, 1.0, 1.0, RAYS_ANISOTROPY]);
+        assert_eq!(r[2], t[2]);
+        // a scene seen through the whole volume keeps nearly all of itself
+        assert!((-r[0][0] * far / 0.5).exp() > 0.9);
+        const { assert!(RAYS_SCATTER > RAYS_EXTINCTION) };
     }
 
     #[test]

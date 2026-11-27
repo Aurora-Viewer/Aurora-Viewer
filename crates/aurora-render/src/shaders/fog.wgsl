@@ -27,7 +27,8 @@ struct FogParams {
     grid: vec4<u32>,
     // x the share of this frame in the history (1: none kept), y 1 = the
     // local lights scatter, z 1 for a still (its froxels sampled at their
-    // centres), w unused
+    // centres), w the sun's and the moon's rays alone: what their air
+    // scatters (1/m, fog.rs `RAYS_SCATTER`; 0: the fog)
     look: vec4<f32>,
     // xyz the noise's offset (m: the grid anchor less the drift, and the
     // slow rise), w how much it shapes the fog (0..1)
@@ -333,10 +334,18 @@ fn inject(@builtin(global_invocation_id) id: vec3<u32>) {
     // across the ground at the slices' distances
     let ground = fog_ground_raw(p.xy);
     let at = vec3<f32>(p.xy, max(p.z, ground + 0.25));
-    let open = fog_open(at);
+    // the rays' air: everywhere, rooms included (the sun's shafts through a
+    // window), even (no height, no noise: fog.rs `frame_terms`), lit by the
+    // sun or the moon alone through its shadows, scattering more than it
+    // takes (no veil over the scene)
+    let rays = fp.look.w > 0.0;
+    let open = select(fog_open(at), 1.0, rays);
     let sigma = fog_density(at, open, footprint);
     var scatter = vec3<f32>(0.0);
-    if (sigma > 1e-7) {
+    if (rays) {
+        let g = frame.fog_look[1].w;
+        scatter = fp.look.w * fog_sun(p - cam) * fog_phase(dot(dir, frame.sun_dir.xyz), g) * fog_sun_shadow(p, dist);
+    } else if (sigma > 1e-7) {
         let g = frame.fog_look[1].w;
         let sky = fog_sky_light() * mix(FOG_SHELTERED_SKY, 1.0, open);
         let sun = fog_sun(p - cam) * fog_phase(dot(dir, frame.sun_dir.xyz), g) * fog_sun_shadow(p, dist);
@@ -466,6 +475,8 @@ fn fog_sky(pos: vec4<f32>) -> vec4<f32> {
     }
     let slices = frame.fog_look[2].z;
     let v = textureSampleLevel(fog_volume, lin_clamp, vec3<f32>(uv, 1.0 - 0.5 / slices), 0.0);
+    // (the rays' air ends with the volume, common.wgsl `weather_fog`)
+    if (fog_rays()) { return v; }
     let reach = frame.fog_look[2].y / max(dot(dir, frame.fog_look[3].yzw), 1e-3);
     let start = cam + dir * reach;
     let len = max(FOG_SKY_REACH - reach, 0.0);
