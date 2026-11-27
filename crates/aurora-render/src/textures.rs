@@ -3746,6 +3746,35 @@ mod tests {
         assert_eq!(store.lost_in_frame(10, &[normal]), 1);
         assert_eq!(store.loc[normal as usize], store.loc[FLAT_NORMAL as usize]);
         assert_eq!(read_back(&device, &queue, &store, normal), vec![vec![FLAT_NORMAL as u8; 4]]);
+        // the media texture's owner fills it again whole
+        // (`MediaManager::texture_lost`: its next frame is fresh, a
+        // `replace_texture` of the full size): a layer of its own again, so
+        // `TextureTable::write_region` draws its rects into it
+        assert!(replace(&mut store, &mut writes, media, &chain(5)));
+        writes.replay(&mut QueueSink(&queue));
+        store.writes_sent(11);
+        assert_eq!(store.lost_in_frame(11, &[]), 0);
+        assert!(!store.slots[media as usize].as_ref().expect("slot").shared);
+        assert_eq!(read_back(&device, &queue, &store, media), chain(5));
+        // a page table with no room left: no page is made for a new size
+        // (made then dropped, at each texture that asks again)
+        let mut full = PageStore::new(64, 1, max_layers, 4096);
+        let one = [MipLevel {
+            width: 1,
+            height: 1,
+            data: &GREY,
+        }];
+        assert!(full.create(&device, &mut writes, &one).is_some());
+        let big = vec![7u8; 32 * 32 * 4];
+        let other = [MipLevel {
+            width: 32,
+            height: 32,
+            data: &big,
+        }];
+        let made = full.made.inline;
+        assert!(full.create(&device, &mut writes, &other).is_none());
+        assert_eq!(full.made.inline, made, "no page made");
+        writes.clear();
     }
 
     /// Randomized GPU check of the page store: creations, upgrades to the
