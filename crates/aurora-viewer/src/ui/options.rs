@@ -859,6 +859,8 @@ pub enum Folder {
     ChatLogs,
     /// A Legacy Viewer's transcripts, to import.
     LegacyLogs,
+    /// A viewer data or account folder selected for this logged-in resident.
+    LegacyTeleports(uuid::Uuid),
     /// The interface language file (Language and updates): a file, asked
     /// for the same way.
     LanguageFile,

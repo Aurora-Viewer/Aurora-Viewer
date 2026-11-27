@@ -24,7 +24,7 @@ pub(super) struct LegacyLists {
 impl App {
     /// Who to look for: the account logged in, on the grid of its
     /// transcripts (`chat_log::grid_name`), with or without transcripts.
-    fn legacy_lists_account(&self) -> Option<Account> {
+    pub(super) fn legacy_lists_account(&self) -> Option<Account> {
         let login = self.world.login.as_ref()?;
         let grid = match self.world.chat_log.identity() {
             Some(identity) => identity.grid.clone(),
@@ -39,9 +39,28 @@ impl App {
 
     /// The import window opens: read the viewers' folders.
     pub(super) fn legacy_lists_opened(&mut self) {
+        self.open_legacy_lists(Parts::default(), None);
+    }
+
+    pub(super) fn open_teleport_history_import(&mut self, chosen: Option<PathBuf>) {
+        self.panels.settings = true;
+        self.options_ui.open(ui::options::Page::System, 0);
+        self.open_legacy_lists(
+            Parts {
+                teleports: true,
+                derender: false,
+                media: false,
+                contact_sets: false,
+            },
+            chosen,
+        );
+    }
+
+    fn open_legacy_lists(&mut self, parts: Parts, chosen: Option<PathBuf>) {
         self.options_ui.legacy_lists_status.clear();
         self.options_ui.legacy_lists = Default::default();
         self.options_ui.legacy_lists.open = true;
+        self.options_ui.legacy_lists.parts = parts;
         let Some(account) = self.legacy_lists_account() else {
             self.options_ui.legacy_lists.found = Some(Vec::new());
             return;
@@ -54,7 +73,11 @@ impl App {
         let (tx, rx) = channel();
         self.legacy_lists.looking = Some(rx);
         let _ = std::thread::Builder::new().name("aurora-legacy-lists".into()).spawn(move || {
-            let _ = tx.send(legacy_lists::find(&apps, &account));
+            let found = match chosen {
+                Some(dir) => legacy_lists::find_chosen(dir, &account),
+                None => legacy_lists::find(&apps, &account),
+            };
+            let _ = tx.send(found);
         });
     }
 
@@ -66,6 +89,9 @@ impl App {
         let mut lists = found.lists;
         lists.keep(parts);
         let report = self.world.merge_legacy_lists(lists);
+        if report.teleports > 0 {
+            self.places_ui.history_reordered();
+        }
         log::info!("legacy lists imported from {}: {report:?}", found.dir.display());
         if report.unseated {
             // we sat on it: gAgent.standUp()
@@ -84,6 +110,19 @@ impl App {
 
     /// Every frame: what the folders hold.
     pub(super) fn poll_legacy_lists(&mut self) {
+        if let Some(result) = self.world.tp_storage.poll_initial_import() {
+            match result {
+                Ok(added) if added > 0 => {
+                    self.places_ui.history_reordered();
+                    self.world.system_notice(
+                        aurora_i18n::tr!("ui-places-legacy-history-imported-at-login", count = added),
+                        crate::world::notice_topics::Topic::Info,
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("teleport history: initial import failed ({e})"),
+            }
+        }
         self.demo_legacy_lists();
         let Some(rx) = &self.legacy_lists.looking else {
             return;

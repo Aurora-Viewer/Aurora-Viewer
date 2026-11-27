@@ -31,7 +31,7 @@ pub(super) fn modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mu
         ui.set_width(460.0);
         ui.label(RichText::new(tr!("ui-options-legacy-lists-title")).size(15.0).strong().color(p.ink));
         ui.add_space(6.0);
-        ui.label(RichText::new(tr!("ui-options-legacy-lists-text")).size(12.5).color(p.muted));
+        ui.label(RichText::new(tr!("ui-options-legacy-lists-policy")).size(12.5).color(p.muted));
         ui.add_space(8.0);
         let mut ready = false;
         match &state.found {

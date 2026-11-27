@@ -2,9 +2,8 @@
 //! only: its files are only read, and what the account has already stays
 //! (`HistoryStorage::merge`, `Derender::merge`, `MediaFilter::merge`,
 //! `ContactSets::merge_import`). The four files are the same on both sides
-//! (LL_PATH_PER_SL_ACCOUNT), so importing again adds nothing, but an entry
-//! removed here comes back with it: the import is always asked for, never
-//! made at login.
+//! (LL_PATH_PER_SL_ACCOUNT). Teleport history respects Aurora removals and
+//! can also be imported once at the first eligible Agni login.
 //!
 //! `read` runs away from the frame; `World::merge_legacy_lists` then
 //! applies what it found.
@@ -159,9 +158,34 @@ fn bytes(folder: &Path, name: &'static str, unreadable: &mut Vec<&'static str>) 
 /// The account's folders that hold a list, read, a folder shared by two
 /// viewers once.
 pub fn find(apps: &[PathBuf], account: &Account) -> Vec<Found> {
+    find_folders(account_folders(apps, account), read)
+}
+
+/// Accept a matching account folder or search a chosen viewer data folder.
+pub fn find_chosen(dir: PathBuf, account: &Account) -> Vec<Found> {
+    if dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| account.owns(name))
+    {
+        find_folders(vec![dir], read)
+    } else {
+        find(&[dir], account)
+    }
+}
+
+/// For login, read only teleport history and combine the detected folders.
+pub fn find_history(apps: &[PathBuf], account: &Account) -> Vec<HistoryItem> {
+    find_folders(account_folders(apps, account), read_history)
+        .into_iter()
+        .flat_map(|found| found.lists.history)
+        .collect()
+}
+
+fn find_folders(folders: Vec<PathBuf>, read: impl Fn(&Path) -> Lists) -> Vec<Found> {
     let mut seen = Vec::new();
     let mut found = Vec::new();
-    for dir in account_folders(apps, account) {
+    for dir in folders {
         let real = dir.canonicalize().unwrap_or_else(|_| dir.clone());
         if seen.contains(&real) {
             continue;
@@ -176,14 +200,19 @@ pub fn find(apps: &[PathBuf], account: &Account) -> Vec<Found> {
     found
 }
 
-/// Read the lists of an account folder.
-pub fn read(folder: &Path) -> Lists {
+fn read_history(folder: &Path) -> Lists {
     let mut lists = Lists::default();
-    let mut failed = Vec::new();
-    if let Some(data) = bytes(folder, tphistory::TELEPORT_HISTORY_FILE, &mut failed) {
+    if let Some(data) = bytes(folder, tphistory::TELEPORT_HISTORY_FILE, &mut lists.unreadable) {
         lists.history = tphistory::places(String::from_utf8_lossy(&data).as_bytes());
     }
-    if let Some(data) = bytes(folder, derender::FILE, &mut failed) {
+    lists
+}
+
+/// Read the lists of an account folder.
+pub fn read(folder: &Path) -> Lists {
+    let mut lists = read_history(folder);
+    let failed = &mut lists.unreadable;
+    if let Some(data) = bytes(folder, derender::FILE, failed) {
         match FileEntries::from_xml(&data) {
             Ok(file) => lists.derender = Some(file),
             Err(e) => {
@@ -192,7 +221,7 @@ pub fn read(folder: &Path) -> Lists {
             }
         }
     }
-    if let Some(data) = bytes(folder, filter::FILE, &mut failed) {
+    if let Some(data) = bytes(folder, filter::FILE, failed) {
         match filter::parse(&data) {
             Ok(rules) => lists.media = rules,
             Err(e) => {
@@ -201,7 +230,7 @@ pub fn read(folder: &Path) -> Lists {
             }
         }
     }
-    if let Some(data) = bytes(folder, CONTACT_SETS_FILE, &mut failed) {
+    if let Some(data) = bytes(folder, CONTACT_SETS_FILE, failed) {
         match ImportData::from_legacy_xml(&data) {
             Ok((sets, skipped)) => {
                 if skipped > 0 {
@@ -216,7 +245,6 @@ pub fn read(folder: &Path) -> Lists {
             }
         }
     }
-    lists.unreadable = failed;
     lists
 }
 
@@ -320,6 +348,9 @@ mod tests {
         };
         let mut found = find(&[root.clone(), root.clone()], &account);
         assert_eq!(found.len(), 1);
+        assert_eq!(find_chosen(root.clone(), &account)[0].dir, dir);
+        assert_eq!(find_chosen(dir.clone(), &account)[0].dir, dir);
+        assert!(find_chosen(root.join("someone_else"), &account).is_empty());
         let Found {
             dir: at,
             counts,
@@ -357,6 +388,23 @@ mod tests {
         )
         .expect("contact sets");
         assert_eq!(read(&dir).counts().contact_sets, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_lists_import_keeps_removed_and_cleared_teleports_out() {
+        let dir = folder("teleport-removals");
+        write_lists(&dir);
+        let (mut world, _) = demo_world();
+        world.tp_storage = tphistory::HistoryStorage::in_memory(Vec::new());
+        assert_eq!(world.merge_legacy_lists(read(&dir)).teleports, 1);
+        world.tp_storage.remove(0);
+        let report = world.merge_legacy_lists(read(&dir));
+        assert_eq!(report.teleports, 0);
+        assert!(report.unsaved.is_empty());
+        world.tp_storage.clear();
+        assert_eq!(world.merge_legacy_lists(read(&dir)).teleports, 0);
+        assert!(world.tp_storage.items.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

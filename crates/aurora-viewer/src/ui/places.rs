@@ -106,6 +106,8 @@ pub enum PlacesAction {
     Sort(model::PlacesSort),
     /// The history's time zone (FSTPHistoryTZ).
     HistoryZone(HistoryZone),
+    ImportLegacyHistory,
+    ChooseLegacyHistoryFolder,
 }
 
 /// One line of a landmarks tab.
@@ -290,6 +292,19 @@ fn history_zone_menu(ui: &mut egui::Ui, p: &Palette, zone: HistoryZone, actions:
     });
 }
 
+fn legacy_history_menu(ui: &mut egui::Ui, p: &Palette, world: &World, demo_import_menu: bool, actions: &mut Vec<PlacesAction>) {
+    if !demo_import_menu && world.login.is_none() {
+        return;
+    }
+    super::menu::separator(ui, p);
+    if super::menu::item(ui, p, "file-import", aurora_i18n::tr!("ui-places-legacy-history-import")) {
+        actions.push(PlacesAction::ImportLegacyHistory);
+    }
+    if super::menu::item(ui, p, "folder-open-filled", aurora_i18n::tr!("ui-places-legacy-history-folder")) {
+        actions.push(PlacesAction::ChooseLegacyHistoryFolder);
+    }
+}
+
 #[derive(Default)]
 pub struct PlacesUi {
     pub tab: usize,
@@ -329,9 +344,18 @@ pub struct PlacesUi {
     /// AURORA_DEMO_PLACES=…:classic: the Legacy Viewer's tabs for this run,
     /// whatever Preferences › Aurora › Places says (not saved).
     pub demo_classic: bool,
+    /// In the offline demo, show the import menu without looking for real histories.
+    pub demo_import_menu: bool,
 }
 
 impl PlacesUi {
+    pub fn history_reordered(&mut self) {
+        if matches!(self.selected, Some(Sel::History(_))) {
+            self.selected = None;
+        }
+        self.aurora.history_reordered();
+    }
+
     /// The session ended: a question left open ends with it.
     pub fn forget_question(&mut self) {
         self.confirm = None;
@@ -531,6 +555,7 @@ impl PlacesUi {
             widgets::icon_menu(ui, p, "settings-filled", aurora_i18n::tr!("ui-places-show-options"), |ui| {
                 if history {
                     self.history_item_menu(ui, p, world, actions);
+                    legacy_history_menu(ui, p, world, self.demo_import_menu, actions);
                 } else {
                     self.landmark_gear_menu(ui, p, world, by_date, actions);
                 }
