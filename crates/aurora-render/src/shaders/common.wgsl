@@ -3666,8 +3666,15 @@ fn water_foam_lace_grad(p:vec2<f32>,gx:vec2<f32>,gy:vec2<f32>)->vec3<f32> {
     let q=drift+warp*1.4;
     let a=sample_tex_grad(slot,q/3.1,gx/3.1,gy/3.1);
     let b=sample_tex_grad(slot,(WATER_FOAM_TURN*q)/5.3,(WATER_FOAM_TURN*gx)/5.3,(WATER_FOAM_TURN*gy)/5.3);
-    let footprint=sqrt(max(length(gx)*length(gy),1e-10));
-    return vec3<f32>(max(a.r,b.r*0.85),max(a.a,b.a*0.85),1.0-smoothstep(0.04,0.25,footprint));
+    // (the lace gives way to its average by the pixel's size between its
+    // mean and its longest side, as water_foam_lace's caller had it, and
+    // once its holes, some 9 to 24 cm across, come down to a few pixels:
+    // from 2 cm a pixel, all of it by 7 cm. Cut into holes a pixel or two
+    // across, from 4 cm to 25 cm a pixel, it sparkled as a fine speckle
+    // that crawled with the waves over every patch of foam a little way off)
+    let mean=sqrt(max(length(gx)*length(gy),1e-10));
+    let footprint=sqrt(mean*max(length(gx),length(gy)));
+    return vec3<f32>(max(a.r,b.r*0.85),max(a.a,b.a*0.85),1.0-smoothstep(0.02,0.07,footprint));
 }
 // How much of the lace `amount` of foam shows (0..1): thick foam fills its
 // cells, thin foam leaves only its strands, and fades as it thins (foam

@@ -26,7 +26,7 @@ pub const WINDOW_SIZE: Vec2 = Vec2::new(700.0, 880.0);
 pub const WINDOW_MIN_SIZE: Vec2 = Vec2::new(360.0, 320.0);
 /// The least width of a column of cards at a text scale of 1: one more
 /// column fits each time the body widens by this much (and a gap).
-const COLUMN_MIN_W: f32 = 300.0;
+pub(crate) const COLUMN_MIN_W: f32 = 300.0;
 /// Narrower than this body width at a text scale of 1, the summary
 /// compacts: a smaller picture and title.
 const COMPACT_SUMMARY_W: f32 = 520.0;
@@ -40,9 +40,9 @@ const COMPASS_MIN: f32 = 84.0;
 const AURORA_PREVIEW_H: f32 = 70.0;
 /// The size of a row's label and of its value.
 const LABEL_SIZE: f32 = 12.5;
-const VALUE_SIZE: f32 = 12.0;
+pub(crate) const VALUE_SIZE: f32 = 12.0;
 /// The size of the words under a slider's ends.
-const ENDS_SIZE: f32 = 11.0;
+pub(crate) const ENDS_SIZE: f32 = 11.0;
 /// The compass steps of the wind's direction (degrees), as its slider had.
 const DIRECTION_STEP: f32 = 5.0;
 
@@ -109,7 +109,7 @@ enum Card {
 
 /// How many columns of cards a body `width` wide holds, each at least
 /// `column_min` wide: 1 to 5.
-fn column_count(width: f32, gap: f32, column_min: f32) -> usize {
+pub(crate) fn column_count(width: f32, gap: f32, column_min: f32) -> usize {
     (((width + gap) / (column_min + gap)).floor() as usize).clamp(1, 5)
 }
 
@@ -369,14 +369,14 @@ fn chip(ui: &mut egui::Ui, p: &Palette, icon: &str, tint: egui::Color32, text: &
 
 /// The switch on a card's title row, on its right: what it turns on and
 /// its tip.
-struct Head<'a> {
-    on: &'a mut bool,
-    tip: &'a str,
+pub(crate) struct Head<'a> {
+    pub(crate) on: &'a mut bool,
+    pub(crate) tip: &'a str,
 }
 
 /// A card: its icon and title, its switch on the right of the title
 /// (`head`), then its rows, given whether that switch is on.
-fn card<R>(
+pub(crate) fn card<R>(
     ui: &mut egui::Ui,
     p: &Palette,
     icon: &str,
@@ -405,7 +405,7 @@ fn card<R>(
 
 /// A row's label with its tip, cut to `width` so that a long one cannot
 /// run under what is on its right.
-fn label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str, width: f32) {
+pub(crate) fn label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str, width: f32) {
     ui.allocate_ui_with_layout(Vec2::new(width.max(0.0), 18.0), Layout::left_to_right(Align::Center), |ui| {
         ui.add(egui::Label::new(RichText::new(text).size(LABEL_SIZE).color(p.ink)).truncate())
             .on_hover_text(tip);
@@ -413,7 +413,7 @@ fn label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str, width: f32) {
 }
 
 /// A setting with a switch on its right, its icon before its label.
-fn switch_row(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &str, tip: &str, on: &mut bool) -> egui::Response {
+pub(crate) fn switch_row(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &str, tip: &str, on: &mut bool) -> egui::Response {
     ui.horizontal(|ui| {
         widgets::glyph(ui, icon, p.muted, 15.0);
         let gap = ui.spacing().item_spacing.x;
@@ -426,7 +426,7 @@ fn switch_row(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &str, tip: &str,
 
 /// A slider under its label, its value in words on the right, and the
 /// words of its two ends under it (`ends`).
-fn slider_row(
+pub(crate) fn slider_row(
     ui: &mut egui::Ui,
     p: &Palette,
     (text, tip): (&str, &str),

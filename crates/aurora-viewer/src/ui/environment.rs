@@ -192,6 +192,7 @@ impl EnvironmentUi {
         lighting: &mut bool,
         weather: &mut WeatherSettings,
         sea: &mut crate::weather::sea::SeaSettings,
+        sea_now: &aurora_render::water_sea::Sea,
     ) -> Vec<EnvAction> {
         let mut out = Vec::new();
         let screen = ctx.content_rect();
@@ -233,7 +234,7 @@ impl EnvironmentUi {
             }
         }
         let mut weather_open = self.weather_open;
-        self.show_weather(ctx, p, weather, sea, &mut weather_open);
+        self.show_weather(ctx, p, weather, sea, sea_now, &mut weather_open);
         self.weather_open = weather_open;
         out
     }
@@ -251,6 +252,7 @@ impl EnvironmentUi {
         p: &Palette,
         weather: &mut WeatherSettings,
         sea: &mut crate::weather::sea::SeaSettings,
+        sea_now: &aurora_render::water_sea::Sea,
         open: &mut bool,
     ) {
         if !*open {
@@ -275,13 +277,12 @@ impl EnvironmentUi {
             ui.add_space(6.0);
             if tab == 1 {
                 // the sea: the user's whoever sets the weather (scrolling in
-                // the window's steady size)
-                let label_w = sea_label_width(ui);
-                ui.data_mut(|d| d.insert_temp(label_width_id(), label_w));
+                // the window's steady size), as the weather's cards, with the
+                // sea drawn now
                 egui::ScrollArea::vertical()
                     .id_salt("aurora_weather_sea")
                     .auto_shrink([false, false])
-                    .show(ui, |ui| sea::body(ui, p, sea, &mut self.sea_name));
+                    .show(ui, |ui| sea::body(ui, p, sea, &mut self.sea_name, sea_now));
                 return None;
             }
             Some(super::weather_window::body(ui, p, weather))
@@ -1115,37 +1116,6 @@ pub fn rotation_from(azimuth: f32, elevation: f32) -> Quat {
         el = APPROXIMATELY_ZERO;
     }
     Quat::from_rotation_z(-az) * Quat::from_rotation_y(-el)
-}
-
-/// A row's label in the label column, with its tip (the Sea page's).
-fn row_label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str) {
-    let width = ui.data(|d| d.get_temp::<f32>(label_width_id())).unwrap_or(LABEL_W);
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 20.0), egui::Sense::hover());
-    ui.painter().text(
-        rect.left_center(),
-        egui::Align2::LEFT_CENTER,
-        text,
-        egui::FontId::proportional(12.5),
-        p.ink,
-    );
-    resp.on_hover_text(tip);
-}
-
-/// Where the Sea page keeps its label column's width this frame.
-fn label_width_id() -> egui::Id {
-    egui::Id::unique("environment_sea_label_width")
-}
-
-/// The Sea page's label column: as wide as its longest label in the
-/// language shown (at least the window's own), so that none runs under its
-/// control.
-fn sea_label_width(ui: &egui::Ui) -> f32 {
-    let font = egui::FontId::proportional(12.5);
-    let widest = sea::labels()
-        .iter()
-        .map(|l| ui.fonts_mut(|f| f.layout_no_wrap(l.to_string(), font.clone(), egui::Color32::PLACEHOLDER).size().x))
-        .fold(0.0f32, f32::max);
-    (widest + 10.0).max(LABEL_W).ceil()
 }
 
 /// The compass point nearest `degrees` (clockwise from north).

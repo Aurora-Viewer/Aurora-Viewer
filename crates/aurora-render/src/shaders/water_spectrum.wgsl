@@ -47,7 +47,9 @@ const WATER_OCEAN_NONE=WaterOceanAt(vec3<f32>(0.0),vec2<f32>(0.0),vec3<f32>(0.0)
 // foam its crests leave behind.
 // `chop`: the scale the spectrum's maps take here (its chop, the Sea
 // panel's), for the GPU's finer maps read beside them.
-struct WaterSwell { offset: vec3<f32>, gradient: vec2<f32>, compression: f32, breaking: f32, crest: f32, surf: f32, swash: f32, linger: f32, chop: f32 };
+// `breakers`: the fold the whitecaps take, the wind chop's (a little more
+// on the swell's crests), where `compression` is the whole sea's.
+struct WaterSwell { offset: vec3<f32>, gradient: vec2<f32>, compression: f32, breaking: f32, crest: f32, surf: f32, swash: f32, linger: f32, chop: f32, breakers: f32 };
 // How much of the wind sea's sway (its horizontal displacement) is kept
 // where its derivatives, scaled as the surface takes them, are `j` (xx,
 // xy, yy): all of it, but where the surface would fold over itself (the
@@ -226,6 +228,8 @@ fn water_sea(p: vec2<f32>, time: f32, quality: u32, sea: WaterSea, at: WaterSeaA
     // far up a pixel spans several crests, and unfiltered they drew combs
     // of foam stripes)
     var jacobian=vec3<f32>(1.0,0.0,1.0)-main*0.85*(1.0-swash)*slide*sin(theta)*att0*vec3<f32>(at.wave.x*dir.x,at.wave.x*dir.y,at.wave.y*dir.y);
+    // (the swell's alone, for the whitecaps: `breakers` below)
+    let swell_j=jacobian;
     // the wind chop: the spectrum's, or the trains'
     let local=p-sea.frame.xy;
     var linger=0.0;
@@ -251,6 +255,17 @@ fn water_sea(p: vec2<f32>, time: f32, quality: u32, sea: WaterSea, at: WaterSeaA
     out.offset=offset;
     out.gradient=vec2<f32>(jacobian.z*gradient.x-jacobian.y*gradient.y,jacobian.x*gradient.y-jacobian.y*gradient.x)/determinant;
     out.compression=1.0-determinant;
+    // What breaks white out at sea is the wind's chop, not the swell: a
+    // swell, long and low, never breaks in deep water (only in the shallows,
+    // `breaking` above). It squeezes the chop riding its crests, which then
+    // breaks sooner there. So the whitecaps' fold is the chop's own, a
+    // little more on the swell's crests; a swell with no chop under a calm
+    // carries no foam (by the whole sea's fold a big swell's crests passed
+    // the whitecaps' test alone and carried sheets of foam).
+    let swell_fold=1.0-max(swell_j.x*swell_j.z-swell_j.y*swell_j.y,0.25);
+    let chop_j=jacobian-swell_j+vec3<f32>(1.0,0.0,1.0);
+    let chop_fold=1.0-max(chop_j.x*chop_j.z-chop_j.y*chop_j.y,0.25);
+    out.breakers=chop_fold+max(chop_fold,0.0)*4.0*clamp(swell_fold,0.0,1.0);
     out.linger=linger;
     out.chop=scaled;
     // the breakers whiten; the swash's foam is its own lace (env's

@@ -21728,6 +21728,8 @@ impl App {
                     &mut lighting,
                     &mut self.settings.weather,
                     &mut self.settings.sea,
+                    // the sea drawn now, for the Sea page's preview
+                    &self.scene.lists.water_sea,
                 );
                 self.panels.environment = open;
                 // the weather saved once a slider is let go

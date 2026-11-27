@@ -1577,7 +1577,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     // at it: read once, for the wake, the normal and the foam below.
     var bed=vec2<f32>(0.0);
     if((water_fx.counts.z&31u)!=0u){bed=water_fx_bed(in.world_pos.xy);}
-    var swell=WaterSwell(vec3<f32>(0.0),vec2<f32>(0.0),0.0,0.0,0.0,0.0,0.0,0.0,0.0);
+    var swell=WaterSwell(vec3<f32>(0.0),vec2<f32>(0.0),0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0);
     // the swash read here, for its foam
     var swash_at:WaterSeaAt;
     var swash_theta=0.0;
@@ -1730,7 +1730,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
             foam=max(foam,swell.swash*water_swash_foam(p,swash_at,swash_theta,reach)*(0.7+0.25*rough)*water_fx.sea.look.x);
         }
         // Whitecaps: where the crests fold over (the displacement's Jacobian
-        // under 1: `compression` above 0). A breeze whitens a crest here and
+        // under 1: `breakers` above 0, the chop's own). A breeze whitens a crest here and
         // there, a gale most of them (whitecap coverage grows about as
         // U^3.4): the fold it takes falls with the roughness. Each cap is a
         // dense core on the fold in a thinner veil the pattern tears, so it
@@ -1743,7 +1743,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         // (the veil also takes the foam the crests left in the last
         // seconds, fading and drawn out downwind (water_fft.rs): thinner,
         // from deeper folds only, so a gale's sea is streaked, not grey)
-        if(water_fx_on(8u) && max(swell.compression,swell.linger-0.14)>cap_start-0.12) {
+        if(water_fx_on(8u) && max(swell.breakers,swell.linger-0.14)>cap_start-0.12) {
             let toward=water_fx.sea.wind.xy;
             let along=vec2<f32>(dot(p,toward),dot(p,vec2<f32>(-toward.y,toward.x)));
             let drift=vec2<f32>(frame.camera_pos.w*(0.3+0.04*water_fx.sea.wind.z),0.0);
@@ -1754,8 +1754,8 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
             let w=q+warp*vec2<f32>(10.0,6.0);
             let windpatch=0.65*water_fx_noise(w*vec2<f32>(0.11,0.19))+0.35*water_fx_noise(w*vec2<f32>(0.27,0.4)+vec2<f32>(9.0,2.0));
             let gusty=smoothstep(0.3-0.25*rough,0.75-0.25*rough,windpatch);
-            let core=smoothstep(cap_start,cap_start+0.35,swell.compression);
-            let veil=max(smoothstep(cap_start-0.12,cap_start+0.1,swell.compression),smoothstep(cap_start+0.02,cap_start+0.3,swell.linger)*0.75);
+            let core=smoothstep(cap_start,cap_start+0.35,swell.breakers);
+            let veil=max(smoothstep(cap_start-0.12,cap_start+0.1,swell.breakers),smoothstep(cap_start+0.02,cap_start+0.3,swell.linger)*0.75);
             // (the Sea panel's foam: more or less of it)
             // (past 100 %, more of the dense core only: the veil and what
             // lingers, turned up with it, spread the faint foam behind every
@@ -2782,7 +2782,7 @@ fn vs_water_crest_mist(@builtin(vertex_index) vertex: u32, @builtin(instance_ind
     let w=q+warp*vec2<f32>(10.0,6.0);
     let windpatch=0.65*water_fx_noise(w*vec2<f32>(0.11,0.19))+0.35*water_fx_noise(w*vec2<f32>(0.27,0.4)+vec2<f32>(9.0,2.0));
     let gusty=smoothstep(0.3-0.25*rough,0.75-0.25*rough,windpatch);
-    let cap=smoothstep(cap_start+0.05,cap_start+0.35,swell.compression)*gusty*at.shelter;
+    let cap=smoothstep(cap_start+0.05,cap_start+0.35,swell.breakers)*gusty*at.shelter;
     let fade=smoothstep(2.0,5.0,far)*(1.0-smoothstep(32.0,45.0,far));
     let strength=cap*breeze*fade*region;
     if(strength<=0.02){return o;}
