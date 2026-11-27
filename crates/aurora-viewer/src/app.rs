@@ -20432,6 +20432,7 @@ impl App {
                     ui::chat::toasts(
                         &ctx,
                         &p,
+                        &mut self.emoji,
                         &self.world,
                         &self.avatar_pics,
                         &mut self.chat_ui.wanted_names,

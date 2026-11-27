@@ -365,6 +365,7 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
             crate::ui::chat::toasts(
                 ui.ctx(),
                 &p,
+                &mut emoji,
                 &world,
                 &pics,
                 &mut names,

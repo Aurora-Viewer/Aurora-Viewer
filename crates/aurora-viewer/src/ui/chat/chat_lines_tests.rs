@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 use egui::{LayerId, Pos2, Rect, Vec2};
 use uuid::Uuid;
 
+use crate::ui::widgets::elide_tests::Frames;
 use crate::world::{ChatKind, ChatLine, World};
 use aurora_net::ChatType;
 
@@ -30,6 +31,7 @@ fn frame(ctx: &egui::Context, world: &World, seconds: f32, cards: bool, frame: u
     let pics = std::collections::HashMap::new();
     let layer = LayerId::new(egui::Order::Background, egui::Id::unique("chat_toasts"));
     let mut bottom = None;
+    let mut emoji = crate::ui::emoji::Emoji::load();
     let input = egui::RawInput {
         screen_rect: Some(Rect::from_min_size(Pos2::ZERO, SCREEN)),
         time: Some(0.1 * f64::from(frame)),
@@ -40,6 +42,7 @@ fn frame(ctx: &egui::Context, world: &World, seconds: f32, cards: bool, frame: u
         super::toasts(
             ui.ctx(),
             &p,
+            &mut emoji,
             world,
             &pics,
             &mut names,
@@ -133,6 +136,7 @@ fn painted(ctx: &egui::Context, world: &World, cards: bool, frame: u32) -> usize
     let pics = std::collections::HashMap::new();
     let layer = LayerId::new(egui::Order::Background, egui::Id::unique("chat_toasts"));
     let mut count = 0;
+    let mut emoji = crate::ui::emoji::Emoji::load();
     let input = egui::RawInput {
         screen_rect: Some(Rect::from_min_size(Pos2::ZERO, SCREEN)),
         time: Some(0.1 * f64::from(frame)),
@@ -143,6 +147,7 @@ fn painted(ctx: &egui::Context, world: &World, cards: bool, frame: u32) -> usize
         super::toasts(
             ui.ctx(),
             &p,
+            &mut emoji,
             world,
             &pics,
             &mut names,
@@ -191,6 +196,7 @@ fn bounds(ctx: &egui::Context, world: &World, seconds: f32, cards: bool, frame: 
     let pics = std::collections::HashMap::new();
     let layer = LayerId::new(egui::Order::Background, egui::Id::unique("chat_toasts"));
     let mut got = (Rect::NOTHING, Rect::NOTHING);
+    let mut emoji = crate::ui::emoji::Emoji::load();
     let input = egui::RawInput {
         screen_rect: Some(Rect::from_min_size(Pos2::ZERO, SCREEN)),
         time: Some(0.1 * f64::from(frame)),
@@ -201,6 +207,7 @@ fn bounds(ctx: &egui::Context, world: &World, seconds: f32, cards: bool, frame: 
         super::toasts(
             ui.ctx(),
             &p,
+            &mut emoji,
             world,
             &pics,
             &mut names,
@@ -297,5 +304,56 @@ fn the_rect_kept_for_the_friends_toasts_is_where_the_lines_are_drawn() {
                 "cards {cards}, leave {leave}: kept {during:?} in the frame of the change, {after:?} settled"
             );
         }
+    }
+}
+
+/// One frame of the toasts, with a line holding `🫶`: the pictures it
+/// painted for the emoji.
+fn toast_emoji_pictures(cards: bool) -> usize {
+    let mut frames = Frames::new();
+    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    say(&mut world, 1, "Emoji 🫶 here", 0);
+    let p = crate::theme::Theme::default().palette();
+    let pics = std::collections::HashMap::new();
+    let mut emoji = crate::ui::emoji::Emoji::load();
+    let mut draw = |frames: &mut Frames| {
+        frames.shapes(Vec::new(), |ui| {
+            let (mut names, mut wanted) = Default::default();
+            super::toasts(
+                ui.ctx(),
+                &p,
+                &mut emoji,
+                &world,
+                &pics,
+                &mut names,
+                &mut wanted,
+                BAR,
+                200.0,
+                40,
+                true,
+                false,
+                cards,
+                false,
+                true,
+            );
+        })
+    };
+    // two passes: a picture's texture is only ready for the second one
+    draw(&mut frames);
+    let shapes = draw(&mut frames);
+    fn textured(shape: &egui::Shape) -> bool {
+        match shape {
+            egui::epaint::Shape::Mesh(m) => m.texture_id != egui::TextureId::default(),
+            egui::epaint::Shape::Rect(r) => r.brush.as_ref().is_some_and(|b| b.fill_texture_id != egui::TextureId::default()),
+            _ => false,
+        }
+    }
+    shapes.iter().filter(|s| textured(s)).count()
+}
+
+#[test]
+fn a_toast_draws_its_emoji_as_pictures_in_both_styles() {
+    for cards in [true, false] {
+        assert_eq!(toast_emoji_pictures(cards), 1, "cards {cards}: one picture for the heart hands");
     }
 }
