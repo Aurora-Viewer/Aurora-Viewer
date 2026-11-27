@@ -1275,10 +1275,11 @@ pub(super) fn reddit_embed(page: &str, html: &str) -> Option<RedditEmbed> {
         .map_or_else(String::new, |name| format!("r/{name}"));
     let source = media["url"].as_str().unwrap_or_default();
     let kind = media["type"].as_str().unwrap_or_default();
-    let clip = (kind == "video")
-        .then(|| super::Clip::of(source))
-        .flatten()
-        .filter(super::Clip::native_video);
+    let clip = match kind {
+        "video" => super::Clip::of(source).filter(super::Clip::native_video),
+        "gif" => reddit_gif_rendition(body, source),
+        _ => None,
+    };
     let media = (matches!(kind, "image" | "gif") && picture_host_ok(Service::Reddit, source)).then(|| source.to_owned());
     let poster = body
         .split("<img ")
@@ -1302,6 +1303,47 @@ pub(super) fn reddit_embed(page: &str, html: &str) -> Option<RedditEmbed> {
         poster,
         clip,
     })
+}
+
+/// The public embed can publish a smaller MP4 for the original Reddit GIF.
+fn reddit_gif_rendition(html: &str, original: &str) -> Option<super::Clip> {
+    let original = Url::parse(original).ok()?;
+    if original.host_str()? != "i.redd.it" || !original.path().ends_with(".gif") {
+        return None;
+    }
+    html.split('<').filter_map(|part| part.split_once('>')).find_map(|(tag, _)| {
+        if !tag.starts_with("shreddit-player ") && !tag.starts_with("video ") && !tag.starts_with("source ") {
+            return None;
+        }
+        let source = Url::parse(&unescape(attribute(tag, "src")?)).ok()?;
+        if source.path() != original.path() || !reddit_gif_video_source(&source) {
+            return None;
+        }
+        super::Clip::of(source.as_str())
+    })
+}
+
+pub(super) fn reddit_gif_video_source(url: &Url) -> bool {
+    matches!(url.host_str(), Some("preview.redd.it" | "cf.preview.redd.it"))
+        && url
+            .path()
+            .strip_prefix('/')
+            .and_then(|path| path.strip_suffix(".gif"))
+            .is_some_and(|id| alnum(id, 6, 48))
+        && url.query_pairs().any(|(key, value)| key == "format" && value == "mp4")
+}
+
+#[test]
+fn reddit_gif_uses_only_a_published_rendition_of_the_same_file() {
+    let original = "https://i.redd.it/example123.gif";
+    let html = r#"<shreddit-player src="https://cf.preview.redd.it/example123.gif?format=mp4&amp;s=public"></shreddit-player>"#;
+    let clip = reddit_gif_rendition(html, original).unwrap();
+    assert_eq!(
+        clip.download_url(),
+        Some("https://cf.preview.redd.it/example123.gif?format=mp4&s=public")
+    );
+    assert!(reddit_gif_rendition(html, "https://i.redd.it/unrelated.gif").is_none());
+    assert!(reddit_gif_rendition(&html.replace("preview.redd.it", "preview.redd.it.example.com"), original).is_none());
 }
 
 #[test]

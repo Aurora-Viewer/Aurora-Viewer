@@ -267,7 +267,11 @@ impl Clip {
             parsed.set_host(Some("i.imgur.com")).ok()?;
             parsed.set_path(&mp4);
             parsed.set_query(None);
-        } else if !(path.ends_with(".mp4") || path.ends_with(".webm") || services::snapchat_video_source(&parsed)) {
+        } else if !(path.ends_with(".mp4")
+            || path.ends_with(".webm")
+            || services::snapchat_video_source(&parsed)
+            || services::reddit_gif_video_source(&parsed))
+        {
             return None;
         }
         parsed.set_fragment(None);
@@ -1416,27 +1420,34 @@ async fn reddit_embed_preview(client: &reqwest::Client, page: &str) -> Option<Co
     let embed = page.replacen("https://www.reddit.com/", "https://embed.reddit.com/", 1);
     let (body, _) = download(client, &embed, "text/html", 768 * 1024).await.ok()?;
     let entry = services::reddit_embed(page, std::str::from_utf8(&body).ok()?)?;
-    if let Some(clip) = entry.clip
-        && let Some(shape) = stream_aspect(client, &clip).await
+    if let Some(source) = entry.media
+        && let Some(picture) = post_picture(client, source).await
     {
-        let thumbnail = match entry.poster {
-            Some(source) => fetch_picture(client, &source).await.ok(),
-            None => None,
-        };
-        return Some(Content::Clip(ClipInfo {
-            clip,
-            title: entry.post.title,
-            channel: entry.post.channel,
-            thumbnail,
-            aspect: Some(shape),
-        }));
+        return Some(Content::Post(entry.post, Some(picture)));
     }
-    for source in entry.media.into_iter().chain(entry.poster) {
-        if let Some(picture) = post_picture(client, source).await {
-            return Some(Content::Post(entry.post, Some(picture)));
+    let picture = match entry.poster {
+        Some(source) => post_picture(client, source).await,
+        None => None,
+    };
+    if let Some(clip) = entry.clip {
+        let aspect = if clip.native_video() {
+            stream_aspect(client, &clip).await
+        } else {
+            picture
+                .as_ref()
+                .and_then(|(p, _)| aspect(f64::from(p.size[0]), f64::from(p.size[1])))
+        };
+        if !clip.native_video() || aspect.is_some() {
+            return Some(Content::Clip(ClipInfo {
+                clip,
+                title: entry.post.title,
+                channel: entry.post.channel,
+                thumbnail: picture.map(|(picture, _)| picture),
+                aspect,
+            }));
         }
     }
-    None
+    picture.map(|picture| Content::Post(entry.post, Some(picture)))
 }
 
 async fn reddit_post_picture(client: &reqwest::Client, page: &str, share_image: &str, feed: Option<&str>) -> Option<(Picture, String)> {
