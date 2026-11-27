@@ -141,6 +141,10 @@ impl Default for Settings {
 }
 
 impl Settings {
+    pub fn site_hidden(&self, host: &str) -> bool {
+        self.hidden_sites.iter().any(|site| in_domain(host, site))
+    }
+
     /// What the player starts with, in the viewer's `language`.
     pub fn player_options(&self, language: &str) -> PlayerOptions {
         let language = language_code(language).unwrap_or_else(|| "en".to_owned());
@@ -709,7 +713,7 @@ pub fn decide(s: &Settings, place: Place, from: Sender, url: &str) -> Option<(Ta
     }
     let target = target(url)?;
     let host = host(url)?;
-    if s.hidden_sites.iter().any(|d| in_domain(&host, d)) {
+    if s.site_hidden(&host) {
         return None;
     }
     let start = match crate::link_trust::classify(url) {

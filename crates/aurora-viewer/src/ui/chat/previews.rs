@@ -206,9 +206,6 @@ pub struct Previews {
     pub demo: bool,
     /// Set by the app every frame; no player without it.
     pub web: Option<WebEnv>,
-    /// A site whose previews the resident hid from a card's menu, for the
-    /// app to add to the settings.
-    pub hide_site: Option<String>,
     /// `AURORA_DEMO_PREVIEW_PLAY=card|window`: the first video card drawn
     /// plays there by itself.
     pub demo_play: Option<lp::Player>,
@@ -242,7 +239,6 @@ impl Default for Previews {
             place: Place::Im,
             demo: false,
             web: None,
-            hide_site: None,
             demo_play: None,
             open_settings: false,
             cache: HashMap::new(),
@@ -626,7 +622,11 @@ impl Previews {
             self.image_window = None;
         }
         let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
-        if self.playing.as_ref().is_some_and(|v| !v.window && pass > v.drawn + 2) {
+        if self
+            .playing
+            .as_ref()
+            .is_some_and(|v| (!v.window && pass > v.drawn + 2) || lp::host(&v.link).is_some_and(|host| self.settings.site_hidden(&host)))
+        {
             self.playing = None;
         }
         let Some(v) = self.playing.as_mut().filter(|v| v.window) else {
@@ -1479,7 +1479,6 @@ fn demo_video_volume() -> Option<u8> {
 /// Right click on a card: open, copy the link, hide this preview, hide the
 /// previews of its site.
 fn card_menu(resp: &egui::Response, p: &Palette, pv: &mut Previews, k: u64, url: &str) {
-    let site = lp::host(url).unwrap_or_default();
     crate::ui::menu::context_menu(resp, p, |ui| {
         if crate::ui::menu::item(ui, p, "external-link-filled", aurora_i18n::tr!("ui-chat-preview-open")) {
             super::open_web_link(ui.ctx(), url);
@@ -1491,16 +1490,7 @@ fn card_menu(resp: &egui::Response, p: &Palette, pv: &mut Previews, k: u64, url:
         if crate::ui::menu::item(ui, p, "eye-off", aurora_i18n::tr!("ui-chat-preview-hide")) {
             pv.hidden.insert(k);
         }
-        if !site.is_empty()
-            && crate::ui::menu::item(
-                ui,
-                p,
-                "eye-off",
-                &aurora_i18n::tr!("ui-chat-preview-hide-site", site = site.as_str()),
-            )
-        {
-            pv.hide_site = Some(site.clone());
-        }
+        super::site_preview_actions(ui, p, url);
     });
     super::line_menu::inline(resp);
 }

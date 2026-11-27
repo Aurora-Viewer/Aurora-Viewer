@@ -1169,6 +1169,12 @@ impl App {
             }
             CtxAction::AppLink(link) => self.run_app_link(link),
             CtxAction::OpenUrl(url) => self.open_web_link(url, None),
+            CtxAction::HideSitePreviews(site) => {
+                if !self.settings.link_previews.site_hidden(&site) {
+                    self.settings.link_previews.hidden_sites.push(site);
+                    self.settings.save();
+                }
+            }
             CtxAction::OpenUrlExternal(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::ExplicitExternal)),
             CtxAction::TeleportToPlaceConfirmed(region, pos) => {
                 self.teleport_to_location(region, pos);

@@ -605,6 +605,7 @@ pub enum CtxAction {
     /// Web link clicked in a text: opened at once when trusted, else after
     /// the external link warning.
     OpenUrl(String),
+    HideSitePreviews(String),
     /// An "Open in browser" button (LLWeb::loadURLExternal): the system
     /// browser whatever the browser choice, after the same link checks.
     OpenUrlExternal(String),

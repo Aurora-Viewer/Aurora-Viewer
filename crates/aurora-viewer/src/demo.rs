@@ -1771,7 +1771,9 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
             // (`link_preview::demo`)
             let preview_lines = std::env::var("AURORA_DEMO_CONV_PREVIEWS").ok().map(|mode| {
                 let with = |key: &str, url: &str| format!("{key} {url}");
-                if mode == "net" {
+                if mode == "site-controls" {
+                    vec![line(ago(1), name, friend, ChatKind::Im, "https://t.me/durov/43")]
+                } else if mode == "net" {
                     // real sites: a site to click on, a YouTube video
                     vec![
                         line(
