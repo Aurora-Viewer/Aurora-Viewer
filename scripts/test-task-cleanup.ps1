@@ -47,6 +47,31 @@ function Get-AgeHours([string]$Target) {
 
 function Test-Near($Hours, [double]$Expected) { $null -ne $Hours -and [math]::Abs($Hours - $Expected) -lt 0.1 }
 
+# Get-BranchPr -AllCommits the way end-task.ps1 and new-task.ps1 reach it:
+# common.ps1 dot-sourced by a script that was called, so its functions live
+# in that script's scope and not in the global one. A new runspace gives
+# that however this test was started: `pwsh -File` runs a script in the
+# global scope, where a function is found from anywhere. gh is a function
+# there that answers $Json: no GitHub call.
+function Get-FixtureBranchPr([string]$Repo, [string]$Branch, [string]$Json) {
+    $probe = [powershell]::Create()
+    try {
+        $script = {
+            param($Common, $Repo, $Branch, $Json)
+            & {
+                . $Common
+                function gh { $global:LASTEXITCODE = 0; $Json }
+                Get-BranchPr $Repo $Branch -AllCommits
+            }
+        }.ToString()
+        $found = $probe.AddScript($script).AddArgument("$PSScriptRoot\common.ps1").AddArgument($Repo).AddArgument($Branch).AddArgument($Json).Invoke()
+        if ($probe.Streams.Error.Count) { throw "Get-BranchPr -AllCommits of ${Branch}: $($probe.Streams.Error[0])" }
+        $found
+    } finally {
+        $probe.Dispose()
+    }
+}
+
 $scratch = Join-Path (Split-Path $PSScriptRoot -Parent) '.scratch'
 $fixture = Join-Path $scratch "cleanup-test-$([Guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $fixture -Force | Out-Null
@@ -108,9 +133,6 @@ try {
     Assert-CleanupTest ((Select-BranchPr $prs @('Upstream', 'Me')).number -eq 2) 'The newest of our PRs wins.'
     Assert-CleanupTest ($null -eq (Select-BranchPr $prs @('nobody'))) 'Only other contributors: no PR.'
     Assert-CleanupTest ($null -eq (Select-BranchPr ('[]' | ConvertFrom-Json) @('Me'))) 'No PR at all.'
-    # -AllCommits: a PR whose head lacks the local commits is skipped
-    Assert-CleanupTest ((Select-BranchPr $prs @('Upstream', 'Me') { param($Oid) $Oid -eq 'c1' }).number -eq 1) 'A head without the local commits is skipped.'
-    Assert-CleanupTest ($null -eq (Select-BranchPr $prs @('Me') { param($Oid) $false })) 'No head with the local commits: no PR.'
 
     # Where a branch was pushed, in a fixture repository whose git reads no
     # global or system setting (a pushDefault of the PC would change it).
@@ -180,6 +202,31 @@ try {
         Assert-CleanupTest (Test-CommitIn $repo $later $later) 'A commit is in itself.'
         Assert-CleanupTest (-not (Test-CommitIn $repo $later $head)) 'A local commit made after the head is not in it.'
         Assert-CleanupTest (-not (Test-CommitIn $repo $head ('0' * 40))) 'A head missing here holds nothing.'
+
+        # -AllCommits, whole: what end-task.ps1 asks before it deletes a
+        # task. The branch stops at $head; the default branch is at $later.
+        git -C $repo branch fix/merged $head
+        $listed = '[{{"number":9,"state":"OPEN","headRefOid":"{0}","headRepositoryOwner":{{"login":"someone"}}}},' +
+            '{{"number":7,"state":"MERGED","headRefOid":"{1}","headRepositoryOwner":{{"login":"Me"}}}}]'
+        $found = Get-FixtureBranchPr $repo 'fix/merged' ($listed -f $later, $head)
+        Assert-CleanupTest ($found.number -eq 7 -and $found.state -eq 'MERGED') "A merged PR whose head is the branch is found (got '$($found.number)')."
+        $found = Get-FixtureBranchPr $repo 'fix/merged' ($listed -f $head, $later)
+        Assert-CleanupTest ($found.number -eq 7) 'A head with commits after the branch still holds all of it.'
+        $found = Get-FixtureBranchPr $repo 'fix/merged' ($listed -f $head, ('0' * 40))
+        Assert-CleanupTest ($null -eq $found) 'A head missing here is not taken for the branch.'
+        # commits made since the merge are not in the PR: nothing to delete on
+        git -C $repo branch fix/commits-since $later
+        $found = Get-FixtureBranchPr $repo 'fix/commits-since' ($listed -f $later, $head)
+        Assert-CleanupTest ($null -eq $found) 'A PR merged before later commits of the branch is skipped.'
+        Assert-CleanupTest ($null -eq (Get-FixtureBranchPr $repo 'fix/no-such-branch' ($listed -f $later, $head))) 'No local branch: no PR.'
+
+        # the same choice, PR by PR: owner first, then the commits
+        $ours = '[{{"number":6,"state":"OPEN","headRefOid":"{0}","headRepositoryOwner":{{"login":"Me"}}}},' +
+            '{{"number":5,"state":"MERGED","headRefOid":"{1}","headRepositoryOwner":{{"login":"Upstream"}}}}]'
+        $ours = ($ours -f $head, $later) | ConvertFrom-Json
+        Assert-CleanupTest ((Select-BranchPr $ours @('Upstream', 'Me') $repo $later).number -eq 5) 'A head without the local commits is skipped.'
+        Assert-CleanupTest ($null -eq (Select-BranchPr $ours @('Me') $repo $later)) 'No head with the local commits: no PR.'
+        Assert-CleanupTest ((Select-BranchPr $ours @('Upstream', 'Me') $repo $head).number -eq 6) 'Every head holds an older branch: the newest PR.'
     } finally {
         $env:GIT_CONFIG_GLOBAL = $savedGlobal; $env:GIT_CONFIG_NOSYSTEM = $savedNoSystem
     }
