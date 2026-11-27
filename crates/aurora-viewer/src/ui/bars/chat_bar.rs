@@ -681,8 +681,10 @@ mod tests {
         let favorites = crate::ui::bars::favorites::View::default();
         let mut emoji = crate::ui::emoji::Emoji::load();
         let mut width = 380.0;
+        // what the frame painted: each shape's clip and its bounds
+        let painted = std::cell::RefCell::new(Vec::new());
         let mut frame = |events, chat: &mut crate::ui::chat::ChatUi| {
-            ctx.run_ui(
+            let out = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1536.0, 864.0))),
                     events,
@@ -735,9 +737,12 @@ mod tests {
                     );
                     chrome::show_chat(ui, &p, &icons, &mut panels, chat, &gestures, Some(&mut emoji), &row, &mut width);
                 },
-            )
-            .textures_delta
-            .clear();
+            );
+            *painted.borrow_mut() = out
+                .shapes
+                .iter()
+                .map(|shape| (shape.clip_rect, shape.shape.visual_bounding_rect()))
+                .collect();
         };
         let rect = |id: egui::Id, what: &str| ctx.read_response(id).unwrap_or_else(|| panic!("{what}")).rect;
         let field = || rect(crate::ui::chat::bar_input_id(), "the chat field");
@@ -788,6 +793,22 @@ mod tests {
             "the row is under the field: {first:?}, {typed:?}"
         );
         assert!(first.bottom() > bar.bottom(), "the island hangs under the bar: {first:?}, {bar:?}");
+        // the island beside the chat's is still cut at the bar's foot, its
+        // shadow with it: the hung island alone is drawn under the bar
+        let under: Vec<_> = painted
+            .borrow()
+            .iter()
+            .filter(|(clip, bounds)| bounds.contains(beside.center()) && clip.intersect(*bounds).bottom() > bar.bottom() + 0.5)
+            .copied()
+            .collect();
+        assert!(under.is_empty(), "nothing of the button's island shows under the bar: {under:?}");
+        assert!(
+            painted
+                .borrow()
+                .iter()
+                .any(|(clip, bounds)| bounds.contains(first.center()) && clip.contains(first.center())),
+            "the hung island is painted behind the row"
+        );
         // under the bar, the pointer is still on the interface (an island's
         // area; the world is the background's)
         let island = |pos| ctx.layer_id_at(pos).is_some_and(|layer| layer.order == egui::Order::Middle);
