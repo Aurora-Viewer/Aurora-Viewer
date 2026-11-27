@@ -823,7 +823,9 @@ queue keeps them off each other's PRs.
   for it without handing back, review, post the comment yourself, and
   offer your human the merge of a ✅ PR as a question they answer (rule 5),
   then `merge-pr.ps1`. Never end a turn on "I will review it once CI is
-  green": release the claim instead.
+  green": release the claim instead. A PR in conflict with `main` gets no
+  CI (GitHub cannot build its merge): ask its author to merge `main`
+  first, without approving or waiting for CI.
 - **Approved PRs**: the queue leaves out a PR you approved, so nobody else
   merges it. `-ToMerge` lists yours that nobody queued: offer their merge
   with the next reviews. A review names the head it read (``Reviewed head:

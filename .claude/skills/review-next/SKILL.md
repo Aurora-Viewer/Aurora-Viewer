@@ -19,8 +19,15 @@ alone, with no `cd` or `;` around it.
 **Never end your turn while a review you started waits for CI.** A turn that
 ends "I'll review it once CI is green" leaves the review hanging: nothing
 wakes you reliably. Wait in the turn (step 4), or release the claim (step 8).
-The only waits that end a turn are a question to your human: the CI
-approval (step 3), a decision (step 6), the merge (step 7).
+
+**Ask your human mid-turn, once.** What only they can say before the reviews
+go on (the CI approvals, the merge of the PRs of step 1, a condition an
+earlier ✅ left to them) goes in one question dialog that keeps the turn
+going (Claude Code: `AskUserQuestion`, one question per subject, up to
+four), asked when step 3 has gathered it all, never in the end-of-turn
+box, which ends the turn. The end-of-turn question is only for what comes
+after the reviews: the merge of the PRs reviewed ✅ in this turn and the
+decisions of step 6.
 
 1. **Your approved PRs first**:
 
@@ -35,10 +42,16 @@ approval (step 3), a decision (step 6), the merge (step 7).
      a re-review: take it through steps 3 to 6, reading what changed since
      the head you reviewed (for a merge of main, that it brings nothing but
      main).
-   - `conflict: true`: ask the author to merge main, in a plain comment
-     with no review heading (a `## Changes requested` would leave the PR
-     waiting on them for good, since a merge of main is no answer); it comes
-     back here with a new head, to re-review.
+   - A verdict line with a condition (`✅ ready to merge once …`): what it
+     waits for is your human's, in the question of step 3 ("Have you done
+     the check …?"). Not done yet: it stays approved.
+   - `conflict: true`: no CI can test it against `main` (GitHub cannot
+     build the merge), so ask the author to merge main, in a plain comment
+     with no review heading that names the conflicting files (`git
+     merge-tree --write-tree --name-only origin/main <head>`). A `## Changes
+     requested` would leave the PR waiting on them for good, since a merge
+     of main is no answer. It comes back here with a new head, to
+     re-review.
    - `ci`: `Approval`, it joins the approval question of step 3, then the
      wait of step 4; `Run` or `None`, wait (step 4); `Fail`, read the failing job (step 4) and ask the author
      to fix it.
@@ -52,8 +65,10 @@ approval (step 3), a decision (step 6), the merge (step 7).
    pwsh ./scripts/review-queue.ps1 -Claim <n>
    ```
 
-   Take the first entry (one with `claimed_by_you: true` is a review you
-   already started: finish it first), or as many as the human asked for,
+   Take the first entry (one with `claimed_by_you: true` is a review your
+   human's account started: finish it first, unless another of their
+   sessions is still on it, a `../work/review-<n>` worktree or their word
+   says so; the claim cannot tell their sessions apart), or as many as the human asked for,
    in order. Claim each before reading anything of it. A refused claim
    (another maintainer holds it): take the next entry. Never remove another
    maintainer's assignment, never take a PR the queue left out. An empty
@@ -65,6 +80,14 @@ approval (step 3), a decision (step 6), the merge (step 7).
    - **Labels**: set its type and area labels if they are missing
      (`gh pr edit <n> --add-label fix --add-label ui`); outside contributors
      cannot.
+   - **Conflict with main** (note `conflict with main`): its CI cannot run
+     against the current `main`, and a green run is an older merge's. Do not
+     ask for its CI approval, do not wait for CI, do not read the code: post
+     a `## Changes requested` (step 6) that names the conflicting files
+     (`git merge-tree --write-tree --name-only origin/main <head>`) and asks
+     the author to merge (or rebase onto) `main` and to say so in a comment
+     when it is pushed (a merge of main alone does not bring the PR back to
+     the queue). That comment is the review: the claim ends with it.
    - **Head and files**, not the diff yet (`gh pr view` stops at 100 files):
 
      ```
@@ -86,14 +109,12 @@ approval (step 3), a decision (step 6), the merge (step 7).
 
      `gh pr checks` can show only the description check as passed while
      the real CI never ran: always list the runs of the head commit. Ask in
-     the end-of-turn question with buttons ("Approve the CI of #3475 and
-     #4449?": "Approve them" / "Only #3475"), and stop there: the one
-     wait of the review that ends a turn before the code. Meanwhile, PRs
-     whose CI is already green go on to step 5 in the same turn. On their
-     yes, approve each run (`gh api -X POST
-     repos/Aurora-Viewer/Aurora-Viewer/actions/runs/<id>/approve`) and go
-     straight to step 4 in that turn. If your tool refuses the call, give
-     your human the commands.
+     the mid-turn question dialog (above), with the merges of step 1 and
+     their conditions ("Approve the CI of #3475 and #4449?": "Approve them"
+     / "Not now"). On their yes, approve each run (`gh api -X POST
+     repos/Aurora-Viewer/Aurora-Viewer/actions/runs/<id>/approve`) and go on
+     to step 4; on a no, release those claims (step 8). If your tool
+     refuses the call, give your human the commands.
    - `last reviewed by <someone>`: read their review and the author's
      answers first; a re-review checks every point of it.
 
@@ -145,9 +166,10 @@ approval (step 3), a decision (step 6), the merge (step 7).
    ⚠️ verdict and the options, then ask the human in the end-of-turn
    question; post their decision as a new comment once they answer.
 
-7. **Offer the merge**: every PR you reviewed ✅ in this turn, and those of
-   step 1 left for it, go in one end-of-turn question with buttons ("Merge
-   #4267 and #2297?": "Merge them" / "Not yet"). Merging someone else's PR
+7. **Offer the merge**: the PRs of step 1 left for it are in the question
+   dialog of step 3; every PR you reviewed ✅ in this turn goes in one
+   end-of-turn question with buttons ("Merge #4267 and #2297?": "Merge
+   them" / "Not yet"). Merging someone else's PR
    needs your human's yes (AGENTS.md section 1, rule 5): never merge
    without it, and never only mention it in prose. On their yes, for each
    PR, first read its head again: a head other than the one you reviewed
@@ -160,7 +182,9 @@ approval (step 3), a decision (step 6), the merge (step 7).
    pwsh ./scripts/merge-pr.ps1 -Pr <n>
    ```
 
-   The script waits for the outcome:
+   The script waits for the outcome, which can take a while: run it in the
+   background and go on with the reviews, but read its outcome before the
+   turn ends.
    - **Merged**: check that the issues it closes are closed.
    - **Left the queue**: `gh run view <id> --log-failed`. A failure of the
      PR's code combined with `main`: a `## Changes requested` comment to its
