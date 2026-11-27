@@ -3822,6 +3822,7 @@ impl App {
         self.photo_reel_end();
         if !self.demo {
             self.settings.release_hover_account();
+            self.settings.release_autoresponse_account();
         }
         // a parcel's saved preset goes with the session
         self.panels.time_of_day = self.settings.time_of_day;
@@ -4675,6 +4676,9 @@ impl App {
                         root,
                     );
                     self.settings.select_hover_account(l.agent_id);
+                    self.settings.select_autoresponse_account(
+                        crate::settings::account_dir(&l.agent_id).join(crate::settings::autoresponse_account::FILE),
+                    );
                     self.settings.save();
                 }
                 self.bridge_runtime = Default::default();

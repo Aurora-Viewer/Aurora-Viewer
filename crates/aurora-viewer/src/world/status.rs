@@ -52,6 +52,8 @@ pub struct StatusModes {
 }
 
 /// Texts and options (DoNotDisturbModeResponse, FSAutorespondModeResponse...).
+/// Most are per account, like the Legacy Viewer's; which ones and where they
+/// are kept: settings/autoresponse_account.rs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AutoResponse {
