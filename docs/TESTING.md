@@ -9805,11 +9805,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   renderer, its drop panics as wgpu's queue does when its last wait fails
   with another error than "lost" ("Unexpected error while waiting for queue
   idle on drop"). The guarded drop takes it: the log says
-  `GPU recovery: wgpu failed dropping the lost renderer` and
-  `GPU device lost: wgpu failed while the lost renderer was dropped, left
-  to the process`, then `GPU recovery: new window and renderer`, and the
-  session goes on with the "The graphics card was reset" notice. No crash
-  report and no "Rust panic". Without it, that panic ended the process.
+  `GPU recovery: wgpu failed dropping the lost renderer, taken` (once,
+  with where it panicked), then `GPU recovery: new window and renderer`,
+  and the session goes on with the "The graphics card was reset" notice.
+  No crash report and no "Rust panic". Without it, that panic ended the
+  process. With `AURORA_DEMO_GPU_STALL=<frame>:<seconds>` just before the
+  loss (`AURORA_DEMO_GPU_STALL=400:10 AURORA_DEMO_GPU_LOST=401`), the
+  render thread is still held when the recovery drops the renderer: the
+  log says `render thread still in the GPU after 3s: left behind`, the new
+  renderer comes, and when the hold ends `render thread back from the GPU
+  after it was left behind: its backend drops now` and the same guarded
+  line follow; the session goes on, no crash report, no abort.
 - **`AURORA_DEMO_GPU_LOST=<frame>`**, with `AURORA_DEMO=1`: the GPU device is
   taken as lost at that frame, as the device-lost callback does after a
   driver reset (the log says `GPU device lost (Unknown): AURORA_DEMO_GPU_LOST
