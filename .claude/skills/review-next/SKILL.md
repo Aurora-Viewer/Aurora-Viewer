@@ -70,8 +70,11 @@ decisions of step 6.
 
    The lines `waiting on a decision (<your login>'s review)`: read what
    your review left open and put it in the dialog of step 2 (a grid test
-   to run now, a choice to make). Their answer becomes a new comment, and
-   the ✅ or `## Changes requested` that follows.
+   to run now, a choice to make). Their answer is posted on the PR at once:
+   a `## Changes requested` when it asks the author for anything (the
+   decision, then every point still open from your review), a `## Review`
+   ✅ when nothing is left for the author (after the test it waited for,
+   if any). A check not done yet: nothing to post, it stays waiting.
 
 2. **Read the queue, offer a selection, claim what your human picks**:
 
@@ -84,9 +87,15 @@ decisions of step 6.
    Code: `AskUserQuestion`, several choices allowed, one option per PR, up
    to four): number, author, title, kind and notes (`claimed by you`,
    `CI waits for Approve and run`, `conflict with main`, a crash issue),
-   the first marked as recommended. Their own answer can name others
+   the first marked as recommended. Say in each option what taking it
+   leads to: a full review, or only a request to merge `main` (a conflict,
+   step 3). Their own answer can name others
    further down the queue. Put the questions of step 1 (merges, conditions)
-   in the same dialog. An entry with `claimed_by_you: true` is a review
+   in the same dialog. More subjects than the dialog holds (four
+   questions): one question each for the selection and for every choice,
+   and the checks your human was to run (step 1's conditions and hand
+   tests) together in one question with several answers allowed ("Which of
+   these checks have you done?"). An entry with `claimed_by_you: true` is a review
    your human's account started: say so in its option, and whether another
    of their sessions may still be on it (a `../work/review-<n>` worktree),
    since the claim cannot tell their sessions apart. An empty queue: say
