@@ -139,6 +139,7 @@ mod photo_isolate;
 mod photo_reel;
 mod phototools;
 mod physics_editor;
+mod picture_viewer;
 mod plate_click;
 mod pointing;
 mod pose_stand;
@@ -993,6 +994,8 @@ pub struct App {
     group_titles_ui: ui::group_titles::GroupTitlesUi,
     /// "Bumps, pushes & hits" (Help menu).
     bumps_ui: ui::bumps::BumpsUi,
+    /// The Picture viewer (World menu; `app/picture_viewer.rs`).
+    picture_viewer: picture_viewer::PictureViewer,
     /// The toolbar's Voice controls window (`ui/voice_controls.rs`).
     voice_controls_ui: ui::voice_controls::VoiceControlsUi,
     /// The Omnifilter Rules Editor (`ui/omnifilter.rs`).
@@ -2306,6 +2309,7 @@ impl App {
             blacklist_ui: Default::default(),
             group_titles_ui: Default::default(),
             bumps_ui: Default::default(),
+            picture_viewer: Default::default(),
             voice_controls_ui: Default::default(),
             omnifilter_ui: Default::default(),
             grid_status: Default::default(),
@@ -21724,6 +21728,7 @@ impl App {
                 self.blacklist_window(&ctx, &p);
                 self.group_titles_window(&ctx, &p);
                 self.world_look_window(&ctx, &p);
+                self.picture_viewer_window(&ctx, &p);
                 self.area_search_window(&ctx, &p);
                 self.sound_explorer_window(&ctx, &p);
                 self.animation_explorer_window(&ctx, &p);

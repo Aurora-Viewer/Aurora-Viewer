@@ -124,6 +124,7 @@ pub(super) fn category(command: &str) -> Category {
         | "phototools_view"
         | "360capture"
         | "director"
+        | "picture_viewer"
         | "second_camera"
         | "inventory_dual"
         | "build_focus"

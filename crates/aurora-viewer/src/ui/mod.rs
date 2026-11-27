@@ -121,6 +121,7 @@ pub mod perf;
 pub mod photo_reel;
 pub mod phototools;
 pub mod physics;
+pub mod picture_viewer;
 pub mod place_card;
 pub mod place_details;
 pub mod places;
@@ -200,6 +201,8 @@ pub struct Panels {
     pub snapshot_pano: bool,
     /// The World filters window (`ui/world_look.rs`).
     pub world_look: bool,
+    /// The Picture viewer (`ui/picture_viewer.rs`).
+    pub picture_viewer: bool,
     pub people: bool,
     pub minimap: bool,
     /// World map (Ctrl+M).
@@ -323,6 +326,7 @@ impl Panels {
             snapshot: false,
             snapshot_pano: false,
             world_look: false,
+            picture_viewer: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,

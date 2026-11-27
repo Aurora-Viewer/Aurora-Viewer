@@ -1778,6 +1778,7 @@ impl App {
         }
         self.photo_demo(renderer);
         self.world_look_demo();
+        self.picture_viewer_demo();
         self.photo_reel_demo(renderer);
         self.photo_luts_update();
         self.photo_quality(renderer);
@@ -2152,7 +2153,12 @@ impl App {
     /// the table chosen and said.
     fn photo_luts_update(&mut self) {
         // (the world's filters read a table of the library too)
-        if !(self.panels.snapshot || self.panels.director || self.panels.world_look || self.settings.world_look.on) {
+        if !(self.panels.snapshot
+            || self.panels.director
+            || self.panels.world_look
+            || self.panels.picture_viewer
+            || self.settings.world_look.on)
+        {
             return;
         }
         self.photo_luts().poll();
@@ -2169,6 +2175,7 @@ impl App {
         let Ok(result) = rx.try_recv() else { return };
         self.snapshots.lut_import = None;
         let to_world = std::mem::take(&mut self.snapshots.world_ui.importing);
+        let to_picture = std::mem::take(&mut self.picture_viewer.importing);
         let Some(results) = result else { return };
         // the tables kept, the first one chosen; the failures said together
         let mut first = None;
@@ -2201,6 +2208,15 @@ impl App {
                     &id,
                 );
                 world.on = true;
+            } else if to_picture {
+                // the Picture viewer's own looks (app/picture_viewer.rs)
+                let pv = &mut self.picture_viewer;
+                let mut stack = crate::ui::looks_editor::Stack {
+                    looks: &mut pv.looks,
+                    look_settings: &mut pv.look_settings,
+                    favorites: &mut self.settings.snapshot.look_favorites,
+                };
+                pv.ui.looks.pick(&mut stack, &id);
             } else {
                 let editor = match self.snapshots.lut_import_director {
                     true => &mut self.director.looks,

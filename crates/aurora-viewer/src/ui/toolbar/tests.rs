@@ -1933,12 +1933,12 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
     // every command but bar_account and bar_system, which stay out of the catalogue
-    assert_eq!(all.len(), 129);
+    assert_eq!(all.len(), 130);
     assert!(
         !all.iter()
             .any(|button| matches!(button.command.as_str(), "bar_account" | "bar_system"))
     );
-    assert_eq!(COMMANDS.len(), 131);
+    assert_eq!(COMMANDS.len(), 132);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();

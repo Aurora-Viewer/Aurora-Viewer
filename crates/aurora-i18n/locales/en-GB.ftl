@@ -478,6 +478,10 @@ photo-looks-color = Colour
 
 world-look-help = Filters and LUTs on the 3D view all the time, apart from the photos' ones. The interface is never coloured.
 
+picture-viewer-help = Open a picture of your computer, crop, turn and resize it, set its light and colour, add the Photo window's filters and LUTs, and see it as a card in 3D with a relief. Saving always writes a new file unless you choose to replace the original.
+
+picture-viewer-light = Light and colour
+
 photo-look-a-bleach-bypass-tip = Washed-out colours and hard contrast, as a film that skipped its bleach
 
 photo-look-a-instant-tip = Soft warm colours, raised blacks, darker corners and a white border

@@ -1674,6 +1674,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::command(ui, p, "toolbar-command-director").item("movie", aurora_i18n::tr!("toolbar-command-director")) {
             super::widgets::toggle_floater(ui.ctx(), super::director::WINDOW, &mut panels.director);
         }
+        // Aurora's own: a picture of the computer viewed, changed, turned in 3D
+        if menu::item(ui, p, "photo-edit", aurora_i18n::tr!("picture-viewer-title")) {
+            super::widgets::toggle_floater(ui.ctx(), super::picture_viewer::WINDOW, &mut panels.picture_viewer);
+        }
         // Aurora's own: our avatar seen by a camera of its own
         if menu::command(ui, p, "second-camera-title").check(
             "device-cctv-filled",
@@ -3058,6 +3062,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "graphics_preferences" => return BarAction::GraphicsPreferences,
         // Aurora's own: the Director's window and its timeline
         "director" => toggle(super::director::WINDOW, &mut panels.director),
+        // Aurora's own: the Picture viewer
+        "picture_viewer" => toggle(super::picture_viewer::WINDOW, &mut panels.picture_viewer),
         // Aurora's own: the second camera's window
         "second_camera" => toggle(super::second_camera::WINDOW, &mut panels.second_camera),
         // Floater.ToggleOrBringToFront settings_debug
@@ -3194,6 +3200,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "phototools" => panels.phototools,
         "quickprefs" => panels.quick_prefs,
         "director" => panels.director,
+        "picture_viewer" => panels.picture_viewer,
         "second_camera" => panels.second_camera,
         "settings_debug" => panels.debug_settings,
         "preferences" => panels.settings,
@@ -5150,6 +5157,7 @@ mod tests {
             ("phototools", super::super::phototools::WINDOW, |p| p.phototools),
             ("quickprefs", super::super::quick_prefs::WINDOW, |p| p.quick_prefs),
             ("director", super::super::director::WINDOW, |p| p.director),
+            ("picture_viewer", super::super::picture_viewer::WINDOW, |p| p.picture_viewer),
             ("second_camera", super::super::second_camera::WINDOW, |p| p.second_camera),
             ("settings_debug", super::super::debug_settings::WINDOW, |p| p.debug_settings),
             ("statistics", "perf", |p| p.perf),

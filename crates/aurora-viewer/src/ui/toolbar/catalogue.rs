@@ -141,6 +141,8 @@ pub const COMMANDS: &[Command] = commands![
     "movement_enhancer", "steering-wheel-filled", "movement-title", true;
     // Aurora's own: the Director, a camera track to film with
     "director", "movie", "toolbar-command-director", true;
+    // Aurora's own: a picture of the computer viewed, changed, turned in 3D
+    "picture_viewer", "photo-edit", "picture-viewer-title", true;
     // Aurora's own: our avatar seen by a camera of its own
     "second_camera", "device-cctv-filled", "second-camera-title", true;
     // Aurora's own: the viewer steps back for a game (app/gaming_mode.rs)

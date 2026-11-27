@@ -104,6 +104,7 @@ mod outside;
 mod overlay_hooks;
 mod own_motion;
 mod physics_editor;
+mod picture;
 mod pose_stand;
 mod proxy;
 mod raw_mouse;
