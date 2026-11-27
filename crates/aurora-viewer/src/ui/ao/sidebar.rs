@@ -34,18 +34,8 @@ pub(super) fn show(
         return;
     }
     let total: usize = Category::ALL.iter().map(|c| c.states().count()).sum();
-    let mut chosen = usize::from(state.essentials);
-    if widgets::count_tabs(
-        ui,
-        p,
-        "ao_essentials",
-        &mut chosen,
-        &[
-            (aurora_i18n::tr!("ao-all-slots"), total),
-            (aurora_i18n::tr!("ao-essentials"), page::ESSENTIALS.len()),
-        ],
-    ) {
-        state.essentials = chosen == 1;
+    if let Some(essentials) = essentials_switch(ui, p, state.essentials, total) {
+        state.essentials = essentials;
         if state.essentials && !page::ESSENTIALS.contains(&state.state) {
             let first = Category::of(state.state)
                 .states()
@@ -81,7 +71,9 @@ pub(super) fn show(
             state.tab = 0;
         }
     }
-    ui.add_space(4.0);
+    // Movement and Stands and turns at the column's foot, as the board has it
+    let foot = GROUP_ROW + ui.spacing().interact_size.y + 3.0 * ui.spacing().item_spacing.y;
+    ui.add_space((ui.available_height() - foot).max(4.0));
     let on = state.tab == 1;
     let tag = aurora_i18n::tr!("ao-experimental");
     if group_row(
@@ -96,7 +88,6 @@ pub(super) fn show(
     {
         state.tab = 1;
     }
-    ui.add_space(4.0);
     // Stands and turns pause for the session only (AOEngine::setOverrideStands
     // is not saved either).
     toggle(ui, p, "ao-stands", &mut runtime.stands);
@@ -108,7 +99,7 @@ fn set_card(ui: &mut egui::Ui, p: &Palette, catalog: &inventory::Catalog, set: O
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), CARD), egui::Sense::click());
     let radius = ui.visuals().window_corner_radius;
     if response.hovered() || state.sets_open {
-        ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.6));
+        ui.painter().rect_filled(rect, radius, super::shades(p).slot);
     }
     let inner = rect.shrink2(Vec2::new(10.0, 7.0));
     let painter = ui.painter();
@@ -156,36 +147,94 @@ fn set_card(ui: &mut egui::Ui, p: &Palette, catalog: &inventory::Catalog, set: O
 /// right. The chosen one stands out.
 fn group_row(ui: &mut egui::Ui, p: &Palette, name: &str, line: &str, count: &str, on: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), GROUP_ROW), egui::Sense::click());
-    let radius = ui.visuals().widgets.inactive.corner_radius;
+    let radius = ui.visuals().window_corner_radius;
+    // the chosen group in the accent, as the board shows it
     if on {
-        ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.75));
+        ui.painter().rect_filled(rect, radius, p.violet);
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.4));
+        ui.painter().rect_filled(rect, radius, super::shades(p).slot);
     }
+    let (ink, quiet) = if on {
+        (p.on_accent, p.on_accent.gamma_multiply(0.85))
+    } else {
+        (p.ink, p.muted)
+    };
     let inner = rect.shrink2(Vec2::new(10.0, 0.0));
     let count_galley = ui
         .painter()
-        .layout_no_wrap(count.to_owned(), egui::FontId::proportional(11.5), p.muted);
+        .layout_no_wrap(count.to_owned(), egui::FontId::proportional(11.5), quiet);
     let room = inner.width() - count_galley.size().x - 8.0;
     widgets::paint_row_text(
         ui.painter(),
         count_galley.clone(),
         inner.right() - count_galley.size().x,
         inner.center().y,
-        if on { p.ink } else { p.muted },
+        quiet,
     );
     let title = egui::FontId::new(13.5, super::super::fonts::semibold(ui.ctx()));
-    widgets::paint_elided(ui, name, egui::pos2(inner.left(), inner.center().y - 8.0), room, title, p.ink);
+    widgets::paint_elided(ui, name, egui::pos2(inner.left(), inner.center().y - 8.0), room, title, ink);
     widgets::paint_elided(
         ui,
         line,
         egui::pos2(inner.left(), inner.center().y + 9.0),
         room,
-        egui::FontId::proportional(11.5),
-        p.muted,
+        egui::FontId::proportional(11.0),
+        quiet,
     );
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, name));
     response
+}
+
+/// All slots or Essentials: two halves on an inset, the chosen one on a
+/// pill that slides, raised for all of them and in the accent for the
+/// essentials. Returns the choice when it changes.
+fn essentials_switch(ui: &mut egui::Ui, p: &Palette, essentials: bool, total: usize) -> Option<bool> {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 38.0), egui::Sense::hover());
+    let radius = ui.visuals().window_corner_radius;
+    ui.painter().rect_filled(rect, radius, p.field);
+    let inner = rect.shrink(3.0);
+    let half = inner.width() / 2.0;
+    let at = ui.ctx().animate_bool(ui.scope_id().with("ao_essentials_pill"), essentials);
+    let pill = egui::Rect::from_min_size(egui::pos2(inner.left() + at * half, inner.top()), Vec2::new(half, inner.height()));
+    let pill_fill = p.raised.lerp_to_gamma(p.violet, at);
+    ui.painter()
+        .rect_filled(pill, ui.visuals().widgets.inactive.corner_radius, pill_fill);
+    let mut chosen = None;
+    for (i, (label, count)) in [
+        (aurora_i18n::tr!("ao-all-slots"), total),
+        (aurora_i18n::tr!("ao-essentials"), page::ESSENTIALS.len()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let side = egui::Rect::from_min_size(
+            egui::pos2(inner.left() + i as f32 * half, inner.top()),
+            Vec2::new(half, inner.height()),
+        );
+        let response = ui.interact(side, ui.scope_id().with(("ao_essentials", i)), egui::Sense::click());
+        let on = (i == 1) == essentials;
+        let ink = match (on, i) {
+            (true, 1) => p.on_accent,
+            (true, _) => p.ink,
+            (false, _) if response.hovered() => p.ink,
+            _ => p.muted,
+        };
+        let font = egui::FontId::new(12.5, super::super::fonts::semibold(ui.ctx()));
+        let name = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
+        let figure = ui
+            .painter()
+            .layout_no_wrap(count.to_string(), egui::FontId::proportional(11.0), ink.gamma_multiply(0.75));
+        let width = name.size().x + 6.0 + figure.size().x;
+        let x = side.center().x - width / 2.0;
+        let name_w = name.size().x;
+        widgets::paint_row_text(ui.painter(), name, x, side.center().y, ink);
+        widgets::paint_row_text(ui.painter(), figure, x + name_w + 6.0, side.center().y, ink.gamma_multiply(0.75));
+        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, label));
+        if response.clicked() && !on {
+            chosen = Some(i == 1);
+        }
+    }
+    chosen
 }
 
 /// "Your sets": every set with its ⋯ menu, the open set's options, and the
@@ -311,9 +360,9 @@ fn set_row(
                 let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), egui::Sense::click());
                 let radius = ui.visuals().widgets.inactive.corner_radius;
                 if active {
-                    ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.75));
+                    ui.painter().rect_filled(rect, radius, super::shades(p).item);
                 } else if response.hovered() {
-                    ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.4));
+                    ui.painter().rect_filled(rect, radius, super::shades(p).slot);
                 }
                 let inner = rect.shrink2(Vec2::new(8.0, 0.0));
                 let title = egui::FontId::new(13.0, super::super::fonts::semibold(ui.ctx()));

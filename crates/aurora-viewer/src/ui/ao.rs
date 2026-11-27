@@ -191,6 +191,42 @@ impl AoUi {
     }
 }
 
+/// The window's shades, as its approved board draws them: steps between the
+/// theme's bar and its raised face, its muted ink and its violet, so that
+/// any skin keeps the same relations.
+#[derive(Clone, Copy)]
+pub(super) struct Shades {
+    /// The middle column, the summary and the take-turns card.
+    pub card: egui::Color32,
+    /// A slot that holds animations; a group row under the pointer.
+    pub slot: egui::Color32,
+    /// The open slot and the summary's tiles.
+    pub open: egui::Color32,
+    /// A tile under the pointer.
+    pub open_hot: egui::Color32,
+    /// An entry's card and the order button.
+    pub item: egui::Color32,
+    pub item_hot: egui::Color32,
+    /// A stack's card.
+    pub stack: egui::Color32,
+    /// The open slot's and the previewed entry's outline.
+    pub edge: egui::Color32,
+}
+
+pub(super) fn shades(p: &Palette) -> Shades {
+    let mix = |t: f32| p.bar.lerp_to_gamma(p.raised, t);
+    Shades {
+        card: mix(0.1),
+        slot: mix(0.26),
+        open: mix(0.4),
+        open_hot: mix(0.7),
+        item: mix(0.6),
+        item_hot: mix(0.78),
+        stack: p.bar.lerp_to_gamma(p.violet, 0.17),
+        edge: p.bar.lerp_to_gamma(p.muted, 0.38),
+    }
+}
+
 fn push(out: &mut Vec<Action>, state: &mut AoUi, result: Result<Mutation, String>) {
     match result {
         Ok(change) => out.push(Action::Edit(change, None)),
@@ -292,8 +328,10 @@ pub fn show(
         let side = egui::Rect::from_min_size(full.min, Vec2::new(SIDEBAR, full.height()));
         let right = egui::Rect::from_min_max(egui::pos2(full.right() - preview_w, full.top()), full.max);
         let middle = egui::Rect::from_min_max(egui::pos2(side.right(), full.top()), egui::pos2(right.left(), full.bottom()));
-        // light materials over the window's glass, not opaque panels
-        ui.painter().rect_filled(side, egui::CornerRadius::ZERO, p.bar.gamma_multiply(0.35));
+        // the board's columns: the darker bar, then the card shade
+        let shade = shades(p);
+        ui.painter().rect_filled(side, egui::CornerRadius::ZERO, p.bar);
+        ui.painter().rect_filled(middle, egui::CornerRadius::ZERO, shade.card);
         column(ui, "ao_sidebar", side, egui::Margin::symmetric(10, 12), |ui| {
             sidebar::show(ui, p, inv, catalog, runtime, account, state, &mut out);
         });

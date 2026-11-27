@@ -167,6 +167,29 @@ pub(super) fn inventory_drop(
     }
 }
 
+/// The order menu's button: the order's icon in the accent, its name, and a
+/// chevron, on the entries' shade.
+fn order_button(ui: &mut egui::Ui, p: &Palette, order: Order, width: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 30.0), egui::Sense::click());
+    let shade = super::shades(p);
+    let fill = if response.hovered() { shade.item_hot } else { shade.item };
+    ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, fill);
+    let y = rect.center().y;
+    widgets::paint_glyph(ui.painter(), order.icon(), egui::pos2(rect.left() + 17.0, y), 14.0, p.violet_pale);
+    let font = egui::FontId::new(12.5, super::super::fonts::semibold(ui.ctx()));
+    widgets::paint_elided(
+        ui,
+        order.label(),
+        egui::pos2(rect.left() + 30.0, y),
+        rect.width() - 54.0,
+        font,
+        p.ink,
+    );
+    widgets::paint_glyph(ui.painter(), "chevron-down", egui::pos2(rect.right() - 15.0, y), 14.0, p.muted);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, order.label()));
+    response
+}
+
 /// A double click, or a click with Shift, plays an entry in the world; a
 /// click alone previews it.
 fn in_world(ui: &egui::Ui, response: &egui::Response) -> bool {
@@ -337,7 +360,7 @@ impl Editor<'_> {
         let p = self.p;
         let (next, now) = self.next_name(c, track);
         egui::Frame::new()
-            .fill(p.raised.gamma_multiply(0.32))
+            .fill(super::shades(p).card)
             .corner_radius(ui.visuals().widgets.inactive.corner_radius)
             .inner_margin(egui::Margin::symmetric(12, 8))
             .show(ui, |ui| {
@@ -349,7 +372,7 @@ impl Editor<'_> {
                         ui.painter()
                             .circle_stroke(ring.center(), 15.0, egui::Stroke::new(2.5, tint.gamma_multiply(0.85)));
                         widgets::paint_glyph(ui.painter(), order.icon(), ring.center(), 15.0, tint);
-                        let right = 128.0;
+                        let right = 140.0;
                         let middle = (ui.available_width() - right - ui.spacing().item_spacing.x).max(120.0);
                         ui.vertical(|ui| {
                             ui.set_width(middle);
@@ -394,8 +417,7 @@ impl Editor<'_> {
                         ui.vertical(|ui| {
                             ui.set_width(right);
                             ui.spacing_mut().item_spacing.y = 2.0;
-                            let face = widgets::action_menu_button(ui, p, order.icon(), order.label(), false, 28.0)
-                                .on_hover_text(aurora_i18n::tr!("ao-order-tip"));
+                            let face = order_button(ui, p, order, right).on_hover_text(aurora_i18n::tr!("ao-order-tip"));
                             super::super::menu::dropdown(&face, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                                 for choice in [Order::Sequence, Order::Shuffle, Order::Manual] {
                                     if super::super::menu::item_detail(ui, p, choice.icon(), choice.label(), choice.line())
@@ -626,11 +648,23 @@ impl Editor<'_> {
         };
         let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), sense);
         let radius = ui.visuals().widgets.inactive.corner_radius;
-        if previewed {
-            ui.painter().rect_filled(rect, radius, p.raised);
+        // each entry on a card of its own, a stack's tinted, the previewed
+        // one outlined (the board's rows)
+        let shade = super::shades(p);
+        let fill = if together {
+            shade.stack
         } else if response.hovered() {
-            ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.5));
-        }
+            shade.item_hot
+        } else {
+            shade.item
+        };
+        let edge = if previewed {
+            egui::Stroke::new(1.0, shade.edge)
+        } else {
+            egui::Stroke::NONE
+        };
+        ui.painter()
+            .rect(rect, ui.visuals().window_corner_radius, fill, edge, egui::StrokeKind::Inside);
         let y = rect.center().y;
         let mut x = rect.left() + 8.0;
         let number = ui
