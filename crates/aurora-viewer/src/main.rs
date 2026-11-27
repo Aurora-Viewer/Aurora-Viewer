@@ -98,6 +98,7 @@ mod net_profile;
 mod object_stage;
 mod oiia;
 mod omnifilter;
+mod open_files;
 mod open_path;
 mod outside;
 mod overlay_hooks;
@@ -211,6 +212,8 @@ fn main() -> anyhow::Result<()> {
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();
+    // #2970: a desktop's 1024 open files run out in a busy region
+    open_files::raise();
     // Preferences › Network › Proxy: before the first connection of the
     // viewer (LLStartUp::startLLProxy, at startup)
     proxy::install(&settings::Settings::load().proxy);
@@ -383,6 +386,7 @@ fn run_viewer() -> anyhow::Result<()> {
     // the browsers stop with the app; their private profiles are removed
     // while the plugins let go of their files
     let restart_vr = app.requested_vr_restart();
+    app.leak_session_at_exit();
     drop(app);
     media::private_profile::finish(std::time::Duration::from_secs(8));
     world::tphistory::finish_writes();
