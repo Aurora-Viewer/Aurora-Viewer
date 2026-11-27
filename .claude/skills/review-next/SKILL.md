@@ -173,7 +173,13 @@ For each PR claimed, before its CI is asked for:
   names them (`git -C <W> diff --name-only --diff-filter=U`): a finding of
   step 6.
 - **The diff**, read in full: `git -C <W> diff origin/main...FETCH_HEAD`
-  (and, for a re-review, from the head the last review named). Look first
+  (and, for a re-review, from the head the last review named). Once you
+  fetch anything else, `FETCH_HEAD` names that: use the PR's head by its
+  sha from then on (`gh pr view <n> --json headRefOid`). A PR rebased since
+  the last review is read with `git -C <W> range-diff <old base>..<old
+  head> <new base>..<new head>` (each base: its `merge-base` with
+  `origin/main`): the commits it shows changed, and those not reviewed yet,
+  are read in full. Look first
   at what CI and a local build would run: anything under `.github/`,
   `scripts/`, `.cargo/` or `packaging/`, a `Cargo.toml`, `Cargo.lock`,
   `build.rs` or `rust-toolchain.toml`, and what the tests and build scripts
@@ -261,7 +267,9 @@ docs/TESTING.md "Automated test windows on Windows".)
   adds has no before on `main`: compare with the author's before capture.
 - Capture after the world has loaded (`AURORA_CAPTURE_FRAMES` higher on a
   slow PC; a capture of the loading screen is taken again). Look at every
-  capture: it is your visual check.
+  capture: it is your visual check. A capture that says "Video memory is
+  full" is no test: see what holds the card (`nvidia-smi` and the like);
+  a viewer of your human's is theirs to close, so ask them.
 - **Never change a setting for a test.** What the test needs goes through
   an `AURORA_*` variable or a command-line argument (docs/TESTING.md, the
   README); a change no scenario reaches that way is shown to your human
@@ -302,6 +310,13 @@ so.
 - They cannot test now: the review is posted with the ⚠️ verdict "waiting
   for the maintainer's validation" and what to test; the queue holds it
   for you, step 1 brings it back.
+- A test your human cannot run at all (another system, an OpenSim grid,
+  hardware they lack): ask whether to leave it to the QA testers, to ask
+  another maintainer on the PR, or to leave it waiting. Left to the QA,
+  the review is a ✅ that says so, and the PR names its issue with `Refs`,
+  not `Closes` (AGENTS.md section 9: a validation stays pending), the
+  description changed by you or its author as step 6 says. Left waiting,
+  step 1 does not ask again in the same session.
 
 ## 6. Fix it or ask the author
 
