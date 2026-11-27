@@ -21,7 +21,6 @@ pub(super) fn show(
     p: &Palette,
     inv: &mut Inventory,
     catalog: &inventory::Catalog,
-    runtime: &mut Runtime,
     account: &mut Account,
     state: &mut AoUi,
     out: &mut Vec<Action>,
@@ -60,8 +59,11 @@ pub(super) fn show(
         let on = state.tab == 0 && current == category;
         let count = format!("{filled}/{}", states.len());
         if group_row(ui, p, category.label(), category.description(), &count, on).clicked() {
-            // Each group opens again on the slot it had open.
-            let remembered = state.category_states[category.index()].filter(|s| states.contains(s));
+            // Each group opens again on the slot it had unfolded, else on
+            // the one it showed last.
+            let remembered = state.open_slots[category.index()]
+                .or(state.category_states[category.index()])
+                .filter(|s| states.contains(s));
             let target = remembered
                 .or_else(|| states.iter().copied().find(|s| *s == category.initial_state()))
                 .unwrap_or(states[0]);
@@ -72,15 +74,12 @@ pub(super) fn show(
         }
     }
     // Movement and Stands and turns at the column's foot, as the board has it
-    let foot = 36.0 + ui.spacing().interact_size.y + 3.0 * ui.spacing().item_spacing.y;
+    let foot = 36.0 + 2.0 * ui.spacing().item_spacing.y;
     ui.add_space((ui.available_height() - foot).max(4.0));
     let on = state.tab == 1;
     if movement_row(ui, p, on).clicked() {
         state.tab = 1;
     }
-    // Stands and turns pause for the session only (AOEngine::setOverrideStands
-    // is not saved either).
-    toggle(ui, p, "ao-stands", &mut runtime.stands);
 }
 
 /// The set's name in large type, the number of sets, and its animation count

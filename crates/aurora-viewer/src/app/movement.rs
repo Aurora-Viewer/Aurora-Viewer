@@ -629,7 +629,6 @@ impl App {
             &mut open,
             &mut self.movement_ui,
             &mut prefs,
-            &self.settings.keybinds,
             status,
         ));
         self.panels.ao = open;

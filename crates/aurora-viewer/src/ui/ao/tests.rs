@@ -10,7 +10,6 @@ struct Fixture {
     state: AoUi,
     movement: super::super::movement::MovementUi,
     movement_prefs: crate::movement::Preferences,
-    keys: crate::keybinds::KeyBindings,
     quick: Option<quick::Quick>,
     manager_open: bool,
 }
@@ -37,12 +36,11 @@ impl Fixture {
             state: AoUi::default(),
             movement: Default::default(),
             movement_prefs: Default::default(),
-            keys: Default::default(),
             quick: None,
             manager_open: true,
         };
         // (the slots open on a click; most tests work in Standing's)
-        fixture.state.slot_open = true;
+        fixture.state.open_slots[0] = Some(State::Standing);
         fixture.settle();
         fixture
     }
@@ -96,7 +94,6 @@ impl Fixture {
                 &mut self.manager_open,
                 &mut self.movement,
                 &mut self.movement_prefs,
-                &self.keys,
                 "",
             ));
         });
@@ -502,7 +499,6 @@ fn ao_manager_keeps_its_size_across_frames() {
                 &mut f.manager_open,
                 &mut f.movement,
                 &mut f.movement_prefs,
-                &f.keys,
                 "",
             );
         },
@@ -624,6 +620,7 @@ fn rename_updates_existing_folder_and_new_set_creates_a_distinct_set() {
 fn animation_picker_links_into_selected_state_and_import_blocks_edits() {
     let mut f = Fixture::new();
     f.state.state = State::Walking;
+    f.state.open_slots[super::category::Category::of(f.state.state).index()] = Some(f.state.state);
     let folder = f.catalog.selected(f.account.selected).expect("set").states[&State::Walking].folder;
     f.click(aurora_i18n::tr!("ao-drop-box"));
     assert_eq!(f.state.picker, Some(false));
@@ -737,6 +734,7 @@ fn acknowledged_container_selection_is_remapped_and_bound_to_its_original_editor
     assert!(f.state.finish_editor(target, &created));
     assert_eq!(f.state.container, Some(actual));
     f.state.state = State::Walking;
+    f.state.open_slots[super::category::Category::of(f.state.state).index()] = Some(f.state.state);
     f.state.container = None;
     assert!(!f.state.finish_editor(target, &created));
     assert!(f.state.container.is_none());
@@ -815,95 +813,11 @@ fn native_animation_rows_choose_on_single_click_and_drag_through_inventory_ack()
 }
 
 #[test]
-fn water_control_hints_follow_rebound_secondary_modified_mouse_and_unassigned_keys() {
-    use crate::keybinds::{Action as KeyAction, Binding, Input, Mods};
-    use winit::keyboard::KeyCode;
-    fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
-        match shape {
-            egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
-            _ => {}
-        }
-    }
-    let contents = |f: &mut Fixture| {
-        let mut out = Vec::new();
-        for shape in f.draw(Vec::new()).1 {
-            texts(&shape.shape, &mut out);
-        }
-        out
-    };
-    // Passage is Control plus the jump keys. The cap is "Ctrl" elsewhere and
-    // "⌘" on macOS (LLKeyboard::stringFromAccelerator); either way it is the
-    // same cap the water hints draw.
-    let modifier = |binding: &Binding| binding.caps().into_iter().next().expect("modifier cap").label;
-    let mut f = Fixture::new();
-    f.click(aurora_i18n::tr!("ao-tab-movement-short"));
-    f.settle();
-    let initial = contents(&mut f);
-    let passage = Binding::captured(
-        Input::key(KeyCode::PageUp),
-        Mods {
-            ctrl: true,
-            ..Default::default()
-        },
-    );
-    assert!(initial.contains(&Input::key(KeyCode::PageUp).label()));
-    assert!(
-        initial.contains(&modifier(&passage)),
-        "passage modifiers use the same keycaps as water gestures"
-    );
-    let first = Binding::captured(
-        Input::key(KeyCode::F10),
-        Mods {
-            ctrl: true,
-            ..Default::default()
-        },
-    );
-    let mouse = Binding::captured(
-        Input::Mouse("Other9".into()),
-        Mods {
-            alt: true,
-            ..Default::default()
-        },
-    );
-    let ctrl_cap = modifier(&first);
-    let alt_cap = modifier(&mouse);
-    f.keys.set(KeyAction::Up, 0, Some(first));
-    f.keys.set(KeyAction::Up, 1, Some(mouse.clone()));
-    f.keys.set(
-        KeyAction::Down,
-        0,
-        Some(Binding::captured(Input::key(KeyCode::F11), Default::default())),
-    );
-    f.keys.set(KeyAction::Down, 1, None);
-    f.settle();
-    let shown = contents(&mut f);
-    for key in ["F10".to_owned(), "F11".to_owned(), mouse.input.label(), ctrl_cap, alt_cap] {
-        assert!(shown.contains(&key), "live keycap {key} is visible");
-    }
-    assert!(!shown.contains(&Input::key(KeyCode::PageUp).label()));
-    assert!(!shown.contains(&Input::key(KeyCode::PageDown).label()));
-    f.keys.set(
-        KeyAction::Up,
-        0,
-        Some(Binding::captured(Input::key(KeyCode::F12), Default::default())),
-    );
-    f.keys.set(KeyAction::Up, 1, None);
-    f.keys.set(KeyAction::Down, 0, None);
-    f.settle();
-    let shown = contents(&mut f);
-    assert!(shown.contains(&"F12".to_owned()));
-    assert!(shown.contains(&aurora_i18n::tr!("movement-key-unbound").to_owned()));
-    for old in ["F10".to_owned(), "F11".to_owned(), mouse.input.label()] {
-        assert!(!shown.contains(&old), "old binding {old} is no longer shown");
-    }
-}
-
-#[test]
 fn both_water_states_use_the_normal_list_and_combination_editor() {
     let mut f = Fixture::new();
     for state in [State::SwimmingForward, State::UnderwaterSwimming] {
         f.state.state = state;
+        f.state.open_slots[super::category::Category::of(f.state.state).index()] = Some(f.state.state);
         f.state.combination = None;
         f.state.container = None;
         f.settle();
@@ -940,6 +854,7 @@ fn swimming_rail_marks_only_required_slots_and_clears_the_warning_when_ready() {
     let floating = set.states.remove(&State::Floating).expect("required slot");
     set.states.remove(&State::UnderwaterSwimming).expect("optional slot");
     f.state.state = State::SwimmingForward;
+    f.state.open_slots[super::category::Category::of(f.state.state).index()] = Some(f.state.state);
     f.settle();
     let palette = crate::theme::Theme::default().palette();
     let shapes = f.draw(Vec::new()).1;
@@ -1075,6 +990,7 @@ fn categories_keep_every_state_and_restore_the_previous_selection() {
     );
     let mut f = Fixture::new();
     f.state.state = State::Walking;
+    f.state.open_slots[super::category::Category::of(f.state.state).index()] = Some(f.state.state);
     f.settle();
     f.click(aurora_i18n::tr!("ao-category-water"));
     assert_eq!(f.state.state, State::Floating);
@@ -1112,6 +1028,7 @@ fn categories_keep_every_state_and_restore_the_previous_selection() {
     f.click(Category::Jumping.label());
     assert_eq!(f.state.state, State::Falling, "jumping retains its own selected state");
     f.state.state = State::Flying;
+    f.state.open_slots[super::category::Category::of(f.state.state).index()] = Some(f.state.state);
     f.settle();
     assert_eq!(
         Category::of(f.state.state),
@@ -1700,4 +1617,30 @@ fn an_old_narrow_ao_window_widens_once() {
         f.draw(Vec::new());
     }
     assert!(width(&f) < 1000.0, "a width chosen later stays: {}", width(&f));
+}
+
+/// The window opens with every slot folded; a click on a slot's title
+/// unfolds it, another folds it, and an unfolded slot stays so while the
+/// groups are flipped through.
+#[test]
+fn slots_start_folded_and_stay_unfolded_across_groups() {
+    use super::category::Category;
+    let mut f = Fixture::new();
+    f.state.open_slots = Default::default();
+    f.settle();
+    assert!(f.state.open_slots.iter().all(Option::is_none), "nothing unfolded at first");
+    f.click(State::Standing.label());
+    assert_eq!(f.state.open_slots[Category::General.index()], Some(State::Standing));
+    f.click(Category::Ground.label());
+    assert_eq!(f.state.open_slots[Category::Ground.index()], None, "another group: as it was");
+    f.click(Category::General.label());
+    assert_eq!(
+        f.state.open_slots[Category::General.index()],
+        Some(State::Standing),
+        "back to General: Standing is still unfolded"
+    );
+    assert_eq!(f.state.state, State::Standing);
+    f.settle();
+    f.click(State::Standing.label());
+    assert_eq!(f.state.open_slots[Category::General.index()], None, "its title folds it again");
 }

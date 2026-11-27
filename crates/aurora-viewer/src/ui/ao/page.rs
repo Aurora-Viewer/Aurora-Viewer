@@ -125,7 +125,10 @@ pub(super) fn show(
     state.category_states[category.index()] = Some(state.state);
     ui.spacing_mut().item_spacing.y = 8.0;
     summary(ui, p, inv, set, category, &states, state);
-    movement_card(ui, p, category, prefs, swim_ready, state, out);
+    if matches!(category, Category::General | Category::Ground) {
+        stands_card(ui, p, runtime);
+    }
+    movement_card(ui, p, category, prefs, swim_ready, out);
     if category == Category::Water && !set.swimming_ready() {
         swimming_warning(ui, p);
     }
@@ -290,11 +293,9 @@ fn movement_card(
     category: Category,
     prefs: &mut crate::movement::Preferences,
     swim_ready: bool,
-    state: &mut AoUi,
     out: &mut Vec<Action>,
 ) {
     let (icon, value, label, ready) = match category {
-        Category::Ground => ("run", &mut prefs.running, aurora_i18n::tr!("movement-running"), true),
         Category::Flight => (
             "plane-tilt-filled",
             &mut prefs.fly_assist,
@@ -312,17 +313,64 @@ fn movement_card(
             if *value != before {
                 out.push(Action::MovementPreferences);
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add(egui::Button::new(RichText::new(aurora_i18n::tr!("ao-open-movement")).color(p.violet_pale)).frame(false))
-                    .clicked()
-                {
-                    state.tab = 1;
-                }
-                ui.label(RichText::new(aurora_i18n::tr!("ao-experimental")).small().color(p.muted));
-            });
         });
     });
+}
+
+/// Stands and turns, on the pages of the stands (General) and the turns
+/// (Ground): a card that says what plays, lit in the accent while the AO
+/// plays them, its figure standing in a disc; a click anywhere on it
+/// switches them. Paused for the session only, as AOEngine's stands
+/// switch is not saved (`Runtime::stands`).
+fn stands_card(ui: &mut egui::Ui, p: &Palette, runtime: &mut Runtime) {
+    let on = runtime.stands;
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 52.0), egui::Sense::click());
+    let radius = ui.visuals().window_corner_radius;
+    let lit = ui.ctx().animate_bool(ui.scope_id().with("ao_stands_lit"), on);
+    let shade = super::shades(p);
+    let fill = shade.card.lerp_to_gamma(p.violet, 0.16 * lit);
+    let fill = if response.hovered() {
+        fill.lerp_to_gamma(p.raised, 0.25)
+    } else {
+        fill
+    };
+    ui.painter().rect(
+        rect,
+        radius,
+        fill,
+        egui::Stroke::new(1.0, shade.edge.lerp_to_gamma(p.violet_light, 0.6 * lit)),
+        egui::StrokeKind::Inside,
+    );
+    // the accent's edge on the left while they play
+    if lit > 0.0 {
+        let edge = egui::Rect::from_min_size(rect.left_top() + Vec2::new(0.0, 8.0), Vec2::new(3.0, rect.height() - 16.0));
+        ui.painter().rect_filled(
+            edge,
+            ui.visuals().widgets.inactive.corner_radius,
+            p.violet_light.gamma_multiply(lit),
+        );
+    }
+    let y = rect.center().y;
+    let disc = egui::pos2(rect.left() + 30.0, y);
+    ui.painter().circle_filled(disc, 16.0, p.raised.lerp_to_gamma(p.violet, 0.75 * lit));
+    let figure = p.muted.lerp_to_gamma(p.on_accent, lit);
+    widgets::paint_glyph(ui.painter(), "man-filled", disc, 18.0, figure);
+    let x = rect.left() + 56.0;
+    let title = egui::FontId::new(13.5, super::super::fonts::semibold(ui.ctx()));
+    let room = rect.width() - 56.0 - 64.0;
+    widgets::paint_elided(ui, aurora_i18n::tr!("ao-stands"), egui::pos2(x, y - 9.0), room, title, p.ink);
+    let line = aurora_i18n::text(if on { "ao-stands-on-line" } else { "ao-stands-off-line" });
+    widgets::paint_elided(ui, line, egui::pos2(x, y + 9.0), room, egui::FontId::proportional(11.5), p.muted);
+    // the switch at the right end, as a picture: the whole card is the button
+    let track = egui::Rect::from_center_size(egui::pos2(rect.right() - 34.0, y), Vec2::new(36.0, 20.0));
+    let knob_radius = ui.visuals().widgets.inactive.corner_radius;
+    ui.painter().rect_filled(track, knob_radius, p.field.lerp_to_gamma(p.violet, lit));
+    let knob = egui::Rect::from_center_size(egui::pos2(track.left() + 10.0 + lit * (track.width() - 20.0), y), Vec2::splat(14.0));
+    ui.painter().rect_filled(knob, knob_radius, p.muted.lerp_to_gamma(p.on_accent, lit));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, true, on, aurora_i18n::tr!("ao-stands")));
+    if response.on_hover_text(aurora_i18n::tr!("ao-stands-tip")).clicked() {
+        runtime.stands = !on;
+    }
 }
 
 /// One slot: its title line, then what it holds (closed) or its editor (open).
@@ -337,7 +385,7 @@ fn section(
     state: &mut AoUi,
     out: &mut Vec<Action>,
 ) -> egui::Response {
-    let open = state.state == item && state.slot_open && state.tab == 0;
+    let open = state.open_slots[Category::of(item).index()] == Some(item) && state.tab == 0;
     // unfolding and folding glide (`reveal`)
     let time = if ui.style().animation_time > 0.0 { REVEAL } else { 0.0 };
     let t = ui
@@ -391,7 +439,7 @@ fn section(
     // a click on the title unfolds the slot, and folds it again
     if inner.clicked() {
         if open {
-            state.slot_open = false;
+            state.open_slots[Category::of(item).index()] = None;
         } else {
             state.select_state(item);
         }
@@ -582,7 +630,6 @@ pub(super) fn movement(
     p: &Palette,
     movement: &mut super::super::movement::MovementUi,
     prefs: &mut crate::movement::Preferences,
-    keys: &crate::keybinds::KeyBindings,
     status: &str,
     out: &mut Vec<Action>,
 ) {
@@ -595,7 +642,7 @@ pub(super) fn movement(
     let actions = egui::ScrollArea::vertical()
         .id_salt("ao_movement")
         .auto_shrink([false, false])
-        .show(ui, |ui| movement.show(ui, p, prefs, keys, status))
+        .show(ui, |ui| movement.show(ui, p, prefs, status))
         .inner;
     if actions.changed {
         out.push(Action::MovementPreferences);

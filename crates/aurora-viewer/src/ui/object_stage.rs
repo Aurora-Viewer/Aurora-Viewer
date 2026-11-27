@@ -607,26 +607,28 @@ impl StageUi {
         );
         let ui = &mut child;
         ui.spacing_mut().item_spacing.x = 2.0;
+        // on a light ground with no face of their own, dark buttons
+        let dark = self.light && !self.bar_face;
         let camera = &mut self.camera;
-        if tool(ui, p, "rotate", aurora_i18n::tr!("stage-turn-left")) {
+        if tool(ui, p, dark, "rotate", aurora_i18n::tr!("stage-turn-left")) {
             camera.yaw += 0.5;
         }
-        if tool(ui, p, "rotate-clockwise", aurora_i18n::tr!("stage-turn-right")) {
+        if tool(ui, p, dark, "rotate-clockwise", aurora_i18n::tr!("stage-turn-right")) {
             camera.yaw -= 0.5;
         }
-        if tool(ui, p, "arrow-up", aurora_i18n::tr!("stage-higher")) {
+        if tool(ui, p, dark, "arrow-up", aurora_i18n::tr!("stage-higher")) {
             camera.pitch = (camera.pitch + 0.25).min(1.4);
         }
-        if tool(ui, p, "arrow-down", aurora_i18n::tr!("stage-lower")) {
+        if tool(ui, p, dark, "arrow-down", aurora_i18n::tr!("stage-lower")) {
             camera.pitch = (camera.pitch - 0.25).max(-1.2);
         }
-        if tool(ui, p, "plus", aurora_i18n::tr!("stage-nearer")) {
+        if tool(ui, p, dark, "plus", aurora_i18n::tr!("stage-nearer")) {
             camera.zoom_at(1.25, Vec2::ZERO, Vec2::ZERO);
         }
-        if tool(ui, p, "minus", aurora_i18n::tr!("stage-further")) {
+        if tool(ui, p, dark, "minus", aurora_i18n::tr!("stage-further")) {
             camera.zoom_at(0.8, Vec2::ZERO, Vec2::ZERO);
         }
-        if *camera != CAMERA && tool(ui, p, "restore", aurora_i18n::tr!("stage-reset")) {
+        if *camera != CAMERA && tool(ui, p, dark, "restore", aurora_i18n::tr!("stage-reset")) {
             *camera = CAMERA;
         }
         let tip = if self.light {
@@ -634,11 +636,17 @@ impl StageUi {
         } else {
             aurora_i18n::tr!("stage-light")
         };
-        if tool_lit(ui, p, "bulb-filled", tip, self.light) {
-            self.light = !self.light;
-        }
         if !self.player {
+            // nothing follows: the ground's switch at the bar's right end
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if tool_lit(ui, p, dark, "bulb-filled", tip, self.light) {
+                    self.light = !self.light;
+                }
+            });
             return;
+        }
+        if tool_lit(ui, p, dark, "bulb-filled", tip, self.light) {
+            self.light = !self.light;
         }
         if self.animated() {
             self.player(ui, p, rect);
@@ -859,20 +867,24 @@ fn tag(ui: &egui::Ui, p: &Palette, rect: Rect, at: egui::Pos2, text: &str) {
 }
 
 /// One button of the bar.
-fn tool(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> bool {
-    tool_lit(ui, p, icon, tip, false)
+/// A button of the bar; `dark`: drawn dark, on a light ground.
+fn tool(ui: &mut egui::Ui, p: &Palette, dark: bool, icon: &str, tip: &str) -> bool {
+    tool_lit(ui, p, dark, icon, tip, false)
 }
 
-fn tool_lit(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) -> bool {
+fn tool_lit(ui: &mut egui::Ui, p: &Palette, dark: bool, icon: &str, tip: &str, on: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(BUTTON), Sense::click());
     if resp.hovered() {
-        ui.painter()
-            .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
+        let face = if dark { p.navy.gamma_multiply(0.12) } else { p.raised };
+        ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, face);
     }
-    let ink = match (on, resp.hovered()) {
-        (true, _) => p.warn,
-        (false, true) => p.ink,
-        (false, false) => p.muted,
+    let ink = match (on, resp.hovered(), dark) {
+        (true, _, false) => p.warn,
+        (true, _, true) => p.amber.lerp_to_gamma(p.navy, 0.35),
+        (false, true, false) => p.ink,
+        (false, false, false) => p.muted,
+        (false, true, true) => p.navy,
+        (false, false, true) => p.bar.lerp_to_gamma(p.muted, 0.25),
     };
     super::sheet::icon_at(ui, icon, rect.center(), 16.0, ink);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, tip));

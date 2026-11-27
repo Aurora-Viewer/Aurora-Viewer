@@ -2,11 +2,7 @@
 //! (running, flight, obstacle passage, water walk, swimming); animations belong
 //! to the AO slots.
 use super::widgets;
-use crate::{
-    keybinds::{Action as KeyAction, Binding, KeyBindings},
-    movement::Preferences,
-    theme::Palette,
-};
+use crate::{movement::Preferences, theme::Palette};
 
 #[derive(Default)]
 pub struct MovementUi {
@@ -25,12 +21,9 @@ pub struct Actions {
 }
 
 impl MovementUi {
-    pub fn show(&mut self, ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences, keys: &KeyBindings, status: &str) -> Actions {
+    pub fn show(&mut self, ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences, status: &str) -> Actions {
         let before = prefs.clone();
         let mut actions = Actions::default();
-        let up = keys.get(KeyAction::Up);
-        let down = keys.get(KeyAction::Down);
-        let passage_keys = keys.pass_wall_bindings();
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
         if status == aurora_i18n::tr!("movement-physics-unavailable") {
             ui.label(egui::RichText::new(status).color(p.violet_pale));
@@ -88,7 +81,6 @@ impl MovementUi {
                 &mut prefs.pass_wall,
                 true,
                 |ui, _| {
-                    key_hint(ui, p, Gesture::Tap(&passage_keys), "");
                     ui.label(egui::RichText::new(aurora_i18n::tr!("movement-pass-help")).small().color(p.muted));
                 },
             );
@@ -102,8 +94,6 @@ impl MovementUi {
                 true,
                 |ui, _| {
                     ui.label(egui::RichText::new(aurora_i18n::tr!("ao-water-walk-line")).small().color(p.muted));
-                    key_hint(ui, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-walk-crouch"));
-                    key_hint(ui, p, Gesture::Tap(&up), aurora_i18n::tr!("movement-water-walk-jump"));
                 },
             );
             if walking != prefs.water_walk {
@@ -157,19 +147,7 @@ impl MovementUi {
                 ui.add_enabled_ui(on, |ui| {
                     widgets::checkbox(ui, p, &mut prefs.jump_obstacles, aurora_i18n::tr!("movement-jump-obstacles"));
                 });
-                widgets::checkbox(ui, p, &mut prefs.water_jumps, aurora_i18n::tr!("movement-water-jumps")).on_hover_ui(|ui| {
-                    key_hint(ui, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-jumps-help"));
-                });
-                ui.columns(2, |columns| {
-                    let (left, right) = columns.split_at_mut(1);
-                    let (left, right) = (&mut left[0], &mut right[0]);
-                    key_hint(left, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-submerge"));
-                    key_hint(left, p, Gesture::Tap(&up), aurora_i18n::tr!("movement-water-leap"));
-                    key_hint(left, p, Gesture::Double(&up), aurora_i18n::tr!("movement-water-takeoff"));
-                    key_hint(right, p, Gesture::Tap(&up), aurora_i18n::tr!("movement-water-surface"));
-                    key_hint(right, p, Gesture::Then(&up, &down), aurora_i18n::tr!("movement-water-dive"));
-                    key_hint(right, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-cannonball"));
-                });
+                widgets::checkbox(ui, p, &mut prefs.water_jumps, aurora_i18n::tr!("movement-water-jumps"));
             },
         );
         if swimming != prefs.swimming {
@@ -283,58 +261,4 @@ fn labelled_stepper(ui: &mut egui::Ui, p: &Palette, id: &str, label: &str, value
         .inner
     })
     .inner
-}
-
-enum Gesture<'a> {
-    Tap(&'a [Option<Binding>]),
-    Double(&'a [Option<Binding>]),
-    Then(&'a [Option<Binding>], &'a [Option<Binding>]),
-}
-
-fn keycaps(ui: &mut egui::Ui, p: &Palette, bindings: &[Option<Binding>]) {
-    let mut any = false;
-    for binding in bindings.iter().flatten() {
-        if any {
-            ui.label(egui::RichText::new("/").color(p.muted));
-        }
-        let caps = widgets::keycap::caps(ui, binding, p.panel);
-        let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(widgets::keycap::row_width(&caps), widgets::keycap::HEIGHT),
-            egui::Sense::hover(),
-        );
-        widgets::keycap::paint_row(ui, p, &caps, rect.left_center(), p.panel);
-        response.on_hover_text(binding.label());
-        any = true;
-    }
-    if !any {
-        ui.label(egui::RichText::new(aurora_i18n::tr!("movement-key-unbound")).color(p.muted));
-    }
-}
-
-fn key_hint(ui: &mut egui::Ui, p: &Palette, gesture: Gesture<'_>, label: &str) {
-    // Read-only instructions use the text line height, rather than reserving
-    // a full button-height row for every gesture.
-    let height = ui.text_style_height(&egui::TextStyle::Body).max(widgets::keycap::HEIGHT);
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), height),
-        egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = 5.0;
-            match gesture {
-                Gesture::Tap(bindings) => keycaps(ui, p, bindings),
-                Gesture::Double(bindings) => {
-                    ui.label(egui::RichText::new(aurora_i18n::tr!("movement-key-double")).color(p.muted));
-                    keycaps(ui, p, bindings);
-                }
-                Gesture::Then(first, second) => {
-                    keycaps(ui, p, first);
-                    widgets::glyph(ui, "arrow-right", p.muted, 14.0);
-                    keycaps(ui, p, second);
-                }
-            }
-            if !label.is_empty() {
-                ui.label(egui::RichText::new(label).color(p.muted));
-            }
-        },
-    );
 }

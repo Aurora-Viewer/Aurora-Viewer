@@ -104,9 +104,10 @@ pub struct AoUi {
     /// Where the animation picker adds: a stack or a layer of the open
     /// slot, `None` for its main list.
     pick_into: Option<Uuid>,
-    /// The slot of `state` is unfolded on its page; a group's page opens
-    /// with all its slots folded, a click on a slot's title unfolds it.
-    slot_open: bool,
+    /// The slot unfolded on each group's page: none when the window first
+    /// opens, then each as left while flipping through the groups; a click
+    /// on a slot's title unfolds it, another folds it.
+    open_slots: [Option<State>; category::Category::ALL.len()],
     preview: preview::Preview,
     /// The preview's 3D stage: our outfit, posed by the preview's skeleton
     /// (app/ao_preview.rs), drawn as Inspect draws an avatar.
@@ -140,7 +141,6 @@ impl AoUi {
     pub fn interface_demo(&mut self, mode: &str, catalog: &inventory::Catalog) {
         let Some(set) = catalog.selected(self.selected_set) else { return };
         self.tab = 0;
-        self.slot_open = true;
         self.state = match mode {
             "interface-running" => State::Running,
             "interface-jumping" => State::Jumping,
@@ -161,6 +161,7 @@ impl AoUi {
                 None
             }
         });
+        self.open_slots[category::Category::of(self.state).index()] = Some(self.state);
         self.sets_open = mode == "interface-sets";
         self.essentials = mode == "interface-essentials";
         if mode == "interface-combine" {
@@ -183,12 +184,12 @@ impl AoUi {
     /// Opens a slot on its group's page, unfolded, its main list shown.
     fn select_state(&mut self, item: State) {
         self.point_at(item);
-        self.slot_open = true;
+        self.open_slots[category::Category::of(item).index()] = Some(item);
     }
 
-    /// Makes `item` the slot the window works on (and previews), folded.
+    /// Makes `item` the slot the window works on (and previews), what is
+    /// unfolded left as it is.
     fn point_at(&mut self, item: State) {
-        self.slot_open = false;
         if self.state != item {
             self.preview = Default::default();
         }
@@ -309,7 +310,6 @@ pub fn show(
     open: &mut bool,
     movement: &mut super::movement::MovementUi,
     movement_prefs: &mut crate::movement::Preferences,
-    keys: &crate::keybinds::KeyBindings,
     movement_status: &str,
 ) -> Vec<Action> {
     let mut out = Vec::new();
@@ -349,12 +349,12 @@ pub fn show(
         ui.painter().rect_filled(side, egui::CornerRadius::ZERO, p.bar);
         ui.painter().rect_filled(middle, egui::CornerRadius::ZERO, shade.card);
         column(ui, "ao_sidebar", side, egui::Margin::symmetric(10, 12), |ui| {
-            sidebar::show(ui, p, inv, catalog, runtime, account, state, &mut out);
+            sidebar::show(ui, p, inv, catalog, account, state, &mut out);
         });
         column(ui, "ao_page", middle, egui::Margin::symmetric(16, 12), |ui| {
             notices(ui, p, inv, catalog, state, &mut out);
             if state.tab == 1 {
-                page::movement(ui, p, movement, movement_prefs, keys, movement_status, &mut out);
+                page::movement(ui, p, movement, movement_prefs, movement_status, &mut out);
             } else if let Some(set) = selected {
                 let swim_ready = movement.swim_ready;
                 page::show(ui, p, inv, set, runtime, state, movement_prefs, swim_ready, &mut out);
