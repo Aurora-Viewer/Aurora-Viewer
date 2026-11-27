@@ -1172,7 +1172,7 @@ mod tests {
         let staged = try_buffer_init(&device, "staged", &bytes, wgpu::BufferUsages::COPY_SRC).expect("made");
         let read = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("read back"),
-            size: 24,
+            size: crate::readback::readback_size(24),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
