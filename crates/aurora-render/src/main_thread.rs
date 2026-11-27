@@ -2131,17 +2131,7 @@ impl Renderer {
     /// World ray under a pixel of the last frame: origin on the near plane,
     /// unit direction.
     pub fn cursor_ray(&self, x: f32, y: f32) -> Option<(Vec3, Vec3)> {
-        let (w, h) = (self.size.0 as f32, self.size.1 as f32);
-        let ndc = |z: f32| Vec4::new(x / w * 2.0 - 1.0, 1.0 - y / h * 2.0, z, 1.0);
-        let un = |v: Vec4| {
-            let p = self.last_inv_vp * v;
-            (p.w.abs() > 1e-9).then(|| p.truncate() / p.w).filter(|v| v.is_finite())
-        };
-        // reverse-Z: 1 is the near plane, small values far away
-        let near = un(ndc(1.0))?;
-        let far = un(ndc(0.001))?;
-        let dir = (far - near).try_normalize()?;
-        Some((near, dir))
+        crate::pick::pixel_ray(self.last_inv_vp, self.size, x, y)
     }
 
     /// Camera/axes of the submitted frame, matching particle_vs billboards.
