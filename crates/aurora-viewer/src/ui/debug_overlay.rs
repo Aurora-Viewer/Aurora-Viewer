@@ -36,6 +36,16 @@ fn avatar_hitbox_frame(pos: Vec3, rot: Quat, scale: Vec3) -> (Vec3, Quat, Vec3) 
     (pos, rot, scale * 0.5)
 }
 
+/// Rotation of the Legacy Viewer's hitbox: `LLViewerObject::getRotationRegion`
+/// (indra/newview/llviewerobject.cpp, originally LGPL 2.1), the rotation the
+/// simulator reported, composed with the parent's for a seated avatar. The
+/// drawn body (`world.bodies`, FSAvatarAlign) turns toward where the avatar
+/// goes and lags behind its turns; using it here made the box chase the
+/// movement instead of holding the avatar's reported facing (#4510).
+fn hitbox_rotation(local: Quat, parent: Option<Quat>) -> Quat {
+    parent.map_or(local, |p| (p * local).normalize())
+}
+
 struct Lines<'a> {
     painter: egui::Painter,
     proj: &'a Projector,
@@ -429,13 +439,23 @@ pub fn draw(
             if scene.gpu.get(idx).is_none() {
                 continue;
             }
-            let Some((pp, pr, _)) = Scene::object_transform(world, idx, now, 0) else {
+            let Some((pp, _, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
             if pp.distance(eye) > SKELETON_RANGE {
                 continue;
             }
-            let (pos, rot, half) = avatar_hitbox_frame(pp, pr, o.scale);
+            // Our own avatar turns with the agent's yaw, as the Legacy
+            // Viewer's own avatar object does. Everyone else keeps the
+            // rotation the simulator reported: `object_transform` replaces
+            // it with the drawn body's visual facing, which chases movement.
+            let rot = if o.full_id == world.agent_id && world.agent.has_local_control() {
+                world.agent.body_rotation()
+            } else {
+                let parent = world.objects.parent_of(o).and_then(|p| world.objects.get(p)).map(|p| p.rotation);
+                hitbox_rotation(o.rotation, parent)
+            };
+            let (pos, _, half) = avatar_hitbox_frame(pp, rot, o.scale);
             wide.obb(pos, rot, half, super::minimap::avatar_color(world, &o.full_id));
         }
     }
@@ -620,6 +640,16 @@ mod tests {
         // the corners reach the rotated half extents, not an axis-aligned box
         let corner = pos + rot * (half * Vec3::new(1.0, 1.0, 1.0));
         assert!(corner.abs_diff_eq(Vec3::new(9.7, 4.3, 1.95), 1e-5), "{corner}");
+    }
+
+    #[test]
+    fn hitbox_rotation_is_the_reported_facing_with_the_parent() {
+        let reported = Quat::from_rotation_z(0.9);
+        let parent = Quat::from_rotation_z(0.5);
+        assert!(hitbox_rotation(reported, None).abs_diff_eq(reported, 1e-6));
+        let seated = hitbox_rotation(reported, Some(parent));
+        assert!(seated.abs_diff_eq(parent * reported, 1e-6));
+        assert!(!seated.abs_diff_eq(reported, 1e-6));
     }
 
     /// The debug texts go where the floating text goes
