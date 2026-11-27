@@ -6638,6 +6638,10 @@ append `-edit` for its edit controls or use `chat-drawer-left|chat-drawer-top` f
 an open drawer. Check the draft, Enter/Escape, multiline growth, emoji picker and
 width handle in both bar styles. The first bottom chat block must stay inside the
 same bar and edit region as later blocks, with the same glass and block controls.
+With `AURORA_DEMO_RECENT_EMOJIS=1`, the chat block's island alone stands out of its
+bar's row: over the dock's with `chat-bottom` (the row over the field), under the
+top bar's with `chat-top` (the row under the field, the arrow turned the other way).
+The bar, its other islands and the side bars keep their place and their height.
 
 `AURORA_DEMO_TOOLBAR=chrome|appearance|menu-layout|address|top-drag` exercises the shared
 main-menu catalogue and all four edges without changing saved toolbar settings.
