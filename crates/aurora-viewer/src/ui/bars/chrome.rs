@@ -19,6 +19,15 @@ struct Metrics {
     editing: bool,
     conversations_vertical: bool,
     conversations_height: f32,
+    /// What the chat block takes beside its field: the recent emojis' row.
+    chat_recent: f32,
+    /// Whether the chat block draws its field (else its button alone, or
+    /// nothing while the interface is edited).
+    chat_field: bool,
+    /// What the chat block's island is raised by over its row of the bar
+    /// (`lift_chat`), instead of the row being as high as it; None in a
+    /// bar that does not raise it.
+    chat_lift: Option<f32>,
 }
 
 #[derive(Clone)]
@@ -31,6 +40,43 @@ struct Slot {
     style: Style,
     locked: bool,
     placeholder: bool,
+    floating: bool,
+}
+
+/// Where the chat block was drawn in this frame, for what stands by it
+/// (the nearby chat lines over the world, `ui::chat::LinesPlace`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChatPlace {
+    /// The block, its raised part included (`lift_chat`).
+    pub rect: Rect,
+    pub bar: Bar,
+    /// In a floating block, not on a bar.
+    pub floating: bool,
+    frame: u64,
+}
+
+impl ChatPlace {
+    #[cfg(test)]
+    pub fn at(rect: Rect, bar: Bar, floating: bool) -> Self {
+        Self {
+            rect,
+            bar,
+            floating,
+            frame: 0,
+        }
+    }
+}
+
+fn chat_place_id() -> Id {
+    Id::unique("toolbar_chat_place")
+}
+
+/// The chat block of this frame, when a bar drew it (`show_chat`, earlier
+/// in the frame): none while the interface is hidden or edited.
+pub fn chat_place(ctx: &egui::Context) -> Option<ChatPlace> {
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    ctx.data(|data| data.get_temp::<ChatPlace>(chat_place_id()))
+        .filter(|place| place.frame == frame)
 }
 
 fn metrics_id() -> Id {
@@ -126,6 +172,9 @@ pub fn prepare(ui: &egui::Ui, p: &Palette, st: &StatusInfo, settings: &ToolbarSe
                 editing,
                 conversations_vertical,
                 conversations_height: conversation_extent,
+                chat_recent: 0.0,
+                chat_field: false,
+                chat_lift: None,
             },
         );
         data.insert_temp(slots_id(), Vec::<Slot>::new());
@@ -155,7 +204,15 @@ pub fn width(ctx: &egui::Context, command: &str) -> Option<f32> {
 
 pub fn height(ctx: &egui::Context, command: &str) -> f32 {
     if command == "bar_chat" {
-        return crate::ui::chat::input::height(ctx, crate::ui::chat::bar_input_id(), islands::SLOT).max(islands::SLOT) + 8.0;
+        // the field, and the room of the recent emojis' row the island draws
+        // over it: without it the row took the field's, and what was typed
+        // went under the bar. A bar
+        // that raises the block's island instead keeps its height
+        // (`lift_chat`)
+        let (recent, lift) = ctx
+            .data(|data| data.get_temp::<Metrics>(metrics_id()))
+            .map_or((0.0, 0.0), |metrics| (metrics.chat_recent, metrics.chat_lift.unwrap_or(0.0)));
+        return chat_editor(ctx) + 8.0 + recent - lift;
     }
     if command == "bar_conversations"
         && let Some(metrics) = ctx.data(|data| data.get_temp::<Metrics>(metrics_id()))
@@ -164,6 +221,11 @@ pub fn height(ctx: &egui::Context, command: &str) -> f32 {
         return metrics.conversations_height.max(islands::HEIGHT);
     }
     islands::HEIGHT
+}
+
+/// The height of the chat block's field: a line, or the paragraph typed.
+fn chat_editor(ctx: &egui::Context) -> f32 {
+    crate::ui::chat::input::height(ctx, crate::ui::chat::bar_input_id(), islands::SLOT).max(islands::SLOT)
 }
 
 pub fn register(ui: &mut egui::Ui, button: &ToolButton, row: &super::Row, size: Vec2) -> Option<Rect> {
@@ -205,6 +267,7 @@ pub(super) fn register_at(ui: &egui::Ui, button: &ToolButton, row: &super::Row, 
         style: crate::ui::toolbar::blocks::style(ui.ctx(), &button.command, row.style),
         locked: row.locked,
         placeholder,
+        floating: row.floating,
     };
     ui.ctx()
         .data_mut(|data| data.get_temp_mut_or_default::<Vec<Slot>>(slots_id()).push(slot));
@@ -214,6 +277,10 @@ pub(super) fn register_at(ui: &egui::Ui, button: &ToolButton, row: &super::Row, 
 /// while its outgoing message still follows the existing local-chat handler.
 pub fn prepare_chat(ctx: &egui::Context, chat: &crate::ui::chat::ChatUi, width: f32) {
     let width = super::chat_bar::width(ctx.content_rect(), width);
+    // the row comes and goes with the field (`dock::chat_island`), which
+    // the interface's edit mode does not draw
+    let field = chat.bar_shown() && !ToolbarUi::intercepting(ctx);
+    let recent = if field { chat.recent_emojis.height() } else { 0.0 };
     ctx.data_mut(|data| {
         let metrics = data.get_temp_mut_or_default::<Metrics>(metrics_id());
         metrics.widths[14] = if chat.bar_shown() || metrics.editing {
@@ -221,7 +288,37 @@ pub fn prepare_chat(ctx: &egui::Context, chat: &crate::ui::chat::ChatUi, width: 
         } else {
             islands::SLOT + islands::PAD * 2.0
         };
+        metrics.chat_recent = recent;
+        metrics.chat_field = field;
+        metrics.chat_lift = None;
     });
+}
+
+/// The bar that holds the chat block raises the block's island over its
+/// row, by what the field takes beyond a line (the recent emojis' row, the
+/// paragraph typed), as the chat island did before the field became a
+/// block: the block keeps a line's height, and the bar's other blocks
+/// theirs. What the island is raised by: nothing for a field of one line,
+/// or for the block's button alone.
+pub(super) fn lift_chat(ctx: &egui::Context) -> f32 {
+    let editor = chat_editor(ctx);
+    ctx.data_mut(|data| {
+        let metrics = data.get_temp_mut_or_default::<Metrics>(metrics_id());
+        let lift = if metrics.chat_field {
+            editor - islands::SLOT + metrics.chat_recent
+        } else {
+            0.0
+        };
+        metrics.chat_lift = Some(lift);
+        lift
+    })
+}
+
+/// What the chat block's island is raised by over its row, in a bar that
+/// raises it (`lift_chat`).
+pub(super) fn chat_lift(ctx: &egui::Context) -> Option<f32> {
+    ctx.data(|data| data.get_temp::<Metrics>(metrics_id()))
+        .and_then(|metrics| metrics.chat_lift)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -247,6 +344,33 @@ pub fn show_chat(
         .filter(|slot| slot.button.command == "bar_chat" && !slot.placeholder)
     {
         let _context = crate::ui::toolbar::native_context::Scope::new(ui.ctx(), "bar_chat");
+        let lift = if slot.bar == Bar::Bottom { chat_lift(ui.ctx()) } else { None };
+        let mut drawn = slot.rect;
+        drawn.min.y -= lift.unwrap_or(0.0);
+        let place = ChatPlace {
+            rect: drawn,
+            bar: slot.bar,
+            floating: slot.floating,
+            frame: ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT),
+        };
+        ui.ctx().data_mut(|data| data.insert_temp(chat_place_id(), place));
+        if let Some(lift) = lift {
+            out = show_lifted_chat(
+                ui.ctx(),
+                p,
+                icons,
+                panels,
+                chat,
+                gestures,
+                emoji.as_deref_mut(),
+                row,
+                &slot,
+                lift,
+                width,
+                &mut committed,
+            );
+            continue;
+        }
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt("toolbar_chat_input")
@@ -274,6 +398,69 @@ pub fn show_chat(
         );
     }
     (out, committed)
+}
+
+/// The chat block of the dock, its island raised by `lift` over the dock's
+/// row (`lift_chat`; the dock paints the raised surface).
+///
+/// What stands out of the dock is an area of its own, kept right over the
+/// dock's: the pointer there is over the interface, not the world. The
+/// whole block is drawn on that area's layer, so that its controls take the
+/// clicks before the dock under them, in the dock as above it. The area is
+/// there for a field of one line too, with no height: an area draws nothing
+/// on its first frame, and the field would blink when its second line or
+/// the first recent emoji raises the island.
+#[allow(clippy::too_many_arguments)]
+fn show_lifted_chat(
+    ctx: &egui::Context,
+    p: &Palette,
+    icons: &Icons,
+    panels: &mut Panels,
+    chat: &mut crate::ui::chat::ChatUi,
+    gestures: &crate::gestures::Manager,
+    emoji: Option<&mut crate::ui::emoji::Emoji>,
+    row: &super::Row,
+    slot: &Slot,
+    lift: f32,
+    width: &mut f32,
+    committed: &mut bool,
+) -> Option<crate::ui::chat::OutgoingChat> {
+    let mut rect = slot.rect;
+    rect.min.y -= lift;
+    let over = Rect::from_min_max(
+        egui::pos2(rect.left() - islands::PAD, rect.top() - islands::PAD),
+        egui::pos2(rect.right() + islands::PAD, slot.rect.top() - islands::PAD),
+    );
+    let row = super::Row {
+        bar: slot.bar,
+        style: slot.style,
+        ..*row
+    };
+    if lift > 0.0 {
+        // (the windows keep their title clear of it, as of the islands)
+        crate::ui::layout::island_drawn(ctx, over);
+    }
+    let (out, layer) = egui::Area::new(Id::unique("bars_chat_lift"))
+        .order(egui::Order::Middle)
+        .fixed_pos(over.min)
+        .constrain(false)
+        .fade_in(false)
+        .show(ctx, |ui| {
+            ui.ctx().set_sublayer(slot.layer, ui.layer_id());
+            let first = ui.painter().add(egui::Shape::Noop);
+            ui.set_min_size(over.size());
+            let mut child = ui.new_child(egui::UiBuilder::new().id_salt("toolbar_chat_input").max_rect(rect));
+            let out = super::chat_bar::show(&mut child, p, icons, panels, chat, gestures, emoji, &row, rect, width, committed);
+            // the bars' opacity, as on the dock's layer (`islands::area_surface`)
+            crate::ui::surface_opacity::fade_after(ui.ctx(), ui.layer_id(), first, p, crate::ui::surface_opacity::bars());
+            (out, ui.layer_id())
+        })
+        .inner;
+    // (the block's own reading looks at one layer: it stands on two)
+    chat.bar_hovered = ctx
+        .pointer_interact_pos()
+        .is_some_and(|pos| rect.contains(pos) && ctx.layer_id_at(pos).is_some_and(|at| at == layer || at == slot.layer));
+    out
 }
 
 #[allow(clippy::too_many_arguments)]

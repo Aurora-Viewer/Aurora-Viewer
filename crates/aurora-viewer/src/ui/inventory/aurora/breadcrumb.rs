@@ -567,11 +567,14 @@ mod tests {
     fn a_typed_path_is_found_whatever_its_case_and_its_top() {
         let (inv, root) = tree();
         let shirts = Some(Uuid::from_u128(3));
-        assert_eq!(resolve(&inv, root, "My Inventory/Clothing/Shirts"), shirts);
+        // the top's name as the window shows it, in this PC's language
+        // ("My inventory", "Mon inventaire"), in any case
+        let top = folder_name(&inv, root).to_uppercase();
+        assert_eq!(resolve(&inv, root, &format!("{top}/Clothing/Shirts")), shirts);
         assert_eq!(resolve(&inv, root, "clothing/SHIRTS/"), shirts);
         assert_eq!(resolve(&inv, root, "/Clothing/Shirts"), shirts);
         assert_eq!(resolve(&inv, root, "  "), Some(root));
-        assert_eq!(resolve(&inv, root, "My Inventory"), Some(root));
+        assert_eq!(resolve(&inv, root, &top), Some(root));
         // ~ is the root, as a home folder
         assert_eq!(resolve(&inv, root, "~/Clothing/Shirts"), shirts);
         assert_eq!(resolve(&inv, root, "~"), Some(root));

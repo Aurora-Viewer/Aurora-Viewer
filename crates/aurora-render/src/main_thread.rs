@@ -362,7 +362,7 @@ pub struct Renderer {
     /// AURORA_DEMO_GPU_LOST: the frame the device is taken as lost at.
     demo_lost: Option<u64>,
     /// AURORA_DEMO_GPU_HANG: the frame a real GPU hang is submitted at, and
-    /// the queue it goes on.
+    /// the queue it goes on, let go once it is submitted.
     demo_hang: Option<(u64, wgpu::Queue)>,
 }
 
@@ -1635,10 +1635,13 @@ impl Renderer {
     ) -> RenderStats {
         let t0 = Instant::now();
         let mut ui = ui;
-        if let Some((frame, queue)) = &self.demo_hang
-            && *frame == self.frames
+        if self.demo_hang.as_ref().is_some_and(|(frame, _)| *frame == self.frames)
+            && let Some((_, queue)) = self.demo_hang.take()
         {
-            crate::device_lost::demo_hang(&self.device, queue);
+            crate::device_lost::demo_hang(&self.device, &queue);
+            // the clone goes now: kept for the renderer's life it dropped
+            // after `host`, so wgpu's last `Queue::drop` ran outside the
+            // lost backend's guarded drop (render_thread.rs, #3915)
         }
         if self.demo_lost == Some(self.frames) && !self.lost.get() {
             self.lost.set_by("demo");
@@ -1729,7 +1732,11 @@ impl Renderer {
             // a film's frame next, sent and not waited for (film_readback.rs)
             None => match self.film_request.take() {
                 Some(film) => {
-                    self.films_sent += 1;
+                    // (a sub-frame before a shutter's last is answered by
+                    // nothing: the last carries the frame)
+                    if film.shutter.is_none_or(|s| s.last()) {
+                        self.films_sent += 1;
+                    }
                     let spec = film.size.map(|(width, height)| crate::SnapshotSpec {
                         width,
                         height,
@@ -1738,7 +1745,7 @@ impl Renderer {
                         photo: (width, height),
                         cube: None,
                     });
-                    Some(crate::packet::Capture::Film(film.tag, spec))
+                    Some(crate::packet::Capture::Film(film.tag, spec, film.shutter))
                 }
                 None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
             },

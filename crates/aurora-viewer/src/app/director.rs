@@ -223,6 +223,24 @@ impl App {
         ))
     }
 
+    /// The Director's shutter while its window is open with its motion
+    /// blur on (°), at the film's frame rate.
+    pub(super) fn director_shutter(&self) -> Option<f32> {
+        if !self.panels.director || !self.in_world() {
+            return None;
+        }
+        self.director.d.motion_blur
+    }
+
+    /// The motion blur of a frame drawn `dt` seconds after the last one:
+    /// the Director's shutter while it has one, else the viewer's own.
+    pub(super) fn motion_blur_frame(&self, dt: f32) -> Option<aurora_render::MotionBlur> {
+        match self.director_shutter() {
+            Some(angle) => crate::motion_blur::shutter(angle, self.settings.director_record.rate(), dt),
+            None => crate::motion_blur::frame(crate::motion_blur::strength(&self.settings.motion_blur), dt),
+        }
+    }
+
     /// The folder of this account's saved tracks.
     fn director_tracks_folder(&self) -> PathBuf {
         crate::settings::account_dir(&self.world.agent_id).join("director")
@@ -1160,6 +1178,17 @@ impl App {
             }
             self.director.demo_record = true;
             log::info!("director demo: recording a second of the track");
+        }
+        // AURORA_DEMO_DIRECTOR_SHUTTER=<degrees>: the Director's motion blur
+        // on at that shutter (its live view, and a render's true shutter)
+        if let Some(angle) = std::env::var("AURORA_DEMO_DIRECTOR_SHUTTER")
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|a| a.is_finite())
+        {
+            let range = director::SHUTTER_RANGE;
+            self.director.d.motion_blur = Some(angle.clamp(*range.start(), *range.end()));
+            log::info!("director demo: motion blur, shutter {angle}°");
         }
         self.director_render_demo(&mode);
         if mode == "green" {

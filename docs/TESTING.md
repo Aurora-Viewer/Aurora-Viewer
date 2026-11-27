@@ -1115,6 +1115,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
+| `AURORA_DEMO_DIRECTOR_SHUTTER=<degrees>` | With `AURORA_DEMO_DIRECTOR`, the Director's motion blur on at that shutter angle (1 to 720), its render with a true shutter (see Details) |
 | `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha\|orbit\|capture\|anim\|montage\|titles\|render` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, a second of the track recorded, the track replaced by an orbit shot round the avatar, a path flown by hand made keyframes, keyframes with an animation, a lens and a time of day, a montage of two shots, fades and titles played, or a second rendered as PNG images (see Details) |
 | `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
 | `AURORA_DIRECTOR_FFMPEG=pack` | The Director looks for no ffmpeg but the project's pack, to try its download on a computer that has ffmpeg (see Details) |
@@ -1285,7 +1286,13 @@ when unfocused") is ignored during a screenshot.
   `Aurora_00024.png` in a new `Aurora_<date>` folder of `<Videos>/Aurora
   Viewer`, the first black, the title in the middle, the last black,
   whatever the window's size; the Output section shows the progress
-  meanwhile.
+  meanwhile. With `AURORA_DEMO_DIRECTOR_SHUTTER=<degrees>` (1 to 720) the
+  Director's motion blur is on at that shutter: its live view and live
+  films blur along the motion vectors, and `render` draws each frame as
+  sub-frames over the time the shutter stays open, averaged (the log adds
+  `shutter open 20.8 ms in 12 sub-frames` at 180°, 24 a second); the
+  orbiting camera and the walking avatars leave smooth streaks, with no
+  doubled images, and the render takes as many times longer.
 - **`AURORA_DEMO_CROSSHAIR=dot|cross|circle|legacy|off|image:<file>`**: the crosshair of
   Preferences › Camera › Mouselook › Crosshair in that shape for the
   session, nothing saved (`cross` and `circle` with their centre dot; `off`:
@@ -4983,9 +4990,61 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_THUNDER_AT=<s>[:<m>]` | A lightning strike this many seconds after the start, 1 km away or `<m>` metres |
 | `AURORA_THUNDER_HOLD=<flash>` | The lightning's light on the world held at this brightness |
 | `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]` | The northern lights at this brightness until the Aurora Weather window is used |
+| `AURORA_FOG=<0..1>\|off` | Fog of this thickness (or none, in a fog demo scene) until the Aurora Weather window is used |
+| `AURORA_FOG_TIER=height\|volumetric\|lights` | How the fog is drawn until the Aurora Weather window is used |
+| `AURORA_FOG_COLOUR=sky\|<r>,<g>,<b>` | The fog's colour (the sky's light, or its own in sRGB 0..1) until the Aurora Weather window is used |
+| `AURORA_DEMO_FOG=sunset\|neon\|indoor\|underwater\|shelter\|aerial\|ground` | Fog under a fixed sky with props and a placed camera |
+| `AURORA_DEMO_FOG_SWING=<degrees>` | The fog scene's camera swings side to side, through its view at full speed every 100 frames |
+| `AURORA_SUN_RAYS=<0..1>\|off` | The sun's and the moon's shafts at this strength, or none, whatever Preferences say (see Details) |
 
 ### Details
 
+- **Fog (`AURORA_FOG`, `AURORA_FOG_TIER`, `AURORA_DEMO_FOG`)**: the Fog card
+  of the Aurora Weather window, for this viewer only. `AURORA_FOG=<0..1>`
+  turns it on at that thickness, `AURORA_FOG_TIER` chooses height fog, the
+  volume, or the volume lit by the local lights, both until the window is
+  touched. `AURORA_DEMO_FOG` (demo mode) turns it on (0.45 without
+  `AURORA_FOG`), answers the region's environment with a fixed sky, adds
+  props and places the camera, the interface hidden: `sunset` (the sun low
+  in the west behind posts and the torus: a warm glow, the posts' and the
+  torus's shadows darker shafts in the fog toward the camera), `neon` (a
+  street at night between dark blocks, neon signs with their lights: each
+  lights the air around it in its colour, the street's end lost in a
+  violet haze), `indoor` (inside a closed room looking out of its doorway:
+  the room clear, the fog outside) and `underwater` (under the lagoon: the
+  water's fog alone, as without the fog) and `shelter` (from outside: the
+  room's doorway with a tongue of fog a few metres in, an open porch on
+  posts with fog under it, a closed glass box clear inside: the fog flowing
+  around the walls, Volume looks only) and `aerial` (60 m up over the
+  region: the fog lies on the hill and the sea to the horizon, with no line
+  where the volume ends 160 m away) and `ground` (4 m over the ground,
+  looking across it: the fog even, no bands at the slices' distances). `AURORA_PROFILE=1` gives its GPU
+  time as `g_fog` (none drawn: 0). A capture without fog for comparison:
+  the same command with `AURORA_FOG=off` (the scene, no fog at all, even
+  with the Fog card on in the saved settings) or
+  `AURORA_FOG=0` (a faint mist). `AURORA_DEMO_FOG_SWING=<degrees>` swings
+  the scene's camera side to side every 200 frames, through its view at
+  full speed at frames 100, 200, 300…: a capture there against one without
+  the variable shows the fog while the camera turns (the same brightness,
+  the wisps in place). With `AURORA_FOG_COLOUR=sky`, `AURORA_RAIN=0`
+  and `AURORA_FOG_TIER`, a capture does not depend on the Fog card's
+  saved colour nor on the rain left on in the profile (the shared settings:
+  AGENTS.md section 4). Under a classic sky the fog is lit by the haze's
+  own colour (its ambient part), so that the fog and the haze beyond it
+  meet without a seam; under the height fog, a room under a roof stays
+  clear (the shelter map, three taps along each view).
+
+- **Sun and moon rays (`AURORA_SUN_RAYS`)**: Preferences › Graphics ›
+  "Sun and moon rays" for this launch only: `<0..1>` their strength, `off`
+  (or `0`) none. A post process (`sun_shafts.rs`): the sky around the sun
+  (the moon at night) streaked from it across the image, cut by what
+  stands in front; nothing behind the camera, fading as the light leaves
+  the view's axis and as it sets; none in debug views, cut-out photos and
+  photos drawn in tiles. Compare `AURORA_DEMO_FOG=sunset AURORA_FOG=off
+  AURORA_SUN_RAYS=0.7` (dark streaks behind the posts and the torus in the
+  low sun's light, the ground beside them as without) against
+  `AURORA_SUN_RAYS=off`. `AURORA_PROFILE=1` counts their GPU time in
+  `g_bloom`.
 - **Weather (`AURORA_RAIN`, `AURORA_SNOW*`, `AURORA_THUNDER_*`)**: the
   weather of the Aurora Weather window is drawn for
   this viewer only. `AURORA_RAIN=<0..1>` sets the rain (0 none, 1 a
@@ -5735,6 +5794,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_GPU_OOM_START=<seconds>` | Video memory full while the renderer is made, that long after the start |
 | `AURORA_GPU_OOM_UI=1` | Video memory too full even for the interface's buffers at the start |
 | `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, photo look, RLVa, TAA history), that long |
+| `AURORA_GPU_OOM_STILL=1` | Video memory full for the constants of a photo's later traced rounds |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
@@ -6177,6 +6237,14 @@ both open states and the selection count. Capture at frame 620.
   once the time is over. A refused RLVa target never shows the world it
   hides: the frame that found it fails as a whole. Without the check, the
   world stayed frozen or black until the window size changed.
+- **`AURORA_GPU_OOM_STILL=1`** (demo or grid): the small buffer that
+  carries a traced pass's constants into a photo's later rounds
+  (`rt_shadows::put`) counts as refused, as on a card full while a photo
+  is taken (#4845). Take a photo with ray tracing on
+  (`AURORA_DEMO_SNAPSHOT=save:1920x1080`): it is still saved, the log says
+  `photo round: constants not updated, buffer refused (AURORA_GPU_OOM_STILL)`
+  once, then a count every 10 s, and no crash window follows. Before,
+  wgpu's `create_buffer_init` panicked on the refused buffer.
 - **`AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]`** (demo or grid): every
   allocation of `mb` megabytes or more made through
   `aurora-render/src/gpu_alloc.rs` fails as if video memory were full
@@ -7006,6 +7074,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LOGIN_LAST=<n>` | Which demo account was logged in last, so the cards select it |
 | `AURORA_DEMO_LOGIN_FAVORITES=1\|open\|pick` | Stored favorite landmarks in the demo accounts' start menus |
 | `AURORA_DEMO_LOGIN_WAIT=logout\|sudden\|refused` | A previous session of the demo account still on the grid: the login's countdown |
+| `AURORA_LOGIN_SNOW=1\|0` | December snow over the login sky, forced on or off whatever the date (see Details) |
 | `AURORA_DEMO_REMEMBER_REFUSED=1` | The credential store refuses the password at login |
 | `AURORA_DEMO_SIGNUP=1\|<page>` | The sign-up window of "Create an account" open over the login screen (see Details) |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
@@ -7024,6 +7093,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
 | `AURORA_DEMO_GPU_RESTART_FAIL=1` | After a GPU loss, the first start of the new renderer fails as on a card lost again while it starts |
+| `AURORA_DEMO_GPU_DROP_FAIL=1` | After a GPU loss, dropping the lost renderer meets wgpu's queue panic on its last wait |
 | `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
 | `AURORA_GPU_RECOVERY=1` / `=0` | Recover from a GPU device loss on a new window and device, or close, whatever Preferences › Graphics says (on by default) |
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
@@ -7051,6 +7121,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|group-notice-chat\|purchase\|purchase-open\|fees\|fees-answered\|fees-short\|pie-toasts\|legacy-pie-toasts` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices, a delivered purchase, a group fee and a question to take L$, toasts a wider gap apart under a more transparent pie |
+| `AURORA_DEMO_NOTIF_WIDTH=<px>` | Aurora's notification center widened to that width for the run, nothing saved |
 | `AURORA_DEMO_DELIVERY=1\|several\|open\|history` | A Marketplace delivery arriving in Received items: its card under the bell, several at once, "Show in inventory", its history entry |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
@@ -7066,7 +7137,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
-| `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes[:lines]\|stagger\|legacy:stagger` | Nearby chat above the chat bar, optionally limited to 0–50 wrapped text lines; `stagger` says the lines one at a time |
+| `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes\|emoji[:lines]\|stagger\|legacy:stagger` | Nearby chat above the chat bar, optionally limited to 0–50 wrapped text lines; `emoji` shows colour emoji in a sender's name and line; `stagger` says the lines one at a time |
 | `AURORA_DEMO_MUTED_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:hidden\|collapsed\|greyed]` | A blocked resident talking in nearby chat: the history hides, folds or greys the lines |
 | `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines][:inspect][:unnamed\|spoof]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact; `unnamed` an object without a name imitating a resident, `spoof` the same marked "(no name)" |
 | `AURORA_DEMO_CHAT_RANGE=aurora\|compact\|bubbles\|legacy\|lines` | Residents and objects talking from near and from beyond the say range, the far lines dimmed |
@@ -7090,7 +7161,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
-| `AURORA_DEMO_RECENT_EMOJIS=1\|<emojis>` | Recent emojis over the chat fields (under them with the Legacy chat style): a full row, or the emojis given |
+| `AURORA_DEMO_RECENT_EMOJIS=1\|<emojis>` | Recent emojis over the chat fields (under the Conversations field with the Legacy chat style): a full row, or the emojis given |
 | `AURORA_DEMO_FAVORITE_EMOJIS=<emojis>` | Favourite emojis: first in that row, the picker opening on their tab |
 | `AURORA_DEMO_CHAT_INPUT=1\|long\|ime\|os-ime` | Paragraph drafts, Japanese IME composition in chat inputs, or an empty field for a real input method |
 | `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
@@ -8377,6 +8448,7 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_NOTIFS=fees|fees-answered|fees-short`**: at frame 700, an invitation to Lagoon Sailing Club with a L$ 50 membership fee ("Membership fee" under its text, "Join · L$ 50" on its button) and a tip jar of Tess Touch asking to take L$ and animate the avatar: titled "Warning: access to your account", the warning then the other permission, Deny as the main button and Allow access beside it. `fees-answered` answers at frame 850: the invitation is replaced by "Join the group" naming the cost (Join / Cancel), the question is denied and the nearby chat tells it ("… has been denied permission to: Take L$ from your account."). `fees-short` asks L$ 5000: Accept at frame 850 leaves the invitation and adds "You do not have enough L$ to join this group". Capture at frame 760 (`fees`) or 900.
 - **`AURORA_DEMO_NOTIFS=pie-toasts|legacy-pie-toasts`**: ToastGap and PieMenuOpacity (Preferences › Chat › Toasts › "Gap between toasts"; Preferences › Appearance › Opacity › "Override the pie menu’s opacity" and "Pie menu"). At frame 600 the gap goes to 20 px (7 by default), the pie's opacity override on at 50 %, and four toasts arrive: two notices, an inventory offer from Orion and Orion coming online. At frame 630 the pie menu opens in the middle of the window. `pie-toasts` shows them in Aurora's style: the cards under the bell and the friend's toast, each 20 px apart (and 20 px above the nearby chat lines); `legacy-pie-toasts` in the Legacy toasts, top right, 20 px apart. The pie shows the scene through it in both. Capture at frame 700. For the human test, move the gap slider from 0 to 30 and the pie slider with the toasts or the pie out: the stack and the pie follow at once.
 - **`AURORA_DEMO_NOTIFS=purchase|purchase-open`**: a Marketplace purchase delivered at frame 700, in the grid's words, from no sender (#1604), with the demo inventory loaded just before. The nearby chat shows it as a notice (the box of items in compact rows, no "System" sender with its letter); "Received Items" in its text is a link to that folder. `purchase-open` clicks the link at frame 760: the inventory opens on its Received tab. Capture at frame 740 (`purchase`) or 820 (`purchase-open`).
+- **`AURORA_DEMO_NOTIF_WIDTH=<px>`**: the width of Aurora's notification center for this run, as if dragged by its grip (the left edge of its list and cards): wider than the default, it grows to the left, within the window; 0 or a narrower value gives the default width. The setting (`notification_width`) is neither read nor saved in that run, so the grip does not move it. With `AURORA_DEMO_NOTIFS=list`, capture at frame 760 at 360 (the default) and 560: the list, its cards and their buttons fill the wider panel, its right edge still under the bell.
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
   center's mockup, at 60 frames a second. An IM from Nova at frame 700
   unrolls from the bell at the right end of the top bar (violet bar of the
@@ -9535,18 +9607,23 @@ failure. Grid validation and any paid upload are performed by the human.
   `demo chat os-ime:` with the field's text and focus, and
   `demo ime output:` as for `AURORA_DEMO_INVENTORY=ime`, whose entry
   describes `scripts/test-ime-linux.py`.
-- **`AURORA_DEMO_RECENT_EMOJIS=1|<emojis>`**: the row under the chat
-  fields (the island's, the Conversations window's), `1` a full row of 20,
+- **`AURORA_DEMO_RECENT_EMOJIS=1|<emojis>`**: the row over the chat
+  fields (the island's, the Conversations window's; under the
+  Conversations field with the Legacy chat style), `1` a full row of 20,
   or the emojis given, the last one first. Nothing is saved. A click adds
   the emoji at the caret; a message sent moves its emojis to the front.
   Unset, the row takes no room until a first emoji is sent. Set, the row
   shows even though Preferences › Chat › Show recent emojis is off by
-  default. The Legacy bars
+  default, and the arrow before the emoji buttons (the chat bar's, the
+  Conversations composers') hides and shows it for the run: down while the
+  row is shown, up while it is hidden. Unset, the arrow turns the
+  Preferences switch itself, which is saved. The Legacy bars
   (`AURORA_DEMO_BARS=legacy`) have no emojis in their field, so no row.
-- **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites, turned on for
-  the run whatever Preferences › Chat › Favorite emojis says: first in the row with a small star, and the emoji picker opening on their
+- **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites of the run:
+  first in the row with a small star, and the emoji picker opening on their
   tab (with `AURORA_DEMO_BARS=emoji`). The right-click menu of an emoji in
-  the row or the picker adds or removes one. Nothing is saved.
+  the row or the picker adds or removes one, and holds nothing else, in
+  the chat bar too. Nothing is saved.
 - **`AURORA_DEMO_EMOJI_CODES=<text>`**: the Conversations window open, its
   input holding `<text>` with the keyboard and the caret at the end
   (`ui/emoji/codes.rs`). With `hi :hea`, the list of suggestions opens
@@ -9692,6 +9769,7 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_LOGIN=connecting|first-connecting|add-connecting`**: synthetic waiting state in the selected card, inline first-account form, or Add form. Capture early and late frames (`AURORA_CAPTURE_FRAMES=20|40|90`) to check the brief animation, status/bar placement and persistent Aurora background. No black progress screen and no grid request. Confirm that inputs remain read-only while pending; a real error/MFA/terms challenge must restore the form, and successful authentication must switch to region loading.
 - **`AURORA_DEMO_LOGIN=cards1|derez1`**: a single saved account; `derez1` starts its validation. With no neighbour card to shatter, a faint echo of the chosen card breaks apart towards both sides from under it. Capture `AURORA_CAPTURE_FRAMES=30|36|42` and compare with `derez` (three cards).
 - **`AURORA_DEMO_SIGNUP=1|<page>`** (#3796, `ui/signup.rs`): opens the sign-up window of the login screen's "Create an account" once, at the first frame of the login screen. `1` loads Second Life's sign-up page (join.secondlife.com, so the network and the media plugins are needed); any other value is the address of a page shown in its place (an `https://` or `file:///` page), for a capture without the network. That page's `secondlife:///app/floaterjoin/close`, `tos`, `tc` and `privacy` work as on the real page (close the window, open the Terms of Service, the Terms and Conditions or the Privacy Policy over it); `join/<name>/<password>` is refused from any page that is not https on secondlife.com, as outside the demo, so it never fills the form from a test page. The log says `sign-up: opening …`, `sign-up: the page asks …` (the command, never the name or password) and `sign-up: window closed`. Never type real details into the sign-up form in a test: the account would be created on the grid.
+- **`AURORA_LOGIN_SNOW=1|0`** (`ui/aurora_bg/snow.rs`): the aurora sky of the login screen and of the loading screens snows from the 1st to the 31st of December (local date); `1` (or `on`) makes it snow on any date, `0` (or `off`) stops it in December. It works with a normal launch too, not only in the demo. Look for three depths of flakes (small and slow behind the far ridgeline, middle ones between the ridges, large quick ones in front), one slow wind that rises and dies down, a light frosting on the high crests, and through the login cards' glass only blurred blobs at the place of the flakes outside. "Reduce animations" (Preferences › Accessibility) always stops it. Use it with `AURORA_DEMO_LOGIN=empty` or `cards`, and `AURORA_CAPTURE` for a still.
 - **`AURORA_DEMO_LOGIN_WAIT=logout|sudden|refused`** (#956, `login_wait.rs`): the demo account's previous session logged out when the viewer started (`logout`: Log in waits up to 10 s), was never seen ending (`sudden`: a crash or a killed viewer, up to 60 s from its last sign of life), or the offline login server answers once as the grid does while it logs out a previous session (`refused`: the grid's message, then a 60 s countdown before trying again). The login screen shows the countdown in the connection progress (“Previous session… 7 s · Esc cancels”, “Session still open… 57 s” after a refusal); Escape cancels it and gives the form back, the end of the countdown sends the login (the demo then says it cannot connect). Use it with `AURORA_DEMO_LOGIN=cards` or `connecting`, and `AURORA_DEMO_LOGIN_SUBMIT=<frame>` for captures. The log says `login waits <n> s for the previous session (…)`. Nothing is read from or written to `last_sessions.json` in demo mode.
 - **`AURORA_DEMO_LOGIN=add-mfa`**: one saved account and the Add form open with a second synthetic identity typed in; Log in sends it to the offline server, which asks for the second factor 1.2 s later. The challenge must stay in the Add form with the new identity (never the saved card's), and the log line `demo login: request for a new account` names which identity was sent, without the name. `AURORA_DEMO_LOGIN_SUBMIT=<frame>[,<frame>…]` presses Log in at those frames for captures (`AURORA_DEMO_LOGIN_SUBMIT=40`, `AURORA_CAPTURE_FRAMES=170`). The demo never touches the system credential store.
 - **`AURORA_DEMO_LOGIN=mfa-refused`**: the first-account form with a synthetic code typed in. The offline server refuses a request that carries a code the way the grid refuses a wrong one, and challenges a request without one. With `AURORA_DEMO_LOGIN_SUBMIT=40,300`, the log must read `code true` for the first request and `code false` for the second, and the second answer opens an empty code field (capture frames 200 and 500).
@@ -9799,6 +9877,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1)`, the viewer waits 2 s, starts the renderer again, and the session
   goes on with the "The graphics card was reset" notice. No crash report and no
   "Rust panic". Without it, that panic ended the process.
+- **`AURORA_DEMO_GPU_DROP_FAIL=1`**, with `AURORA_DEMO=1` and
+  `AURORA_DEMO_GPU_LOST` (#3915): when the recovery drops the lost
+  renderer, its drop panics as wgpu's queue does when its last wait fails
+  with another error than "lost" ("Unexpected error while waiting for queue
+  idle on drop"). The guarded drop takes it: the log says
+  `GPU recovery: wgpu failed dropping the lost renderer, taken` (once,
+  with where it panicked), then `GPU recovery: new window and renderer`,
+  and the session goes on with the "The graphics card was reset" notice.
+  No crash report and no "Rust panic". Without it, that panic ended the
+  process. With `AURORA_DEMO_GPU_STALL=<frame>:<seconds>` just before the
+  loss (`AURORA_DEMO_GPU_STALL=400:10 AURORA_DEMO_GPU_LOST=401`), the
+  render thread is still held when the recovery drops the renderer: the
+  log says `render thread still in the GPU after 3s: left behind`, the new
+  renderer comes, and when the hold ends `render thread back from the GPU
+  after it was left behind: its backend drops now` and the same guarded
+  line follow; the session goes on, no crash report, no abort.
 - **`AURORA_DEMO_GPU_LOST=<frame>`**, with `AURORA_DEMO=1`: the GPU device is
   taken as lost at that frame, as the device-lost callback does after a
   driver reset (the log says `GPU device lost (Unknown): AURORA_DEMO_GPU_LOST
@@ -9954,10 +10048,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   links the release page, and nothing is downloaded or replaced.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CHAT_LINES=1|legacy|volumes[:lines]`**: nearby chat said at the arrival,
+- **`AURORA_DEMO_CHAT_LINES=1|legacy|volumes|emoji[:lines]`**: nearby chat said at the arrival,
   shown above the chat bar with the Conversations window closed: two lines
   of one resident, an emote, an object's line, a long line with a link, a
-  shout. Preferences › Chat sets the maximum wrapped text lines (40 by
+  shout. `emoji` instead says one line whose sender's name and text hold
+  colour emoji (🫶 ❤️ 😀 👍), to check that they are pictures and not
+  egui's "no glyph" square in both styles (`legacy:emoji` for the Legacy
+  one-line look). Preferences › Chat sets the
+  maximum wrapped text lines (40 by
   default, 0–50; 0 hides them), keeping the newest whole messages. Card
   headers do not count toward the text limit. Append `:3` to any mode to
   test three lines, or `:0` to hide them, without saving the override.
@@ -9982,7 +10080,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   show it: capture consecutive frames across a departure
   (`AURORA_FPS_LIMIT=60`, `AURORA_CAPTURE_FRAMES` listing every frame from
   about 23 s to 31 s after the arrival) and compare the lines' bottom frame
-  by frame.
+  by frame. The lines follow the chat bar: with
+  `AURORA_DEMO_TOOLBAR=chat-top`, `chat-left` or `chat-right` they hang
+  under the chat field, from its left, or ending on its right at the right
+  of the screen; in a short window (`AURORA_WINDOW_SIZE=1100,520`) the
+  oldest are cut under the top bar instead of leaving the screen.
 
 - **`AURORA_DEMO_MUTED_CHAT=aurora|compact|bubbles|legacy|lines[:hidden|collapsed|greyed]`**:
   the demo's blocked resident, Violet Wolf (on the demo block list), talks
@@ -10649,10 +10751,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1536 the position too, with `rights` the forbidden rights are named at
   1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
   the bell's red counter.
-- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite|lost`**: Contacts
+- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite|lost|sheet|collapsed|groups-sheet|groups-collapsed`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
-  picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). In Aurora's look of People, `groups` opens the Groups pill of the Contacts tab, and the filter fills its search. The detached window has the look of the tab it
+  picker of "Add...". `sheet` opens Friends in a Conversations window
+  wide enough for the contact sheet (900 × 560), its collapse button at the
+  right of the sheet's head; `collapsed` opens the same window with the
+  sheet collapsed: the list takes the whole pane and the expand button ends
+  its toolbar, in the same place. `groups-sheet` and `groups-collapsed` do
+  the same under the Groups pill, whose group sheet the same button
+  collapses. Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). In Aurora's look of People, `groups` opens the Groups pill of the Contacts tab, and the filter fills its search. The detached window has the look of the tab it
   left (#961): People's friends tab in Aurora's look of People with the
   Aurora or Compact conversation style, the contact list otherwise (add
   `AURORA_DEMO_PEOPLE=legacy` to see it). These modes enable the optional Contacts entry for
@@ -13662,6 +13770,7 @@ What the inventory must show with these scenarios:
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
+| `AURORA_MOTION_BLUR=<0-100>` | Motion blur at that strength (%) for this launch, whatever the setting says (`0`: none) |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_CLOUDS=aurora` or `legacy` | Volumetric clouds or the Legacy Viewer's flat layer for this launch, over the setting (and over `AURORA_DEMO_CLOUDS`) |
@@ -14327,6 +14436,18 @@ What the inventory must show with these scenarios:
   captures off differ by the demo's run-to-run noise only). `g_bloom` of
   `perf summary` is its GPU time (demo, 2560 × 1369, RTX 4090: about
   0.07 ms on the plaza, 0.09 ms in a crowd of 40).
+- **`AURORA_MOTION_BLUR=<0-100>`**: Aurora's motion blur (Preferences ›
+  Graphics › Motion blur, off by default) at that strength for this launch,
+  without changing the saved setting; `0` draws none. 50 is the default
+  strength: a 180° shutter at 60 frames a second, the same streaks at any
+  frame rate. The Director's own shutter (its Look tab) replaces it while
+  the Director's window is open. To look at: `AURORA_DEMO_DIRECTOR=play`
+  (the camera flies round the avatar) with `AURORA_MOTION_BLUR=100`: the
+  background streaks along the camera's path while the avatar it follows
+  stays sharp; the plaza's walking avatars streak along their steps with
+  the camera still. Not drawn on photos, offline Director renders,
+  cut-out frames, nor the first frame after a teleport. Off, nothing of it
+  is made and the frame is drawn as before.
 - **`AURORA_AUTO_EXPOSURE=0|1|alt`**: the automatic exposure of skies that
   are not classic (reflection probe ambiance above 0), like the Legacy
   Viewer's dynamic exposure, for this launch: `0` off (exposure 1 on every

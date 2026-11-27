@@ -327,6 +327,7 @@ const BEFORE: &[&str] = &[
     "chat_bar",
     "chat_toast_seconds",
     "chat_console_max_lines",
+    "chat_lines_direction",
     "chat_bubbles",
     "chat_bubbles_hide_console",
     "typing_bubbles",
