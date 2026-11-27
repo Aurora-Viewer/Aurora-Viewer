@@ -526,6 +526,10 @@ mod tests {
         };
         settings.left_style.align = Some(left);
         settings.compose_chat(&skin);
+        // (a button stands in one bar: the dock's own Sit and Fly go)
+        if let Some(buttons) = settings.buttons.as_mut() {
+            buttons.retain(|button| !matches!(button.command.as_str(), "sit" | "fly"));
+        }
         let status = islands::tests::status(true, true);
         let icons = Icons::default();
         let favorites = crate::ui::bars::favorites::View::default();
@@ -684,7 +688,7 @@ mod tests {
         // what the frame painted: each shape's clip and its bounds
         let painted = std::cell::RefCell::new(Vec::new());
         let mut frame = |events, chat: &mut crate::ui::chat::ChatUi| {
-            let out = ctx.run_ui(
+            let mut out = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1536.0, 864.0))),
                     events,
@@ -738,6 +742,7 @@ mod tests {
                     chrome::show_chat(ui, &p, &icons, &mut panels, chat, &gestures, Some(&mut emoji), &row, &mut width);
                 },
             );
+            out.textures_delta.clear();
             *painted.borrow_mut() = out
                 .shapes
                 .iter()
