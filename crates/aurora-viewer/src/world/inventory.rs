@@ -399,7 +399,7 @@ impl Inventory {
             self.accepted_snapshot_items.clear();
         }
         self.generation += 1;
-        let mut refreshed: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
+        let mut refreshed = HashMap::new();
         let mut stale = Vec::new();
         for mut c in contents {
             // Inventory versions advance as copies arrive (Firestorm's
@@ -453,7 +453,7 @@ impl Inventory {
                 (*parent == c.folder_id && self.items.get(item).is_some_and(|it| it.parent == *parent)).then_some(*item)
             }));
             if c.version >= 0 {
-                refreshed.insert(c.folder_id, item_ids.iter().copied().collect());
+                refreshed.insert(c.folder_id, item_ids.clone());
             }
             if let Some(f) = self.folders.get_mut(&c.folder_id) {
                 f.children = child_ids;
@@ -494,7 +494,13 @@ impl Inventory {
             // The links come from the parent index, not a scan of every
             // record: ~6 ms per readback with 220,000 items (#1963).
             for (folder, listed) in &refreshed {
-                for id in self.items.links_in(*folder) {
+                let links = self.items.links_in(*folder);
+                if links.is_empty() {
+                    continue;
+                }
+                // Folders without links need no membership lookup after the batch.
+                let listed: HashSet<_> = listed.iter().copied().collect();
+                for id in links {
                     if !listed.contains(&id) {
                         self.items.remove(&id);
                     }
