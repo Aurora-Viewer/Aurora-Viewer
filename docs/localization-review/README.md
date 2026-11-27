@@ -17,7 +17,15 @@ Save the English catalog from the revision the translations were based on. With 
     -ReportDirectory ./review-reports
 ```
 
-The wrapper builds Aurora's `catalog_delta` once and writes one text worklist per language. Each worklist shows missing entries, changed English and retired IDs. Pass `-CurrentEnglish ./current-en.ftl` to review a saved source catalog, such as a release candidate, from another checkout. Group repeated messages by source and meaning, then review each affected screen in the offline Viewer. Run the catalog checks after applying the edits.
+The wrapper builds Aurora's `catalog_delta` once and writes one text worklist per language. Each worklist shows missing entries, changed English and retired IDs. Pass `-CurrentEnglish ./current-en.ftl` to review a saved source catalog, such as a release candidate, from another checkout. Group repeated messages by source and meaning, then review each affected screen in the offline Viewer.
+
+After integrating the latest `main` and applying the edits, run the same catalog checks as pull request CI from the repository root.
+
+```powershell
+cargo test --profile ci --workspace --locked --test catalogs --test user_catalog --test user_catalog_regional
+```
+
+A missing community translation can fall back to English. Remove retired IDs from every catalog because the tests reject keys that no longer exist in English. For changes to Viewer code, also run the complete Windows check in `scripts/check.ps1`.
 
 Before an importable catalog is proposed for bundling, finish the wording review, check the relevant screens in the offline Viewer, and record the human validation and remaining issues in the pull request.
 
