@@ -266,27 +266,36 @@ present (the viewer's Vulkan calls already go through `sl.interposer.dll`)
 and presents the generated frames itself, paced on its own queue, with
 Reflex keeping input latency down. Not yet run on Windows.
 
-- **A restart to turn it on or off.** Streamline loads frame generation when
-  it starts, with the viewer's GPU, or not at all; loaded, every swapchain
-  goes through its proxy, which costs a copy even with frame generation off.
-  So the setting is read as the viewer starts, and Preferences says when a
-  change waits for a restart. Off at that start, nothing of it is loaded.
+- **A restart to turn it on.** Streamline loads frame generation when it
+  starts, with the viewer's GPU, or not at all; loaded, every swapchain goes
+  through its proxy, which costs a copy even with frame generation off. So
+  the setting is read as the viewer starts, and Preferences says when a
+  change waits for a restart. Off at that start, nothing of it is loaded,
+  and the switch can be turned on whether or not the card has it: the
+  restart tells. Turned off while it runs, it stops at once; the proxy goes
+  at the next restart.
 - **What it is given.** For each frame DLSS draws: the depth and motion
-  DLSS reads, copied by Streamline as it is tagged, and the window's image
-  before the interface (a copy of it, in the window's format). The
+  DLSS reads, copied by the viewer before DLSS runs, and the window's image
+  before the interface (a copy of it, in the window's format), all three
+  tagged valid until the present, so Streamline copies none of them. The
   interface itself is not given, so in a generated frame it is moved with
   the scene behind it where they differ.
-- **Off for a frame** DLSS did not draw, under a modal's blur, and for one
-  present before the window's size or vsync changes (NVIDIA's guide: not
-  while the swapchain is made again); the frame after, it is on again.
+- **Off for a frame** DLSS did not draw, under a modal's blur, and before
+  the window's size or vsync changes (NVIDIA's guide: not while the
+  swapchain is made again): the swapchain is made again once a present has
+  asked it off, or after three frames, or at once when the window gives no
+  image, asked off first. Off too in a window under the smallest size it
+  takes, and after three presents in a row whose status is not `ok`, until
+  the window takes another size. Off as DLSS goes (another anti-aliasing,
+  another model), its memory let go.
 - **Vsync is not applied** while it runs: NVIDIA supports vsync with frame
   generation on Direct3D 12 only. The frame rate limit stays in effect, and
   limits the frames drawn.
 - **Needs** an RTX 40 or 50 card, Windows 10 20H1 or later, and
   hardware-accelerated GPU scheduling on (Windows' Graphics settings).
   RTX 40 makes one frame per frame drawn (2x); `AURORA_DLSS_FG_FRAMES=<n>`
-  asks for `n` per frame drawn for a test, up to what the card says (the
-  log's `up to <n>x here`).
+  asks for `n` per frame drawn for a test, at most what the card says,
+  read before the first ask (the log's `up to <n>x here`).
 - **The log.** `DLSS: frame generation supported here` (or why not) at the
   start; `DLSS frame generation: on` when it is first asked for; then at the
   first present with it, each 600th and at each change, its status (`ok`,

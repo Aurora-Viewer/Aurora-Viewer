@@ -2513,11 +2513,15 @@ pub(crate) struct Backend {
     /// window's image before the interface, in its format and size
     #[cfg(windows)]
     fg_hudless: Option<wgpu::Texture>,
-    /// Windows' frame generation is off for this frame's present: the
-    /// window's size or vsync changes at the next frame, whose swapchain
-    /// is not made under frame generation (DLSS-G guide §17)
+    /// Windows' frame generation: frames the window's size or vsync
+    /// change has waited for a present asked off, whose swapchain is not
+    /// made under frame generation (DLSS-G guide §17); 0 when none waits
     #[cfg(windows)]
-    fg_hold: bool,
+    fg_hold: u8,
+    /// the video memory refused the image before the interface at this
+    /// size: not asked again until the window changes
+    #[cfg(windows)]
+    fg_hudless_refused: Option<wgpu::Extent3d>,
     /// This frame's TAA jitter in pixels, y down: where it moved the image.
     taa_jitter: glam::Vec2,
     prev_view_proj: Option<Mat4>,
@@ -5498,7 +5502,9 @@ impl Backend {
             #[cfg(windows)]
             fg_hudless: None,
             #[cfg(windows)]
-            fg_hold: false,
+            fg_hold: 0,
+            #[cfg(windows)]
+            fg_hudless_refused: None,
             taa_jitter: glam::Vec2::ZERO,
             prev_view_proj: None,
             prev_motion_view: None,
@@ -7293,7 +7299,16 @@ impl Backend {
             let ((rr_gbuf, albedo_msaa, albedo, rr_inputs), refused) = crate::gpu_alloc::scoped(device, || {
                 // (drawn into after the copy: the impostor cards and the
                 // blended faces opaque to the eye)
-                let copied = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | att;
+                // (Windows: copied in turn for frame generation, dlss.rs
+                // `fg_copy_inputs`)
+                let copied = wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | att
+                    | if cfg!(windows) {
+                        wgpu::TextureUsages::COPY_SRC
+                    } else {
+                        wgpu::TextureUsages::empty()
+                    };
                 (
                     gbuf.is_none().then(|| gbuffer(GBUF_STANDARD)),
                     (samples > 1).then(|| make_view(device, "albedo msaa", w, h, ALBEDO_FORMAT, samples, att).1),
@@ -8501,15 +8516,24 @@ impl Backend {
         self.fg_allowed = s.fg_allowed;
         let resize = (s.width, s.height) != (self.config.width, self.config.height);
         // Windows' frame generation, on at the last present: off for this
-        // frame's, and the swapchain made again at the next (`fg_hold`).
-        // One frame at most: a frame not presented leaves it asked.
+        // frame's, and the swapchain made again once a present asked it off
+        // (`fg_hold`). Three frames at most: one whose present never comes
+        // (no image from the window, a failure) asks it off itself
         #[cfg(windows)]
         {
-            let asked = self.taa.as_ref().and_then(|t| t.dlss.as_ref()).is_some_and(|(d, _)| d.fg_asked());
-            self.fg_hold = !self.fg_hold && asked && (resize || s.vsync != self.vsync);
-            if self.fg_hold {
-                return;
+            let change = resize || s.vsync != self.vsync;
+            let dlss = self.taa.as_mut().and_then(|t| t.dlss.as_mut()).map(|(d, _)| d);
+            if change && dlss.as_ref().is_some_and(|d| d.fg_asked()) {
+                if self.fg_hold < 3 {
+                    self.fg_hold += 1;
+                    return;
+                }
+                log::warn!("DLSS frame generation: no present asked it off in 3 frames: off before the swapchain is made again");
+                if let Some(d) = dlss {
+                    d.fg_off();
+                }
             }
+            self.fg_hold = 0;
         }
         self.set_vsync(s.vsync);
         if resize {
@@ -10718,6 +10742,12 @@ impl Backend {
                 wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(FrameTarget::Surface(t)),
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                     if !self.external {
+                        // (Windows' frame generation off first: DLSS-G
+                        // guide §17, not while the swapchain is made again)
+                        #[cfg(windows)]
+                        if let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut()) {
+                            dlss.fg_off();
+                        }
                         crate::present::configure(&self.surface, &self.device, &self.config);
                     }
                     None
@@ -10743,7 +10773,25 @@ impl Backend {
             cmds.push(encoder.finish());
             crate::device_lost::submit_tracked(&self.lost, &self.queue, index, upload_cmds.into_iter().chain(cmds));
             if let FrameTarget::Surface(t) = surface_tex {
+                // (Windows' frame generation: off for a present with no
+                // scene, and the frame's markers to its end)
+                #[cfg(windows)]
+                let mut fg_dlss = if self.external {
+                    None
+                } else {
+                    self.taa.as_mut().and_then(|t| t.dlss.as_mut()).map(|(d, _)| d)
+                };
+                #[cfg(windows)]
+                if let Some(dlss) = &mut fg_dlss {
+                    dlss.fg_off();
+                    dlss.fg_submitted();
+                    dlss.fg_presenting();
+                }
                 self.queue.present(t);
+                #[cfg(windows)]
+                if let Some(dlss) = fg_dlss {
+                    dlss.fg_end();
+                }
                 stats.presented = true;
             }
             let captured = capture.and_then(|capture| self.read_capture(capture, false));
@@ -15398,23 +15446,36 @@ impl Backend {
         let fg_hudless = match &surface_tex {
             FrameTarget::Surface(t)
                 if fg_on
-                    && !self.fg_hold
+                    && self.fg_hold == 0
                     && dlss_cmds.is_some()
                     && self.ui_blur.is_none()
                     && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) =>
             {
                 let (size, format) = (t.texture.size(), t.texture.format());
-                if self.fg_hudless.as_ref().is_none_or(|h| h.size() != size || h.format() != format) {
-                    self.fg_hudless = Some(self.device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some("DLSS FG hudless"),
-                        size,
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format,
-                        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-                        view_formats: &[],
-                    }));
+                if self.fg_hudless.as_ref().is_none_or(|h| h.size() != size || h.format() != format)
+                    && self.fg_hudless_refused != Some(size)
+                {
+                    // checked apart: refused, frame generation is off at
+                    // this size and the frame presents
+                    self.fg_hudless = None;
+                    let (made, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                        self.device.create_texture(&wgpu::TextureDescriptor {
+                            label: Some("DLSS FG hudless"),
+                            size,
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format,
+                            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                            view_formats: &[],
+                        })
+                    });
+                    if self.memory_refused(refused) {
+                        log::warn!("DLSS frame generation: the video memory refused the image before the interface: off at this size");
+                        self.fg_hudless_refused = Some(size);
+                    } else {
+                        (self.fg_hudless, self.fg_hudless_refused) = (Some(made), None);
+                    }
                 }
                 self.fg_hudless.as_ref().map(|h| {
                     encoder.copy_texture_to_texture(t.texture.as_image_copy(), h.as_image_copy(), size);

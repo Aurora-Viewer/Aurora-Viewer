@@ -1411,13 +1411,15 @@ fn image(cx: &mut Cx) {
         // yet); on, it can always be turned off, and why it does not run
         // is said below it. On Windows Streamline loads it at its start:
         // a change says it waits for a restart, and frame generation not
-        // loaded is no reason to grey it
+        // loaded is no reason to grey it (turned on, it would load at the
+        // restart: `dlss_fg_restart(true)`)
         cx.conditional(dlss && cfg!(any(target_os = "linux", windows)), |cx| {
             let p = cx.p;
             let on = cx.s.dlss_fg;
+            let ready = aurora_render::dlss_fg_ready();
             let restart = aurora_render::dlss_fg_restart(on);
-            let blocked = (!aurora_render::dlss_fg_ready() && !restart).then(|| tr!("ui-options-dlss-fg-unavailable"));
-            let greyed = blocked.filter(|_| !on);
+            let blocked = (!ready && !restart).then(|| tr!("ui-options-dlss-fg-unavailable"));
+            let greyed = (!on && !ready && !aurora_render::dlss_fg_restart(true)).then(|| tr!("ui-options-dlss-fg-unavailable"));
             let help = if cfg!(windows) {
                 tr!("ui-options-dlss-fg-help-windows")
             } else {

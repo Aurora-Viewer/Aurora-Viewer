@@ -272,12 +272,11 @@ mod sl {
     /// `sl::ResourceLifecycle::eValidUntilEvaluate`: the viewer's images
     /// stay as they are until `slEvaluateFeature` returns.
     pub const VALID_UNTIL_EVALUATE: u32 = 2;
-    /// `sl::ResourceLifecycle::eOnlyValidNow`: the library copies the
-    /// image in the tag's command buffer. Windows' frame generation reads
-    /// its inputs at the present, after the frame's later passes have
-    /// changed their layouts (`ResourceTag::copied`).
+    /// `sl::ResourceLifecycle::eValidUntilPresent`: the image stays as
+    /// tagged until the frame is presented, and the library makes no copy
+    /// of it (`ResourceTag::until_present`).
     #[cfg_attr(not(windows), allow(dead_code))]
-    pub const ONLY_VALID_NOW: u32 = 0;
+    pub const VALID_UNTIL_PRESENT: u32 = 1;
     /// `sl::ResourceType::eTex2d`
     pub const TEX_2D: u8 = 0;
     /// `sl::RenderAPI::eVulkan`
@@ -759,12 +758,16 @@ mod sl {
             }
         }
 
-        /// Copied by the library in the tag's command buffer
-        /// ([`ONLY_VALID_NOW`]): what Windows' frame generation reads at
-        /// the present.
+        /// Valid until the present ([`VALID_UNTIL_PRESENT`]): Windows'
+        /// frame generation's inputs, the viewer's own copies. A tag valid
+        /// until the evaluate, or only now, of an input frame generation
+        /// has read at a present is copied by the library in the tag's
+        /// command buffer (Streamline 2.14.16,
+        /// `ResourceTaggingForFrame::setTag`), which needs the image to be
+        /// a copy source.
         #[cfg_attr(not(windows), allow(dead_code))]
-        pub fn copied(mut self) -> Self {
-            self.lifecycle = ONLY_VALID_NOW;
+        pub fn until_present(mut self) -> Self {
+            self.lifecycle = VALID_UNTIL_PRESENT;
             self
         }
     }
@@ -3645,8 +3648,30 @@ mod imp {
         presents: u64,
         status: Option<u32>,
         /// frames the GPU can generate per frame drawn
-        /// (`numFramesToGenerateMax`), 0 until its state is read
+        /// (`numFramesToGenerateMax`) and the smallest side the window
+        /// may have (`minWidthOrHeight`), read before the first ask
+        /// (`state_read`)
         max: u32,
+        min: u32,
+        state_read: bool,
+        /// the depth and the motion this frame's DLSS read, copied as it
+        /// read them ([`Dlss::fg_copy_inputs`]): frame generation reads
+        /// them at the present, after later passes have changed the
+        /// originals' layouts
+        inputs: Option<[wgpu::TextureView; 2]>,
+        /// the video memory refused those copies: off for this DLSS
+        inputs_refused: bool,
+        /// the window's size at the last present asked on, and the size a
+        /// status other than OK was read at: off there, until the window
+        /// takes another size (DLSS-G guide §14.3: on in an invalid state,
+        /// it paints the frame pink)
+        size: Option<(u32, u32)>,
+        bad: Option<(u32, u32)>,
+        /// presents in a row read with a status other than OK
+        bad_run: u32,
+        /// asked on once for this viewport: asked off, without its memory
+        /// kept, as the feature goes ([`Dlss::retire`])
+        used: bool,
         /// a failure was logged (one line, not one a frame)
         failed: bool,
     }
@@ -3914,7 +3939,17 @@ mod imp {
             let drawn_and_read = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
             let ((motion, safe, output), refused) = crate::gpu_alloc::scoped(device, || {
                 (
-                    texture("DLSS motion vectors", render, MOTION_FORMAT, drawn_and_read),
+                    // (Windows: copied for frame generation, `fg_copy_inputs`)
+                    texture(
+                        "DLSS motion vectors",
+                        render,
+                        MOTION_FORMAT,
+                        if cfg!(windows) {
+                            drawn_and_read | wgpu::TextureUsages::COPY_SRC
+                        } else {
+                            drawn_and_read
+                        },
+                    ),
                     texture("DLSS colour", render, OUTPUT_FORMAT, drawn_and_read),
                     texture(
                         "DLSS output",
@@ -4382,6 +4417,8 @@ mod imp {
                 pass.draw(0..3, 0..1);
             }
             self.fg_frame = None;
+            #[cfg(windows)]
+            self.fg_copy_inputs(encoder);
             let commands = self.evaluate(encoder, f);
             match commands {
                 Ok((commands, token, constants)) => {
@@ -4434,6 +4471,12 @@ mod imp {
                     match create(self.lib, &self.device, &self.lost, &self.queue, &self.shape, self.report) {
                         Some(made) => {
                             (self.viewport, self.start, self.made, self.reset) = (made.viewport, made.start, true, true);
+                            // (a new viewport: frame generation off on the
+                            // old one, `retire`, and not yet asked here)
+                            #[cfg(windows)]
+                            {
+                                (self.fg_win.asked, self.fg_win.used, self.fg_win.bad) = (0, false, None);
+                            }
                         }
                         None => self.failed = true,
                     }
@@ -4594,10 +4637,11 @@ mod imp {
                         let dlssd = lib.dlssd()?;
                         sl::check((dlssd.set_options)(&handle, options)).map_err(|e| format!("slDLSSDSetOptions: {e}"))?;
                     }
-                    // (the depth and motion of a frame with Windows' frame
-                    // generation are copied now: it reads them at the
-                    // present, when later passes have moved them on)
-                    let fg_copy = |tag: sl::ResourceTag| if given.is_some() { tag.copied() } else { tag };
+                    // (with Windows' frame generation loaded, valid until
+                    // the present: the library would copy them otherwise
+                    // once frame generation has read them at a present;
+                    // its own are the copies `fg_present` tags after)
+                    let fg_copy = |tag: sl::ResourceTag| if given.is_some() { tag.until_present() } else { tag };
                     let mut tags = vec![
                         sl::ResourceTag::new(&mut color, sl::buffer::SCALING_INPUT_COLOR, extent(render)),
                         fg_copy(sl::ResourceTag::new(&mut depth, sl::buffer::DEPTH, extent(render))),
@@ -4662,15 +4706,69 @@ mod imp {
             }
         }
 
+        /// Windows' frame generation, before DLSS's evaluate: the depth and
+        /// the motion it reads, copied into frame generation's own
+        /// textures, which `fg_present` tags valid until the present.
+        /// While Streamline has frame generation loaded (a token from
+        /// [`Dlss::fg_begin`]); the copies are made the first time, at the
+        /// originals' size and format, and refused, frame generation stays
+        /// off for this DLSS.
+        #[cfg(windows)]
+        fn fg_copy_inputs(&mut self, encoder: &mut wgpu::CommandEncoder) {
+            if self.fg_win.token.is_none() || self.fg_win.inputs_refused {
+                return;
+            }
+            let (depth, motion) = (self.depth.texture(), self.motion.texture());
+            let fits =
+                |copy: &wgpu::TextureView, of: &wgpu::Texture| copy.texture().size() == of.size() && copy.texture().format() == of.format();
+            if !self.fg_win.inputs.as_ref().is_some_and(|[d, m]| fits(d, depth) && fits(m, motion)) {
+                self.fg_win.inputs = None;
+                if !(depth.usage() & motion.usage()).contains(wgpu::TextureUsages::COPY_SRC) {
+                    self.fg_win.inputs_refused = true;
+                    self.fg_failed("the depth or the motion DLSS reads cannot be copied");
+                    return;
+                }
+                let device = &self.device;
+                let copy = |of: &wgpu::Texture, label| {
+                    device
+                        .create_texture(&wgpu::TextureDescriptor {
+                            label: Some(label),
+                            size: of.size(),
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: of.format(),
+                            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                            view_formats: &[],
+                        })
+                        .create_view(&Default::default())
+                };
+                let (made, refused) = crate::gpu_alloc::scoped(device, || [copy(depth, "DLSS FG depth"), copy(motion, "DLSS FG motion")]);
+                if refused {
+                    self.fg_win.inputs_refused = true;
+                    log::warn!("DLSS frame generation: the video memory refused its copies of the depth and the motion: off");
+                    return;
+                }
+                self.fg_win.inputs = Some(made);
+            }
+            if let Some([d, m]) = &self.fg_win.inputs {
+                encoder.copy_texture_to_texture(depth.as_image_copy(), d.texture().as_image_copy(), depth.size());
+                encoder.copy_texture_to_texture(motion.as_image_copy(), m.texture().as_image_copy(), motion.size());
+            }
+        }
+
         /// Windows' frame generation, before the frame's last submit: the
         /// window's image before the interface (`hudless`, at the window's
-        /// size, in its format) tagged with the frame's token, and frame
-        /// generation asked on for the present, [`fg_frames`] generated per
-        /// frame drawn (1 for 2x, up to what the GPU says). Off with
-        /// `hudless` None (the setting off, a modal's blur, a resize to
-        /// come) and for a frame DLSS did not draw; `keep` keeps the
-        /// feature's memory through an off of a moment. The commands go
-        /// after the encoder's; None when there are none to run.
+        /// size, in its format) and the copies of the depth and the motion
+        /// ([`Dlss::fg_copy_inputs`]) tagged with the frame's token, and
+        /// frame generation asked on for the present, [`fg_frames`]
+        /// generated per frame drawn (1 for 2x, at most what the GPU says).
+        /// Off with `hudless` None (the setting off, a modal's blur, a
+        /// resize to come), for a frame DLSS did not draw, for a window
+        /// under the smallest size it takes, and at a size its status was
+        /// not OK at; `keep` keeps the feature's memory through an off of a
+        /// moment. The commands go after the encoder's; None when there
+        /// are none to run.
         #[cfg(windows)]
         pub fn fg_present(
             &mut self,
@@ -4679,23 +4777,60 @@ mod imp {
             keep: bool,
         ) -> Option<wgpu::CommandBuffer> {
             let token = self.fg_win.token?;
-            // a frame DLSS drew: `evaluate` set its constants with the token
-            let drew = self.fg_frame.as_ref().is_some_and(|(t, _)| *t == token);
+            // a frame DLSS drew, its inputs copied: `evaluate` set its
+            // constants with the token
+            let drew = self.fg_win.inputs.is_some() && self.fg_frame.as_ref().is_some_and(|(t, _)| *t == token);
             let hudless = hudless.filter(|_| drew);
-            let mut hudless_r = hudless.and_then(|view| resource(view, &self.adapter, false));
-            if let Some(view) = hudless.filter(|_| hudless_r.is_some()) {
-                encoder.transition_resources(
-                    std::iter::empty(),
-                    std::iter::once(wgpu::TextureTransition {
+            let size = hudless.map(|view| {
+                let size = view.texture().size();
+                (size.width, size.height)
+            });
+            // the GPU's most frames and the smallest size, read before the
+            // first ask: more frames than the GPU makes are refused (DLSS-G
+            // guide §6.2), a smaller window must have it off (§17)
+            if size.is_some() && !self.fg_win.state_read {
+                self.fg_win.state_read = true;
+                if let Some(state) = self.fg_state() {
+                    (self.fg_win.max, self.fg_win.min) = (state.num_frames_to_generate_max, state.min_width_or_height);
+                    log::info!(
+                        "DLSS frame generation: up to {}x here, windows from {} pixels a side",
+                        state.num_frames_to_generate_max + 1,
+                        state.min_width_or_height
+                    );
+                }
+            }
+            if let (Some(bad), Some(size)) = (self.fg_win.bad, size)
+                && bad != size
+            {
+                self.fg_win.bad = None;
+            }
+            let small = size.is_some_and(|(w, h)| w.min(h) < self.fg_win.min);
+            let hudless = hudless.filter(|_| !small && self.fg_win.bad.is_none());
+            let mut tagged = match (hudless, &self.fg_win.inputs) {
+                (Some(hudless), Some([depth, motion])) => (|| {
+                    Some([
+                        resource(hudless, &self.adapter, false)?,
+                        resource(depth, &self.adapter, false)?,
+                        resource(motion, &self.adapter, false)?,
+                    ])
+                })(),
+                _ => None,
+            };
+            if tagged.is_some()
+                && let (Some(hudless), Some([depth, motion])) = (hudless, &self.fg_win.inputs)
+            {
+                fn read(view: &wgpu::TextureView) -> wgpu::TextureTransition<&wgpu::Texture> {
+                    wgpu::TextureTransition {
                         texture: view.texture(),
                         selector: None,
                         state: wgpu::TextureUses::RESOURCE,
-                    }),
-                );
+                    }
+                }
+                encoder.transition_resources(std::iter::empty(), [read(hudless), read(depth), read(motion)].into_iter());
             }
-            let on = hudless_r.is_some();
+            let on = tagged.is_some();
             let frames = match self.fg_win.max {
-                0 => fg_frames(),
+                0 => 1,
                 max => fg_frames().min(max),
             };
             let options = sl::DlssgOptions::new(
@@ -4703,15 +4838,13 @@ mod imp {
                 frames,
                 if on || keep { sl::DLSSG_RETAIN_RESOURCES_WHEN_OFF } else { 0 },
             );
-            let extent = hudless.map(|view| {
-                let size = view.texture().size();
-                sl::Extent {
-                    top: 0,
-                    left: 0,
-                    width: size.width,
-                    height: size.height,
-                }
-            });
+            let extent = |(width, height): (u32, u32)| sl::Extent {
+                top: 0,
+                left: 0,
+                width,
+                height,
+            };
+            let (display, render) = (size.map(extent), extent(self.render()));
             let mut own = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("DLSS frame generation inputs"),
             });
@@ -4719,9 +4852,11 @@ mod imp {
             let lib = self.lib;
             // SAFETY: as in `evaluate`: under the lock, for the start that
             // made the viewport; the token is this frame's ([`fg_begin`]);
-            // the structs are locals that outlive the calls; the library
-            // copies the image in `own`'s open command buffer, submitted
-            // after the encoder that drew it
+            // the structs are locals that outlive the calls; the images are
+            // valid until the present (frame generation's own, written by
+            // nothing until the next frame's copies, which go after the
+            // present), and the Dlss keeps them until its last present
+            // (`retire`); no copy is asked, so `own` stays empty
             let r = with_started(lib, &self.device, &self.lost, false, |st| unsafe {
                 if st.start != self.start {
                     return None;
@@ -4729,10 +4864,20 @@ mod imp {
                 Some(own.as_hal_mut::<Vulkan, _, _>(|e| {
                     let cmd = e.ok_or("not a Vulkan encoder")?.raw_handle();
                     let f = lib.dlssg()?;
-                    if let (Some(resource), Some(extent)) = (&mut hudless_r, extent) {
-                        let tag = sl::ResourceTag::new(resource, sl::buffer::HUDLESS_COLOR, extent).copied();
-                        sl::check((lib.set_tag_for_frame)(token as sl::FrameToken, &handle, &tag, 1, cmd))
-                            .map_err(|e| format!("slSetTagForFrame (frame generation): {e}"))?;
+                    if let (Some([hudless, depth, motion]), Some(display)) = (&mut tagged, display) {
+                        let tags = [
+                            sl::ResourceTag::new(hudless, sl::buffer::HUDLESS_COLOR, display).until_present(),
+                            sl::ResourceTag::new(depth, sl::buffer::DEPTH, render).until_present(),
+                            sl::ResourceTag::new(motion, sl::buffer::MOTION_VECTORS, render).until_present(),
+                        ];
+                        sl::check((lib.set_tag_for_frame)(
+                            token as sl::FrameToken,
+                            &handle,
+                            tags.as_ptr(),
+                            tags.len() as u32,
+                            cmd,
+                        ))
+                        .map_err(|e| format!("slSetTagForFrame (frame generation): {e}"))?;
                     }
                     sl::check((f.set_options)(&handle, &options)).map_err(|e| format!("slDLSSGSetOptions: {e}"))
                 }))
@@ -4746,8 +4891,79 @@ mod imp {
                         log::info!("DLSS frame generation: off for now");
                     }
                     self.fg_win.asked = if on { frames } else { 0 };
+                    self.fg_win.used |= on;
+                    if on {
+                        self.fg_win.size = size;
+                    }
                     Some(own.finish())
                 }
+                Some(Err(e)) => {
+                    self.fg_failed(&e);
+                    None
+                }
+                None => None,
+            }
+        }
+
+        /// Windows' frame generation asked off now, its memory kept: before
+        /// the swapchain is made again outside a present asked off (an
+        /// image the window could not give, a hold that did not end), and
+        /// for a present that is not the frame's own (DLSS-G guide §17).
+        #[cfg(windows)]
+        pub fn fg_off(&mut self) {
+            if self.fg_win.asked == 0 {
+                return;
+            }
+            match self.fg_set_off(true) {
+                Ok(()) => {
+                    self.fg_win.asked = 0;
+                    log::info!("DLSS frame generation: off for now");
+                }
+                Err(e) => self.fg_failed(&e),
+            }
+        }
+
+        /// Windows' frame generation asked off for the viewport, its memory
+        /// kept (`keep`) or let go at the next present.
+        #[cfg(windows)]
+        fn fg_set_off(&self, keep: bool) -> Result<(), String> {
+            let options = sl::DlssgOptions::new(sl::dlssg_mode::OFF, 1, if keep { sl::DLSSG_RETAIN_RESOURCES_WHEN_OFF } else { 0 });
+            let handle = sl::ViewportHandle::new(self.viewport);
+            let lib = self.lib;
+            // SAFETY: as in `fg_begin`; `options` lives through the call
+            with_started(lib, &self.device, &self.lost, false, |st| unsafe {
+                if st.start != self.start {
+                    return None;
+                }
+                Some(
+                    lib.dlssg()
+                        .and_then(|f| sl::check((f.set_options)(&handle, &options)).map_err(|e| format!("slDLSSGSetOptions: {e}"))),
+                )
+            })
+            .flatten()
+            .unwrap_or(Ok(()))
+        }
+
+        /// Windows' frame generation's state for the viewport (no options
+        /// passed: no VRAM estimate, the cheap call); None when it cannot
+        /// be read.
+        #[cfg(windows)]
+        fn fg_state(&mut self) -> Option<sl::DlssgState> {
+            let handle = sl::ViewportHandle::new(self.viewport);
+            let lib = self.lib;
+            let mut state = sl::DlssgState::new();
+            // SAFETY: as in `fg_begin`; `state` lives through the call
+            let r = with_started(lib, &self.device, &self.lost, false, |st| unsafe {
+                if st.start != self.start {
+                    return None;
+                }
+                Some(lib.dlssg().and_then(|f| {
+                    sl::check((f.get_state)(&handle, &mut state, std::ptr::null())).map_err(|e| format!("slDLSSGGetState: {e}"))
+                }))
+            })
+            .flatten();
+            match r {
+                Some(Ok(())) => Some(state),
                 Some(Err(e)) => {
                     self.fg_failed(&e);
                     None
@@ -4804,7 +5020,8 @@ mod imp {
         /// Windows' frame generation, once the window's image is presented:
         /// the present's end marker, and the frame's token let go. With
         /// frame generation asked, its state, logged at the first present,
-        /// each 600th and when its status changes.
+        /// each 600th and when its status changes; a status other than OK
+        /// asks it off at this window size (`bad`).
         #[cfg(windows)]
         pub fn fg_end(&mut self) {
             self.fg_mark(sl::pcl::PRESENT_END);
@@ -4813,39 +5030,31 @@ mod imp {
                 return;
             }
             self.fg_win.presents += 1;
-            let handle = sl::ViewportHandle::new(self.viewport);
-            let lib = self.lib;
-            let mut state = sl::DlssgState::new();
-            // SAFETY: as in `fg_begin`; `state` lives through the call, and
-            // no options are passed (no VRAM estimate, the cheap call)
-            let r = with_started(lib, &self.device, &self.lost, false, |st| unsafe {
-                if st.start != self.start {
-                    return None;
-                }
-                Some(lib.dlssg().and_then(|f| {
-                    sl::check((f.get_state)(&handle, &mut state, std::ptr::null())).map_err(|e| format!("slDLSSGGetState: {e}"))
-                }))
-            })
-            .flatten();
-            match r {
-                Some(Ok(())) => {
-                    self.fg_win.max = state.num_frames_to_generate_max;
-                    let n = self.fg_win.presents;
-                    if n == 1 || n.is_multiple_of(600) || self.fg_win.status != Some(state.status) {
-                        let level = if state.status == 0 { log::Level::Info } else { log::Level::Warn };
-                        log::log!(
-                            level,
-                            "DLSS frame generation: {n} presents, status {}; {} frame(s) presented per frame drawn, up to {}x here (minimum size {})",
-                            sl::dlssg_status(state.status),
-                            state.num_frames_actually_presented,
-                            state.num_frames_to_generate_max + 1,
-                            state.min_width_or_height,
-                        );
-                    }
-                    self.fg_win.status = Some(state.status);
-                }
-                Some(Err(e)) => self.fg_failed(&e),
-                None => {}
+            let Some(state) = self.fg_state() else {
+                return;
+            };
+            (self.fg_win.max, self.fg_win.min) = (state.num_frames_to_generate_max, state.min_width_or_height);
+            let n = self.fg_win.presents;
+            if n == 1 || n.is_multiple_of(600) || self.fg_win.status != Some(state.status) {
+                let level = if state.status == 0 { log::Level::Info } else { log::Level::Warn };
+                log::log!(
+                    level,
+                    "DLSS frame generation: {n} presents, status {}; {} frame(s) presented per frame drawn, up to {}x here (minimum size {})",
+                    sl::dlssg_status(state.status),
+                    state.num_frames_actually_presented,
+                    state.num_frames_to_generate_max + 1,
+                    state.min_width_or_height,
+                );
+            }
+            self.fg_win.status = Some(state.status);
+            // (DLSS-G guide §14.3: "If not, disable DLSS-G"; three presents
+            // in a row, so one of a moment, as Reflex starts, does not keep
+            // it off)
+            self.fg_win.bad_run = if state.status == 0 { 0 } else { self.fg_win.bad_run + 1 };
+            if self.fg_win.bad_run >= 3 {
+                log::warn!("DLSS frame generation: off at this window size, on again at another");
+                (self.fg_win.bad, self.fg_win.bad_run) = (self.fg_win.size, 0);
+                self.fg_off();
             }
         }
 
@@ -4966,13 +5175,28 @@ mod imp {
             if !self.made {
                 return;
             }
+            // Windows' frame generation asked off, without its memory kept,
+            // before its feature is freed (DLSS-G guide §6.4: off, then
+            // `slFreeResources`): the frames after this one have no DLSS
+            // to ask it off
+            #[cfg(windows)]
+            if self.fg_win.used
+                && let Err(e) = self.fg_set_off(false)
+            {
+                log::error!("DLSS frame generation: off as the feature goes: {e}");
+            }
             let (lib, lost, start, viewport) = (self.lib, self.lost.clone(), self.start, self.viewport);
             // (the guides too: the feature reads them until its last
-            // evaluate has run)
+            // evaluate has run; and frame generation's copies, until its
+            // last present)
             let guides = self
                 .rr
                 .as_ref()
                 .map(|rr| (rr.diffuse.clone(), rr.specular.clone(), rr.normals.clone()));
+            #[cfg(windows)]
+            let fg_inputs = self.fg_win.inputs.clone();
+            #[cfg(not(windows))]
+            let fg_inputs: Option<()> = None;
             let held = (
                 self.color.clone(),
                 self.safe.clone(),
@@ -4980,6 +5204,7 @@ mod imp {
                 self.motion.clone(),
                 self.output.clone(),
                 guides,
+                fg_inputs,
             );
             let begun = std::time::Instant::now();
             self.queue.on_submitted_work_done(move || {
@@ -5262,6 +5487,11 @@ mod imp {
 
         #[cfg(windows)]
         pub fn fg_asked(&self) -> bool {
+            match self.0 {}
+        }
+
+        #[cfg(windows)]
+        pub fn fg_off(&mut self) {
             match self.0 {}
         }
 
