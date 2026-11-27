@@ -393,6 +393,8 @@ struct Session<'a> {
     attach_queue: attach_queue::AttachQueue,
     inventory_merchant_pending: bool,
     next_inventory_callback: u32,
+    /// Bakes fetched from the simulator with `RequestImage` (`image_udp`).
+    images: crate::image_udp::Fetch,
 }
 
 /// The packet counters the bandwidth asked is adjusted from.
@@ -631,6 +633,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         offer_hosts: Default::default(),
         inventory_merchant_pending: false,
         next_inventory_callback: 0,
+        images: Default::default(),
     };
 
     log::info!(
@@ -1471,6 +1474,7 @@ impl Session<'_> {
     // ----------------------------------------------------------------- tick
 
     fn tick(&mut self) {
+        self.flush_host_images(Instant::now());
         if self.logout_started.is_none() && self.viewer_stats.due(Instant::now(), self.agent_moved) {
             self.send_viewer_stats();
         }
@@ -3249,6 +3253,14 @@ impl Session<'_> {
                 }
             }
             NetCommand::ClearObjectCache => self.object_cache.clear(),
+            NetCommand::SyncHostImages(wants) => {
+                // (a want the simulator already answered missing: the viewer
+                // is told again, else its texture would wait for nothing)
+                for id in self.images.sync(&wants) {
+                    emit(self.sh, NetEvent::HostImage { id, bytes: None });
+                }
+                self.flush_host_images(Instant::now());
+            }
             NetCommand::Build(b) => self.on_build(b),
             // handled by on_social_command
             NetCommand::RequestMuteList { .. }
@@ -4515,6 +4527,92 @@ impl Session<'_> {
         self.sims.get(&addr).map(|s| s.handle).unwrap_or(0)
     }
 
+    /// `LLMessageSystem::sendSemiReliable` (indra/llmessage/message.cpp):
+    /// one reliable send, never resent, given up after
+    /// `max(1 s, 5 × getPingDelayAveraged())`, the circuit's own timeout
+    /// for a reliable packet (`timeout: None`).
+    fn send_semi<M: Msg>(&mut self, addr: SocketAddr, msg: &M) {
+        let Some(sim) = self.sims.get_mut(&addr) else {
+            return;
+        };
+        let _ = sim.circuit.send_reliable_with(
+            &self.sock,
+            &self.sh.stats,
+            msg,
+            Resend {
+                timeout: None,
+                max_retries: 0,
+            },
+        );
+    }
+
+    fn flush_host_images(&mut self, now: Instant) {
+        // a region without a circuit keeps its requests due: they leave when
+        // it connects, not 10 s later (LLMessageSystem drops a send to an
+        // unknown host, and the Legacy Viewer waits for its next pass)
+        let sims = &self.sims;
+        let batches = self
+            .images
+            .take_outbound(now, |region| sims.values().any(|sim| sim.handle == region));
+        for batch in batches {
+            let Some(addr) = self.sim_for_handle(batch.region) else {
+                continue;
+            };
+            let message = crate::image_udp::request_message(self.agent_id(), self.session_id(), &batch.items);
+            self.send_semi(addr, &message);
+        }
+    }
+
+    fn on_image_data(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
+        let message: ImageData = pkt.decode()?;
+        let id = message.image_id.id;
+        let region = self.handle_of(from);
+        if let Some(arrival) = self.images.header(
+            id,
+            region,
+            message.image_id.packets,
+            message.image_id.size,
+            message.image_data.data,
+            Instant::now(),
+        ) {
+            self.emit_host_image(id, arrival);
+        }
+        Ok(())
+    }
+
+    fn emit_host_image(&self, id: Uuid, arrival: crate::image_udp::Arrival) {
+        let bytes = match arrival {
+            crate::image_udp::Arrival::Complete(bytes) => Some(bytes),
+            crate::image_udp::Arrival::GaveUp => {
+                log::info!("host bake {id}: its packets never added up to its size, given up");
+                None
+            }
+        };
+        emit(self.sh, NetEvent::HostImage { id, bytes });
+    }
+
+    fn on_image_packet(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
+        let message: ImagePacket = pkt.decode()?;
+        let id = message.image_id.id;
+        let region = self.handle_of(from);
+        if let Some(arrival) = self
+            .images
+            .packet(id, region, message.image_id.packet, message.image_data.data, Instant::now())
+        {
+            self.emit_host_image(id, arrival);
+        }
+        Ok(())
+    }
+
+    fn on_image_missing(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
+        let message: ImageNotInDatabase = pkt.decode()?;
+        let id = message.image_id.id;
+        if self.images.not_in_database(id, self.handle_of(from)) {
+            emit(self.sh, NetEvent::HostImage { id, bytes: None });
+        }
+        Ok(())
+    }
+
     fn dispatch(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let id = pkt.id;
         if self.dispatch_inventory_upload(from, pkt)?
@@ -4531,6 +4629,13 @@ impl Session<'_> {
             || self.dispatch_god(pkt)?
         {
             return Ok(());
+        }
+        if id == ImageData::ID {
+            return self.on_image_data(from, pkt);
+        } else if id == ImagePacket::ID {
+            return self.on_image_packet(from, pkt);
+        } else if id == ImageNotInDatabase::ID {
+            return self.on_image_missing(from, pkt);
         }
         if id == PacketAck::ID {
             let m: PacketAck = pkt.decode()?;
@@ -7215,6 +7320,7 @@ mod event_queue_tests {
             attach_queue: Default::default(),
             inventory_merchant_pending: false,
             next_inventory_callback: 0,
+            images: Default::default(),
         }
     }
 
@@ -7597,6 +7703,7 @@ mod script_dialog_tests {
             attach_queue: Default::default(),
             inventory_merchant_pending: false,
             next_inventory_callback: 0,
+            images: Default::default(),
         }
     }
 
