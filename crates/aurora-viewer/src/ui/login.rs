@@ -266,7 +266,7 @@ pub fn draw_background(ui: &egui::Ui, p: &Palette) {
     let rect = ctx.content_rect();
     let painter = ctx.layer_painter(egui::LayerId::background());
     let t = ctx.input(|i| i.time) as f32;
-    super::aurora_bg::paint(&painter, p, rect, t, 1.0);
+    super::aurora_bg::paint(&painter, p, rect, t, 1.0, super::aurora_bg::snow::amount(ctx));
     // slow animation: ~30 images/s are plenty
     ctx.request_repaint_after(std::time::Duration::from_millis(33));
 }
@@ -618,8 +618,20 @@ fn glass_card<R>(
                 0.13 * strength,
             ),
         ];
-        behind.0.set(behind.1, egui::Shape::Vec(lights.clone()));
-        let mut shapes = super::aurora_bg::frosted_pane(p, ctx.content_rect(), ctx.input(|i| i.time) as f32, rect, lights);
+        // The spill fades out on its own: clipped to the card's area (the
+        // sidebar's column), it ended in a straight edge above the cards.
+        // `set_clip_rect`, not `with_clip_rect`, which only narrows the clip.
+        let mut spill = behind.0;
+        spill.set_clip_rect(ctx.content_rect());
+        spill.set(behind.1, egui::Shape::Vec(lights.clone()));
+        let mut shapes = super::aurora_bg::frosted_pane(
+            p,
+            ctx.content_rect(),
+            ctx.input(|i| i.time) as f32,
+            rect,
+            lights,
+            super::aurora_bg::snow::amount(ctx),
+        );
         let top = |height: f32| egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), height));
         if accent {
             shapes.push(strip(top(2.0), &[(0.0, p.violet), (1.0, p.teal)]));
@@ -1810,5 +1822,44 @@ mod tests {
             ("synthetic.resident", "synthetic-input")
         );
         assert!(settings.remember_password);
+    }
+    /// The two lights of a login card spill around it and fade out on their
+    /// own: clipped to the sidebar's column, they ended in a straight edge
+    /// above the Version card.
+    #[test]
+    fn the_cards_light_spill_is_not_cut_at_the_sidebar_column() {
+        let ctx = egui::Context::default();
+        let mut settings = Settings::default();
+        let mut form = LoginForm::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(2006.0, 1106.0));
+        let mut output = None;
+        for _ in 0..3 {
+            output = Some(test_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui, &p, &icons, None, &mut settings, &mut form, &info, None);
+                },
+            )));
+        }
+        let output = output.expect("three frames");
+        // the lights: wider than the sidebar, reaching above its top
+        let lights: Vec<_> = output
+            .shapes
+            .iter()
+            .filter(|s| {
+                let b = s.shape.visual_bounding_rect();
+                b.left() < screen.right() - 400.0 && b.right() > screen.right() && b.top() < 0.0 && b.width() < screen.width()
+            })
+            .collect();
+        assert!(!lights.is_empty(), "the Version card's lights");
+        for light in lights {
+            assert_eq!(light.clip_rect, screen, "a card's light is clipped short of the screen");
+        }
     }
 }
