@@ -376,11 +376,11 @@ impl App {
     /// Fill a prim's PBR faces for a glTF file: each face whose material
     /// the rights let through, as drawn (scene::meshes::render_material: the
     /// asset, its override on top), without the textures the rights do not
-    /// let through. False while a material is still loading, until `waited`
-    /// (then the face keeps its texture entry).
-    fn export_resolve_pbr(&mut self, key: ObjKey, input: &mut PrimInput, waited: bool) -> bool {
+    /// let through (`allowed_textures`, the job's files, built once per
+    /// pass). False while a material is still loading, until `waited` (then
+    /// the face keeps its texture entry).
+    fn export_resolve_pbr(&mut self, key: ObjKey, input: &mut PrimInput, allowed_textures: &HashSet<Uuid>, waited: bool) -> bool {
         use crate::scene::meshes::MaterialStatus;
-        let allowed_textures: HashSet<Uuid> = self.object_export_job.files.iter().map(|(id, _)| *id).collect();
         let overrides = self.world.gltf_overrides.get(&key).cloned();
         let mut ready = true;
         for (face, id) in input.materials.clone().into_iter().enumerate() {
@@ -534,12 +534,17 @@ impl App {
             Stage::Gathering { path, since, mut inputs } => {
                 let gltf = self.settings.build.export.format == Format::Gltf;
                 let waited = now.duration_since(since) > MATERIAL_WAIT;
+                let allowed_textures: HashSet<Uuid> = if gltf {
+                    self.object_export_job.files.iter().map(|(id, _)| *id).collect()
+                } else {
+                    HashSet::new()
+                };
                 for key in self.object_export_job.allowed.clone() {
                     if inputs.contains_key(&key) {
                         continue;
                     }
                     if let Ok(mut input) = gather::input(&self.world, &mut self.scene, key, now)
-                        && (!gltf || self.export_resolve_pbr(key, &mut input, waited))
+                        && (!gltf || self.export_resolve_pbr(key, &mut input, &allowed_textures, waited))
                     {
                         inputs.insert(key, input);
                     }
