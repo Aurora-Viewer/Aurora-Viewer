@@ -16,8 +16,8 @@ const PACK: u32 = 4096;
 pub struct SnowDetail {
     slot: Option<u32>,
     tried: bool,
-    /// The slots made, packed or not.
-    made: Vec<u32>,
+    /// The slots made, packed or not, with their image.
+    made: Vec<(u32, &'static [u8], &'static str)>,
 }
 
 impl SnowDetail {
@@ -29,7 +29,9 @@ impl SnowDetail {
             self.tried = true;
             let detail = upload(renderer, PNG, "snow detail texture");
             let color = upload(renderer, COLOR_PNG, "snow colour texture");
-            self.made = detail.into_iter().chain(color).collect();
+            self.made = (detail.map(|d| (d, PNG, "snow detail texture")).into_iter())
+                .chain(color.map(|c| (c, COLOR_PNG, "snow colour texture")))
+                .collect();
             self.slot = detail.map(|d| match color {
                 Some(c) if d < PACK && c < PACK => d + c * PACK,
                 _ => d,
@@ -38,15 +40,23 @@ impl SnowDetail {
         self.slot
     }
 
-    /// The renderer could not stage the texels of these slots: when one is
-    /// either texture, both are made again at the next use, and both leave
-    /// `lost`.
+    /// The renderer could not stage the texels of these slots: each of the
+    /// two that is is sent again into its slot, where its page already is
+    /// (nothing to make, so nothing more to be refused but the staging
+    /// itself, which hands the slot back again); they leave `lost`. Should
+    /// that fail, both are made again at the next use.
     pub fn texture_lost(&mut self, lost: &mut Vec<u32>, renderer: &mut Renderer) {
-        if !self.made.iter().any(|s| lost.contains(s)) {
+        if !self.made.iter().any(|(s, ..)| lost.contains(s)) {
             return;
         }
-        lost.retain(|s| !self.made.contains(s));
-        for s in self.made.drain(..) {
+        let resent = (self.made.iter())
+            .filter(|(s, ..)| lost.contains(s))
+            .all(|&(s, png, what)| levels(png, what).is_some_and(|l| renderer.replace_texture(s, &mip_levels(&l))));
+        lost.retain(|s| !self.made.iter().any(|(m, ..)| m == s));
+        if resent {
+            return;
+        }
+        for (s, ..) in self.made.drain(..) {
             renderer.free_texture(s);
         }
         self.slot = None;
@@ -54,7 +64,8 @@ impl SnowDetail {
     }
 }
 
-fn upload(renderer: &mut Renderer, png: &[u8], what: &str) -> Option<u32> {
+/// The image's mip chain, down to 1 texel wide.
+fn levels(png: &[u8], what: &str) -> Option<Vec<image::RgbaImage>> {
     let image = match image::load_from_memory_with_format(png, image::ImageFormat::Png) {
         Ok(i) => i.to_rgba8(),
         Err(e) => {
@@ -73,15 +84,23 @@ fn upload(renderer: &mut Renderer, png: &[u8], what: &str) -> Option<u32> {
         );
         levels.push(next);
     }
-    let mips: Vec<MipLevel> = levels
+    Some(levels)
+}
+
+fn mip_levels(levels: &[image::RgbaImage]) -> Vec<MipLevel<'_>> {
+    levels
         .iter()
         .map(|l| MipLevel {
             width: l.width(),
             height: l.height(),
             data: l.as_raw(),
         })
-        .collect();
-    let slot = renderer.create_texture(&mips);
+        .collect()
+}
+
+fn upload(renderer: &mut Renderer, png: &[u8], what: &str) -> Option<u32> {
+    let levels = levels(png, what)?;
+    let slot = renderer.create_texture(&mip_levels(&levels));
     if slot.is_none() {
         log::warn!("{what}: no slot");
     }

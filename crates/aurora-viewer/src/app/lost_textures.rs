@@ -83,6 +83,11 @@ impl App {
             return;
         }
         let mut left = self.scene.send_lost_textures(&due, renderer);
+        // (AURORA_DEMO_STREAM's checkers have no data the streamer could
+        // decode again: the scenario decodes them)
+        if let Some(demo) = &mut self.stream_demo {
+            demo.textures_lost();
+        }
         left.retain(|&slot| !(renderer.send_texture_again(slot) || self.media.texture_lost(slot) || self.director_card_lost(slot)));
         log::info!(
             "textures: {} sent again after video memory refused their staging buffer, {} no longer held{}",

@@ -311,9 +311,15 @@ pub struct StreamDemo {
     idle_before: bool,
     /// A GPU recovery happened since the last `tick` ([`Self::gpu_reset`]).
     gpu_lost: bool,
-    /// Since this GPU recovery, textures of the lost device are not shown
-    /// again yet: the scenario keeps feeding them after its loading too.
+    /// Texture writes were refused their staging buffer since the last
+    /// `tick` ([`Self::textures_lost`]).
+    refused: bool,
+    /// Since this GPU recovery (or refusal), textures of the lost device are
+    /// not shown again yet: the scenario keeps feeding them after its
+    /// loading too.
     recovering: Option<Instant>,
+    /// What `recovering` follows, for the log.
+    recovering_from: &'static str,
 }
 
 /// Shares of the textures showing their first pixels the log tells, in
@@ -322,6 +328,10 @@ const SHOWN_STEPS: [u32; 3] = [5, 9, 10];
 
 /// Texture `i` is used and shows nothing yet (after `,leave`, the textures
 /// nothing uses any more are not brought back).
+/// What brought textures back to decode, for the log.
+const GPU_RECOVERY: &str = "GPU recovery";
+const STAGING_REFUSED: &str = "staging refusal";
+
 fn lost_on_the_gpu(textures: &TextureStreamer, i: u32) -> bool {
     textures.is_wanted(&texture(i)) && textures.decoded_level(&texture(i)).is_none()
 }
@@ -361,7 +371,9 @@ impl StreamDemo {
             left_at: None,
             evicted_logged: false,
             gpu_lost: false,
+            refused: false,
             recovering: None,
+            recovering_from: GPU_RECOVERY,
         }
     }
 
@@ -374,18 +386,32 @@ impl StreamDemo {
         self.gpu_lost = true;
     }
 
+    /// Video memory refused the staging of texture writes and the streamer
+    /// was asked to send them again (app/lost_textures.rs): its own data
+    /// brings back the others, but the checkers arrive decoded, without
+    /// data, so they are decoded again here at the next `tick`, as after a
+    /// GPU recovery.
+    pub fn textures_lost(&mut self) {
+        self.refused = true;
+    }
+
     /// After a GPU recovery: the textures the new device lacks, decoded
     /// again (a quarter of their size, then full size, as on arrival).
     /// With `j2k=`, the streamer looks for their data again and the files
     /// are given at once where it finds none; with `net=`, it downloads
     /// them again from the local server by itself.
-    fn give_again(&mut self, textures: &TextureStreamer, jobs: &Jobs, now: Instant) {
+    fn give_again(&mut self, textures: &TextureStreamer, jobs: &Jobs, now: Instant, from: &'static str) {
         let lost: Vec<u32> = (0..self.next).filter(|&i| lost_on_the_gpu(textures, i)).collect();
-        log::info!("demo stream: GPU recovery, {} textures to show again", lost.len());
+        // (a refusal of other textures than these is not logged here)
+        if lost.is_empty() && from == STAGING_REFUSED {
+            return;
+        }
+        log::info!("demo stream: {from}, {} textures to show again", lost.len());
         if lost.is_empty() {
             return;
         }
         self.recovering = Some(now);
+        self.recovering_from = from;
         if self.j2k.is_some() {
             for &i in &lost {
                 self.fed[i as usize] = None;
@@ -406,8 +432,9 @@ impl StreamDemo {
         }
         self.recovering = None;
         log::info!(
-            "demo stream: textures shown again {:.2} s after the GPU recovery",
-            now.duration_since(since).as_secs_f32()
+            "demo stream: textures shown again {:.2} s after the {}",
+            now.duration_since(since).as_secs_f32(),
+            self.recovering_from
         );
     }
 
@@ -488,7 +515,10 @@ impl StreamDemo {
         }
         let now = Instant::now();
         if std::mem::take(&mut self.gpu_lost) {
-            self.give_again(textures, jobs, now);
+            self.refused = false;
+            self.give_again(textures, jobs, now, GPU_RECOVERY);
+        } else if std::mem::take(&mut self.refused) {
+            self.give_again(textures, jobs, now, STAGING_REFUSED);
         }
         if self.recovering.is_some() && frame.is_multiple_of(10) {
             self.recovery_over(textures, now);
@@ -688,7 +718,7 @@ mod tests {
         demo.next = 4;
         demo.gpu_reset();
         assert!(demo.gpu_lost, "handled at the next tick");
-        demo.give_again(&textures, &jobs, Instant::now());
+        demo.give_again(&textures, &jobs, Instant::now(), GPU_RECOVERY);
         // a quarter of their size at once, full size after UPGRADE_AFTER
         let mut decoded: Vec<(Uuid, u8)> = (0..2)
             .map(|_| match results.recv_timeout(Duration::from_secs(10)) {
@@ -710,6 +740,34 @@ mod tests {
     }
 
     #[test]
+    fn a_staging_refusal_decodes_again_the_checkers_the_streamer_lost() {
+        let textures = recovered_streamer();
+        let (jobs, results) = Jobs::new();
+        let mut demo = StreamDemo::from_value("8,8");
+        demo.next = 4;
+        demo.textures_lost();
+        assert!(demo.refused, "handled at the next tick");
+        demo.give_again(&textures, &jobs, Instant::now(), STAGING_REFUSED);
+        let mut decoded: Vec<Uuid> = (0..2)
+            .map(|_| match results.recv_timeout(Duration::from_secs(10)) {
+                Ok(JobResult::Texture { id, .. }) => id,
+                _ => panic!("a decoded texture"),
+            })
+            .collect();
+        decoded.sort();
+        assert_eq!(decoded, vec![texture(0), texture(3)]);
+        assert_eq!(demo.recovering_from, STAGING_REFUSED);
+        // a refusal that cost none of them: nothing to do, nothing logged
+        let mut shown = recovered_streamer();
+        shown.test_used(texture(0), 1, Some(0));
+        shown.test_used(texture(3), 1, Some(0));
+        let mut idle = StreamDemo::from_value("8,8");
+        idle.next = 4;
+        idle.give_again(&shown, &jobs, Instant::now(), STAGING_REFUSED);
+        assert!(idle.recovering.is_none());
+    }
+
+    #[test]
     fn a_gpu_recovery_with_j2k_files_hands_them_over_again() {
         let textures = recovered_streamer();
         let (jobs, results) = Jobs::new();
@@ -718,7 +776,7 @@ mod tests {
         demo.next = 4;
         let fed = Instant::now();
         demo.fed = vec![Some(fed); 8];
-        demo.give_again(&textures, &jobs, Instant::now());
+        demo.give_again(&textures, &jobs, Instant::now(), GPU_RECOVERY);
         // asked again at once by the feeding of `tick`, nothing decoded here
         assert_eq!(demo.fed[..4], [None, Some(fed), Some(fed), None]);
         assert!(demo.upgrades.is_empty());
@@ -734,7 +792,7 @@ mod tests {
         let (jobs, _results) = Jobs::new();
         let mut demo = StreamDemo::from_value("8,8");
         demo.next = 4;
-        demo.give_again(&textures, &jobs, Instant::now());
+        demo.give_again(&textures, &jobs, Instant::now(), GPU_RECOVERY);
         assert!(demo.recovering.is_none());
         assert!(demo.upgrades.is_empty());
     }

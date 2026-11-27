@@ -6311,7 +6311,8 @@ both open states and the selection count. Capture at frame 620.
   sends it again after 2 s, then up to 30 s apart while the refusals go on
   (`textures: … sent again after video memory refused their staging
   buffer`). With `0` nothing is ever made: the world's textures stay black
-  (the demo's sky and ground too), the device is not lost and the
+  (in the demo, the plaza's floor, pillars, sculpture and avatars; the sky
+  and the ground draw as usual), the device is not lost and the
   interface keeps drawing. Before, wgpu made the staging buffer of every
   texture write itself, and a refusal of it lost the device.
 - **`AURORA_STAGING_OOM_SECONDS=<s>`**: with `AURORA_STAGING_OOM`, the
@@ -6319,8 +6320,8 @@ both open states and the selection count. Capture at frame 620.
   (`journal staging: AURORA_STAGING_OOM over, staging buffers are made
   again`): with `0`, `20` and `AURORA_DEMO_TEXTURES=3000`, the stress
   cubes are back after the first 2 s wait (their texels come through the
-  staging pool), the demo's own textures (sky, ground, plaza) stay black
-  for about 20 s, then every texture is back in its place within the next
+  staging pool), the plaza's textured objects (floor, pillars, sculpture,
+  avatars) stay black for about 20 s, then every texture is back in its place within the next
   30 s (`… 0 no longer held`), with no `wgpu error` in the log.
 - **`AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]`**:
   once the loading screen is gone, our avatar and the camera behind it
