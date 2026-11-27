@@ -205,6 +205,16 @@ Assert-Queue ($list -eq '61,60,65,72,66,67,68') "to merge: your approvals only, 
 $reviewed = ($merge | Where-Object { $_.OnHead } | ForEach-Object { $_.Number }) -join ','
 Assert-Queue ($reviewed -eq '61,60,65') "only an approval naming the head counts for the merge (no head named, a later push, a merge of main: re-review); got $reviewed"
 Assert-Queue (($merge | Where-Object { $_.Number -eq 61 }).Ci -eq 'Approval') 'an approved PR keeps its CI state (runs to approve before the merge)'
+$decision = "## Review`n`n**Verdict: ⚠️ needs a decision**"
+$nodes = @(
+    (New-Node 90 -Comments @(, @('maya', 'MEMBER', 100, $decision)))                       # maya's ⚠️
+    (New-Node 91 -Comments @(, @('olga', 'MEMBER', 100, $decision)))                       # another maintainer's ⚠️
+    (New-Node 92 -Comments @(@('maya', 'MEMBER', 100, $decision), @('alice', 'CONTRIBUTOR', 50, 'Done')))  # answered: a re-review
+    (New-Node 93 -Comments @(, @('maya', 'MEMBER', 100, $onHead)))                         # maya's ✅: to merge, not here
+)
+$items = @($nodes | ForEach-Object { ConvertTo-ReviewItem $_ @{} })
+$waiting = (@(Get-WaitingOnDecision (Get-ReviewQueue $items 'maya' $now) 'maya') | ForEach-Object { $_.Number }) -join ','
+Assert-Queue ($waiting -eq '90') "waiting on your decision: your own ⚠️ reviews with no answer since; got $waiting"
 Assert-Queue (Test-HeadNamed 'Re-review of head `abc1234`.' 'abc1234def') 'a short sha names the head'
 Assert-Queue (-not (Test-HeadNamed 'Re-review of head `abc123`.' 'abc1234def')) 'six characters name no head'
 Assert-Queue (-not (Test-HeadNamed 'see 1234567 tests' 'abc1234def')) 'another number is not the head'

@@ -31,10 +31,12 @@
     The first five, for an agent: number, kind, notes, URL.
 
 .EXAMPLE
-    ./scripts/review-queue.ps1 -ToMerge -Json
-    The PRs you approved (✅) that nobody queued yet, with their CI state and
-    whether your approval names their head commit: the queue leaves them
-    out, so the reviewer offers the merge (of a reviewed head only).
+    ./scripts/review-queue.ps1 -Pending -Json
+    What waits on you before any new review, which the queue leaves out:
+    the PRs you approved (✅) that nobody queued yet (kind "merge"), with
+    their CI state and whether your approval names their head commit; and
+    the PRs your review left waiting on a decision (⚠️, kind "decision": a
+    hand or grid test, a product choice).
 #>
 param(
     [int]$Top = 20,
@@ -42,8 +44,8 @@ param(
     [switch]$Json,
     [int]$Claim,
     [int]$Release,
-    # only the PRs you approved that wait for their merge
-    [switch]$ToMerge,
+    # only what waits on you: your approvals to merge, your reviews left on a decision
+    [switch]$Pending,
     # see the queue as another maintainer sees it (their login)
     [string]$As
 )
@@ -183,18 +185,20 @@ $items = @($nodes | ForEach-Object { ConvertTo-ReviewItem $_ $issues })
 $entries = @(Get-ReviewQueue $items $me (Get-Date).ToUniversalTime())
 $queue = @(Get-OrderedReviewQueue $entries)
 $approvedList = @(Get-ApprovedToMerge $entries $me)
+$decisionList = @(Get-WaitingOnDecision $entries $me)
 $ciText = @{ Fail = 'CI red'; Approval = 'CI waits for Approve and run'; Run = 'CI running'; Ok = 'CI green'; None = 'no CI yet' }
 function Format-MergeState($Entry) {
     $ciText[[string]$Entry.Ci] + $(if ($Entry.Conflict) { ' · conflict with main' } else { '' }) +
         $(if (-not $Entry.OnHead) { ' · head not named in the review: re-review it first' } else { '' })
 }
 
-if ($ToMerge) {
+if ($Pending) {
     if ($Json) {
-        $list = @($approvedList | ForEach-Object {
-            [pscustomobject]@{ number = $_.Number; title = $_.Title; author = $_.Author; url = $_.Url
-                approved_at = $_.Since.ToString('o'); head = [string]$_.Head; head_reviewed = [bool]$_.OnHead
-                ci = [string]$_.Ci; conflict = [bool]$_.Conflict }
+        $list = @(@($approvedList | ForEach-Object { , @('merge', $_) }) + @($decisionList | ForEach-Object { , @('decision', $_) }) | ForEach-Object {
+            $kind, $e = $_
+            [pscustomobject]@{ kind = $kind; number = $e.Number; title = $e.Title; author = $e.Author; url = $e.Url
+                reviewed_at = $e.Since.ToString('o'); head = [string]$e.Head; head_reviewed = [bool]$e.OnHead
+                ci = [string]$e.Ci; conflict = [bool]$e.Conflict }
         })
         ConvertTo-Json -InputObject $list -Depth 3
         exit 0
@@ -202,6 +206,9 @@ if ($ToMerge) {
     Write-Host "Approved by $me, to merge ($($approvedList.Count)):" -ForegroundColor Cyan
     foreach ($e in $approvedList) { Write-Host (' {0,-6} {1}  ({2})' -f "#$($e.Number)", (Format-Cut $e.Title 60), (Format-MergeState $e)) }
     if (-not $approvedList.Count) { Write-Host ' Nothing.' }
+    Write-Host "Left by $me's review on a decision ($($decisionList.Count)):" -ForegroundColor Cyan
+    foreach ($e in $decisionList) { Write-Host (' {0,-6} {1}  ({2})' -f "#$($e.Number)", (Format-Cut $e.Title 60), $ciText[[string]$e.Ci]) }
+    if (-not $decisionList.Count) { Write-Host ' Nothing.' }
     exit 0
 }
 
@@ -239,6 +246,11 @@ if ($approvedList.Count) {
     Write-Host ''
     Write-Host "Approved by $me, to merge ($($approvedList.Count)): ./scripts/merge-pr.ps1 -Pr <n> once CI is green" -ForegroundColor Green
     foreach ($e in $approvedList) { Write-Host (' {0,-6} {1}  ({2})' -f "#$($e.Number)", (Format-Cut $e.Title 60), (Format-MergeState $e)) }
+}
+if ($decisionList.Count) {
+    Write-Host ''
+    Write-Host "Left by $me's review on a decision ($($decisionList.Count)): a test or a choice to bring back" -ForegroundColor Green
+    foreach ($e in $decisionList) { Write-Host (' {0,-6} {1}' -f "#$($e.Number)", (Format-Cut $e.Title 60)) }
 }
 $theirs = @($out | Where-Object { $_.SkipKind -in 'Claimed', 'StaleClaim', 'Held' })
 if ($theirs.Count) {

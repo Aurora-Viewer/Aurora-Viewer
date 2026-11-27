@@ -316,6 +316,14 @@ function Get-ApprovedToMerge($Entries, [string]$Me) {
     @($Entries | Where-Object { $_.SkipKind -eq 'Approved' -and $_.Reviewer -eq $Me } | Sort-Object Since, Number)
 }
 
+# The PRs whose last review is $Me's and left a decision open (⚠️ verdict:
+# a hand or grid test, a product choice): every queue leaves them out and
+# no other maintainer may claim them, so only their reviewer brings them
+# back, with what their human decided. Oldest review first.
+function Get-WaitingOnDecision($Entries, [string]$Me) {
+    @($Entries | Where-Object { $_.SkipKind -eq 'Decision' -and $_.Reviewer -eq $Me } | Sort-Object Since, Number)
+}
+
 # The queue in order: the PRs already claimed by $Me first (finish what you
 # started), then tier, crash / fix / rest, longest waiting, oldest number.
 function Get-OrderedReviewQueue($Entries) {
