@@ -356,7 +356,17 @@ impl Entry {
             second_view,
             look_thumbs,
         );
-        let mut cmds = egui.update_buffers(device, queue, &mut encoder, &ui.primitives, &sd);
+        // after the acquire and the previews, right before the upload, which
+        // is guarded too: a device lost meanwhile leaves this window's frame
+        // to the new renderer (#3844)
+        if lost.get() {
+            return false;
+        }
+        let Some(mut cmds) =
+            crate::device_lost::ui_upload_guarded(lost, || egui.update_buffers(device, queue, &mut encoder, &ui.primitives, &sd))
+        else {
+            return false;
+        };
         {
             let mut pass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {

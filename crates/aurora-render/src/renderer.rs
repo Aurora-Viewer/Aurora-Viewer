@@ -8779,8 +8779,8 @@ impl Backend {
         });
         let mut cmds = Vec::new();
         let mut screen = None;
-        // (none on a device lost since the frame began: egui-wgpu's buffer
-        // upload would panic, #3844)
+        // (none on a device lost since the frame began; one lost later is
+        // taken at the upload below, #3844)
         let mut ui = ui.filter(|_| !self.lost.get());
         if let Some(ui) = &mut ui {
             crate::ui_world::take_end(&mut ui.primitives);
@@ -8804,10 +8804,17 @@ impl Backend {
                 size_in_pixels: [self.config.width, self.config.height],
                 pixels_per_point: ui.pixels_per_point,
             };
-            cmds = self
-                .egui
-                .update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &sd);
-            screen = Some(sd);
+            // checked again after the previews, the upload guarded (#3844):
+            // without it, no screen and no interface drawn
+            let (egui, device, queue) = (&mut self.egui, &self.device, &self.queue);
+            if !self.lost.get()
+                && let Some(uploaded) = crate::device_lost::ui_upload_guarded(&self.lost, || {
+                    egui.update_buffers(device, queue, &mut encoder, &ui.primitives, &sd)
+                })
+            {
+                cmds = uploaded;
+                screen = Some(sd);
+            }
         }
         {
             let mut pass = encoder
@@ -9219,9 +9226,10 @@ impl Backend {
             &sources[0],
             (mirror_size.0, mirror_size.1),
             &mut self.egui,
-            // (no interface on a device lost during the eyes' frames:
-            // egui-wgpu's buffer upload would panic, #3844)
+            // (no interface on a device lost during the eyes' frames; the
+            // mirror checks again at its upload, #3844)
             mirror_ui.as_ref().filter(|_| !self.lost.get()),
+            &self.lost,
         );
         if let Err(e) = world.session.end(grade) {
             log::error!("XR world submission failed: {e}");
@@ -9725,8 +9733,11 @@ impl Backend {
         let surface_tex = if self.lost.get() {
             // a lost device: nothing is drawn or presented until the app
             // replaces the renderer, and the frame is retired as a skipped
-            // one (its texture changes applied above, its uploads and picks
-            // let go). Its frames still queued after the loss reached
+            // one: its interface texture changes are applied above (harmless:
+            // the recovery's replay comes from the main thread's EguiShadow,
+            // app.rs), its upload commands still submitted, which wgpu drops
+            // with an error on the lost device, its picks abandoned. Its
+            // frames still queued after the loss reached
             // egui-wgpu's buffer upload, which panics when the lost queue
             // refuses its staging write (#3844). (A frame or two: the main
             // thread builds none once it sees the loss.)
@@ -14201,11 +14212,13 @@ impl Backend {
         let mut extra_cmds = Vec::new();
         let mut window_glass = false;
         let mut meshes_uploaded = false;
-        // a loss reported since the frame began: egui-wgpu's buffer upload
-        // would panic (#3844), so the interface waits for the new renderer
+        // a loss reported since the frame began: the interface waits for
+        // the new renderer (no glass, previews or labels made for it); one
+        // that comes later is taken at the upload below (#3844)
         if self.lost.get() {
             ui = None;
         }
+        let mut ui_lost = false;
         let sd = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [self.config.width, self.config.height],
             pixels_per_point: ui.as_ref().map_or(1.0, |ui| ui.pixels_per_point),
@@ -14301,10 +14314,34 @@ impl Backend {
                 scale,
             );
             crate::look_thumbs::resolve(self.look_thumbs.as_ref(), &mut ui.primitives);
-            extra_cmds = self
-                .egui
-                .update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &sd);
-            meshes_uploaded = crate::ui_frame::meshes_uploaded(&ui.primitives);
+            // right before the upload, after the glass, labels and previews
+            // that can find a loss first; and the upload itself guarded, as
+            // its staging writes can be the call that finds it (#3844)
+            let (egui, device, queue, lost) = (&mut self.egui, &self.device, &self.queue, &self.lost);
+            let demo_loss = crate::device_lost::demo_upload_loss(index);
+            let uploaded = (!lost.get())
+                .then(|| {
+                    crate::device_lost::ui_upload_guarded(lost, || {
+                        if demo_loss {
+                            // AURORA_DEMO_GPU_LOST_UPLOAD: lost here, after the checks
+                            log::error!("GPU device lost (Unknown): AURORA_DEMO_GPU_LOST_UPLOAD at frame {index}");
+                            lost.set_by("demo");
+                            device.destroy();
+                        }
+                        egui.update_buffers(device, queue, &mut encoder, &ui.primitives, &sd)
+                    })
+                })
+                .flatten();
+            match uploaded {
+                Some(cmds) => {
+                    extra_cmds = cmds;
+                    meshes_uploaded = crate::ui_frame::meshes_uploaded(&ui.primitives);
+                }
+                None => ui_lost = true,
+            }
+        }
+        if ui_lost {
+            ui = None;
         }
         let draw_ui = |encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, primitives: &[egui::ClippedPrimitive]| {
             let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

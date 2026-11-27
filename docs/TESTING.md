@@ -7097,6 +7097,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_DRIVER=old\|old-linux\|aged` | Out of date graphics driver warning on the login screen |
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
+| `AURORA_DEMO_GPU_LOST_UPLOAD=<frame>` | The GPU device is lost right before that frame's interface upload, after the frame's own checks |
 | `AURORA_DEMO_GPU_RESTART_FAIL=1` | After a GPU loss, the first start of the new renderer fails as on a card lost again while it starts |
 | `AURORA_DEMO_GPU_DROP_FAIL=1` | After a GPU loss, dropping the lost renderer meets wgpu's queue panic on its last wait |
 | `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
@@ -9929,6 +9930,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   session log` in demo), `OS GPU reset records` and `Vulkan layers
   installed`: read it in the session's
   `public-report.md` under the crash folder of `%LOCALAPPDATA%\Aurora`.
+- **`AURORA_DEMO_GPU_LOST_UPLOAD=<frame>`**, with `AURORA_DEMO=1`: at that
+  frame, once in the run, the world frame loses its device inside its
+  interface upload, after every check of the frame, right before
+  egui-wgpu's `update_buffers` (the device destroyed and marked lost): the
+  loss its checks cannot see (#3844, #5091). The log says
+  `AURORA_DEMO_GPU_LOST_UPLOAD at frame …`, then `GPU device lost while the
+  interface was uploaded: this frame goes without it` (the upload's panic
+  taken as the loss, `device_lost::ui_upload_guarded`), and the recovery
+  replaces the window as with `AURORA_DEMO_GPU_LOST`; no crash window, and
+  the session's `panic.txt` stays empty. Before the guard, egui-wgpu's
+  "Failed to create staging buffer…" panic ended the render thread.
 - **`AURORA_DEMO_GPU_HANG=<frame>`**, with `AURORA_DEMO=1`: a real GPU hang
   at that frame, for testing the recovery on a real driver reset. One
   compute dispatch whose loop runs about 12 s on a recent card (the log says
