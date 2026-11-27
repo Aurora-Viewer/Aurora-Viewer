@@ -283,7 +283,18 @@ so.
   Wait for its window before you ask.
 - Tell them precisely what to test, where (demo, or the grid when only the
   grid shows it: network, teleports, voice, other residents, real assets)
-  and what they should see. On the grid, they log in (AGENTS.md section 1,
+  and what they should see, in your message before the question, in
+  detail:
+  - **What the PR fixes or adds**: the problem as a user met it (or what
+    was missing), and what the change does about it, in a few plain
+    sentences.
+  - **Where**: the viewer's window title, demo or grid, and the scenario
+    it opened on.
+  - **The steps**, numbered, each one action (the menu path, the button,
+    what to type or drag) followed by what they should see, and what they
+    would have seen before the PR when it differs.
+  - **What else to glance at**: the neighbouring behaviour the change could
+    break. On the grid, they log in (AGENTS.md section 1,
   rule 1). Tell them that what they change in Preferences stays for every
   viewer of the PC.
 - Wait for their answer, in a dialog that keeps the turn going. A problem
