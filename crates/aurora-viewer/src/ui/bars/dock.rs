@@ -303,6 +303,9 @@ pub fn bottom(
         if emoji.is_some() {
             geo.chat.min.y -= chat.recent_emojis.height();
         }
+        // the island of its own stands over the dock's row: the side bars
+        // keep their place beside it (`chrome::side_room`)
+        super::chrome::raise_chat(&ctx, geo.chat.x_range(), geo.chat.height() - geo.height);
     }
     chat.bar_hovered = false;
     let docked = toolbar_settings.location("conversations", layout).is_some();

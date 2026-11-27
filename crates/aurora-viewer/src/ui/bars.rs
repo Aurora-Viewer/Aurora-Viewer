@@ -4351,6 +4351,9 @@ pub(crate) fn toolbar_row(
                     if let Some((chat, lift)) = lifted
                         && rect.contains(chat)
                     {
+                        // (the side bars keep their place beside it:
+                        // `chrome::side_room`)
+                        chrome::raise_chat(ui.ctx(), rect.x_range(), lift);
                         rect.min.y -= lift;
                     }
                     super::widgets::island_shape(ui.ctx(), p, rect)

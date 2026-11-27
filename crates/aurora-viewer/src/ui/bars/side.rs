@@ -138,7 +138,10 @@ pub(crate) fn bars(
         // contents change. An empty Legacy bar must already use its panel;
         // switching from an Area during hover invalidates the snapped target.
         if islands {
-            let island = column(ui, p, icons, buttons, toolbar, panels, mic, &row, room, &mut action, &display);
+            // beside the chat island raised over the dock's row, the bar
+            // keeps the room it has without it
+            let own = super::chrome::side_room(ui.ctx(), room, bar);
+            let island = column(ui, p, icons, buttons, toolbar, panels, mic, &row, own, &mut action, &display);
             if !buttons.is_empty() {
                 room = room_beside(room, bar, island);
                 edges[usize::from(bar == Bar::Right)] = if bar == Bar::Left { island.right() } else { island.left() };

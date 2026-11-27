@@ -28,6 +28,11 @@ struct Metrics {
     /// (`lift_chat`), instead of the row being as high as it; None in a
     /// bar that does not raise it.
     chat_lift: Option<f32>,
+    /// The chat island of the bottom dock standing over the dock's row this
+    /// frame (the recent emojis' row, a paragraph): its sides, and what it
+    /// is raised by. The dock says so (`raise_chat`), for the side bars
+    /// (`side_room`).
+    chat_raised: Option<(egui::Rangef, f32)>,
 }
 
 #[derive(Clone)]
@@ -175,6 +180,7 @@ pub fn prepare(ui: &egui::Ui, p: &Palette, st: &StatusInfo, settings: &ToolbarSe
                 chat_recent: 0.0,
                 chat_field: false,
                 chat_lift: None,
+                chat_raised: None,
             },
         );
         data.insert_temp(slots_id(), Vec::<Slot>::new());
@@ -291,7 +297,43 @@ pub fn prepare_chat(ctx: &egui::Context, chat: &crate::ui::chat::ChatUi, width: 
         metrics.chat_recent = recent;
         metrics.chat_field = field;
         metrics.chat_lift = None;
+        metrics.chat_raised = None;
     });
+}
+
+/// The bottom dock's chat island stands `by` over the dock's row this
+/// frame, between the sides `columns`.
+pub(super) fn raise_chat(ctx: &egui::Context, columns: egui::Rangef, by: f32) {
+    if by > 0.0 {
+        ctx.data_mut(|data| data.get_temp_mut_or_default::<Metrics>(metrics_id()).chat_raised = Some((columns, by)));
+    }
+}
+
+/// The room of a side bar, from `room`, what the bars leave to the windows.
+/// The windows keep clear of the chat island raised over the dock's row,
+/// all along the screen; a side bar goes down to the dock's row, unless
+/// the raised island stands in its column. Its buttons then keep their
+/// place when the recent emojis' row comes and goes or a paragraph is
+/// typed, where a centred bar moved by half of what the island rose (the
+/// human's report, 2026-11-27).
+pub(super) fn side_room(ctx: &egui::Context, room: Rect, bar: Bar) -> Rect {
+    let Some((columns, by)) = ctx
+        .data(|data| data.get_temp::<Metrics>(metrics_id()))
+        .and_then(|metrics| metrics.chat_raised)
+    else {
+        return room;
+    };
+    // (the side bars' inner sides, as drawn last frame)
+    let [left, right] = super::side::edges(ctx);
+    let under = match bar {
+        Bar::Left => columns.min <= left + islands::MARGIN,
+        Bar::Right => columns.max >= right - islands::MARGIN,
+        Bar::Top | Bar::Bottom => true,
+    };
+    if under {
+        return room;
+    }
+    Rect::from_min_max(room.min, egui::pos2(room.right(), room.bottom() + by))
 }
 
 /// The bar that holds the chat block raises the block's island over its

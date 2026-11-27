@@ -445,6 +445,153 @@ mod tests {
         assert!(!chat.recent_emojis.take_toggle());
     }
 
+    /// The windows keep clear of the chat island raised over the dock's row
+    /// all along the screen, but a side bar keeps its place beside it: its
+    /// buttons do not move when the recent emojis' row comes and goes. Only
+    /// the bar that has the raised island in its column gives it room.
+    #[test]
+    fn a_side_bar_keeps_its_place_beside_the_raised_chat_island() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        let mut chat = crate::ui::chat::ChatUi::default();
+        let gestures = crate::gestures::Manager::default();
+        let mut toolbar = ToolbarUi::default();
+        toolbar.islands = true;
+        let skin = crate::ui::skin::Layout::default();
+        let mut settings = ToolbarSettings {
+            composed: true,
+            left: vec![crate::ui::bars::top::button("sit", "armchair")],
+            right: vec![crate::ui::bars::top::button("fly", "plane-tilt-filled")],
+            ..Default::default()
+        };
+        settings.compose_chat(&skin);
+        let status = islands::tests::status(true, true);
+        let icons = Icons::default();
+        let favorites = crate::ui::bars::favorites::View::default();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut width = 380.0;
+        // one frame of the dock and the side bars: the room left to the windows
+        let mut frame = |chat: &mut crate::ui::chat::ChatUi| {
+            let mut room = Rect::NOTHING;
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1536.0, 864.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    toolbar.prepare(ui.ctx(), &settings);
+                    chrome::prepare(ui, &p, &status, &settings, false);
+                    chrome::prepare_chat(ui.ctx(), chat, width);
+                    let row = Row {
+                        unread: 0,
+                        latest_unread: None,
+                        flash: 0.0,
+                        flying: false,
+                        seated: false,
+                        mouselook: false,
+                        ao_active: false,
+                        locked: false,
+                        favorites: &favorites,
+                        bar: Bar::Bottom,
+                        style: settings.style(Bar::Bottom).resolve(Bar::Bottom, true),
+                        editing: false,
+                        floating: false,
+                    };
+                    let mut mic = crate::ui::bars::MicButton::default();
+                    let top = dock::bottom(
+                        ui,
+                        &p,
+                        &icons,
+                        &skin,
+                        &mut toolbar,
+                        &settings,
+                        &mut panels,
+                        chat,
+                        &gestures,
+                        Some(&mut emoji),
+                        &row,
+                        &mut width,
+                        &mut mic,
+                    )
+                    .2;
+                    let area = crate::ui::layout::bars_room(ui.available_rect_before_wrap(), top, false);
+                    let side = Row {
+                        bar: Bar::Left,
+                        style: Default::default(),
+                        ..row
+                    };
+                    room = crate::ui::bars::side::bars(
+                        ui,
+                        &p,
+                        &icons,
+                        &skin,
+                        &mut toolbar,
+                        &settings,
+                        &mut panels,
+                        &mut mic,
+                        &side,
+                        area,
+                        true,
+                        [true, true],
+                    )
+                    .0;
+                    chrome::show(
+                        ui,
+                        &p,
+                        &icons,
+                        &mut panels,
+                        &status,
+                        &mut Default::default(),
+                        &mut Default::default(),
+                        Default::default(),
+                        &mut Default::default(),
+                        Default::default(),
+                        &mut toolbar,
+                        &settings,
+                    );
+                    chrome::show_chat(ui, &p, &icons, &mut panels, chat, &gestures, Some(&mut emoji), &row, &mut width);
+                },
+            )
+            .textures_delta
+            .clear();
+            room
+        };
+        let button = |command: &str| {
+            ctx.read_response(crate::ui::bars::tool_button_id(command))
+                .unwrap_or_else(|| panic!("the {command} button"))
+                .rect
+        };
+        let mut settle = |chat: &mut crate::ui::chat::ChatUi| {
+            for _ in 0..3 {
+                frame(chat);
+            }
+            frame(chat)
+        };
+
+        let room = settle(&mut chat);
+        let (sit, fly) = (button("sit"), button("fly"));
+        let field = ctx.read_response(crate::ui::chat::bar_input_id()).expect("the chat field").rect;
+        assert!(field.center().x < 768.0, "the chat block is at the left of the dock: {field:?}");
+
+        chat.recent_emojis = crate::ui::emoji::recent::Recent::demo("👍😂");
+        chat.recent_emojis.enabled = true;
+        let row = crate::ui::emoji::recent::HEIGHT;
+        let raised = settle(&mut chat);
+        assert_eq!(raised.bottom(), room.bottom() - row, "the windows leave the raised island its room");
+        assert_eq!(button("fly"), fly, "the right bar keeps its place: the island is not in its column");
+        let moved = button("sit");
+        assert!(
+            moved.center().y < sit.center().y && moved.bottom() <= raised.bottom() + 0.5,
+            "the left bar, over the raised island, gives it room: {moved:?} from {sit:?}"
+        );
+
+        chat.recent_emojis.enabled = false;
+        assert_eq!(settle(&mut chat), room);
+        assert_eq!((button("sit"), button("fly")), (sit, fly), "the row gone, both are where they were");
+    }
+
     /// On the dock, the chat block's island alone rises for the recent
     /// emojis' row and for a paragraph, as the chat island did before the
     /// field became a block: the dock and its buttons keep their height.
