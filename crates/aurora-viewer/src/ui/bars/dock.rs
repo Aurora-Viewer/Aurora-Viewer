@@ -451,6 +451,10 @@ pub(super) fn chat_island(
         Vec2::splat(EMOJI_ICON),
     );
     let smile_resp = ui.interact(smile.expand(4.0), Id::unique("chat_island_emoji"), Sense::click());
+    // (the button's own reading, not the layer's under the pointer: the
+    // dock's chat block stands on a layer over the dock's, whose area is
+    // only what stands out of the dock, `chrome::show_lifted_chat`)
+    let on_smile = smile_resp.contains_pointer();
     let hot = smile_resp.hovered() || chat.bar_emoji_open;
     paint_icon(ui, icons, "mood-smile-filled", smile, EMOJI_ICON, slot_ink(p, hot, true));
     if smile_resp.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
@@ -504,7 +508,7 @@ pub(super) fn chat_island(
         }
     }
     if chat.bar_emoji_open {
-        emoji_picker(ui, p, icons, chat, emoji, smile, island, row.bar);
+        emoji_picker(ui, p, icons, chat, emoji, on_smile, island, row.bar);
     }
 
     if with_button {
@@ -537,14 +541,15 @@ pub(super) fn chat_island(
 /// The emoji picker of the chat field (the one of the Conversations
 /// window), its bottom right corner at `corner`, above the island; a pick
 /// goes at the end of the field, Shift keeps the picker open, a click away
-/// from it and from its `button` closes it.
+/// from it and from its button (`on_button`: the pointer is on it) closes
+/// it.
 fn emoji_picker(
     ui: &egui::Ui,
     p: &Palette,
     icons: &Icons,
     chat: &mut crate::ui::chat::ChatUi,
     emoji: Option<&mut crate::ui::emoji::Emoji>,
-    button: Rect,
+    on_button: bool,
     island: Rect,
     bar: crate::ui::toolbar::Bar,
 ) {
@@ -586,7 +591,7 @@ fn emoji_picker(
             });
         });
     // the emoji's menu can hang outside the picker: its click stays in it
-    let away = shown.response.clicked_elsewhere() && !starred && !ui.rect_contains_pointer(button.expand(4.0));
+    let away = shown.response.clicked_elsewhere() && !starred && !on_button;
     if escape {
         // the field gets the keyboard back, its caret where it was
         chat.bar_emoji_open = false;

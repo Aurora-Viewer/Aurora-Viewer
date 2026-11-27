@@ -441,6 +441,14 @@ mod tests {
 
         let top = settle(&mut frame, &mut chat);
         let (plain, bar, beside) = (field(), dock(), button());
+        // the emoji button opens its picker, and closes it: the block
+        // stands on a layer over the dock's, and the click that opens the
+        // picker is not one away from the button
+        let smile = || rect(egui::Id::unique("chat_island_emoji"), "the emoji button").center();
+        for open in [true, false] {
+            click(&mut frame, &mut chat, smile());
+            assert_eq!(chat.bar_emoji_open, open, "the emoji button's click, in the dock");
+        }
         assert!(
             bar.expand(0.5).contains_rect(plain),
             "the field alone is in the dock: {plain:?} in {bar:?}"
@@ -489,6 +497,10 @@ mod tests {
                 !island(egui::pos2(beside.center().x, out.y)),
                 "above {above}: over the other islands, the world keeps its clicks"
             );
+            for open in [true, false] {
+                click(&mut frame, &mut chat, smile());
+                assert_eq!(chat.bar_emoji_open, open, "above {above}: the emoji button's click");
+            }
             if above {
                 chat.input.clear();
                 click(&mut frame, &mut chat, egui::pos2(first.center().x, out.y));
