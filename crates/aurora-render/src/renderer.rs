@@ -8779,7 +8779,9 @@ impl Backend {
         });
         let mut cmds = Vec::new();
         let mut screen = None;
-        let mut ui = ui;
+        // (none on a device lost since the frame began: egui-wgpu's buffer
+        // upload would panic, #3844)
+        let mut ui = ui.filter(|_| !self.lost.get());
         if let Some(ui) = &mut ui {
             crate::ui_world::take_end(&mut ui.primitives);
             crate::ui_blur::take_boundary(&mut ui.primitives);
@@ -8971,9 +8973,10 @@ impl Backend {
         self.rebuild_targets();
     }
 
-    /// End of a frame that cannot be drawn (no swapchain image, or its
-    /// encoding failed). Its writes were replayed and its copies are still
-    /// submitted: the scene's mirrors count them as sent.
+    /// End of a frame that cannot be drawn (no swapchain image, its
+    /// encoding failed, or the device is lost). Its writes were replayed and
+    /// its copies are still submitted: the scene's mirrors count them as
+    /// sent.
     fn skip(
         &mut self,
         index: u64,
@@ -9216,7 +9219,9 @@ impl Backend {
             &sources[0],
             (mirror_size.0, mirror_size.1),
             &mut self.egui,
-            mirror_ui.as_ref(),
+            // (no interface on a device lost during the eyes' frames:
+            // egui-wgpu's buffer upload would panic, #3844)
+            mirror_ui.as_ref().filter(|_| !self.lost.get()),
         );
         if let Err(e) = world.session.end(grade) {
             log::error!("XR world submission failed: {e}");
@@ -9317,8 +9322,11 @@ impl Backend {
         if !self.vr.wanted() && self.xr_world.is_none() {
             self.xr_retry = (0, None);
         }
+        // a lost device draws nothing until the app replaces the renderer
+        // (app/gpu_recovery.rs): the frame goes to `render_view`, which
+        // retires it as a skipped one, not to the headset's eyes and mirror
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-        let packet = if self.xr_seed.is_some() && (self.vr.wanted() || self.xr_world.is_some()) {
+        let packet = if !self.lost.get() && self.xr_seed.is_some() && (self.vr.wanted() || self.xr_world.is_some()) {
             match self.render_xr(packet) {
                 Ok(result) => return result,
                 Err(packet) => *packet,
@@ -9714,7 +9722,17 @@ impl Backend {
             );
         }
         let t_acquire = Instant::now();
-        let surface_tex = if let Some(texture) = output {
+        let surface_tex = if self.lost.get() {
+            // a lost device: nothing is drawn or presented until the app
+            // replaces the renderer, and the frame is retired as a skipped
+            // one (its texture changes applied above, its uploads and picks
+            // let go). Its frames still queued after the loss reached
+            // egui-wgpu's buffer upload, which panics when the lost queue
+            // refuses its staging write (#3844). (A frame or two: the main
+            // thread builds none once it sees the loss.)
+            log::info!("render: frame {index} on a lost device, retired without drawing");
+            None
+        } else if let Some(texture) = output {
             // The render pipelines and persistent targets belong to this view's
             // output configuration. Reject mismatches before recording GPU work.
             if snapshot.is_some()
@@ -14183,6 +14201,11 @@ impl Backend {
         let mut extra_cmds = Vec::new();
         let mut window_glass = false;
         let mut meshes_uploaded = false;
+        // a loss reported since the frame began: egui-wgpu's buffer upload
+        // would panic (#3844), so the interface waits for the new renderer
+        if self.lost.get() {
+            ui = None;
+        }
         let sd = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [self.config.width, self.config.height],
             pixels_per_point: ui.as_ref().map_or(1.0, |ui| ui.pixels_per_point),

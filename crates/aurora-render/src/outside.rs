@@ -255,6 +255,11 @@ impl Surfaces {
         // (the previews of a window that closed go with it)
         previews.keep_outside(|key| self.entries.contains_key(&key), egui);
         for (key, entry) in &mut self.entries {
+            // a loss while the windows draw: their frames wait for the new
+            // renderer (egui-wgpu's buffer upload would panic, #3844)
+            if lost.get() {
+                break;
+            }
             let now = Instant::now();
             if entry.pending.is_none() || entry.rest_until.is_some_and(|until| now < until) {
                 continue;
