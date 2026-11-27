@@ -17638,7 +17638,11 @@ impl App {
 
     /// Places › Favorites, the first tab.
     fn open_places_favorites(&mut self) {
-        self.places_ui.tab = 0;
+        // open_tab, not the field alone: Aurora's look follows its own
+        // source, which stayed on the last list shown (#4771); a place
+        // profile left open would hide the list
+        self.world.place_details.close_panel();
+        self.places_ui.open_tab(ui::places::TAB_FAVORITES);
         ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
     }
 
