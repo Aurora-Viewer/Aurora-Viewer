@@ -21,6 +21,10 @@ const LOD_REACH: f32 = 150.0;
 /// Height of a label line (points).
 const LOD_LINE: f32 = 13.0;
 const SKELETON_RANGE: f32 = 32.0;
+/// Avatar hitboxes: drawn to their own range, not the skeletons', so the
+/// box distance can be tuned (or culled by visibility) without moving the
+/// skeleton and collision-volume views.
+const HITBOX_RANGE: f32 = 32.0;
 
 const GREEN: Color32 = Color32::from_rgb(80, 220, 120);
 const RED: Color32 = Color32::from_rgb(240, 70, 70);
@@ -442,7 +446,7 @@ pub fn draw(
             let Some((pp, _, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            if pp.distance(eye) > SKELETON_RANGE {
+            if pp.distance(eye) > HITBOX_RANGE {
                 continue;
             }
             // Our own avatar turns with the agent's yaw, as the Legacy
