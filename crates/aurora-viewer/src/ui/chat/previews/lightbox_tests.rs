@@ -76,6 +76,44 @@ fn a_reddit_poster_click_opens_the_post_and_a_regular_picture_still_enlarges() {
 }
 
 #[test]
+fn reddit_photo_dispatches_its_original_permalink_to_the_system_browser() {
+    let ctx = Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let url = "https://www.reddit.com/r/pics/comments/1u58ant/photo_of_my_friends_cousins_door/";
+    let mut pv = Previews {
+        demo: true,
+        ..Previews::default()
+    };
+    pv.cache.insert(
+        url.to_owned(),
+        crate::ui::chat::previews::Cached {
+            entry: Entry::Post(
+                lp::PostInfo {
+                    title: "A photo".into(),
+                    channel: "r/pics".into(),
+                    summary: String::new(),
+                },
+                Some(shown(&ctx)),
+            ),
+            used: 0,
+        },
+    );
+    pv.revealed.insert(7);
+    let target = lp::target(url).unwrap();
+    let mut frame = |events| {
+        let _ = run_ui(&ctx, input(events), |ui| card(ui, &p, &mut pv, 7, url, &target, lp::Start::Load));
+    };
+    let at = Pos2::new(90.0, 120.0);
+    frame(vec![]);
+    frame(vec![egui::Event::PointerMoved(at)]);
+    frame(vec![pointer(at, true)]);
+    frame(vec![pointer(at, false)]);
+    assert!(matches!(&crate::ui::context::take_requests(&ctx)[..],
+        [crate::ui::context::CtxAction::OpenUrlExternal(link)] if link == url));
+    assert!(!pv.enlarged());
+}
+
+#[test]
 fn zoomed_image_can_be_closed_from_the_fixed_corner_button() {
     let ctx = Context::default();
     let p = crate::theme::Theme::default().palette();

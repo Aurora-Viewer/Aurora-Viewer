@@ -958,7 +958,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
                             ui.label(RichText::new(&post.channel).size(11.5).color(p.muted));
                         }
                         if ui.link(RichText::new(&post.title).strong()).clicked() {
-                            super::open_web_link(ui.ctx(), url);
+                            open_reddit_post(ui.ctx(), url);
                         }
                     } else {
                         ui.label(RichText::new(&post.title).strong().color(p.ink));
@@ -986,6 +986,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
                     Some(Action::Reveal) => reveal = true,
                     Some(Action::Copy) => clipboard::request(ui.ctx(), &image.copy),
                     Some(Action::CopyLink) => ui.ctx().copy_text(url.to_owned()),
+                    Some(Action::Open) if reddit => open_reddit_post(ui.ctx(), url),
                     Some(Action::Open) => super::open_web_link(ui.ctx(), url),
                     Some(Action::Enlarge) => enlarge = true,
                     Some(Action::Window) => window = true,
@@ -1231,6 +1232,10 @@ fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, url: &str, width: f32,
             .on_hover_text(aurora_i18n::tr!("ui-chat-preview-enlarge"))
     };
     PictureOut { resp, action }
+}
+
+fn open_reddit_post(ctx: &egui::Context, url: &str) {
+    crate::ui::context::request(ctx, crate::ui::context::CtxAction::OpenUrlExternal(url.to_owned()));
 }
 
 fn link_tip(url: &str, copy: bool) -> String {
@@ -1557,7 +1562,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                                     .on_hover_text(link_tip(url, false))
                                     .clicked()
                                 {
-                                    super::open_web_link(ui.ctx(), url);
+                                    open_reddit_post(ui.ctx(), url);
                                 }
                             } else {
                                 ui.add(egui::Label::new(title.color(p.ink)).truncate());
