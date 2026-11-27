@@ -823,9 +823,9 @@ queue keeps them off each other's PRs.
   the claim, then the review goes to its end in the same turn, as for your
   own PR (section 8, steps 8 and 9): once the outside CI is approved
   (below; one question to your human for all the PRs you claimed), wait
-  for it without handing back, review, offer your human a demo run or a
-  grid test once the diff reads clean when the change can be seen in the
-  viewer, post the comment yourself, and
+  for it without handing back, review, then test it in a demo or on the
+  grid (your human's choice; never skipped when the change can be seen in
+  the viewer) before any verdict, post the comment yourself, and
   offer your human the merge of a ✅ PR as a question they answer (rule 5),
   then `merge-pr.ps1`. Never end a turn on "I will review it once CI is
   green": release the claim instead. A PR in conflict with `main` gets no

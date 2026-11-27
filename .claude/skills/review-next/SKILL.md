@@ -60,6 +60,19 @@ decisions of step 6.
    - Otherwise (head reviewed, green CI, no conflict): offer its merge in
      the dialog of step 2; on their yes, merge it as step 7 says.
 
+   Then the PRs your ⚠️ reviews left waiting on your human (a grid test, a
+   product choice): every queue leaves them out, so only you bring them
+   back.
+
+   ```
+   pwsh ./scripts/review-queue.ps1 -All
+   ```
+
+   The lines `waiting on a decision (<your login>'s review)`: read what
+   your review left open and put it in the dialog of step 2 (a grid test
+   to run now, a choice to make). Their answer becomes a new comment, and
+   the ✅ or `## Changes requested` that follows.
+
 2. **Read the queue, offer a selection, claim what your human picks**:
 
    ```
@@ -160,13 +173,14 @@ decisions of step 6.
    data of our own in shared places, credits, secrets, docs. Draft the
    comment in a `.scratch/review-<n>.md` (ignored by git).
 
-   **Offer a demo or a grid test** once CI is green and the diff reads
-   clean, before posting a ✅, when the change can be seen or felt in the
-   viewer: a window, a rendering, a behaviour, a demo scenario it adds or
-   touches (`AURORA_DEMO_*`), or something only the grid shows (network,
-   teleports, voice, other residents, permissions on real assets). Ask in a
-   mid-turn dialog, one question per PR, saying what you would run and what
-   to look at:
+   **Test it in a demo or on the grid**, never skipped, once CI is green
+   and the diff reads clean, before any verdict, whenever the change can
+   be seen or felt in the viewer: a window, a rendering, a behaviour, a
+   demo scenario it adds or touches (`AURORA_DEMO_*`), or something only
+   the grid shows (network, teleports, voice, other residents, permissions
+   on real assets). Offer which test in a mid-turn dialog, one question per
+   PR, saying what you would run and what to look at, with your pick first
+   (both when the demo shows part of it and the grid the rest):
    - **Demo** (default for what a scenario shows): you build the PR merged
      into the latest `main` in a detached worktree (`git worktree add
      --detach ../work/review-<n> origin/main`, then merge the PR's head
@@ -177,11 +191,14 @@ decisions of step 6.
      title; they log in and test (AGENTS.md section 1, rule 1), and you say
      precisely what to do and what they should see. Their result goes in
      the review.
-   - **Skip**: the review says that no demo or grid test was run by the
-     maintainer.
 
-   A PR with nothing to see (docs, tests, tooling, a change no scenario
-   reaches) gets no offer. Remove the worktree once the review is posted
+   There is no "skip". When your human cannot do the grid test now, post
+   the review with the ⚠️ verdict, "waiting for the maintainer's grid
+   test", and what is to test: the queue holds it for you (no other
+   maintainer can claim it), step 1 brings it back, and the ✅ follows
+   their result. Only a PR with
+   nothing to see in the viewer (docs, tests, tooling) gets no test, and
+   its review says why. Remove the worktree once the review is posted
    (`git worktree remove ../work/review-<n>`). A problem the test shows is
    a finding like the others: `## Changes requested`.
 

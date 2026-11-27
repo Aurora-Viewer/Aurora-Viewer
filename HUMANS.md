@@ -136,9 +136,9 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
   An agent that reviews from the queue offers you a selection from its top
   and claims only what you pick; it asks you once to approve the
   outside CI of the PRs it claimed (naming any that changes `.github/`,
-  scripts or build files), waits for it, offers you a demo run or a grid
-  test when the change can be seen in the viewer, posts its review and asks
-  you before any merge.
+  scripts or build files), waits for it, tests every change that can be
+  seen in the viewer in a demo or on the grid (it asks you which; a grid
+  test is yours to run), posts its review and asks you before any merge.
 - **Outside contributors' CI** waits for a maintainer: on their PR, "Approve
   and run" (look first that it does not change `.github/`). Review it only
   once that CI is green and the description is complete.
