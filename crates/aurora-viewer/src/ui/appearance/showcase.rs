@@ -33,6 +33,10 @@ const RAIL_FROM: f32 = 820.0;
 const PREVIEW_FROM: f32 = 600.0;
 const RAIL_W: f32 = 176.0;
 const PREVIEW_W: f32 = 300.0;
+const RAIL_MIN: f32 = 140.0;
+const PREVIEW_MIN: f32 = 240.0;
+/// The room the grid keeps when either side is dragged wider.
+const GRID_MIN: f32 = 300.0;
 const GAP: f32 = 10.0;
 /// The least width of a card: the grid takes as many columns as fit.
 const CARD_MIN: f32 = 150.0;
@@ -149,6 +153,39 @@ pub(super) fn previews(width: f32) -> bool {
     width >= PREVIEW_FROM
 }
 
+/// The widest a rail can be dragged: the grid keeps `GRID_MIN`.
+fn rail_max(area: f32, preview_w: f32) -> f32 {
+    (area - GRID_MIN - 2.0 * GAP - preview_w).max(RAIL_MIN)
+}
+
+/// The widest the preview can be dragged: the grid keeps `GRID_MIN`.
+fn preview_max(area: f32, rail_w: f32, rail: bool) -> f32 {
+    (area - GRID_MIN - if rail { 2.0 * GAP } else { GAP } - rail_w).max(PREVIEW_MIN)
+}
+
+/// The rail and preview widths for a showcase `area` points wide, from the
+/// saved ones (0: the defaults). A width saved in a wider window is only
+/// clamped for this frame, so it comes back when the window grows again.
+pub(super) fn split_widths(area: f32, rail: bool, preview: bool, saved_rail: u16, saved_preview: u16) -> (f32, f32) {
+    let mut rail_w = if rail {
+        if saved_rail == 0 { RAIL_W } else { f32::from(saved_rail) }
+    } else {
+        0.0
+    };
+    let mut preview_w = if preview {
+        if saved_preview == 0 { PREVIEW_W } else { f32::from(saved_preview) }
+    } else {
+        0.0
+    };
+    if preview {
+        preview_w = preview_w.clamp(PREVIEW_MIN, preview_max(area, rail_w, rail));
+    }
+    if rail {
+        rail_w = rail_w.clamp(RAIL_MIN, rail_max(area, preview_w));
+    }
+    (rail_w, preview_w)
+}
+
 /// Widens the window, once, to the showcase's rail, three columns and
 /// preview when it first shows in a narrower window. The window is the
 /// user's to make narrower again: the showcase then folds its rail into a
@@ -204,14 +241,15 @@ pub(super) fn show(
     let (area, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     let wide = area.width() >= RAIL_FROM;
     let with_preview = area.width() >= PREVIEW_FROM;
+    let (rail_w, preview_w) = split_widths(area.width(), wide, with_preview, st.showcase_rail_width, st.showcase_preview_width);
     let mut grid = area;
     let rail = wide.then(|| {
-        let r = Rect::from_min_size(area.min, Vec2::new(RAIL_W, area.height()));
+        let r = Rect::from_min_size(area.min, Vec2::new(rail_w, area.height()));
         grid.min.x = r.right() + GAP;
         r
     });
     let preview = with_preview.then(|| {
-        let r = Rect::from_min_max(egui::pos2(area.right() - PREVIEW_W, area.top()), area.max);
+        let r = Rect::from_min_max(egui::pos2(area.right() - preview_w, area.top()), area.max);
         grid.max.x = r.left() - GAP;
         r
     });
@@ -282,6 +320,47 @@ pub(super) fn show(
                     });
                 }
             });
+    }
+    if let Some(rail) = rail {
+        let hit = Rect::from_center_size(egui::pos2(rail.right() + GAP * 0.5, rail.center().y), Vec2::new(8.0, rail.height()));
+        let response = widgets::splitter(
+            ui,
+            p,
+            hit,
+            ui.scope_id().with("showcase_rail_resize"),
+            aurora_i18n::tr!("ui-appearance-showcase-resize-rail"),
+        );
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique("showcase_rail_handle"), hit));
+        if response.double_clicked() {
+            st.showcase_rail_width = 0;
+        } else if response.dragged() && response.drag_delta().x != 0.0 {
+            let width = (rail_w + response.drag_delta().x).clamp(RAIL_MIN, rail_max(area.width(), preview_w));
+            st.showcase_rail_width = width.round() as u16;
+        }
+    }
+    if let Some(preview) = preview {
+        let hit = Rect::from_center_size(
+            egui::pos2(preview.left() - GAP * 0.5, preview.center().y),
+            Vec2::new(8.0, preview.height()),
+        );
+        let response = widgets::splitter(
+            ui,
+            p,
+            hit,
+            ui.scope_id().with("showcase_preview_resize"),
+            aurora_i18n::tr!("ui-appearance-showcase-resize-preview"),
+        );
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique("showcase_preview_handle"), hit));
+        if response.double_clicked() {
+            st.showcase_preview_width = 0;
+        } else if response.dragged() && response.drag_delta().x != 0.0 {
+            let width = (preview_w - response.drag_delta().x).clamp(PREVIEW_MIN, preview_max(area.width(), rail_w, wide));
+            st.showcase_preview_width = width.round() as u16;
+        }
     }
 }
 
@@ -1163,6 +1242,113 @@ mod tests {
             actions.extend(frame(ctx, world, st, vec![button]).0);
         }
         actions
+    }
+
+    fn frame_at(
+        ctx: &egui::Context,
+        world: &mut World,
+        st: &mut AppearanceUi,
+        events: Vec<egui::Event>,
+        time: f64,
+    ) -> (Vec<Action>, Vec<(String, egui::Pos2)>) {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        let (actions, shapes) = draw_output(ctx, world, st, input);
+        (actions, texts(&shapes))
+    }
+
+    /// The rail keeps the grid wide enough whatever its saved width, and a
+    /// width saved in a wider window comes back when the window grows again.
+    #[test]
+    fn split_widths_keep_the_grid_and_both_panels_usable() {
+        assert_eq!(split_widths(1080.0, true, true, 0, 0), (RAIL_W, PREVIEW_W));
+        let (rail, preview) = split_widths(1080.0, true, true, u16::MAX, u16::MAX);
+        assert!(rail >= RAIL_MIN && preview >= PREVIEW_MIN);
+        assert!(1080.0 - rail - preview - 2.0 * GAP >= GRID_MIN - 0.1);
+        let (rail, preview) = split_widths(600.0, false, true, 0, u16::MAX);
+        assert_eq!(rail, 0.0);
+        assert!(preview >= PREVIEW_MIN);
+        assert!(600.0 - preview - GAP >= GRID_MIN - 0.1);
+        assert_eq!(split_widths(500.0, false, false, 300, 400), (0.0, 0.0));
+        assert_eq!(split_widths(1600.0, true, true, 400, 500), (400.0, 500.0));
+    }
+
+    /// The separator between the rail and the grid resizes the rail, and
+    /// the one before the preview resizes the preview; a double click puts
+    /// the default back.
+    #[test]
+    fn the_rail_and_the_preview_drag_from_their_separators_and_reset() {
+        let (mut world, mut st) = grouped();
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        let handle = |ctx: &egui::Context, name: &str| {
+            ctx.data(|data| data.get_temp::<Rect>(egui::Id::unique(name)))
+                .unwrap_or_else(|| panic!("{name} drawn"))
+        };
+        let drag = |ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, name: &str, delta: f32| {
+            let start = handle(ctx, name).center();
+            frame(ctx, world, st, vec![egui::Event::PointerMoved(start)]);
+            frame(
+                ctx,
+                world,
+                st,
+                vec![egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                }],
+            );
+            for step in [delta, delta * 2.0] {
+                frame(ctx, world, st, vec![egui::Event::PointerMoved(start + Vec2::new(step, 0.0))]);
+            }
+            frame(
+                ctx,
+                world,
+                st,
+                vec![egui::Event::PointerButton {
+                    pos: start + Vec2::new(delta * 2.0, 0.0),
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                }],
+            );
+            frame(ctx, world, st, Vec::new());
+        };
+        drag(&ctx, &mut world, &mut st, "showcase_rail_handle", 40.0);
+        assert!(st.showcase_rail_width >= (RAIL_W + 40.0) as u16, "the rail widened");
+        drag(&ctx, &mut world, &mut st, "showcase_preview_handle", -40.0);
+        assert!(st.showcase_preview_width >= (PREVIEW_W + 40.0) as u16, "the preview widened");
+        let rail = st.showcase_rail_width;
+        let hit = handle(&ctx, "showcase_rail_handle");
+        let mut time = 1.0;
+        for pressed in [true, false, true, false] {
+            time += 0.05;
+            frame_at(
+                &ctx,
+                &mut world,
+                &mut st,
+                vec![
+                    egui::Event::PointerMoved(hit.center()),
+                    egui::Event::PointerButton {
+                        pos: hit.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                time,
+            );
+        }
+        assert!(rail > 0);
+        assert_eq!(st.showcase_rail_width, 0, "double click restores the rail default");
     }
 
     /// The first time it shows, the showcase widens the window to its rail,

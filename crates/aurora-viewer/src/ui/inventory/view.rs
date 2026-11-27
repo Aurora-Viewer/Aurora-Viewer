@@ -545,6 +545,8 @@ impl Default for InventoryPreferences {
 #[serde(from = "SavedExplorer")]
 pub struct ExplorerPreferences {
     pub sidebar_width: u16,
+    /// The wide layout's details pane; 0 is the 300-point default.
+    pub details_width: u16,
     /// The details' columns after the name, in their order.
     pub columns: ColumnList,
     /// How the explorer shows its folder: rows, tiles, or both.
@@ -562,6 +564,7 @@ impl Default for ExplorerPreferences {
     fn default() -> Self {
         Self {
             sidebar_width: 0,
+            details_width: 0,
             columns: ColumnList::default(),
             view: ExplorerView::List,
             tile_size: 0,
@@ -577,6 +580,7 @@ impl Default for ExplorerPreferences {
 #[serde(default)]
 struct SavedExplorer {
     sidebar_width: u16,
+    details_width: u16,
     columns: Option<ColumnList>,
     kind_width: u16,
     rights_width: u16,
@@ -595,6 +599,7 @@ impl Default for SavedExplorer {
         let now = ExplorerPreferences::default();
         Self {
             sidebar_width: now.sidebar_width,
+            details_width: now.details_width,
             columns: None,
             kind_width: 0,
             rights_width: 0,
@@ -627,6 +632,7 @@ impl From<SavedExplorer> for ExplorerPreferences {
         });
         Self {
             sidebar_width: saved.sidebar_width,
+            details_width: saved.details_width,
             columns,
             view: saved.view,
             tile_size: saved.tile_size,

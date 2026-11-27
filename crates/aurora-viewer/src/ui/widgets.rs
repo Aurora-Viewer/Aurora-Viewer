@@ -3268,6 +3268,22 @@ pub fn border_stroke(p: &Palette, usual: Stroke) -> Stroke {
     }
 }
 
+/// A vertical splitter between two panels side by side: an 8-point strip in
+/// their gap, dragged to resize one of them and lit in violet while the
+/// pointer is on it. The caller keeps the width and applies the drag, as the
+/// inventory's sidebar, columns and gallery do.
+pub(crate) fn splitter(ui: &mut egui::Ui, p: &Palette, hit: egui::Rect, id: egui::Id, tip: impl Into<egui::WidgetText>) -> egui::Response {
+    let response = ui
+        .interact(hit, id, Sense::click_and_drag())
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+        .on_hover_text(tip);
+    if response.hovered() || response.dragged() {
+        ui.painter()
+            .vline(hit.center().x, hit.y_range(), border_stroke(p, Stroke::new(1.0, p.violet_light)));
+    }
+    response
+}
+
 /// The room a `divider` takes across its line.
 const DIVIDER_ROOM: f32 = 6.0;
 
