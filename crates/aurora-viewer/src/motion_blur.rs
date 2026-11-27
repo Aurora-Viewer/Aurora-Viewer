@@ -107,6 +107,21 @@ pub fn shutter(angle: f32, fps: u32, dt: f32) -> Option<aurora_render::MotionBlu
     )
 }
 
+/// The Director's render with a shutter of `angle` degrees at `fps`: the
+/// seconds it stays open from each frame's instant, and the sub-frames
+/// drawn over that time, more for a longer shutter so that its streaks
+/// stay smooth (12 at 180°, 48 at 720°).
+pub fn render_shutter(angle: f32, fps: u32) -> (f32, u32) {
+    let range = crate::director::SHUTTER_RANGE;
+    let angle = if angle.is_finite() {
+        angle.clamp(*range.start(), *range.end())
+    } else {
+        crate::director::DEFAULT_SHUTTER
+    };
+    let turns = angle / 360.0;
+    (turns / fps.max(1) as f32, ((turns * 24.0).ceil() as u32).clamp(4, 48))
+}
+
 /// A shutter open `exposure` seconds over a frame drawn `dt` seconds after
 /// the last one, its streaks held to `max_share` of the image's height.
 fn open_for(exposure: f32, dt: f32, max_share: f32, samples: u32) -> Option<aurora_render::MotionBlur> {
@@ -177,6 +192,20 @@ mod tests {
         assert_eq!(shutter(180.0, 30, 0.0), None);
         // a rate of 0 from a broken file is one frame a second, not a crash
         assert!(shutter(180.0, 0, 1.0 / 60.0).is_some());
+    }
+
+    #[test]
+    fn the_render_shutter_stays_open_its_angle_and_takes_more_sub_frames_when_longer() {
+        let (open, count) = render_shutter(180.0, 30);
+        assert!((open - 1.0 / 60.0).abs() < 1e-7);
+        assert_eq!(count, 12);
+        let (open, count) = render_shutter(720.0, 24);
+        assert!((open - 2.0 / 24.0).abs() < 1e-7);
+        assert_eq!(count, 48);
+        assert_eq!(render_shutter(1.0, 30).1, 4);
+        assert_eq!(render_shutter(9000.0, 30), render_shutter(720.0, 30));
+        assert_eq!(render_shutter(f32::NAN, 30), render_shutter(180.0, 30));
+        assert!(render_shutter(180.0, 0).0.is_finite());
     }
 
     #[test]

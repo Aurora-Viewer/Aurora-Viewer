@@ -740,7 +740,7 @@ fn picture_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, locked: boo
     // the Director's own shutter: its motion blur, at the film's rate
     let mut blur = d.motion_blur.is_some();
     if widgets::checkbox(ui, p, &mut blur, aurora_i18n::tr!("director-motion-blur"))
-        .on_hover_text(aurora_i18n::tr!("director-motion-blur-tip"))
+        .on_hover_text(aurora_i18n::tr!("director-motion-blur-hint"))
         .changed()
     {
         d.motion_blur = blur.then_some(director::DEFAULT_SHUTTER);

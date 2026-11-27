@@ -2129,6 +2129,13 @@ pub(crate) struct Backend {
     equirect_reads: crate::equirect::Readbacks,
     /// The Director's film frames on their way back (film_readback.rs).
     film_reads: crate::film_readback::FilmReads,
+    /// The Director's shutter (shutter.rs), made the first time a render
+    /// uses it.
+    shutter: Option<crate::shutter::ShutterAccum>,
+    /// This frame's sub-frame of an offline frame with a shutter.
+    shutter_now: Option<crate::Shutter>,
+    /// Frames drawn since the last film frame (`SHUTTER_KEPT_FRAMES`).
+    shutter_idle: u32,
     /// The six faces of a 360° capture are drawn one after the other: the
     /// snapshot size stays (the render targets are made once, not twice per
     /// face) from the first face to the frame after the last.
@@ -3563,6 +3570,33 @@ fn motion_blur_targets(
     let (_, refused) = crate::gpu_alloc::scoped(device, || b.ensure_targets(device, size, HDR_FORMAT, post));
     if first_use(oom, "motion blur", false, refused && !lost) {
         b.release();
+        return false;
+    }
+    true
+}
+
+/// Frames without a film frame after which the shutter's sum is let go.
+const SHUTTER_KEPT_FRAMES: u32 = 600;
+
+/// The shutter's sum for `size` is made, checked: false while refused or
+/// waiting (the frame is its last sub-frame alone).
+fn shutter_target(
+    oom: &mut crate::gpu_alloc::Refusals,
+    accum: &mut Option<crate::shutter::ShutterAccum>,
+    device: &wgpu::Device,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let a = accum.get_or_insert_with(|| crate::shutter::ShutterAccum::new(device));
+    if a.has_target(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || a.ensure_target(device, size));
+    if first_use(oom, "shutter", false, refused && !lost) {
+        a.release();
         return false;
     }
     true
@@ -5037,6 +5071,9 @@ impl Backend {
             cube: None,
             equirect_reads: Default::default(),
             film_reads: Default::default(),
+            shutter: None,
+            shutter_now: None,
+            shutter_idle: 0,
             cube_hold: false,
             cube_keep: false,
             cube_step: None,
@@ -7745,6 +7782,9 @@ impl Backend {
             blur.release();
         }
         self.blur_motion = None;
+        if let Some(accum) = &mut self.shutter {
+            accum.release();
+        }
         if let Some(looks) = &mut self.looks {
             looks.release();
         }
@@ -8802,7 +8842,21 @@ impl Backend {
         // (a film frame drawn at its size is no photo: its pixels come back
         // in `films`, a later frame's result once the GPU is done)
         let film = self.film_reads.end_frame();
-        let snapshot = self.end_snapshot() && !cube_face && !film;
+        // (nor is a sub-frame of a shutter: nothing answers it)
+        let sub_frame = self.shutter_now.take().is_some_and(|s| !s.last());
+        let snapshot = self.end_snapshot() && !cube_face && !film && !sub_frame;
+        // the shutter's sum goes some frames after the last render's
+        // (the window's own frames come between a render's sub-frames)
+        self.shutter_idle = if film || sub_frame {
+            0
+        } else {
+            self.shutter_idle.saturating_add(1)
+        };
+        if self.shutter_idle > SHUTTER_KEPT_FRAMES
+            && let Some(accum) = &mut self.shutter
+        {
+            accum.release();
+        }
         if self.film_reads.busy() {
             self.lost.poll(&self.device);
         }
@@ -9492,10 +9546,16 @@ impl Backend {
             rt: rt_faces,
         } = packet;
         let external_output = output.is_some();
+        // (a sub-frame before its shutter's last carries no film frame:
+        // only the last is read back, shutter.rs)
         self.film_reads.begin(match wanted {
-            Some(Capture::Film(tag, _)) => Some(tag),
+            Some(Capture::Film(tag, _, shutter)) if shutter.is_none_or(|s| s.last()) => Some(tag),
             _ => None,
         });
+        self.shutter_now = match wanted {
+            Some(Capture::Film(_, Some(_), Some(shutter))) => Some(shutter),
+            _ => None,
+        };
         self.motion_cut |= motion_cut;
         self.shift_weather(world_shift);
         let mut stats = RenderStats::default();
@@ -9576,7 +9636,7 @@ impl Backend {
             self.rebuild_targets();
         }
         let snapshot = match wanted {
-            Some(Capture::Snapshot(s) | Capture::Film(_, Some(s))) if s.width > 0 && s.height > 0 => Some(s),
+            Some(Capture::Snapshot(s) | Capture::Film(_, Some(s), _)) if s.width > 0 && s.height > 0 => Some(s),
             _ => None,
         };
         if let Some(s) = snapshot {
@@ -14288,7 +14348,7 @@ impl Backend {
         if wanted == Some(Capture::Scene) {
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             capture = self.encode_capture(&mut encoder, source, false);
-        } else if matches!(wanted, Some(Capture::Film(_, None))) && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
+        } else if matches!(wanted, Some(Capture::Film(_, None, _))) && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
             // a live film's frame: the same view, read back without a wait
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             let bgra = matches!(
@@ -14421,6 +14481,27 @@ impl Backend {
             }
             if let Some(cube) = &mut self.cube {
                 cube.add_face(&mut encoder, surface_tex.texture(), step);
+            }
+        } else if let (Some(_), Some(shutter)) = (snapshot, self.shutter_now) {
+            // a sub-frame of an offline frame with a shutter: added to the
+            // sum; the last writes the average and is read back as below
+            let texture = surface_tex.texture();
+            if shutter_target(
+                &mut self.oom,
+                &mut self.shutter,
+                &self.device,
+                (texture.width(), texture.height()),
+                self.lost.get(),
+            ) {
+                let accum = self.shutter.as_mut().expect("made by shutter_target");
+                accum.encode(&self.device, &self.queue, &mut encoder, texture, shutter);
+            }
+            if shutter.last() {
+                let bgra = matches!(
+                    texture.format(),
+                    wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+                );
+                self.film_reads.encode(&self.device, &mut encoder, texture, bgra, f.cutout);
             }
         } else if snapshot.is_some() && self.film_reads.carried() {
             // an offline render's frame, drawn at its size: read back

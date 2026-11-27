@@ -1179,6 +1179,17 @@ impl App {
             self.director.demo_record = true;
             log::info!("director demo: recording a second of the track");
         }
+        // AURORA_DEMO_DIRECTOR_SHUTTER=<degrees>: the Director's motion blur
+        // on at that shutter (its live view, and a render's true shutter)
+        if let Some(angle) = std::env::var("AURORA_DEMO_DIRECTOR_SHUTTER")
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|a| a.is_finite())
+        {
+            let range = director::SHUTTER_RANGE;
+            self.director.d.motion_blur = Some(angle.clamp(*range.start(), *range.end()));
+            log::info!("director demo: motion blur, shutter {angle}°");
+        }
         self.director_render_demo(&mode);
         if mode == "green" {
             let isolation = &mut self.world.photo_isolation;

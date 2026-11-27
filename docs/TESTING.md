@@ -1115,6 +1115,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
+| `AURORA_DEMO_DIRECTOR_SHUTTER=<degrees>` | With `AURORA_DEMO_DIRECTOR`, the Director's motion blur on at that shutter angle (1 to 720), its render with a true shutter (see Details) |
 | `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha\|orbit\|capture\|anim\|montage\|titles\|render` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, a second of the track recorded, the track replaced by an orbit shot round the avatar, a path flown by hand made keyframes, keyframes with an animation, a lens and a time of day, a montage of two shots, fades and titles played, or a second rendered as PNG images (see Details) |
 | `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
 | `AURORA_DIRECTOR_FFMPEG=pack` | The Director looks for no ffmpeg but the project's pack, to try its download on a computer that has ffmpeg (see Details) |
@@ -1285,7 +1286,13 @@ when unfocused") is ignored during a screenshot.
   `Aurora_00024.png` in a new `Aurora_<date>` folder of `<Videos>/Aurora
   Viewer`, the first black, the title in the middle, the last black,
   whatever the window's size; the Output section shows the progress
-  meanwhile.
+  meanwhile. With `AURORA_DEMO_DIRECTOR_SHUTTER=<degrees>` (1 to 720) the
+  Director's motion blur is on at that shutter: its live view and live
+  films blur along the motion vectors, and `render` draws each frame as
+  sub-frames over the time the shutter stays open, averaged (the log adds
+  `shutter open 20.8 ms in 12 sub-frames` at 180°, 24 a second); the
+  orbiting camera and the walking avatars leave smooth streaks, with no
+  doubled images, and the render takes as many times longer.
 - **`AURORA_DEMO_CROSSHAIR=dot|cross|circle|legacy|off|image:<file>`**: the crosshair of
   Preferences › Camera › Mouselook › Crosshair in that shape for the
   session, nothing saved (`cross` and `circle` with their centre dot; `off`:
