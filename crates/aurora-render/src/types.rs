@@ -2692,6 +2692,7 @@ mod tests {
             pixel_scale: 900.0,
             shadows: true,
             reflections: false,
+            second_view: false,
         });
         // a packet buffer coming back from an earlier, larger frame
         let mut packet = DrawLists::default();

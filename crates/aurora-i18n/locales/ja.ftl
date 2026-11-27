@@ -16797,3 +16797,5 @@ ao-mini-default = デフォルトのアニメーション
 ao-mini-sets-tip = クリックしてセットを変更
 ao-swim-ready-tag = 泳ぐ準備完了
 ao-manage-sets = セットを管理…
+ao-preview-drag = ドラッグしてアバターの周りを回転
+ao-preview-second-camera = 「セカンドカメラ」ウィンドウがプレビューを使用中です。閉じるとここにアバターが表示されます。

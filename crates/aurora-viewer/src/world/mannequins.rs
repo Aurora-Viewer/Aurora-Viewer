@@ -246,7 +246,7 @@ impl World {
     /// A client-only copy of our avatar: the mirror or a mannequin. Lists of
     /// residents (radar, minimap, contact markers…) leave them out.
     pub fn is_local_copy(&self, id: &Uuid) -> bool {
-        self.is_mirror(id) || self.is_mannequin(id)
+        self.is_mirror(id) || self.is_mannequin(id) || self.is_ao_preview(id)
     }
 
     /// Whether an object is one of our copies, or worn by one. Not the

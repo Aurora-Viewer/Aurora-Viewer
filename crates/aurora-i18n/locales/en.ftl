@@ -17003,3 +17003,5 @@ ao-mini-default = Default animations
 ao-mini-sets-tip = Click to change the set
 ao-swim-ready-tag = Swim ready
 ao-manage-sets = Manage sets…
+ao-preview-drag = Drag to turn around your avatar
+ao-preview-second-camera = The “Second camera” window is using the preview. Close it to see your avatar here.

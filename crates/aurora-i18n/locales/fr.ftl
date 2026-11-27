@@ -17009,3 +17009,5 @@ ao-mini-default = Animations par défaut
 ao-mini-sets-tip = Cliquez pour changer d’ensemble
 ao-swim-ready-tag = Prêt pour la nage
 ao-manage-sets = Gérer les ensembles…
+ao-preview-drag = Glissez pour tourner autour de votre avatar
+ao-preview-second-camera = La fenêtre « Seconde caméra » utilise l’aperçu. Fermez-la pour voir votre avatar ici.

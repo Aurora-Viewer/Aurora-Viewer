@@ -78,6 +78,10 @@ pub mod object_flags {
     /// casting its shadow and in the reflections and probe captures, so
     /// that the subject keeps the scene's light (#2316).
     pub const UNSEEN: u32 = 512;
+    /// Drawn by the second camera only (`frame_flags::SECOND_VIEW`): in the
+    /// window's view it is not drawn, casts no shadow and is in no
+    /// reflection (the AO window's preview copy of our avatar).
+    pub const SECOND_VIEW_ONLY: u32 = 1024;
 }
 
 /// `CullObject::state` of an avatar entry, set every frame by the scene.
@@ -191,6 +195,9 @@ pub mod frame_flags {
     /// moves (avatars, rigged meshes, physical objects) is left out of it,
     /// so that it leaves no dry patch following it.
     pub const SPOT_SHELTER: u32 = 16384;
+    /// This cull is the second camera's (second_view.rs): it draws the
+    /// objects of `object_flags::SECOND_VIEW_ONLY`.
+    pub const SECOND_VIEW: u32 = 32768;
 }
 
 const CLASSIFY_GROUP: u32 = 128;
@@ -431,6 +438,9 @@ impl CullFrame {
         if probe_shadow.is_some() {
             flags |= frame_flags::PROBE_SHADOW;
         }
+        if view.second_view {
+            flags |= frame_flags::SECOND_VIEW;
+        }
         if let Some((_, show)) = view.first_person {
             flags |= frame_flags::FIRST_PERSON;
             if show {
@@ -480,6 +490,8 @@ pub struct GpuCullView {
     pub pixel_scale: f32,
     pub shadows: bool,
     pub reflections: bool,
+    /// The second camera's view (second_view.rs), not the window's.
+    pub second_view: bool,
 }
 
 /// Side and near planes of a reverse-Z infinite view (the sixth accepts all).
@@ -521,6 +533,9 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
     }
     let o = objects[f.object as usize];
     if o.flags & object_flags::ACTIVE == 0 || o.flags & (object_flags::HUD | object_flags::HIDDEN) != 0 {
+        return (0, false);
+    }
+    if o.flags & object_flags::SECOND_VIEW_ONLY != 0 && frame.sizes[3] & frame_flags::SECOND_VIEW == 0 {
         return (0, false);
     }
     let is_avatar = o.flags & object_flags::AVATAR != 0;
@@ -1644,6 +1659,45 @@ mod tests {
         const { assert!(COUNT_SHADOW + SHADOW_STATS <= COUNT_CLAMPED && COUNT_CLAMPED < COUNTS) };
     }
 
+    /// The AO preview's copy is drawn by the second camera only: in the
+    /// window's cull it is in no bin at all (no view, no shadow, no
+    /// reflection), and the second camera's cull leaving our own avatar out
+    /// (the first-person rule without the self view) still draws the copy.
+    #[test]
+    fn second_view_only_objects_are_drawn_by_the_second_camera_alone() {
+        let mut frame = frame_for_tests();
+        frame.sizes[1] = 2;
+        frame.sizes[3] = frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER | frame_flags::MIRROR;
+        // 0: our avatar, 1: its copy
+        let mut objects = vec![
+            CullObject {
+                flags: object_flags::ACTIVE | object_flags::AVATAR,
+                avatar: 0,
+                state: avatar_state::FULL,
+                ..CullObject::NONE
+            };
+            2
+        ];
+        objects[1].avatar = 1;
+        objects[1].flags |= object_flags::SECOND_VIEW_ONLY;
+        let spheres = vec![(Vec3::ZERO, 1.0); 2];
+        let faces: Vec<CullFace> = (0..2)
+            .map(|object| CullFace {
+                object,
+                bits: pass::OPAQUE | FACE_FIRST,
+                ..CullFace::NONE
+            })
+            .collect();
+        let bins = |frame: &CullFrame, i: usize| face_bins(frame, &faces, &objects, &spheres, i).0;
+        assert_ne!(bins(&frame, 0) & 1, 0, "our avatar in the window's view");
+        assert_eq!(bins(&frame, 1), 0, "the copy nowhere in the window's frame, its shadows included");
+        frame.sizes[3] |= frame_flags::SECOND_VIEW | frame_flags::FIRST_PERSON;
+        frame.groups[1] = 1;
+        assert_eq!(bins(&frame, 0), 0, "our avatar left out of the preview");
+        assert_ne!(bins(&frame, 1) & 1, 0, "the copy in the second camera's view");
+        assert_ne!(bins(&frame, 1) & !15, 0, "with its shadow there");
+    }
+
     #[test]
     fn first_person_visibility_hides_own_head_only_in_the_main_view() {
         let mut frame = frame_for_tests();
@@ -1734,7 +1788,7 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 52] = [
+        let pairs: [(&str, u32); 54] = [
             ("F_PROBE_SHADOW", frame_flags::PROBE_SHADOW),
             ("F_FIRST_PERSON", frame_flags::FIRST_PERSON),
             ("F_SHOW_SELF", frame_flags::SHOW_SELF),
@@ -1781,6 +1835,8 @@ mod tests {
             ("OBJ_HIDDEN", object_flags::HIDDEN),
             ("OBJ_PHYSICAL", object_flags::PHYSICAL),
             ("OBJ_UNSEEN", object_flags::UNSEEN),
+            ("OBJ_SECOND_VIEW_ONLY", object_flags::SECOND_VIEW_ONLY),
+            ("F_SECOND_VIEW", frame_flags::SECOND_VIEW),
             ("F_SPOT_SHELTER", frame_flags::SPOT_SHELTER),
             ("SKELETON_ANCHOR", SKELETON_ANCHOR),
             ("AV_FULL", avatar_state::FULL),

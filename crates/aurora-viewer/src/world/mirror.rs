@@ -87,30 +87,48 @@ impl World {
             return Some(id);
         }
         self.remove_mirror();
-        let own = self.objects.index_of_uuid(&self.agent_id)?;
-        let avatar = self.objects.get(own)?;
         let id = mirror_id(self.agent_id);
         let facing = self.agent.body_rotation();
-        let mut root = copy_of(avatar, id, FIRST_LOCAL, 0);
-        // a root of its own, where we stand, even when we sit
-        root.position = self.agent.position + facing * Vec3::new(DISTANCE, 0.0, 0.0);
-        root.rotation = facing * glam::Quat::from_rotation_z(std::f32::consts::PI);
+        let position = self.agent.position + facing * Vec3::new(DISTANCE, 0.0, 0.0);
+        let root = self.copy_own_avatar(
+            id,
+            FIRST_LOCAL,
+            position,
+            facing * glam::Quat::from_rotation_z(std::f32::consts::PI),
+        )?;
+        self.mirror = Some(Mirror { id, root });
+        log::info!("animation editor: a mirror of our avatar stands in as Person B");
+        Some(id)
+    }
+
+    /// Make a client-only copy of our avatar and of what it wears (not the
+    /// HUDs), as avatar `id` with local ids from `first_local`, its root at
+    /// `position` turned by `rotation`. Shared by the mirror and the AO
+    /// window's preview (ao_preview.rs). None while our avatar is not in the
+    /// world.
+    pub(super) fn copy_own_avatar(&mut self, id: Uuid, first_local: u32, position: Vec3, rotation: glam::Quat) -> Option<ObjKey> {
+        let own = self.objects.index_of_uuid(&self.agent_id)?;
+        let avatar = self.objects.get(own)?;
+        let mut root = copy_of(avatar, id, first_local, 0);
+        // a root of its own, even when we sit
+        root.position = position;
+        root.rotation = rotation;
         let mut copies = vec![(None, root)];
         let mut locals = HashMap::new();
-        locals.insert(avatar.key, FIRST_LOCAL);
-        let mut next = FIRST_LOCAL + 1;
+        locals.insert(avatar.key, first_local);
+        let mut next = first_local + 1;
         // what we wear, parents before their children; not the HUDs, which
         // would show twice on the screen
         for idx in self.objects.subtree(own).into_iter().skip(1) {
             // (nor the copies drawn from the cache, which go when the
-            // region's objects come: the mirror would keep them)
+            // region's objects come: the copy would keep them)
             let Some(object) = self.objects.get(idx).filter(|o| !super::avatar_cache::is_copy(o.key)) else {
                 continue;
             };
             let Some(&parent) = object.parent_key().and_then(|key| locals.get(&key)) else {
                 continue;
             };
-            if parent == FIRST_LOCAL && (object.is_avatar() || (31..=38).contains(&object.attachment_point())) {
+            if parent == first_local && (object.is_avatar() || (31..=38).contains(&object.attachment_point())) {
                 continue;
             }
             let full_id = Uuid::from_u128(id.as_u128() ^ object.full_id.as_u128().rotate_left(1));
@@ -127,15 +145,10 @@ impl World {
         for (parent, update) in copies {
             self.objects.upsert_preview(parent, update);
         }
-        self.mirror = Some(Mirror {
-            id,
-            root: ObjKey {
-                region: PREVIEW_REGION,
-                local_id: FIRST_LOCAL,
-            },
-        });
-        log::info!("animation editor: a mirror of our avatar stands in as Person B");
-        Some(id)
+        Some(ObjKey {
+            region: PREVIEW_REGION,
+            local_id: first_local,
+        })
     }
 
     /// Take the mirror away, with what it wears.

@@ -32,6 +32,10 @@ pub struct SecondViewJob {
     pub eye: Vec3,
     pub fov_y: f32,
     pub size: [u32; 2],
+    /// An avatar to leave out of the picture with what it wears (its object
+    /// index): our own, while the view shows the AO window's preview copy
+    /// standing in our place.
+    pub hide_avatar: Option<u32>,
 }
 
 /// Longest side of the picture, in pixels: a large window is drawn smaller
@@ -144,8 +148,12 @@ pub(crate) fn packet(main: &FramePacket, job: &SecondViewJob) -> FramePacket {
         gpu.planes = crate::gpu_cull::view_planes(job.proj * job.view);
         gpu.eye = job.eye;
         gpu.pixel_scale = height as f32 * job.proj.y_axis.y;
-        // the whole avatar: the second camera is not in mouselook
-        gpu.first_person = None;
+        // the whole avatar: the second camera is not in mouselook; or none
+        // of it, for the AO preview (the cull's first-person rule without
+        // the self view leaves an avatar out with its attachments)
+        gpu.first_person = job.hide_avatar.map(|avatar| (avatar, false));
+        // and it draws what only it shows (the AO preview's copy)
+        gpu.second_view = true;
     }
     let mut params = main.params.clone();
     params.view = job.view;

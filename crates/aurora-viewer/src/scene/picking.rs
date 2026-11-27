@@ -498,6 +498,7 @@ impl Scene {
                 let g = self.gpu.get(idx)?;
                 let o = world.objects.get(idx)?;
                 if g.hud
+                    || g.second_only
                     || (!meets_hidden && (g.hidden || g.unseen || g.rlva_hidden))
                     || g.is_avatar
                     || g.rigged
@@ -909,7 +910,9 @@ impl Scene {
             // (what is not drawn is not picked: a hidden rendering type, as
             // LLPipeline::lineSegmentIntersectInWorld skips its partitions,
             // or what the photo leaves out)
-            .filter(|(idx, gpu)| !gpu.hidden && !gpu.unseen && !gpu.rlva_hidden && self.first_person_object_visible(*idx, gpu))
+            .filter(|(idx, gpu)| {
+                !gpu.hidden && !gpu.unseen && !gpu.second_only && !gpu.rlva_hidden && self.first_person_object_visible(*idx, gpu)
+            })
     }
 
     pub fn click_bounds(&self, world: &World, idx: usize) -> Option<(Vec3, Vec3)> {

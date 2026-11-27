@@ -14,6 +14,7 @@ pub mod calling_cards;
 pub mod object_motion_trace;
 pub mod shape_tween;
 
+pub mod ao_preview;
 mod arrival_wait;
 pub mod avatar_cache;
 pub mod beacons;
@@ -733,6 +734,8 @@ pub struct World {
     held_partner: Vec<(ObjKey, Uuid)>,
     /// The stand-in Person B, a mirror of our avatar (mirror.rs).
     mirror: Option<mirror::Mirror>,
+    /// The AO window's preview copy of our avatar (ao_preview.rs).
+    ao_preview: Option<ao_preview::AoPreview>,
     /// LiveMesh's Fit lab: mannequins dressed as our avatar (mannequins.rs).
     fit_lab: mannequins::FitLab,
     /// Interface sounds to play (drained by the app).
@@ -1215,6 +1218,7 @@ impl World {
             couple_anchor: None,
             held_partner: Vec::new(),
             mirror: None,
+            ao_preview: None,
             fit_lab: Default::default(),
             social: social::Social::default(),
             contact_sets: Default::default(),
@@ -7009,6 +7013,9 @@ impl World {
 
     pub fn animations_of(&self, owner: &Uuid) -> &[PlayingAnimation] {
         if let Some(playing) = self.mannequin_animations(owner) {
+            return playing;
+        }
+        if let Some(playing) = self.ao_preview_animations(owner) {
             return playing;
         }
         if *owner == self.agent_id {
