@@ -418,6 +418,9 @@ impl WebView {
         }
         if std::mem::take(&mut self.nav_pending) {
             p.load_uri(&self.url);
+            if self.native_video {
+                p.start(1.0);
+            }
             self.nav_started = Some(Instant::now());
             self.load_secs = None;
             self.location = self.url.clone();

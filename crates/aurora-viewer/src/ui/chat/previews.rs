@@ -1400,7 +1400,12 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
     let width = if here == Some(false) { playing_width } else { width };
     // the video in its own shape; the card no narrower than its text needs
     let size = video_size(width, aspect);
-    let card_width = size.x.max(MIN_VIDEO_CARD.min(width));
+    let reddit_post = matches!(target, Target::Page(lp::Service::Reddit));
+    let card_width = if reddit_post {
+        width
+    } else {
+        size.x.max(MIN_VIDEO_CARD.min(width))
+    };
     // the player's buttons show while the pointer is over the card (#848)
     let hover_id = ui.scope_id().with(("video_card_hover", k));
     let last = ui.ctx().data(|d| d.get_temp::<egui::Rect>(hover_id));
@@ -1544,7 +1549,19 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                         ui.vertical(|ui| {
                             ui.set_width((ui.available_width() - buttons).max(60.0));
                             ui.spacing_mut().item_spacing.y = 2.0;
-                            ui.add(egui::Label::new(RichText::new(&title).size(13.5).strong().color(p.ink)).truncate());
+                            let title = RichText::new(&title).size(13.5).strong();
+                            if reddit_post {
+                                let text = title.color(ui.visuals().hyperlink_color);
+                                if ui
+                                    .add(egui::Label::new(text).wrap().sense(egui::Sense::click()))
+                                    .on_hover_text(link_tip(url, false))
+                                    .clicked()
+                                {
+                                    super::open_web_link(ui.ctx(), url);
+                                }
+                            } else {
+                                ui.add(egui::Label::new(title.color(p.ink)).truncate());
+                            }
                             ui.add(egui::Label::new(RichText::new(&channel).size(11.5).color(p.muted)).truncate());
                         });
                         if shown > 0.01 {
