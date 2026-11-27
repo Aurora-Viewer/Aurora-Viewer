@@ -7023,6 +7023,7 @@ ui-inventory-recent-note-period = Recent: the last { $days } d { $hours } h.
 ui-land-general-reclaim-land = Reclaim land
 common-collapse = Collapse
 common-window-outside = Move outside the viewer's window
+common-window-reset = Reset position and size
 common-window-inside = Bring back into the viewer's window
 common-window-rename-name = Double-click to rename
 common-carry-hint = Click to drop it here, Esc to let go of it
