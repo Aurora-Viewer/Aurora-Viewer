@@ -704,7 +704,7 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &m
                 .on_hover_text(top)
                 .clicked()
             {
-                super::top_objects::open(s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
+                super::top_objects::open(ui.ctx(), s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
             }
             let restart = aurora_i18n::tr!("region-restart");
             if action(ui, p, "refresh", label(restart), SoftDanger, true)
@@ -835,7 +835,7 @@ fn health_card(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world
         && r.clicked()
         && !world.estate.top_waiting
     {
-        super::top_objects::open(s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
+        super::top_objects::open(ui.ctx(), s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
     }
     let stats = world.estate.stats_of(v.handle).cloned();
     let get = |id: u32| stats.as_ref().and_then(|s| s.get(id));

@@ -997,6 +997,23 @@ fn reflections_and_water(cx: &mut Cx) {
             tr!("ui-options-shiny-surfaces-expensive-disabled-by-default"),
             &field!(ssr),
         );
+        // (Aurora's own: the Legacy Viewer keeps its deferred normals in 16
+        // bits whatever is drawn, LLPipeline::addDeferredAttachments; here
+        // Automatic keeps them so for the traced reflections, which show
+        // the steps of 8, and the user decides otherwise)
+        cx.subs(!cx.s.ssr, |cx| {
+            use crate::settings::{NORMAL_PRECISION_AUTO, NORMAL_PRECISION_HIGH, NORMAL_PRECISION_STANDARD};
+            cx.keywords("normals G-buffer 8-bit 16-bit banding").choice(
+                tr!("ui-options-normal-precision"),
+                tr!("ui-options-normal-precision-help"),
+                &field!(normal_precision),
+                &[
+                    (NORMAL_PRECISION_AUTO, tr!("ui-options-normal-precision-automatic"), false),
+                    (NORMAL_PRECISION_STANDARD, tr!("ui-options-normal-precision-standard"), false),
+                    (NORMAL_PRECISION_HIGH, tr!("ui-options-normal-precision-high"), false),
+                ],
+            );
+        });
         cx.stepped(
             tr!("common-reflection-probes"),
             tr!("ui-options-what-shiny-surfaces-reflect-as-in-firestorm"),

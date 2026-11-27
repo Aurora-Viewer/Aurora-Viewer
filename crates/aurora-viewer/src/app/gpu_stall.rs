@@ -70,6 +70,10 @@ impl App {
         let now = Instant::now();
         // a VR session is not recovered yet (TASKS.md): it closes as before
         let recovers = super::gpu_recovery::enabled(self.settings.gpu_recovery) && !renderer.vr_engaged();
+        // once per loss, whether it is recovered or closes the viewer
+        if renderer.device_lost() && !self.gpu_stall.lost {
+            crate::crash::open_files_at_loss();
+        }
         if renderer.device_lost() && recovers && !self.gpu_stall.lost {
             crate::crash::gpu_loss_snapshot();
             use super::gpu_recovery::LossStep;

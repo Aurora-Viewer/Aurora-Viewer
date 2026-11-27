@@ -18,7 +18,9 @@ const FETCH_ATTEMPTS: u8 = 3;
 
 #[derive(Default)]
 pub struct AttachmentInventory {
-    fetched: HashMap<Uuid, (Instant, u8)>,
+    /// Each worn item's last read, its attempts, and the inventory's
+    /// give-up round (`Inventory::give_up_rounds`) they count in.
+    fetched: HashMap<Uuid, (Instant, u8, u32)>,
     registered: HashSet<Uuid>,
     detached: HashSet<Uuid>,
     pending: Option<(Uuid, Vec<Uuid>)>,
@@ -156,12 +158,28 @@ impl World {
         }
         let mut missing = Vec::new();
         for id in &worn {
-            if self.inventory.items.contains_key(id) {
+            // (nor while its read is on its way: a slow answer on a huge
+            // inventory never uses up the attempts)
+            // (nor a given-up original: `send_from` would drop its read, and
+            // an attempt never sent must not be spent)
+            if self.inventory.items.contains_key(id)
+                || self.inventory.item_reading(*id, true, now)
+                || self.inventory.broken(id)
+                || self.inventory.read_exhausted(id)
+            {
                 continue;
             }
-            let attempt = self.attachment_inventory.fetched.entry(*id).or_insert((now, 0));
+            let round = self.inventory.give_up_rounds.get(id).copied().unwrap_or(0);
+            let attempt = self.attachment_inventory.fetched.entry(*id).or_insert((now, 0, round));
+            // (attempts spent, and the inventory's give-up pause for it has
+            // ended since (`Inventory::expire_given_up` counts a round): it
+            // is read again like a new one. Reads that never got any answer
+            // start no round, so they stop at FETCH_ATTEMPTS)
+            if attempt.1 >= FETCH_ATTEMPTS && round > attempt.2 {
+                *attempt = (now, 0, round);
+            }
             if attempt.1 < FETCH_ATTEMPTS && (attempt.1 == 0 || now.saturating_duration_since(attempt.0) >= RETRY_GAP) {
-                *attempt = (now, attempt.1 + 1);
+                *attempt = (now, attempt.1 + 1, attempt.2);
                 missing.push(*id);
             }
         }
@@ -177,9 +195,12 @@ impl World {
                 .attachment_inventory
                 .last_link
                 .is_some_and(|at| now.saturating_duration_since(at) < RETRY_GAP)
-            || !self
-                .main()
-                .is_some_and(|r| r.caps.contains_key("InventoryAPIv3") && r.caps.contains_key("FetchInventoryDescendents2"))
+            // With or without AIS: without it the links go out as
+            // LinkInventoryItem (link_inventory_array, llviewerinventory.cpp),
+            // and the fetch service reads them back. Waiting for AIS left
+            // every object an outfit change put on unlinked on OpenSim, so
+            // the next login wore none of them.
+            || !self.main().is_some_and(|r| r.caps.contains_key("FetchInventoryDescendents2"))
         {
             return commands;
         }
@@ -412,6 +433,30 @@ mod tests {
     }
 
     #[test]
+    fn an_arrival_is_linked_on_a_grid_without_ais() {
+        // OpenSim: no InventoryAPIv3. The outfit change left the object out
+        // of the COF until it arrived; without its link the next login
+        // wears nothing (an empty COF after every outfit change).
+        let (mut world, _object, item) = fixture();
+        world.ensure_region(1, (256, 256)).caps = Arc::new(
+            ["FetchInventory2", "FetchInventoryDescendents2"]
+                .into_iter()
+                .map(|name| (name.to_owned(), "x".to_owned()))
+                .collect(),
+        );
+        world.inventory.add_items(vec![item.clone()]);
+        let cof = appearance::cof(&world.inventory).expect("COF");
+        let commands = world.update_attachment_inventory(Instant::now(), true);
+        let [NetCommand::EditInventory { request, change }] = &commands[..] else {
+            panic!("register the arrival without AIS: {commands:?}")
+        };
+        assert!(matches!(&change.operations[..], [Operation::Links { parent, links }]
+            if *parent == cof && links.len() == 1 && links[0].target == item.id));
+        world.attachment_inventory_result(*request, Ok(linked_reply(&world, &item)));
+        assert!(super::super::outfit::cof_objects(&world.inventory, cof).contains(&item.id));
+    }
+
+    #[test]
     fn attachment_inventory_recovers_an_unexpected_item_and_registers_it_once() {
         let (mut world, object, item) = fixture();
         let now = Instant::now();
@@ -455,6 +500,49 @@ mod tests {
         );
     }
 
+    /// Reads that never get any answer (lost replies) stop after their
+    /// attempts: no give-up round ends, so they never start again.
+    #[test]
+    fn unanswered_attachment_reads_stop_after_their_attempts() {
+        let (mut world, _, item) = fixture();
+        let now = Instant::now();
+        let mut sent = 0;
+        for step in 0..100u32 {
+            // (each read's claim long expired: nothing holds the next back)
+            let at = now + crate::world::inventory::ITEM_READ_DEADLINE * (step + 1);
+            sent += world
+                .update_attachment_inventory(at, true)
+                .iter()
+                .filter(|c| matches!(c, NetCommand::FetchAttachmentItems { items } if items == &[item.id]))
+                .count();
+        }
+        assert_eq!(sent, usize::from(FETCH_ATTEMPTS));
+    }
+
+    /// A given-up original spends no attempt on reads that would never be
+    /// sent, and is read again once its pause ends.
+    #[test]
+    fn a_given_up_attachment_is_read_again_after_its_pause() {
+        let (mut world, _, item) = fixture();
+        let now = Instant::now();
+        for attempt in 0..u32::from(FETCH_ATTEMPTS) {
+            world.update_attachment_inventory(now + RETRY_GAP * attempt, true);
+            world.apply(NetEvent::InventoryItemsFailed {
+                items: vec![item.id],
+                attachment: true,
+                coalesced: false,
+            });
+        }
+        assert!(world.inventory.read_exhausted(&item.id));
+        assert!(!world.inventory.broken(&item.id));
+        assert!(world.update_attachment_inventory(now + RETRY_GAP * 10, true).is_empty());
+        let at = world.inventory.gave_up_at.get_mut(&item.id).expect("given up");
+        *at -= crate::world::inventory::ITEM_GIVE_UP;
+        world.inventory.expire_given_up(Instant::now());
+        assert!(matches!(&world.update_attachment_inventory(now + RETRY_GAP * 11, true)[..],
+            [NetCommand::FetchAttachmentItems { items }] if items == &[item.id]));
+    }
+
     #[test]
     fn attachment_inventory_retries_a_delayed_item_without_requesting_each_tick() {
         let (mut world, _, item) = fixture();
@@ -462,7 +550,11 @@ mod tests {
         for attempt in 0..u32::from(FETCH_ATTEMPTS) {
             assert!(matches!(&world.update_attachment_inventory(now + RETRY_GAP * attempt, true)[..],
                 [NetCommand::FetchAttachmentItems { items }] if items == &[item.id]));
-            world.apply(NetEvent::InventoryItemsFailed { items: vec![item.id] });
+            world.apply(NetEvent::InventoryItemsFailed {
+                items: vec![item.id],
+                attachment: true,
+                coalesced: false,
+            });
             assert!(
                 world
                     .update_attachment_inventory(now + RETRY_GAP * attempt + Duration::from_millis(500), true)
@@ -900,7 +992,11 @@ mod tests {
         let now = Instant::now();
         for attempt in 0..u32::from(FETCH_ATTEMPTS) {
             world.update_attachment_inventory(now + RETRY_GAP * attempt, false);
-            world.apply(NetEvent::InventoryItemsFailed { items: vec![item.id] });
+            world.apply(NetEvent::InventoryItemsFailed {
+                items: vec![item.id],
+                attachment: true,
+                coalesced: false,
+            });
         }
         assert!(
             appearance::plan(
@@ -1126,7 +1222,10 @@ mod tests {
         let objects = item.parent;
         let lost = with_lost_folder(&mut world, &item);
         item.parent = Uuid::nil();
-        world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+        world.apply(NetEvent::AttachmentInventoryItems {
+            items: vec![item.clone()],
+            coalesced: false,
+        });
         assert_eq!(world.inventory.items[&item.id].parent, objects);
         assert!(world.inventory.folders[&objects].items.contains(&item.id));
         assert!(!world.inventory.folders[&lost].items.contains(&item.id));
@@ -1154,7 +1253,10 @@ mod tests {
         let old = item.parent;
         let lost = with_lost_folder(&mut world, &item);
         item.parent = Uuid::nil();
-        world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+        world.apply(NetEvent::AttachmentInventoryItems {
+            items: vec![item.clone()],
+            coalesced: false,
+        });
         assert_eq!(world.inventory.items[&item.id].parent, old);
         assert!(world.inventory.folders[&lost].items.is_empty());
         let locked = Uuid::from_u128(90_083);
@@ -1228,7 +1330,10 @@ mod tests {
                 folders: Vec::new(),
                 items: vec![item.clone()],
             };
-            let readback = NetEvent::AttachmentInventoryItems(vec![item.clone()]);
+            let readback = NetEvent::AttachmentInventoryItems {
+                items: vec![item.clone()],
+                coalesced: false,
+            };
             for event in if notification_first {
                 [notification, readback]
             } else {
@@ -1279,7 +1384,10 @@ mod tests {
             }
             assert!(world.worn_attachment(&item.id).is_none());
             item.parent = Uuid::nil();
-            world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+            world.apply(NetEvent::AttachmentInventoryItems {
+                items: vec![item.clone()],
+                coalesced: false,
+            });
             assert_eq!(world.inventory.items[&item.id].parent, objects);
             assert!(!world.inventory.folders[&lost].items.contains(&item.id));
             assert!(

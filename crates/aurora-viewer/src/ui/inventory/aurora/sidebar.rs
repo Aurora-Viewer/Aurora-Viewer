@@ -32,7 +32,7 @@ pub struct Sidebar {
     pub(super) rows: Vec<Row>,
     /// The explorer's folder last shown: a new one opens its ancestors and
     /// scrolls into sight.
-    shown: Uuid,
+    pub(super) shown: Uuid,
     #[cfg(test)]
     pub(super) drawn: std::collections::HashMap<Uuid, Rect>,
     #[cfg(test)]
@@ -131,7 +131,8 @@ fn entry_tinted(
     }
     let icon_center = Pos2::new(rect.left() + left + ICON / 2.0, rect.center().y);
     let tint = color.unwrap_or(if selected { p.violet_pale } else { p.muted });
-    widgets::paint_glyph(ui.painter(), icon, icon_center, ICON, tint);
+    let size = super::super::category::row_icon_size(icon, ICON);
+    widgets::paint_glyph(ui.painter(), icon, icon_center, size, tint);
     let mut end = rect.right() - 8.0;
     if waiting > 0 {
         let badge = widgets::unread_count(
@@ -188,6 +189,114 @@ fn browse(st: &mut InventoryUi, prefs: &InventoryPreferences, folder: Uuid) {
     st.browse = folder;
     // A pointer selection is already in sight, even if its row is partly clipped.
     st.side.shown = folder;
+}
+
+/// A pinned folder being dragged to another place among the pins.
+#[derive(Clone, Copy, Debug)]
+struct PinDrag(Uuid);
+
+/// Where `moved` goes among `pins` when dropped on `onto` (before it, or
+/// after it when it was above), as Windows Explorer's Quick access.
+pub(super) fn reorder(pins: &mut Vec<Uuid>, moved: Uuid, onto: Uuid) {
+    let (Some(from), Some(to)) = (pins.iter().position(|id| *id == moved), pins.iter().position(|id| *id == onto)) else {
+        return;
+    };
+    let id = pins.remove(from);
+    pins.insert(to, id);
+}
+
+/// The folders pinned to the column (Windows Explorer's Quick access,
+/// Dolphin's Places), in the order given: a click shows one, cargo dropped
+/// on one goes into it, a pin dragged onto another takes its place, a
+/// folder dragged onto the heading is pinned. Its menu is the folder's,
+/// whose "Unpin from Quick access" takes it off. Aurora's: the Legacy
+/// Viewer has its Favorites (starred items), which stay a shortcut of their
+/// own.
+#[allow(clippy::too_many_arguments)]
+fn quick_access(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    let pins: Vec<Uuid> = prefs.pinned.iter().copied().filter(|id| inv.folders.contains_key(id)).collect();
+    let carrying = egui::DragAndDrop::payload::<FolderDrag>(ui.ctx()).map(|f| f.0);
+    if pins.is_empty() && carrying.is_none() {
+        return;
+    }
+    ui.add_space(10.0);
+    let heading = ui
+        .scope(|ui| menu::section(ui, p, aurora_i18n::tr!("inventory-quick-access")))
+        .response;
+    // a folder dropped on the heading (or the hint under it) is pinned
+    let mut zone = heading.rect;
+    if pins.is_empty() {
+        let (hint, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::hover());
+        widgets::paint_row_text(
+            ui.painter(),
+            ui.painter().layout_no_wrap(
+                aurora_i18n::tr!("inventory-quick-access-drop").to_owned(),
+                egui::FontId::proportional(12.0),
+                p.muted,
+            ),
+            hint.left() + 8.0,
+            hint.center().y,
+            p.muted,
+        );
+        zone = zone.union(hint);
+    }
+    if let Some(folder) = carrying
+        && ui.rect_contains_pointer(zone)
+    {
+        tree::drop_outline(ui, p, zone, !prefs.pinned.contains(&folder) && folder != inv.root);
+        if ui.input(|i| i.pointer.any_released()) && folder != inv.root && !prefs.pinned.contains(&folder) {
+            egui::DragAndDrop::clear_payload(ui.ctx());
+            prefs.pinned.push(folder);
+            st.preferences_dirty = true;
+        }
+    }
+    ui.add_space(2.0);
+    for id in pins {
+        let Some(folder) = inv.folders.get(&id) else { continue };
+        let name = folder_name(inv, id);
+        let icon = tree::folder_icon(folder.info.type_default, false);
+        let color = folder_colors::tint(prefs, id);
+        let selected = st.tab == 0 && st.browse == id;
+        // a pin is moved by dragging it. The handle is laid out under the
+        // row, and senses clicks too: egui gives the row on top its clicks
+        // (left and right) and the handle the drag; a drag-only widget on
+        // top would take every press for a drag (egui's hit_test)
+        let at = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), ROW));
+        let handle = ui.interact(at, ui.scope_id().with(("aurora_pin_drag", id)), Sense::click_and_drag());
+        let response = entry_tinted(ui, p, icon, &name, None, 0, selected, 8.0, color);
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::unique(("aurora_pin", id)), response.rect));
+        if response.clicked() {
+            browse(st, prefs, id);
+        }
+        if handle.drag_started() {
+            handle.dnd_set_drag_payload(PinDrag(id));
+        }
+        if let Some(moved) = response.dnd_hover_payload::<PinDrag>()
+            && moved.0 != id
+        {
+            ui.painter()
+                .hline(response.rect.x_range(), response.rect.top(), egui::Stroke::new(2.0, p.violet));
+        }
+        if let Some(moved) = handle
+            .dnd_release_payload::<PinDrag>()
+            .or_else(|| response.dnd_release_payload::<PinDrag>())
+        {
+            reorder(&mut prefs.pinned, moved.0, id);
+            st.preferences_dirty = true;
+        }
+        let mut open = false;
+        folder_target(ui, p, inv, id, &response, &mut open, st, prefs, facts, actions);
+    }
 }
 
 /// The account's saved smart searches: a click shows one over the whole
@@ -379,6 +488,9 @@ pub(super) fn show(
             set_tab(st, prefs, tab);
         }
     }
+    if !scoped {
+        quick_access(ui, p, inv, st, prefs, facts, actions);
+    }
     let saved = if scoped { Vec::new() } else { super::super::smart_store::list() };
     if !saved.is_empty() || (st.finding_similar() && !scoped) {
         ui.add_space(10.0);
@@ -399,7 +511,7 @@ pub(super) fn show(
         for id in super::super::rows::folders(&st.view, inv, base, false, prefs.show_library) {
             st.side.set_open(id, open);
             if open {
-                inv.request(id);
+                inv.retry(id);
             }
         }
         collapsed = !open;
@@ -436,12 +548,7 @@ pub(super) fn show(
             let left = 4.0 + row.depth as f32 * INDENT + CARET + 4.0;
             let selected = st.tab == 0 && st.browse == row.id;
             let name = folder_name(inv, row.id);
-            let icon = match tree::folder_icon(folder.info.type_default, row.open) {
-                "Inv_TrashClosed" => "trash-filled",
-                "Inv_SuitcaseOpen" | "Inv_SuitcaseClosed" => "briefcase-filled",
-                "Inv_FolderOpen" => "folder-open-filled",
-                _ => "folder-filled",
-            };
+            let icon = tree::folder_icon(folder.info.type_default, row.open);
             let color = folder_colors::tint(prefs, row.id);
             let response = entry_tinted(ui, p, icon, &name, None, 0, selected, left, color);
             #[cfg(test)]
@@ -469,6 +576,7 @@ pub(super) fn show(
                 }
             }
             if response.clicked() {
+                inv.open_folder(row.id);
                 browse(st, prefs, row.id);
             }
             if response.double_clicked() && row.branches {
@@ -483,7 +591,7 @@ pub(super) fn show(
                         .get(&row.id)
                         .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Failed))
                 {
-                    inv.request(row.id);
+                    inv.open_folder(row.id);
                 }
             }
         }
@@ -520,6 +628,17 @@ mod tests {
     use super::*;
     use crate::world::inventory::Folder;
     use aurora_net::inventory::InvFolder;
+
+    #[test]
+    fn a_pin_dropped_on_another_takes_its_place() {
+        let mut pins: Vec<Uuid> = (1..=4).map(Uuid::from_u128).collect();
+        reorder(&mut pins, id(4), id(2));
+        assert_eq!(pins, vec![id(1), id(4), id(2), id(3)]);
+        reorder(&mut pins, id(1), id(3));
+        assert_eq!(pins, vec![id(4), id(2), id(3), id(1)]);
+        reorder(&mut pins, id(9), id(1));
+        assert_eq!(pins.len(), 4, "an unknown pin moves nothing");
+    }
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)

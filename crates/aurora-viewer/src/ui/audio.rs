@@ -309,6 +309,44 @@ pub fn top_controls(
     media: MediaState,
     slot: Vec2,
 ) -> AudioAction {
+    controls(ui, p, icons, audio, st, media, slot, None)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TopControl {
+    Media,
+    Music,
+    Volume,
+}
+
+/// The same native control and volume panel, independently placed in a toolbar.
+/// Click rules follow LLStatusBar::onClickVolume/onClickStreamToggle/onClickMediaToggle
+/// (indra/newview/llstatusbar.cpp); moving a control does not change its availability.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn top_control(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    audio: &mut AudioSettings,
+    st: &mut AudioUi,
+    media: MediaState,
+    slot: Vec2,
+    control: TopControl,
+) -> AudioAction {
+    controls(ui, p, icons, audio, st, media, slot, Some(control))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn controls(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    audio: &mut AudioSettings,
+    st: &mut AudioUi,
+    media: MediaState,
+    slot: Vec2,
+    only: Option<TopControl>,
+) -> AudioAction {
     let mut action = AudioAction::None;
     // demo captures: AURORA_DEMO_VOLUME=open pins the panel open, `muted`
     // also draws the speaker muted (display only, the settings stay)
@@ -322,77 +360,97 @@ pub fn top_controls(
             ui.spacing_mut().item_spacing.x = ICON_GAP;
             // speaker: all sound on / off on click, the volume panel on
             // hover (no tooltip: the panel opens where it would show)
-            let master = speaker_icon(audio.volume[0], audio.muted[0] || demo_muted);
-            let sp = slot_button(ui, p, icons, master, st.panel_open, true, slot);
-            if sp.clicked() {
-                toggle_master_mute(audio);
-                action = AudioAction::Changed;
-            }
-            let action_tip = if !media.music_available {
-                aurora_i18n::tr!("ui-audio-no-music-on-this-parcel")
-            } else if media.music_playing {
-                aurora_i18n::tr!("ui-audio-stop-parcel-music")
-            } else {
-                aurora_i18n::tr!("ui-audio-listen-to-parcel-music")
-            };
-            // A parcel without music says so alone, without a second "none".
-            let music_tip = if media.music_available {
-                format!("{action_tip}\n{}", media.music_status.text())
-            } else {
-                action_tip.to_owned()
-            };
-            let music = slot_button(ui, p, icons, "radio", media.music_playing, media.music_available, slot);
-            // a station heard under a failed certificate: the warning sign on
-            // the radio's corner, the reason in red in its tooltip
-            let warning = media.music_status.certificate().map(certificate_warning);
-            let music = match &warning {
-                Some(text) => {
-                    if let Some(icon) = icons.get(WARNING_ICON) {
-                        let badge = egui::Rect::from_min_size(music.rect.right_bottom() - Vec2::splat(9.0), Vec2::splat(9.0));
-                        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                        ui.painter().image(icon.id(), badge, uv, p.danger);
-                    }
-                    music.on_hover_ui(|ui| {
-                        ui.set_max_width(300.0);
-                        ui.label(&music_tip);
-                        warning_line(ui, p, icons, text, 12.0);
-                    })
+            let sp = only.is_none_or(|control| control == TopControl::Volume).then(|| {
+                let master = speaker_icon(audio.volume[0], audio.muted[0] || demo_muted);
+                let sp = slot_button(ui, p, icons, master, st.panel_open, true, slot);
+                if sp.clicked() {
+                    toggle_master_mute(audio);
+                    action = AudioAction::Changed;
                 }
-                None => music.on_hover_text(&music_tip),
-            };
-            if music.clicked() && media.music_available {
-                action = AudioAction::ToggleMusic;
+                sp
+            });
+            if only.is_none_or(|control| control == TopControl::Music) {
+                let action_tip = if !media.music_available {
+                    aurora_i18n::tr!("ui-audio-no-music-on-this-parcel")
+                } else if media.music_playing {
+                    aurora_i18n::tr!("ui-audio-stop-parcel-music")
+                } else {
+                    aurora_i18n::tr!("ui-audio-listen-to-parcel-music")
+                };
+                // A parcel without music says so alone, without a second "none".
+                let music_tip = if media.music_available {
+                    format!("{action_tip}\n{}", media.music_status.text())
+                } else {
+                    action_tip.to_owned()
+                };
+                let music = slot_button(ui, p, icons, "radio", media.music_playing, media.music_available, slot);
+                // a station heard under a failed certificate: the warning sign on
+                // the radio's corner, the reason in red in its tooltip
+                let warning = media.music_status.certificate().map(certificate_warning);
+                let music = match &warning {
+                    Some(text) => {
+                        if let Some(icon) = icons.get(WARNING_ICON) {
+                            let badge = egui::Rect::from_min_size(music.rect.right_bottom() - Vec2::splat(9.0), Vec2::splat(9.0));
+                            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                            ui.painter().image(icon.id(), badge, uv, p.danger);
+                        }
+                        music.on_hover_ui(|ui| {
+                            ui.set_max_width(300.0);
+                            ui.label(&music_tip);
+                            warning_line(ui, p, icons, text, 12.0);
+                        })
+                    }
+                    None => music.on_hover_text(&music_tip),
+                };
+                if music.clicked() && media.music_available {
+                    action = AudioAction::ToggleMusic;
+                }
             }
-            // media: all media on / off on click, the nearby media panel on
-            // hover (no tooltip, as for the speaker: the panel shows there)
-            let med = slot_button(
-                ui,
-                p,
-                icons,
-                "brand-youtube-filled",
-                media.media_playing,
-                media.media_available,
-                slot,
-            );
-            if med.clicked() && media.media_available {
-                action = AudioAction::ToggleMedia;
+            if only.is_none_or(|control| control == TopControl::Media) {
+                // media: all media on / off on click, the nearby media panel on
+                // hover (no tooltip, as for the speaker: the panel shows there)
+                let med = slot_button(
+                    ui,
+                    p,
+                    icons,
+                    "brand-youtube-filled",
+                    media.media_playing,
+                    media.media_available,
+                    slot,
+                );
+                if med.clicked() && media.media_available {
+                    action = AudioAction::ToggleMedia;
+                }
+                if ui.is_enabled() {
+                    st.media_button = Some(med.rect);
+                    st.media_button_hovered = med.contains_pointer();
+                }
             }
-            st.media_button = Some(med.rect);
-            st.media_button_hovered = med.contains_pointer();
             sp
         })
         .inner;
 
+    let Some(sp) = sp else { return action };
+    if !ui.is_enabled() {
+        return action;
+    }
     let on_icon = sp.contains_pointer() || demo.is_some();
     if on_icon {
         st.hover(true, false, false, 0.0);
     }
     if st.panel_open {
-        let anchor = sp.rect.right_bottom() + Vec2::new(4.0, 6.0);
-        let area = egui::Area::new(egui::Id::unique("volume_panel"))
+        let id = egui::Id::unique("volume_panel");
+        let wanted = ui.ctx().memory(|memory| memory.area_rect(id)).map_or(250.0, |rect| rect.height());
+        let (anchor_y, above, _) = super::widgets::popup_vertical(ui.ctx().content_rect(), sp.rect, wanted, 6.0);
+        let anchor = egui::pos2(sp.rect.right() + 4.0, anchor_y);
+        let area = egui::Area::new(id)
             .fade_in(false)
             .order(egui::Order::Foreground)
-            .pivot(egui::Align2::RIGHT_TOP)
+            .pivot(if above {
+                egui::Align2::RIGHT_BOTTOM
+            } else {
+                egui::Align2::RIGHT_TOP
+            })
             .fixed_pos(anchor)
             .show(ui.ctx(), |ui| {
                 super::widgets::overlay(ui, p, egui::Margin::symmetric(10, 8), |ui| {
@@ -477,6 +535,53 @@ pub fn top_controls(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn independently_placed_media_retains_its_hover_anchor_and_edit_previews_do_not_register_one() {
+        for enabled in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let p = crate::theme::Theme::default().palette();
+            let mut state = AudioUi::default();
+            let mut audio = AudioSettings::default();
+            let icons = Icons::default();
+            ctx.run_ui(Default::default(), |ui| {
+                if !enabled {
+                    ui.disable();
+                }
+                top_control(
+                    ui,
+                    &p,
+                    &icons,
+                    &mut audio,
+                    &mut state,
+                    MediaState::default(),
+                    Vec2::splat(32.0),
+                    TopControl::Media,
+                );
+                let media = state.media_button;
+                for control in [TopControl::Music, TopControl::Volume] {
+                    top_control(
+                        ui,
+                        &p,
+                        &icons,
+                        &mut audio,
+                        &mut state,
+                        MediaState::default(),
+                        Vec2::splat(32.0),
+                        control,
+                    );
+                    assert_eq!(state.media_button, media, "other audio controls retain the media anchor");
+                }
+            })
+            .textures_delta
+            .clear();
+            assert_eq!(state.media_button.is_some(), enabled);
+            if let Some(rect) = state.media_button {
+                assert!(rect.is_positive());
+            }
+        }
+    }
 
     #[test]
     fn parcel_music_status_distinguishes_intent_consent_and_engine_playback() {

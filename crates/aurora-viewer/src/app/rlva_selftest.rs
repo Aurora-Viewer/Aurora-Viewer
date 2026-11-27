@@ -107,7 +107,7 @@ impl App {
         }
         if self.rlva_selftest.runner.confirming() {
             let mut phase2 = self.rlva_selftest.runner.phase2;
-            let answer = crate::ui::rlva_selftest::confirm(ctx, p, &mut phase2, self.settings.rlva_enabled);
+            let answer = crate::ui::rlva_selftest::confirm(ctx, p, &mut phase2, self.rlva_switch.running());
             self.rlva_selftest.runner.phase2 = phase2;
             match answer {
                 Some(UiAction::Start) if self.in_world() => {
@@ -162,8 +162,7 @@ impl App {
         if self.rlva_selftest.demo_step == 0 {
             self.rlva_selftest.demo_step = 1;
             self.seed_rlva_selftest_demo();
-            self.settings.rlva_enabled = true;
-            self.world.rlva_configure(true);
+            self.rlva_demo_switch(true);
             self.panels.chat = false;
             self.panels.inventory = false;
             self.panels.perf = false;

@@ -567,7 +567,7 @@ impl App {
     }
     pub(super) fn open_movement(&mut self) {
         self.ao_ui.tab = 1;
-        self.panels.ao = true;
+        crate::ui::widgets::open_floater(&self.egui_ctx, "ao", &mut self.panels.ao);
         if let Some(prototype) = &mut self.ao_ui.prototype {
             prototype.open_movement();
         }

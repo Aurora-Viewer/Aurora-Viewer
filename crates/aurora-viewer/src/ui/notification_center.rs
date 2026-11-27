@@ -387,6 +387,11 @@ pub fn show(
     let (presence, peek) = (&nui.center.presence, &nui.center.peek);
     list.list
         .retain(|n| !n.transient || presence.iter().any(|t| t.id == n.id) || peek.iter().any(|p| p.id == n.id));
+    let listed_now = list.listed().next().is_some();
+    if nui.open && super::notifications::list_emptied(nui.was_listed, listed_now, nui.center.tab) {
+        nui.open = false;
+    }
+    nui.was_listed = listed_now;
     let Some(bell) = nui.bell else {
         return (answers, asks);
     };
@@ -403,7 +408,8 @@ pub fn show(
         ),
     };
     nui.center.inner_width = inner;
-    let pos = egui::pos2(x, bell.bottom() + 6.0);
+    let (anchor_y, above, available) = super::widgets::popup_vertical(screen, bell, screen.height() * 0.65 + 80.0, 6.0);
+    let pos = egui::pos2(x, anchor_y);
     let unroll = ctx.animate_bool_with_time_and_easing(
         egui::Id::unique("notification_center_unroll"),
         nui.open || !nui.center.peek.is_empty(),
@@ -425,17 +431,21 @@ pub fn show(
     let area = egui::Area::new(egui::Id::unique("notification_center"))
         .fade_in(false)
         .order(egui::Order::Foreground)
+        .pivot(if above { egui::Align2::LEFT_BOTTOM } else { egui::Align2::LEFT_TOP })
         .fixed_pos(pos)
         .constrain(false)
         .show(ctx, |ui| {
             // unroll from the bell: the panel is revealed from its top
             if unroll < 1.0 {
-                let clip = Rect::from_min_size(pos, Vec2::new(inner + PANEL_FRAME, (height * unroll).max(1.0)));
+                let shown = (height * unroll).max(1.0);
+                let top = if above { pos - Vec2::new(0.0, shown) } else { pos };
+                let clip = Rect::from_min_size(top, Vec2::new(inner + PANEL_FRAME, shown));
                 ui.set_clip_rect(clip.intersect(ui.clip_rect()));
                 ui.multiply_opacity(unroll);
             }
             super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                 ui.set_width(inner);
+                ui.set_max_height((available - PANEL_FRAME).max(1.0));
                 if nui.open {
                     full_list(ui, p, icons, world, list, hist, nui, env, dnd, &mut answers, &mut asks);
                 } else {
@@ -453,7 +463,11 @@ pub fn show(
             .fade_in(false)
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::RIGHT_TOP)
-            .fixed_pos(pos + Vec2::new(-6.0, 4.0))
+            .fixed_pos(if above {
+                pos + Vec2::new(-6.0, 4.0 - height)
+            } else {
+                pos + Vec2::new(-6.0, 4.0)
+            })
             .interactable(false)
             .show(ctx, |ui| {
                 super::widgets::overlay(ui, p, egui::Margin::symmetric(7, 3), |ui| {
@@ -661,7 +675,7 @@ fn full_list(
     ui.add_space(4.0);
     tabs(ui, p, &mut nui.center.tab);
     ui.add_space(4.0);
-    let max_h = ui.ctx().content_rect().height() * 0.65;
+    let max_h = (ui.ctx().content_rect().height() * 0.65).min(ui.available_height().max(0.0));
     match nui.center.tab {
         Tab::ToDo => {
             if list.listed().next().is_none() {

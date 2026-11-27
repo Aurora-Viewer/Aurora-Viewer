@@ -238,17 +238,9 @@ impl EnvironmentUi {
         }
         let screen = ctx.content_rect();
         // left of the Environment window, which it opens beside
-        let left = screen.right() - 750.0 - super::weather_window::WINDOW_W;
+        let left = screen.right() - 750.0 - super::weather_window::WINDOW_SIZE.x;
         let pos = egui::pos2(left.max(screen.left() + 10.0), screen.top() + 90.0);
-        let actions = Floater::new(
-            "aurora_weather",
-            aurora_i18n::tr!("ui-weather-aurora"),
-            pos,
-            Vec2::new(super::weather_window::WINDOW_W, 300.0),
-        )
-        .auto_height()
-        .help(aurora_i18n::tr!("ui-weather-window-help"))
-        .show(ctx, p, open, |ui| super::weather_window::body(ui, p, weather));
+        let actions = super::weather_window::floater(pos).show(ctx, p, open, |ui| super::weather_window::body(ui, p, weather));
         if let Some(actions) = actions {
             self.weather_clean |= actions.clean;
             self.weather_fill |= actions.fill;
@@ -316,7 +308,7 @@ impl EnvironmentUi {
                     .on_hover_text(aurora_i18n::tr!("ui-environment-adjust-the-current-sky-for-your-view-only"))
                     .clicked()
                 {
-                    *lighting = !*lighting;
+                    widgets::toggle_floater(ui.ctx(), "personal_lighting", lighting);
                 }
             });
             // each arrow right after its own button: this one the sky's,
@@ -365,7 +357,7 @@ impl EnvironmentUi {
                     .on_hover_text(aurora_i18n::tr!("ui-weather-window-tip"))
                     .clicked()
                 {
-                    *open = !*open;
+                    widgets::toggle_floater(ui.ctx(), "aurora_weather", open);
                 }
             }
         });

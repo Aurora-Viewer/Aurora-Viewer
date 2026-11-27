@@ -729,6 +729,10 @@ pub struct Settings {
     pub custom_login_uri: String,
     /// Saved grid metadata, independent of the account catalogue.
     pub grids: Vec<crate::grids::Grid>,
+    /// The login servers (`aurora_net::login::unencrypted_server`) the user
+    /// agreed to log in to over plain http, asked once each. "Reset
+    /// everything" forgets them: the question comes back.
+    pub unencrypted_logins: Vec<String>,
     pub start_location: String,
     pub start_region: String,
     pub draw_distance: f32,
@@ -862,8 +866,12 @@ pub struct Settings {
     /// FSUseStandalonePlaceDetailsFloater: landmarks, place links and history
     /// entries open in their own window instead of the Places window.
     pub standalone_place_details: bool,
-    /// FSInspectColumnConfig: columns of the Inspect window (ui/inspect.rs).
+    /// FSInspectColumnConfig: columns of the Inspect window's Details table (ui/inspect).
     pub inspect_columns: u32,
+    /// The same for what an avatar wears.
+    pub inspect_avatar_columns: u32,
+    /// The 3D views have a light ground.
+    pub stage_light: bool,
     /// LandmarksSortedByDate: the Landmarks tab of Places sorted by date.
     pub landmarks_by_date: bool,
     /// FSTPHistoryTZ: the time zone of the teleport history's days, chosen
@@ -1636,6 +1644,12 @@ pub struct Settings {
     /// standing, 0 (the default lag) to 100 % (world/body.rs; Debug Settings
     /// only).
     pub avatar_turn_speed: f32,
+    /// AvatarRotateThresholdSlow: minimum body-facing difference at low
+    /// movement speeds, in degrees (Legacy Viewer; Debug Settings only).
+    pub avatar_rotate_threshold_slow: f32,
+    /// AvatarRotateThresholdFast: minimum body-facing difference at high
+    /// movement speeds, in degrees (Legacy Viewer; Debug Settings only).
+    pub avatar_rotate_threshold_fast: f32,
     /// Hold Up to start flying (agent_jump, indra/newview/llviewerinput.cpp).
     /// Aurora splits AutomaticFly into independent takeoff/landing choices;
     /// both default to on.
@@ -1922,6 +1936,11 @@ pub struct Settings {
     pub display_name_notices: bool,
     /// Screen-space reflections.
     pub ssr: bool,
+    /// The precision of the normals the reflections read: 0 Automatic (High
+    /// with the ray-traced reflections, Standard otherwise), 1 Standard,
+    /// 2 High (aurora-render `NormalPrecision`). Apart from the graphics
+    /// levels, like the ray tracing quality.
+    pub normal_precision: u8,
     /// Preferences › Graphics › Ray tracing.
     pub ray_tracing: RayTracingSettings,
     /// The warning of Deluxe (RT) was shown and accepted once
@@ -1984,6 +2003,13 @@ pub struct Settings {
     /// None delays migration until the first account enters the world.
     #[serde(rename = "toolbar_common", default)]
     pub toolbar: Option<crate::ui::toolbar::ToolbarSettings>,
+    /// Preset identity and its last confirmed snapshot; never exported in a notecard.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::ui::toolbar::selection::or_none"
+    )]
+    pub(crate) toolbar_selection: Option<crate::ui::toolbar::selection::Selection>,
     /// Keep the earlier per-account layouts through saves made before login.
     #[serde(rename = "toolbar", default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub(crate) legacy_toolbars: std::collections::HashMap<uuid::Uuid, crate::ui::toolbar::ToolbarSettings>,
@@ -2518,6 +2544,7 @@ impl Default for Settings {
             grid: GridChoice::SecondLife,
             custom_login_uri: "http://127.0.0.1:9000/".into(),
             grids: Vec::new(),
+            unencrypted_logins: Vec::new(),
             start_location: "last".into(),
             start_region: String::new(),
             draw_distance: 96.0,
@@ -2578,6 +2605,8 @@ impl Default for Settings {
             show_movement_controls: false,
             standalone_place_details: false,
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
+            inspect_avatar_columns: crate::ui::inspect::AVATAR_COLUMNS,
+            stage_light: false,
             landmarks_by_date: true,
             tp_history_zone: HistoryZone::Slt,
             confirm_teleports: true,
@@ -2851,6 +2880,8 @@ impl Default for Settings {
             walk_backwards_without_turning: false,
             turn_to_selected: true,
             avatar_turn_speed: 0.0,
+            avatar_rotate_threshold_slow: 60.0,
+            avatar_rotate_threshold_fast: 2.0,
             automatic_fly: true,
             automatic_land: true,
             fly_after_teleport: false,
@@ -2943,6 +2974,7 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
+            normal_precision: NORMAL_PRECISION_AUTO,
             ray_tracing: RayTracingSettings::OFF,
             deluxe_rt_warned: false,
             rt_sun_softness: RT_SOFTNESS,
@@ -2964,6 +2996,7 @@ impl Default for Settings {
             chat_bar_width: 0.0,
             chat_island_width: 0.0,
             toolbar: Default::default(),
+            toolbar_selection: None,
             legacy_toolbars: Default::default(),
             audio: AudioSettings::default(),
             media: Default::default(),
@@ -3668,6 +3701,7 @@ impl Settings {
                 by_date: true,
                 folders_by_name: false,
                 system_first: true,
+                ..Default::default()
             };
             if self.inventory.recent_sort == former {
                 self.inventory.recent_sort.system_first = false;
@@ -3767,6 +3801,9 @@ impl Settings {
         self.ssao = self.ssao.min(2);
         self.ao_method = self.ao_method.min(1);
         self.gtao_quality = self.gtao_quality.min(3);
+        if self.normal_precision > NORMAL_PRECISION_HIGH {
+            self.normal_precision = NORMAL_PRECISION_AUTO;
+        }
         self.water_reflections = self.water_reflections.min(4);
         self.mirrors = self.mirrors.min(4);
         self.anisotropy = match self.anisotropy {
@@ -3844,6 +3881,16 @@ impl Settings {
             self.avatar_turn_speed.clamp(0.0, 100.0)
         } else {
             0.0
+        };
+        self.avatar_rotate_threshold_slow = if self.avatar_rotate_threshold_slow.is_finite() {
+            self.avatar_rotate_threshold_slow.clamp(0.0, 180.0)
+        } else {
+            60.0
+        };
+        self.avatar_rotate_threshold_fast = if self.avatar_rotate_threshold_fast.is_finite() {
+            self.avatar_rotate_threshold_fast.clamp(0.0, 180.0)
+        } else {
+            2.0
         };
         // the ranges of the Legacy Viewer's Build preferences
         let b = &mut self.build;
@@ -3959,6 +4006,7 @@ impl Settings {
         if let Some(toolbar) = &mut self.toolbar {
             changed |= toolbar.migrate_vr_button();
             changed |= toolbar.migrate_director_button();
+            changed |= toolbar.migrate_build_icons();
         }
         if !self.legacy_toolbars.is_empty() {
             self.legacy_toolbars.clear();
@@ -4185,6 +4233,24 @@ impl Settings {
         }
     }
 
+    /// "Reflection precision" as the renderer takes it.
+    fn normal_precision(&self) -> aurora_render::NormalPrecision {
+        match self.normal_precision {
+            NORMAL_PRECISION_STANDARD => aurora_render::NormalPrecision::Standard,
+            NORMAL_PRECISION_HIGH => aurora_render::NormalPrecision::High,
+            _ => aurora_render::NormalPrecision::Auto,
+        }
+    }
+
+    /// Whether the reflections, once on, keep their normals in 16 bits
+    /// (aurora-render `NormalPrecision::high`), for the photo quality's
+    /// memory estimate: Automatic counts the ray-traced reflections where
+    /// they are asked, whatever the graphics card traces.
+    pub fn normals_high(&self) -> bool {
+        let traced = self.shadow_quality > 0 && self.ray_tracing.enabled && self.ray_tracing.reflections;
+        self.normal_precision().high(true, traced)
+    }
+
     pub fn render_settings(&self) -> aurora_render::RenderSettings {
         use aurora_render::{AntiAliasing, AoMethod, FsrQuality, Tonemapper};
         let mut water_effects = self.water_effects.render();
@@ -4237,6 +4303,7 @@ impl Settings {
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
+            normal_precision: self.normal_precision(),
             ray_tracing: self.ray_tracing.render(),
             rt_tuning: self.rt_tuning(),
             // set each frame by the app while it rains
@@ -4364,6 +4431,11 @@ pub const RT_SOFTNESS: f32 = 0.2;
 /// The ray tracing quality's levels (`Settings::rt_quality`): Low, Medium,
 /// High, the default.
 pub const RT_QUALITY_HIGH: u8 = 2;
+/// The reflections' normal precision (`Settings::normal_precision`):
+/// Automatic, the default, Standard and High.
+pub const NORMAL_PRECISION_AUTO: u8 = 0;
+pub const NORMAL_PRECISION_STANDARD: u8 = 1;
+pub const NORMAL_PRECISION_HIGH: u8 = 2;
 /// The most lamps that cast traced shadows (aurora-render's
 /// `MAX_TRACED_LIGHTS`).
 pub const RT_SHADOW_LAMPS_MAX: u8 = 64;
@@ -4539,6 +4611,47 @@ mod tests {
         assert!(!old.avatars);
         assert!(old.enabled);
         assert!(!old.all_objects);
+    }
+
+    #[test]
+    fn avatar_rotation_thresholds_default_persist_and_sanitize() {
+        let defaults = Settings::default();
+        assert_eq!(defaults.avatar_rotate_threshold_slow, 60.0);
+        assert_eq!(defaults.avatar_rotate_threshold_fast, 2.0);
+
+        let mut old = serde_json::to_value(&defaults).expect("serialize defaults");
+        old.as_object_mut().expect("settings object").remove("avatar_rotate_threshold_slow");
+        old.as_object_mut().expect("settings object").remove("avatar_rotate_threshold_fast");
+
+        let migrated: Settings = serde_json::from_value(old).expect("load older settings");
+        assert_eq!(migrated.avatar_rotate_threshold_slow, 60.0);
+        assert_eq!(migrated.avatar_rotate_threshold_fast, 2.0);
+
+        let mut changed = Settings {
+            avatar_rotate_threshold_slow: 13.5,
+            avatar_rotate_threshold_fast: 37.25,
+            ..Settings::default()
+        };
+
+        let saved = serde_json::to_value(&changed).expect("save custom thresholds");
+        let loaded: Settings = serde_json::from_value(saved).expect("reload custom thresholds");
+        assert_eq!(loaded.avatar_rotate_threshold_slow, 13.5);
+        assert_eq!(loaded.avatar_rotate_threshold_fast, 37.25);
+
+        changed.avatar_rotate_threshold_slow = -10.0;
+        changed.avatar_rotate_threshold_fast = 200.0;
+        let clamped = changed.sanitized();
+        assert_eq!(clamped.avatar_rotate_threshold_slow, 0.0);
+        assert_eq!(clamped.avatar_rotate_threshold_fast, 180.0);
+
+        let invalid = Settings {
+            avatar_rotate_threshold_slow: f32::NAN,
+            avatar_rotate_threshold_fast: f32::INFINITY,
+            ..Settings::default()
+        };
+        let repaired = invalid.sanitized();
+        assert_eq!(repaired.avatar_rotate_threshold_slow, 60.0);
+        assert_eq!(repaired.avatar_rotate_threshold_fast, 2.0);
     }
 
     #[test]
@@ -4738,6 +4851,77 @@ mod tests {
         assert!(old.rt_gi_probes);
         let off: Settings = serde_json::from_str(r#"{"rt_gi_probes":false}"#).expect("preferences");
         assert!(!off.render_settings().rt_tuning.probes);
+    }
+
+    #[test]
+    fn the_normal_precision_defaults_to_automatic_and_reaches_the_renderer() {
+        use super::{NORMAL_PRECISION_AUTO, NORMAL_PRECISION_HIGH, NORMAL_PRECISION_STANDARD, Settings};
+        use aurora_render::NormalPrecision;
+        assert_eq!(Settings::default().normal_precision, NORMAL_PRECISION_AUTO);
+        // preferences saved before the setting existed
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert_eq!(old.normal_precision, NORMAL_PRECISION_AUTO);
+        assert_eq!(old.render_settings().normal_precision, NormalPrecision::Auto);
+        // (a value no level has is read as Automatic)
+        for (saved, drawn) in [
+            (NORMAL_PRECISION_AUTO, NormalPrecision::Auto),
+            (NORMAL_PRECISION_STANDARD, NormalPrecision::Standard),
+            (NORMAL_PRECISION_HIGH, NormalPrecision::High),
+            (9, NormalPrecision::Auto),
+        ] {
+            let s = Settings {
+                normal_precision: saved,
+                ..Settings::default()
+            };
+            assert_eq!(s.render_settings().normal_precision, drawn, "{saved}");
+        }
+        let unknown = Settings {
+            normal_precision: 9,
+            ..Settings::default()
+        };
+        assert_eq!(unknown.sanitized().normal_precision, NORMAL_PRECISION_AUTO);
+        // what the photo quality's memory estimate counts
+        let traced = Settings {
+            shadow_quality: 2,
+            ray_tracing: super::RayTracingSettings {
+                enabled: true,
+                reflections: true,
+                ..Settings::default().ray_tracing
+            },
+            ..Settings::default()
+        };
+        assert!(traced.normals_high());
+        assert!(
+            !Settings {
+                shadow_quality: 0,
+                ..traced.clone()
+            }
+            .normals_high()
+        );
+        assert!(!Settings::default().normals_high());
+        assert!(
+            Settings {
+                normal_precision: NORMAL_PRECISION_HIGH,
+                ..Settings::default()
+            }
+            .normals_high()
+        );
+        assert!(
+            !Settings {
+                normal_precision: NORMAL_PRECISION_STANDARD,
+                ..traced
+            }
+            .normals_high()
+        );
+        // the graphics levels leave it alone
+        for level in crate::graphics_presets::Preset::ALL {
+            let mut s = Settings {
+                normal_precision: NORMAL_PRECISION_HIGH,
+                ..Settings::default()
+            };
+            level.apply(&mut s);
+            assert_eq!(s.normal_precision, NORMAL_PRECISION_HIGH, "{level:?}");
+        }
     }
 
     #[test]
@@ -5693,6 +5877,7 @@ mod tests {
             by_date: true,
             folders_by_name: false,
             system_first: true,
+            ..Default::default()
         };
         for version in [39, 40] {
             for by_date in [false, true] {
@@ -5702,6 +5887,7 @@ mod tests {
                             by_date,
                             folders_by_name,
                             system_first,
+                            ..Default::default()
                         };
                         let mut saved = Settings {
                             settings_version: version,
