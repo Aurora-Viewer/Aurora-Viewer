@@ -104,6 +104,8 @@ pub struct Settings {
     /// The pictures of group chats and conferences are blurred until
     /// clicked.
     pub blur_groups: bool,
+    /// Show opt-in, click-to-play cards for recognized adult media sites.
+    pub adult_previews: bool,
     pub load: Load,
     pub player: Player,
     /// Play eligible video cards as they come into view.
@@ -131,6 +133,7 @@ impl Default for Settings {
             groups: true,
             nearby: false,
             blur_groups: true,
+            adult_previews: false,
             load: Load::default(),
             player: Player::default(),
             autoplay_video: true,
@@ -232,7 +235,8 @@ impl Clip {
             return None;
         }
         if let Some(video) = hosted::Hosted::of(&parsed) {
-            return (crate::link_trust::classify(url) == Trust::Trusted && crate::link_trust::classify(&video.page()) == Trust::Trusted)
+            return (video.adult()
+                || (crate::link_trust::classify(url) == Trust::Trusted && crate::link_trust::classify(&video.page()) == Trust::Trusted))
                 .then_some(Self(ClipSource::Hosted(video)));
         }
         if parsed.host_str() == Some("v.redd.it") {
@@ -866,7 +870,8 @@ pub fn decide(s: &Settings, place: Place, from: Sender, url: &str) -> Option<(Ta
     }
     let target = target(url)?;
     let host = host(url)?;
-    if s.hidden_sites.iter().any(|d| in_domain(&host, d)) {
+    let adult = services::adult_media_site(&host);
+    if (adult && !s.adult_previews) || s.hidden_sites.iter().any(|d| in_domain(&host, d)) {
         return None;
     }
     let start = match crate::link_trust::classify(url) {
@@ -876,7 +881,7 @@ pub fn decide(s: &Settings, place: Place, from: Sender, url: &str) -> Option<(Ta
         _ => Start::Ask,
     };
     // only a preview about to load by itself is looked at further
-    let by_itself = start == Start::Load && from == Sender::Resident && !waits_for_click(url) && !services::adult_media_site(&host);
+    let by_itself = start == Start::Load && from == Sender::Resident && !waits_for_click(url) && !adult;
     Some((target, if by_itself { Start::Load } else { Start::Ask }))
 }
 
@@ -884,20 +889,31 @@ pub fn decide(s: &Settings, place: Place, from: Sender, url: &str) -> Option<(Ta
 fn adult_site_media_waits_for_an_explicit_preview_click() {
     let settings = Settings {
         load: Load::All,
+        adult_previews: true,
         ..Settings::default()
     };
     for url in [
         "https://www.redgifs.com/watch/example",
         "https://media.redgifs.com/example.gif",
+        "https://cdn.phncdn.com/example.jpg",
+        "https://www.redgifs.com/ifr/example",
+        "https://www.pornhub.com/embed/phabcdef",
+        "https://www.xvideos.com/embedframe/123456",
         "https://www.pornhub.com/view_video.php?viewkey=phabcdef",
         "https://www.xvideos.com/video.example/title",
         "https://onlyfans.com/123456789/example",
     ] {
+        assert!(decide(&Settings::default(), Place::Im, Sender::Resident, url).is_none(), "{url}");
+        assert!(blurred_until_clicked(url));
         assert!(
             matches!(decide(&settings, Place::Im, Sender::Resident, url), Some((_, Start::Ask))),
             "{url}"
         );
     }
+}
+
+pub fn adult_link(url: &str) -> bool {
+    host(url).is_some_and(|host| services::adult_media_site(&host))
 }
 
 /// A picture decoded for its card.
@@ -1264,7 +1280,7 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                 return Ok(Content::Post(post, picture));
             }
             let html = text_head(client, &page, "text/html", "</head>").await.0?;
-            if let Some(found) = services::arte_clip(&page, &html) {
+            if let Some(found) = services::arte_clip(&page, &html).or_else(|| services::adult_clip(&page, &html)) {
                 return Ok(Content::Clip(fetch_found_clip(client, found).await));
             }
             let title = services::metadata(&html, &["og:title", "twitter:title"]).ok_or(Failure::Unavailable)?;

@@ -573,6 +573,11 @@ fn link_previews(cx: &mut Cx) {
             tr!("ui-options-link-previews-nearby-hint"),
             &field!(link_previews.nearby),
         );
+        cx.toggle(
+            tr!("ui-options-link-previews-adult"),
+            tr!("ui-options-link-previews-adult-hint"),
+            &field!(link_previews.adult_previews),
+        );
         cx.choice(
             tr!("ui-options-link-previews-size"),
             "",

@@ -642,11 +642,10 @@ impl Previews {
             self.image_window = None;
         }
         let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
-        if self
-            .playing
-            .as_ref()
-            .is_some_and(|v| !v.window && (pass > v.drawn + 2 || (v.automatic && !self.settings.autoplay_video)))
-        {
+        if self.playing.as_ref().is_some_and(|v| {
+            (!self.settings.adult_previews && lp::adult_link(&v.link))
+                || (!v.window && (pass > v.drawn + 2 || (v.automatic && !self.settings.autoplay_video)))
+        }) {
             self.playing = None;
         }
         if self.stopped.is_some_and(|(_, seen)| pass.saturating_sub(seen) > 2) {
@@ -1631,7 +1630,9 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
     if stopped && visible {
         pv.stopped = Some((k, pass));
     }
-    let demo = pv.playing.is_none().then(|| pv.demo_play.take()).flatten();
+    let demo = (pv.playing.is_none() && !lp::adult_link(url))
+        .then(|| pv.demo_play.take())
+        .flatten();
     let automatic = !play
         && demo.is_none()
         && allow_autoplay

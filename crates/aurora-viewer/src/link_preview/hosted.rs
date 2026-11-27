@@ -18,6 +18,7 @@ pub(super) enum Hosted {
     KickLive(String),
     Dailymotion { player: String, video: String },
     Arte { language: String, id: String },
+    AdultEmbed { domain: &'static str, id: String },
 }
 
 fn id_ok(id: &str, max: usize) -> bool {
@@ -107,9 +108,13 @@ impl Hosted {
     pub(super) fn requires_player_click(&self) -> bool {
         matches!(
             self,
-            Self::InstagramReel(_) | Self::FacebookReel(_) | Self::Dailymotion { .. } | Self::Arte { .. }
+            Self::InstagramReel(_) | Self::FacebookReel(_) | Self::Dailymotion { .. } | Self::Arte { .. } | Self::AdultEmbed { .. }
         )
     }
+    pub(super) fn adult(&self) -> bool {
+        matches!(self, Self::AdultEmbed { .. })
+    }
+
     pub(super) fn minimum_width(&self) -> f32 {
         match self {
             // Twitch requires at least 400 × 300 CSS pixels.
@@ -128,6 +133,24 @@ impl Hosted {
         let parts: Vec<_> = url.path().trim_end_matches('/').strip_prefix('/')?.split('/').collect();
         let host = url.host_str()?;
         match (host, parts.as_slice()) {
+            ("www.redgifs.com" | "redgifs.com", ["ifr", id]) if id_ok(id, 80) => {
+                return Some(Self::AdultEmbed {
+                    domain: "redgifs.com",
+                    id: (*id).to_owned(),
+                });
+            }
+            ("www.pornhub.com" | "pornhub.com", ["embed", id]) if id_ok(id, 48) && id.len() >= 5 => {
+                return Some(Self::AdultEmbed {
+                    domain: "pornhub.com",
+                    id: (*id).to_owned(),
+                });
+            }
+            ("www.xvideos.com" | "xvideos.com", ["embedframe", id]) if digits(id, 1, 24) => {
+                return Some(Self::AdultEmbed {
+                    domain: "xvideos.com",
+                    id: (*id).to_owned(),
+                });
+            }
             ("geo.dailymotion.com", ["player", file]) => {
                 let player = file.strip_suffix(".html").filter(|id| dailymotion_id(id))?;
                 let video = url.query_pairs().find(|(key, _)| key == "video")?.1;
@@ -233,7 +256,7 @@ impl Hosted {
 
     pub(super) fn page(&self) -> String {
         match self {
-            Self::Dailymotion { .. } | Self::Arte { .. } => self.player(),
+            Self::Dailymotion { .. } | Self::Arte { .. } | Self::AdultEmbed { .. } => self.player(),
             Self::InstagramReel(id) => format!("https://www.instagram.com/reel/{id}/"),
             Self::FacebookReel(id) => format!("https://www.facebook.com/reel/{id}/"),
             Self::Framatube(id) => format!("https://framatube.org/w/{id}"),
@@ -253,6 +276,14 @@ impl Hosted {
         match self {
             Self::Dailymotion { player, video } => format!("https://geo.dailymotion.com/player/{player}.html?video={video}"),
             Self::Arte { language, id } => format!("https://www.arte.tv/embeds/{language}/{id}"),
+            Self::AdultEmbed { domain, id } => {
+                let path = match *domain {
+                    "redgifs.com" => "ifr",
+                    "pornhub.com" => "embed",
+                    _ => "embedframe",
+                };
+                format!("https://www.{domain}/{path}/{id}")
+            }
             Self::InstagramReel(id) => format!("https://www.instagram.com/reel/{id}/embed/"),
             Self::FacebookReel(id) => {
                 format!("https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2Freel%2F{id}%2F&autoplay=false")
@@ -301,7 +332,8 @@ impl Hosted {
             | Self::KickLive(_)
             | Self::InstagramReel(_)
             | Self::FacebookReel(_)
-            | Self::Arte { .. } => {
+            | Self::Arte { .. }
+            | Self::AdultEmbed { .. } => {
                 return None;
             }
         };
@@ -336,7 +368,8 @@ impl Hosted {
             | Self::KickLive(_)
             | Self::InstagramReel(_)
             | Self::FacebookReel(_)
-            | Self::Arte { .. } => false,
+            | Self::Arte { .. }
+            | Self::AdultEmbed { .. } => false,
         };
         permitted.then_some(url)
     }

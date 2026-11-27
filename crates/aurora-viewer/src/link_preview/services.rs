@@ -401,10 +401,68 @@ fn publisher_shares_use_public_pages_and_publisher_images() {
     );
 }
 
-const VIEWER_CONFIRMATION_DOMAINS: &[&str] = &["pornhub.com", "xvideos.com", "onlyfans.com", "redgifs.com"];
+const VIEWER_CONFIRMATION_DOMAINS: &[&str] = &[
+    "pornhub.com",
+    "phncdn.com",
+    "xvideos.com",
+    "xvideos-cdn.com",
+    "xvideos-cdn.net",
+    "onlyfans.com",
+    "ofstatic.com",
+    "redgifs.com",
+];
 
 pub(super) fn adult_media_site(host: &str) -> bool {
     VIEWER_CONFIRMATION_DOMAINS.iter().any(|domain| super::in_domain(host, domain))
+}
+
+/// A public post may publish its own player as sharing metadata.
+pub(super) fn adult_clip(page: &str, html: &str) -> Option<FoundClip> {
+    let page_url = Url::parse(page).ok()?;
+    let domain = bare_host(&page_url)?;
+    if !matches!(domain.as_str(), "redgifs.com" | "pornhub.com" | "xvideos.com") {
+        return None;
+    }
+    let player = metadata(html, &["og:video:secure_url", "og:video", "twitter:player"])?;
+    let player_url = page_url.join(&player).ok()?;
+    if bare_host(&player_url)? != domain {
+        return None;
+    }
+    let player_path = segments(&player_url);
+    let player_id = player_path.get(1)?;
+    let page_path = segments(&page_url);
+    let same_item = match domain.as_str() {
+        "redgifs.com" => page_path.get(1) == Some(player_id),
+        "pornhub.com" => page_url.query_pairs().any(|(key, value)| key == "viewkey" && value == *player_id),
+        _ => page_path
+            .first()
+            .and_then(|part| part.strip_prefix("video"))
+            .is_some_and(|id| id.starts_with('.') || id == *player_id),
+    };
+    let clip = super::Clip::of(player_url.as_str())?;
+    if !same_item || !clip.hosted() || !clip.requires_player_click() {
+        return None;
+    }
+    Some(FoundClip {
+        clip,
+        title: metadata(html, &["og:title", "twitter:title"]).unwrap_or_default(),
+        channel: metadata(html, &["author"]).unwrap_or_default(),
+        posters: publisher_poster(page, html).into_iter().collect(),
+        size: metadata(html, &["og:video:width"])
+            .and_then(|s| s.parse().ok())
+            .zip(metadata(html, &["og:video:height"]).and_then(|s| s.parse().ok())),
+    })
+}
+
+#[test]
+fn an_adult_card_only_accepts_a_player_from_the_same_publisher() {
+    let page = "https://www.redgifs.com/watch/example";
+    let html = r#"<meta property="og:video" content="https://www.redgifs.com/ifr/example">"#;
+    let clip = adult_clip(page, html).unwrap().clip;
+    assert!(clip.requires_player_click());
+    assert!(adult_clip(page, &html.replace("www.redgifs.com", "www.xvideos.com")).is_none());
+    assert!(adult_clip(page, &html.replace("/ifr/example", "/ifr/other")).is_none());
+    assert!(adult_clip("https://onlyfans.com/123/example", html).is_none());
 }
 
 #[test]
@@ -1336,9 +1394,10 @@ pub fn blurred_until_clicked(url: &str) -> bool {
         return false;
     };
     bare_host(&parsed).is_some_and(|host| {
-        ["reddit.com", "redd.it", "redditmedia.com"]
-            .iter()
-            .any(|d| host == *d || host.strip_suffix(d).is_some_and(|sub| sub.ends_with('.')))
+        adult_media_site(&host)
+            || ["reddit.com", "redd.it", "redditmedia.com"]
+                .iter()
+                .any(|d| host == *d || host.strip_suffix(d).is_some_and(|sub| sub.ends_with('.')))
     })
 }
 
