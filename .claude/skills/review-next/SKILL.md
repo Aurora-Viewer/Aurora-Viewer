@@ -303,8 +303,9 @@ that fails) goes to your human in a dialog, before anything is posted:
   a branch of this repository, or a fork that allows maintainers' pushes)
   and the fix is small and sure (a merge of `main` and its conflicts, a
   field a test of `main` lacks, a TASKS.md line, a typo). In the review
-  worktree: resolve, commit, `check.ps1` again, then push to the author's
-  branch:
+  worktree: resolve, commit, then `check.ps1` again: after every change
+  you make to a PR, however small, before it is pushed (a change to docs
+  alone excepted). Then push to the author's branch:
 
   ```
   git -C <W> push https://github.com/<owner>/<repo>.git HEAD:refs/heads/<headRefName>
