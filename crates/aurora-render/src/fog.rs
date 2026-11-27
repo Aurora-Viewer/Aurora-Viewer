@@ -94,13 +94,14 @@ pub(crate) const MODE_SHELTER: f32 = 4.0;
 pub(crate) const MODE_RAYS: f32 = 8.0;
 
 /// The rays' air at full strength (`FogLook::rays` 1): what it takes of the
-/// light through it (1/m: 6 % over the volume's 160 m), and what it
-/// scatters of the sun's (1/m, fog.wgsl `fp.look.w`), ten times more. A
-/// scattering above the extinction is no physical air: it shows the light's
-/// shafts without the veil a fog thick enough to show them would lay over
-/// the scene.
+/// light through it (1/m: 5 % over the rays' 128 m), and what it scatters
+/// of the sun's (1/m, fog.wgsl `fp.look.w`), far more. A scattering above
+/// the extinction is no physical air: it shows the light's shafts without
+/// the veil a fog thick enough to show them would lay over the scene. (The
+/// fog demo's sunset, its sun 5° up, showed nothing at 0.004 and a veil at
+/// 0.2, 2026-11-27.)
 const RAYS_EXTINCTION: f32 = 0.0004;
-const RAYS_SCATTER: f32 = 0.004;
+const RAYS_SCATTER: f32 = 0.1;
 /// Their lean toward the light (Henyey-Greenstein g): bright looking toward
 /// the sun, faint across its shafts, none away from it.
 const RAYS_ANISOTROPY: f32 = 0.6;
