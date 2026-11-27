@@ -4811,6 +4811,13 @@ fn classic_pane(
         .horizontal(|ui| {
             // the edges of the lines above, half the theme's spacing between
             ui.spacing_mut().item_spacing.x *= 0.5;
+            // the recent emojis' arrow, before the emoji button
+            // (`emoji::recent`): up shows the row, down hides it
+            let (arrow, tip) = st.recent_emojis.arrow();
+            if tool_resp(ui, p, icons, arrow, false).on_hover_text(tip).clicked() {
+                st.recent_emojis.ask_toggle();
+                st.conv_focus_request = true;
+            }
             let b = tool_resp(ui, p, icons, "mood-smile-filled", st.emoji_open);
             emoji_btn = Some(b.rect);
             if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {

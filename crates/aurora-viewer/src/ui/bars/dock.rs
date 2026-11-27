@@ -464,9 +464,28 @@ pub(super) fn chat_island(
         chat.bar_emoji_open = true;
     }
 
+    // the recent emojis' arrow, before the emoji (the human's request,
+    // 2026-11-27; `emoji::recent`): up shows the row, down hides it
+    let mut text_right = smile.left();
+    if emoji.is_some() {
+        let arrow = Rect::from_center_size(
+            Pos2::new(smile.left() - 8.0 - EMOJI_ICON / 2.0, smile.center().y),
+            Vec2::splat(EMOJI_ICON),
+        );
+        let resp = ui.interact(arrow.expand(4.0), recent_arrow_id(), Sense::click());
+        let (icon, tip) = chat.recent_emojis.arrow();
+        paint_icon(ui, icons, icon, arrow, EMOJI_ICON, slot_ink(p, resp.hovered(), true));
+        if resp.on_hover_text(tip).clicked() {
+            chat.recent_emojis.ask_toggle();
+            // the keyboard stays in the field
+            chat.focus_request = true;
+        }
+        text_right = arrow.left();
+    }
+
     let text = Rect::from_min_max(
         Pos2::new(field.left() + FIELD_PAD, field.top()),
-        Pos2::new(smile.left() - 6.0, field.bottom()),
+        Pos2::new(text_right - 6.0, field.bottom()),
     );
     // what is typed at the chat's text size (Preferences › Chat), the
     // placeholder at the interface's like the bar around it
@@ -529,6 +548,11 @@ pub(super) fn chat_island(
         *committed = true;
     }
     out
+}
+
+/// The recent emojis' arrow of the chat field.
+pub(super) fn recent_arrow_id() -> Id {
+    Id::unique("chat_island_recent_emojis")
 }
 
 /// The emoji picker of the chat field (the one of the Conversations

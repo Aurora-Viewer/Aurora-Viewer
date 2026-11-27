@@ -5,13 +5,22 @@
 //! the account. A click adds one at the caret and leaves the keyboard in the
 //! field (LLTextEditor::insertEmoji).
 //!
-//! Aurora differences: the row is a Preferences › Chat switch, on, in place
-//! of a small arrow beside the field that starts closed at each session, and
-//! it takes no room until there is an emoji to show.
+//! Aurora differences: the row is a Preferences › Chat switch, kept from one
+//! session to the next, where the Legacy Viewer's row starts closed at each
+//! session, and it takes no room until there is an emoji to show. The small
+//! arrow beside the emoji button turns that switch (`Recent::arrow`): the
+//! Legacy Viewer's `emoji_recent_panel_toggle_btn`
+//! (FSFloaterNearbyChat::onEmojiRecentPanelToggleBtnClicked,
+//! indra/newview/fsfloaternearbychat.cpp, and FSFloaterIM's), which stands
+//! after its emoji button and points up while the row is shown. Ours stands
+//! before the emoji button, in the chat bar too, and points where a click
+//! takes the row: up to show it, down to hide it (the human's request,
+//! 2026-11-27).
 //!
 //! Aurora addition: favourite emojis, kept for the account, marked from the
 //! right-click menu of an emoji. They come first in the row, with a small
-//! star, and have their tab in the picker.
+//! star, and have their tab in the picker. They have no switch (the human's
+//! choice, 2026-11-27: the Preferences › Chat one of 2026-11-09 is gone).
 
 use super::Emoji;
 use crate::theme::Palette;
@@ -123,12 +132,12 @@ pub struct Recent {
     favorites: Vec<char>,
     /// Preferences › Chat, given every frame by the app.
     pub enabled: bool,
-    /// Preferences › Chat › Favorite emojis, off by default, given every
-    /// frame by the app: while off, no star, menu nor tab, and the row shows
-    /// the recent emojis alone (the file stays for when they come back).
-    pub favorites_enabled: bool,
-    /// `AURORA_DEMO_FAVORITE_EMOJIS`: on for the run, whatever the switch.
-    demo_favorites: bool,
+    /// The arrow beside an emoji button was clicked: the app turns the
+    /// switch (`take_toggle`).
+    toggle: bool,
+    /// `AURORA_DEMO_RECENT_EMOJIS`, whose row shows whatever the switch
+    /// says: the arrow hid it, for the run.
+    pub demo_hidden: bool,
     /// The row's place in Conversations, given every frame by the app:
     /// above the chat field, nearer the lines read (the human's choice,
     /// 2026-11-09); under it with the Legacy chat style, as
@@ -205,17 +214,32 @@ impl Recent {
     /// `AURORA_DEMO_FAVORITE_EMOJIS`: `text`'s emojis as the favourites.
     pub fn demo_favorites(&mut self, text: &str) {
         remember(&mut self.favorites, text);
-        self.demo_favorites = true;
     }
 
-    /// The favourites, newest first; `None` while they are turned off.
-    pub fn favorites(&self) -> Option<&[char]> {
-        (self.favorites_enabled || self.demo_favorites).then_some(self.favorites.as_slice())
+    /// The favourites, newest first.
+    pub fn favorites(&self) -> &[char] {
+        &self.favorites
     }
 
-    /// The favourites the row draws: none while they are turned off.
-    fn shown_favorites(&self) -> &[char] {
-        self.favorites().unwrap_or_default()
+    /// The arrow beside the emoji buttons, its icon and its tooltip: up
+    /// while the row is hidden, where a click shows it; down while it is
+    /// shown, where a click hides it.
+    pub fn arrow(&self) -> (&'static str, &'static str) {
+        if self.enabled {
+            ("chevron-down", aurora_i18n::tr!("ui-chat-recent-emojis-hide"))
+        } else {
+            ("chevron-up", aurora_i18n::tr!("ui-chat-recent-emojis-show"))
+        }
+    }
+
+    /// The arrow was clicked.
+    pub fn ask_toggle(&mut self) {
+        self.toggle = true;
+    }
+
+    /// Whether the arrow was clicked, once.
+    pub fn take_toggle(&mut self) -> bool {
+        std::mem::take(&mut self.toggle)
     }
 
     /// `c` becomes a favourite, or stops being one.
@@ -242,7 +266,7 @@ impl Recent {
 
     /// The row takes its place under the fields.
     pub fn shown(&self) -> bool {
-        self.enabled && !(self.list.is_empty() && self.shown_favorites().is_empty())
+        self.enabled && !(self.list.is_empty() && self.favorites.is_empty())
     }
 
     /// What the fields take for the row.
@@ -252,7 +276,7 @@ impl Recent {
 
     /// The favourites, then the recent emojis that are not.
     fn in_row(&self) -> impl Iterator<Item = char> + '_ {
-        let favorites = self.shown_favorites();
+        let favorites = self.favorites();
         let recent = self.list.iter().filter(move |c| !favorites.contains(c));
         favorites.iter().chain(recent).copied()
     }
@@ -295,7 +319,7 @@ impl Recent {
             }
             let cell = egui::Rect::from_min_size(rect.min + egui::vec2(placed as f32 * CELL, 0.0), egui::Vec2::splat(CELL));
             let resp = ui.interact(cell, egui::Id::unique(("recent_emoji", field, placed)), egui::Sense::click());
-            let favorite = self.favorites().map(|f| f.contains(&c));
+            let favorite = self.favorites.contains(&c);
             let (resp, toggle) = emoji.cell(ui, p, c, favorite, resp);
             if resp.clicked() {
                 chosen = Some(c);
@@ -512,13 +536,12 @@ mod tests {
     #[test]
     fn favorites_come_first_in_the_row_without_repeating() {
         let mut recent = Recent::demo("😂🔥👍");
-        recent.favorites_enabled = true;
         recent.toggle_favorite('🔥');
         recent.toggle_favorite('❤');
-        assert_eq!(recent.favorites(), Some(&['❤', '🔥'][..]));
+        assert_eq!(recent.favorites(), ['❤', '🔥']);
         assert_eq!(recent.in_row().collect::<Vec<_>>(), ['❤', '🔥', '👍', '😂']);
         recent.toggle_favorite('🔥');
-        assert_eq!(recent.favorites(), Some(&['❤'][..]));
+        assert_eq!(recent.favorites(), ['❤']);
         assert_eq!(recent.in_row().collect::<Vec<_>>(), ['❤', '👍', '🔥', '😂']);
     }
 
@@ -526,28 +549,37 @@ mod tests {
     fn favorites_alone_show_the_row() {
         let mut recent = Recent::demo("");
         recent.enabled = true;
-        recent.favorites_enabled = true;
         recent.toggle_favorite('❤');
         assert!(recent.shown());
         recent.enabled = false;
         assert!(!recent.shown());
     }
 
-    /// Off by default: the row is the recent emojis alone, as before
-    /// favourites existed, and the kept ones come back with the switch.
+    /// Favourites have no switch: a new account's are there to be marked,
+    /// with nothing to turn on first.
     #[test]
-    fn favorites_turned_off_leave_the_recent_row_alone() {
+    fn favorites_need_no_switch() {
         let mut recent = Recent::demo("😂🔥");
         recent.enabled = true;
+        assert!(recent.favorites().is_empty());
         recent.toggle_favorite('❤');
-        assert_eq!(recent.favorites(), None);
-        assert_eq!(recent.in_row().collect::<Vec<_>>(), ['🔥', '😂']);
-        let mut alone = Recent::demo("");
-        alone.enabled = true;
-        alone.toggle_favorite('❤');
-        assert!(!alone.shown(), "no row for favourites turned off");
-        recent.favorites_enabled = true;
+        assert_eq!(recent.favorites(), ['❤']);
         assert_eq!(recent.in_row().collect::<Vec<_>>(), ['❤', '🔥', '😂']);
+    }
+
+    /// The arrow points where a click takes the row, and its click is asked
+    /// of the app once.
+    #[test]
+    fn the_arrow_points_up_to_show_the_row_and_down_to_hide_it() {
+        let mut recent = Recent::demo("😂");
+        assert_eq!(recent.arrow().0, "chevron-up", "hidden: a click shows the row");
+        assert!(!recent.take_toggle());
+        recent.ask_toggle();
+        assert!(recent.take_toggle());
+        assert!(!recent.take_toggle(), "asked once");
+        recent.enabled = true;
+        assert_eq!(recent.arrow().0, "chevron-down", "shown: a click hides it");
+        assert_ne!(recent.arrow().1, Recent::demo("").arrow().1, "each state says what its click does");
     }
 
     #[test]

@@ -9595,12 +9595,16 @@ failure. Grid validation and any paid upload are performed by the human.
   the emoji at the caret; a message sent moves its emojis to the front.
   Unset, the row takes no room until a first emoji is sent. Set, the row
   shows even though Preferences › Chat › Show recent emojis is off by
-  default. The Legacy bars
+  default, and the arrow before the emoji buttons (the chat bar's, the
+  Conversations composers') hides and shows it for the run: down while the
+  row is shown, up while it is hidden. Unset, the arrow turns the
+  Preferences switch itself, which is saved. The Legacy bars
   (`AURORA_DEMO_BARS=legacy`) have no emojis in their field, so no row.
-- **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites, turned on for
-  the run whatever Preferences › Chat › Favorite emojis says: first in the row with a small star, and the emoji picker opening on their
+- **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites of the run:
+  first in the row with a small star, and the emoji picker opening on their
   tab (with `AURORA_DEMO_BARS=emoji`). The right-click menu of an emoji in
-  the row or the picker adds or removes one. Nothing is saved.
+  the row or the picker adds or removes one, and holds nothing else, in
+  the chat bar too. Nothing is saved.
 - **`AURORA_DEMO_EMOJI_CODES=<text>`**: the Conversations window open, its
   input holding `<text>` with the keyboard and the caret at the end
   (`ui/emoji/codes.rs`). With `hi :hea`, the list of suggestions opens
