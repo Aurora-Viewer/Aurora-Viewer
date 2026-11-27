@@ -217,10 +217,6 @@ common-behavior = Behaviour
 
 app-login-canceled = Login cancelled.
 
-ui-options-favorite-emojis = Favourite emojis
-
-ui-options-favorite-emojis-hint = Right-click an emoji in the picker or the recent row to keep it: favourites come first in that row and have their own tab in the picker.
-
 ui-options-blocked-chat-greyed = Greyed
 
 ui-options-flash-conversations-button-hint = When a message arrives with the Conversations window closed, its button flashes softly in violet, then stays tinted until the window is opened. Minimised, the window's bar flashes instead, then stays tinted while messages wait unread.

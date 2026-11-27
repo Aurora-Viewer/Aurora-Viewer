@@ -20615,14 +20615,25 @@ impl App {
                 self.chat_ui.group_emotes = self.settings.group_emotes || (self.demo && crate::demo::emotes_grouped());
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 // the Legacy chat style keeps its own switch; both are off by
-                // default, the demo switch shows the row whatever they say
-                self.chat_ui.recent_emojis.enabled = (self.demo && crate::demo::recent_emojis_on())
-                    || if self.settings.chat_style == crate::settings::ChatStyle::Legacy {
-                        self.settings.show_recent_emojis_legacy
+                // default, and the arrow beside the emoji buttons turns the
+                // one of the style in use. The demo switch shows the row
+                // whatever they say: its arrow hides it for the run, nothing
+                // saved
+                let demo_row = self.demo && crate::demo::recent_emojis_on();
+                if self.chat_ui.recent_emojis.take_toggle() {
+                    if demo_row {
+                        self.chat_ui.recent_emojis.demo_hidden ^= true;
                     } else {
-                        self.settings.show_recent_emojis
-                    };
-                self.chat_ui.recent_emojis.favorites_enabled = self.settings.favorite_emojis;
+                        let switch = self.settings.recent_emojis_switch();
+                        *switch = !*switch;
+                        self.settings.save();
+                    }
+                }
+                self.chat_ui.recent_emojis.enabled = if demo_row {
+                    !self.chat_ui.recent_emojis.demo_hidden
+                } else {
+                    *self.settings.recent_emojis_switch()
+                };
                 self.chat_ui.recent_emojis.above = self.settings.chat_style != crate::settings::ChatStyle::Legacy;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
