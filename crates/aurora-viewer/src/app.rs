@@ -57,6 +57,7 @@ mod chat_commands;
 mod chat_import;
 mod click_pick;
 mod color_picker;
+mod constellations;
 mod contents_copy;
 mod context_menu;
 mod controls;
@@ -471,6 +472,8 @@ pub struct App {
     force_agent_update: bool,
     scene: Scene,
     probes: crate::scene::probes::ProbeManager,
+    /// The constellations and the planets over the real sky (app/constellations.rs).
+    constellations: constellations::NightSkyExtras,
     /// Throttle of the "sky frame" log line.
     sky_log: crate::world::env::SkyLog,
     camera: Camera,
@@ -2014,6 +2017,7 @@ impl App {
             force_agent_update: false,
             scene,
             probes: Default::default(),
+            constellations: Default::default(),
             sky_log: Default::default(),
             camera: Camera::default(),
             avatar_studio: Default::default(),
@@ -13108,6 +13112,13 @@ impl App {
         env.water.normal_texture = slots[3];
         env.sky.rainbow_texture = slots[4];
         env.sky.halo_texture = slots[5];
+        // the sky's moment: a photo's held instant for all its parts
+        // (snapshot::Hold, Freeze World), the demo's fixed one in the demo
+        // only; the stars and the planets share it
+        let sky_moment =
+            self.demo.then(crate::demo::night_sky::instant).flatten().unwrap_or_else(|| {
+                crate::world::night_sky::unix_days_now() - hold.map_or(0.0, |h| h.at.elapsed().as_secs_f64() / 86_400.0)
+            });
         env.sky.stars = crate::world::night_sky::star_frame(
             self.settings.night_sky,
             crate::world::night_sky::Observer {
@@ -13118,13 +13129,18 @@ impl App {
             self.settings.night_sky_gain,
             self.settings.night_sky_milky_way,
             env.sky.sun_dir,
-            // the sky's moment: a photo's held instant for all its parts
-            // (snapshot::Hold, Freeze World), the demo's fixed one in the
-            // demo only
-            self.demo.then(crate::demo::night_sky::instant).flatten().unwrap_or_else(|| {
-                crate::world::night_sky::unix_days_now() - hold.map_or(0.0, |h| h.at.elapsed().as_secs_f64() / 86_400.0)
-            }),
+            sky_moment,
             f64::from(world_clock()),
+        );
+        // the planets and the constellations over the real sky
+        // (app/constellations.rs): display only
+        self.constellations_frame(
+            &mut env.sky.stars,
+            env.sky.sun_dir,
+            sky_moment,
+            dt,
+            gfx.renderer.size().1,
+            &gfx.renderer.device,
         );
         t_part = self.scene.parts.lap(Part::ParamsEnv, t_part);
         let mirror = if in_world && self.settings.mirrors > 0 {
@@ -13383,6 +13399,7 @@ impl App {
             photo_tile,
             photo_scale,
             photo_context,
+            constellations: self.constellations.overlay.frame(),
             camera_pos: render_eye,
             near: if studio_view.is_some() {
                 crate::avatar_studio::NEAR
@@ -17327,6 +17344,8 @@ impl App {
                     ui::widgets::open_floater(&self.egui_ctx, "aurora_weather", &mut self.env_ui.weather_open);
                 }
             }
+            BarAction::Constellations => self.open_constellations(false),
+            BarAction::ToggleConstellations => self.open_constellations(true),
             BarAction::NewEnvironment(kind) => self.open_new_environment(kind),
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
@@ -18715,6 +18734,9 @@ impl App {
         }
         if res.open_world_look {
             ui::widgets::open_floater(&self.egui_ctx, ui::world_look::WINDOW, &mut self.panels.world_look);
+        }
+        if res.open_constellations {
+            self.open_constellations(false);
         }
         if res.clear_cache {
             self.disk_cache.clear();
@@ -22243,6 +22265,8 @@ impl App {
                     &mut self.settings.weather,
                 );
                 self.panels.environment = open;
+                // the Constellations window, beside the weather's
+                self.constellations_windows(&ctx, &p);
                 // the weather saved once a slider is let go
                 if self.settings.weather != self.weather_saved && !ctx.input(|i| i.pointer.any_down()) {
                     self.weather_saved = self.settings.weather.clone();
@@ -23119,6 +23143,8 @@ impl ApplicationHandler for App {
                 self.settings.night_sky_hour = crate::world::night_sky::StarHour::RealTime;
                 self.settings.sync_night_sky();
             }
+            // AURORA_DEMO_CONSTELLATIONS=zenith=<figure> (app/constellations.rs)
+            self.constellations_demo();
             if let Some(t) = std::env::var("AURORA_DEMO_TOD").ok().and_then(|v| v.parse::<u8>().ok()) {
                 self.panels.time_of_day = t.min(crate::world::env::TIME_OF_DAY_PRESETS);
             }

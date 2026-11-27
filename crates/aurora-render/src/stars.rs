@@ -371,6 +371,16 @@ pub struct StarFrame {
     /// Brightness of the stars (Preferences, "Star brightness"; 1: the
     /// catalogue's own).
     pub gain: f32,
+    /// The planets for the sky shader (aurora-viewer world/planets.rs;
+    /// env.wgsl `sky_planet_points`): [0].x their count, then per planet its
+    /// point in the star buffer's layout (`GpuStar`: catalogue direction and
+    /// peak intensity; colour and sigma). Count 0: none, nothing read.
+    pub planets: [[f32; 4]; crate::constellations::PLANET_SLOTS],
+    /// The Sun's and the Moon's discs as drawn (constellations.rs
+    /// `apply_discs`): xyz their region direction, w `DISC_REGION` (the
+    /// environment's own, as before; xyz unused), `DISC_REAL` (drawn there)
+    /// or `DISC_HIDDEN` (not drawn).
+    pub discs: [[f32; 4]; 2],
 }
 
 impl Default for StarFrame {
@@ -380,6 +390,8 @@ impl Default for StarFrame {
             axes: [Vec3::X, Vec3::Y, Vec3::Z],
             milky_way: 0.0,
             gain: 1.0,
+            planets: [[0.0; 4]; crate::constellations::PLANET_SLOTS],
+            discs: [[0.0; 4]; 2],
         }
     }
 }

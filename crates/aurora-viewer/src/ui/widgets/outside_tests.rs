@@ -21,6 +21,12 @@ fn every_plain_window_may_go_outside_but_the_dev_toolbox() {
     // a window sized by its content: its window outside follows it
     assert!(window("profile").fixed().goes_outside());
     assert!(window("weather").auto_height().goes_outside());
+    assert!(window(crate::ui::constellations_window::WINDOW).auto_height().goes_outside());
+    assert!(
+        window(crate::ui::constellations_window::CREDITS_WINDOW)
+            .auto_height()
+            .goes_outside()
+    );
     // its tools read the world under the viewer's pointer
     assert!(!window(crate::ui::dev_toolbox::WINDOW).goes_outside());
 }

@@ -100,6 +100,7 @@ pub const COMMANDS: &[Command] = commands![
     "landmark_here", "star-filled", "toolbar-command-landmark-here", true;
     "marketplacelistings", "tag-filled", "marketplace-listings-menu", true;
     "myenvironments", "Command_Environments_Icon", "toolbar-command-environments", true;
+    "constellations", "sparkles-filled", "ui-bars-constellations", true;
     "radar", "radar", "toolbar-command-radar", true;
     "block_list", "ban", "toolbar-command-block-list", true;
     "contact_sets", "users-group", "toolbar-command-contact-sets", true;

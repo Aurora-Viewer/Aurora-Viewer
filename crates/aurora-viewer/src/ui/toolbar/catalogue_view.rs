@@ -109,7 +109,7 @@ pub(super) fn category(command: &str) -> Category {
         "conversations" | "speak" | "people" | "friends" | "contact_sets" | "block_list" | "radar" | "group_titles" | "voice"
         | "defaultchatbar" | "bar_chat" | "conversation_log" | "discord" => Communication,
         "home" | "location_bar" | "places" | "favorites" | "worldmap" | "minimap" | "aboutland" | "regioninfo" | "teleport_history"
-        | "landmark_here" | "search" | "destinations" | "regiontracker" | "areasearch" | "webbrowser" => World,
+        | "landmark_here" | "search" | "destinations" | "regiontracker" | "areasearch" | "webbrowser" | "constellations" => World,
         "inventory"
         | "texture_library"
         | "build"

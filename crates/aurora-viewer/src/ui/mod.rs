@@ -35,6 +35,7 @@ pub mod click_away_focus;
 pub mod close_key;
 pub mod color_picker;
 pub mod colors;
+pub mod constellations_window;
 pub mod contact_markers;
 pub mod contacts;
 pub mod context;
@@ -268,6 +269,10 @@ pub struct Panels {
     pub destinations: bool,
     /// "Phototools" (toolbar `phototools`).
     pub phototools: bool,
+    /// The Constellations window (World › Environment, Preferences › Just
+    /// for fun, toolbar `constellations`) and its credits window.
+    pub constellations: bool,
+    pub constellation_credits: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
     /// The Director (toolbar `director`): its window and its timeline.
@@ -370,6 +375,8 @@ impl Panels {
             avatar_welcome: false,
             destinations: false,
             phototools: false,
+            constellations: false,
+            constellation_credits: false,
             quick_prefs: false,
             director: false,
             second_camera: false,

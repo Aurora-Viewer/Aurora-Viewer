@@ -18,6 +18,7 @@ mod blend_tests;
 mod bloom;
 mod clouds;
 pub mod clouds_noise;
+pub mod constellations;
 mod contact_shadows;
 pub mod curvature;
 mod cutout;

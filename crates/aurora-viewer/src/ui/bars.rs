@@ -204,6 +204,11 @@ pub enum BarAction {
     /// World › Environment › Aurora Weather: its window (testers looked
     /// for the weather there, beside Personal lighting).
     AuroraWeather,
+    /// World › Environment › Constellations: their window, beside the
+    /// weather's.
+    Constellations,
+    /// The toolbar's Constellations button: their window opened or closed.
+    ToggleConstellations,
     /// World › Teleport history (ToggleTeleportHistory, Alt+H).
     TeleportHistory,
     /// The balance, or Me › Buy L$ (LLStatusBar::onClickBuyCurrency).
@@ -1550,6 +1555,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             // lights the scene, so @setenv holds it like the rest
             if menu::item_if(ui, p, "umbrella-filled", aurora_i18n::tr!("ui-bars-aurora-weather"), free) {
                 *action = BarAction::AuroraWeather;
+            }
+            // Aurora's own: the constellations over the real night sky,
+            // held by @setenv like the weather beside it
+            if menu::item_if(ui, p, "sparkles-filled", aurora_i18n::tr!("ui-bars-constellations"), free) {
+                *action = BarAction::Constellations;
             }
             // Firestorm's Phototools "New preset" buttons (World.EnvPreset)
             menu::separator(ui, p);
@@ -3113,6 +3123,9 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "aboutland" => toggle(super::land::window_id(panels.about_land_classic), &mut panels.about_land),
         "regioninfo" => toggle(super::region::window_id(panels.region_estate_classic), &mut panels.region_estate),
         "myenvironments" => toggle("environment_selector", &mut panels.environment),
+        // Aurora's own: the constellations' window (the app holds it under
+        // @setenv like the menu entry)
+        "constellations" => return BarAction::ToggleConstellations,
         "radar" | "block_list" | "contact_sets" => {
             let tab = match cmd {
                 "radar" => super::people::TAB_NEARBY,
@@ -3175,6 +3188,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "aboutland" => panels.about_land,
         "regioninfo" => panels.region_estate,
         "myenvironments" => panels.environment,
+        "constellations" => panels.constellations,
         "inventory" => panels.inventory,
         "inventory_dual" => panels.inventory_dual,
         "texture_library" => panels.texture_library,

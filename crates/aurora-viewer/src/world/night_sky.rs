@@ -29,7 +29,7 @@ pub const LATITUDE: f64 = 48.8566;
 pub const LONGITUDE: f64 = 2.3522;
 
 /// Days of the J2000.0 epoch (2000-01-01 12:00 TT) after the Unix epoch.
-const J2000_UNIX_DAYS: f64 = 10957.5;
+pub(crate) const J2000_UNIX_DAYS: f64 = 10957.5;
 
 /// Which stars the night sky shows.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -227,6 +227,8 @@ pub fn star_frame(mode: NightSky, at: Observer, gain: f32, milky_way: f32, sun: 
                 axes: [m.x_axis.as_vec3(), m.y_axis.as_vec3(), m.z_axis.as_vec3()],
                 milky_way: within(milky_way, MILKY_WAY_RANGE, DEFAULT_MILKY_WAY),
                 gain: within(gain, GAIN_RANGE, DEFAULT_GAIN),
+                // the planets and the discs: world/planets.rs fills them
+                ..StarFrame::default()
             }
         }
         NightSky::Legacy => {
@@ -236,6 +238,7 @@ pub fn star_frame(mode: NightSky, at: Observer, gain: f32, milky_way: f32, sun: 
                 axes: [m.x_axis.as_vec3(), m.y_axis.as_vec3(), m.z_axis.as_vec3()],
                 milky_way: 0.0,
                 gain: 1.0,
+                ..StarFrame::default()
             }
         }
     }
@@ -260,7 +263,7 @@ fn sun_right_ascension(n: f64) -> f64 {
 
 /// Greenwich mean sidereal time (radians), `n` days (UT) after J2000.0
 /// (Astronomical Almanac, about 0.1 s over this century).
-fn greenwich_sidereal(n: f64) -> f64 {
+pub(crate) fn greenwich_sidereal(n: f64) -> f64 {
     (280.460_618_37 + 360.985_647_366_29 * n).rem_euclid(360.0).to_radians()
 }
 
