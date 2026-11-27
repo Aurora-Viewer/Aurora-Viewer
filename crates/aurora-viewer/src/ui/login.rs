@@ -266,7 +266,7 @@ pub fn draw_background(ui: &egui::Ui, p: &Palette) {
     let rect = ctx.content_rect();
     let painter = ctx.layer_painter(egui::LayerId::background());
     let t = ctx.input(|i| i.time) as f32;
-    super::aurora_bg::paint(&painter, p, rect, t, 1.0);
+    super::aurora_bg::paint(&painter, p, rect, t, 1.0, super::aurora_bg::snow::amount(ctx));
     // slow animation: ~30 images/s are plenty
     ctx.request_repaint_after(std::time::Duration::from_millis(33));
 }
@@ -619,7 +619,14 @@ fn glass_card<R>(
             ),
         ];
         behind.0.set(behind.1, egui::Shape::Vec(lights.clone()));
-        let mut shapes = super::aurora_bg::frosted_pane(p, ctx.content_rect(), ctx.input(|i| i.time) as f32, rect, lights);
+        let mut shapes = super::aurora_bg::frosted_pane(
+            p,
+            ctx.content_rect(),
+            ctx.input(|i| i.time) as f32,
+            rect,
+            lights,
+            super::aurora_bg::snow::amount(ctx),
+        );
         let top = |height: f32| egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), height));
         if accent {
             shapes.push(strip(top(2.0), &[(0.0, p.violet), (1.0, p.teal)]));

@@ -1,7 +1,10 @@
 //! Animated aurora background (login, loading screens without a last view):
 //! night sky gradient, twinkling stars, slowly moving aurora curtains in the
 //! brand colors (additive light) and mountain silhouettes on the horizon.
-//! Drawn with egui meshes: a few hundred vertices, no textures.
+//! Drawn with egui meshes: a few hundred vertices, no textures. In December
+//! it snows over it (`snow`).
+
+pub mod snow;
 
 use crate::theme::Palette;
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
@@ -43,26 +46,28 @@ fn gradient(mesh: &mut Mesh, r: Rect, top: Color32, bottom: Color32) {
     mesh.add_triangle(i, i + 2, i + 3);
 }
 
-/// Paint the background over `rect`; `t` = time in seconds, `alpha` fades it.
-pub fn paint(painter: &egui::Painter, p: &Palette, rect: Rect, t: f32, alpha: f32) {
-    painter.extend(shapes(p, rect, t, alpha, false));
+/// Paint the background over `rect`; `t` = time in seconds, `alpha` fades it,
+/// `snow` (0–1, `snow::amount`) is how much it snows.
+pub fn paint(painter: &egui::Painter, p: &Palette, rect: Rect, t: f32, alpha: f32, snow: f32) {
+    painter.extend(shapes(p, rect, t, alpha, false, snow));
 }
 
 /// The background as a frosted pane shows it: the same sky at the same
 /// moment, out of focus (no stars, the rays of the curtains melted together,
 /// their edges and the ridgelines feathered). The cards of the login screen
 /// draw it under their tint: the blur of the in-world windows only knows the
-/// 3D scene, and there is none behind them.
-pub fn frosted(p: &Palette, rect: Rect, t: f32) -> Vec<Shape> {
-    shapes(p, rect, t, 1.0, true)
+/// 3D scene, and there is none behind them. The snow shows through too,
+/// blurred, where it falls outside.
+pub fn frosted(p: &Palette, rect: Rect, t: f32, snow: f32) -> Vec<Shape> {
+    shapes(p, rect, t, 1.0, true, snow)
 }
 
 /// Shared login glass: a softened sky under the skin's lighter panel tint.
 pub const LOGIN_TINT: f32 = 0.56;
 
 /// The sky shown through a login card, with its own lights and panel tint.
-pub fn frosted_pane(p: &Palette, screen: Rect, t: f32, pane: Rect, lights: Vec<Shape>) -> Vec<Shape> {
-    let mut out = frosted(p, screen, t);
+pub fn frosted_pane(p: &Palette, screen: Rect, t: f32, pane: Rect, lights: Vec<Shape>, snow: f32) -> Vec<Shape> {
+    let mut out = frosted(p, screen, t, snow);
     out.extend(lights);
     let alpha = (f32::from(p.panel_alpha) * LOGIN_TINT) as u8;
     out.push(Shape::rect_filled(
@@ -73,9 +78,11 @@ pub fn frosted_pane(p: &Palette, screen: Rect, t: f32, pane: Rect, lights: Vec<S
     out
 }
 
-fn shapes(p: &Palette, rect: Rect, t: f32, alpha: f32, soft: bool) -> Vec<Shape> {
+fn shapes(p: &Palette, rect: Rect, t: f32, alpha: f32, soft: bool, snow: f32) -> Vec<Shape> {
     let mut out = Vec::new();
     let a = alpha.clamp(0.0, 1.0);
+    // the flakes fade with the sky
+    let snow = snow.clamp(0.0, 1.0) * a;
     let (w, h) = (rect.width(), rect.height());
     let fade = |c: Color32| c.gamma_multiply(a);
 
@@ -175,12 +182,17 @@ fn shapes(p: &Palette, rect: Rect, t: f32, alpha: f32, soft: bool) -> Vec<Shape>
     haze.add_triangle(i, i + 2, i + 3);
     out.push(Shape::mesh(haze));
 
-    // ---- mountains: two ridgelines (far lighter, near darker)
-    let mut ridge = |seed: f32, base: f32, amp: f32, color: Color32| {
+    // ---- mountains: two ridgelines (far lighter, near darker), the snow's
+    // depths around them
+    let snow_color = fade(snow::color(p));
+    let ridge = |out: &mut Vec<Shape>, seed: f32, base: f32, amp: f32, color: Color32, frost: f32| {
         let mut m = Mesh::default();
+        let mut caps = Mesh::default();
         const R: usize = 96;
         // out of focus, the crest fades in over this height
         let feather = if soft { h * 0.035 } else { 0.0 };
+        // the frosting on the crests: its depth below the crest line
+        let cap_depth = h * if soft { 0.02 } else { 0.011 };
         for s in 0..=R {
             let u = s as f32 / R as f32;
             let x = rect.left() + u * w;
@@ -188,10 +200,16 @@ fn shapes(p: &Palette, rect: Rect, t: f32, alpha: f32, soft: bool) -> Vec<Shape>
                 + (u * 7.3 + seed * 2.0).sin() * 0.28
                 + (u * 17.0 + seed * 3.0).sin() * 0.12
                 + ((u * 41.0 + seed).sin() * 0.06);
-            let y = rect.top() + (base - amp * (0.5 + 0.5 * n)) * h;
+            let height = 0.5 + 0.5 * n;
+            let y = rect.top() + (base - amp * height) * h;
             m.vertices.push(v(Pos2::new(x, y - feather), Color32::TRANSPARENT));
             m.vertices.push(v(Pos2::new(x, y + feather), color));
             m.vertices.push(v(Pos2::new(x, rect.bottom().max(y + feather)), color));
+            if snow > 0.0 {
+                let white = color.lerp_to_gamma(snow_color, frost * snow * snow::cap(height));
+                caps.vertices.push(v(Pos2::new(x, y + feather), white));
+                caps.vertices.push(v(Pos2::new(x, y + feather + cap_depth), color));
+            }
         }
         for s in 0..R as u32 {
             let i = s * 3;
@@ -201,9 +219,21 @@ fn shapes(p: &Palette, rect: Rect, t: f32, alpha: f32, soft: bool) -> Vec<Shape>
             }
         }
         out.push(Shape::mesh(m));
+        if !caps.vertices.is_empty() {
+            for s in 0..R as u32 {
+                let i = s * 2;
+                caps.add_triangle(i, i + 2, i + 1);
+                caps.add_triangle(i + 1, i + 2, i + 3);
+            }
+            out.push(Shape::mesh(caps));
+        }
     };
-    ridge(0.7, 0.86, 0.16, fade(mix(p.navy, p.indigo, 0.16)));
-    ridge(2.9, 0.93, 0.13, fade(mix(p.navy, Color32::BLACK, 0.35)));
+    let flakes = |out: &mut Vec<Shape>, depth| out.extend(snow::flakes(p, rect, t, snow, depth, soft));
+    flakes(&mut out, snow::Depth::Far);
+    ridge(&mut out, 0.7, 0.86, 0.16, fade(mix(p.navy, p.indigo, 0.16)), 0.42);
+    flakes(&mut out, snow::Depth::Middle);
+    ridge(&mut out, 2.9, 0.93, 0.13, fade(mix(p.navy, Color32::BLACK, 0.35)), 0.30);
+    flakes(&mut out, snow::Depth::Near);
     out
 }
 
