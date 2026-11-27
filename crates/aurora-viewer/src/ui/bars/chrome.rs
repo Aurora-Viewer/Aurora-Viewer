@@ -19,6 +19,8 @@ struct Metrics {
     editing: bool,
     conversations_vertical: bool,
     conversations_height: f32,
+    /// What the chat block takes beside its field: the recent emojis' row.
+    chat_recent: f32,
 }
 
 #[derive(Clone)]
@@ -126,6 +128,7 @@ pub fn prepare(ui: &egui::Ui, p: &Palette, st: &StatusInfo, settings: &ToolbarSe
                 editing,
                 conversations_vertical,
                 conversations_height: conversation_extent,
+                chat_recent: 0.0,
             },
         );
         data.insert_temp(slots_id(), Vec::<Slot>::new());
@@ -155,7 +158,13 @@ pub fn width(ctx: &egui::Context, command: &str) -> Option<f32> {
 
 pub fn height(ctx: &egui::Context, command: &str) -> f32 {
     if command == "bar_chat" {
-        return crate::ui::chat::input::height(ctx, crate::ui::chat::bar_input_id(), islands::SLOT).max(islands::SLOT) + 8.0;
+        // the field, and the room of the recent emojis' row the island draws
+        // over it (under it with the Legacy chat style): without it the row
+        // took the field's, and what was typed went under the bar
+        let recent = ctx
+            .data(|data| data.get_temp::<Metrics>(metrics_id()))
+            .map_or(0.0, |metrics| metrics.chat_recent);
+        return crate::ui::chat::input::height(ctx, crate::ui::chat::bar_input_id(), islands::SLOT).max(islands::SLOT) + 8.0 + recent;
     }
     if command == "bar_conversations"
         && let Some(metrics) = ctx.data(|data| data.get_temp::<Metrics>(metrics_id()))
@@ -221,6 +230,8 @@ pub fn prepare_chat(ctx: &egui::Context, chat: &crate::ui::chat::ChatUi, width: 
         } else {
             islands::SLOT + islands::PAD * 2.0
         };
+        // the row comes and goes with the field (`dock::chat_island`)
+        metrics.chat_recent = if chat.bar_shown() { chat.recent_emojis.height() } else { 0.0 };
     });
 }
 

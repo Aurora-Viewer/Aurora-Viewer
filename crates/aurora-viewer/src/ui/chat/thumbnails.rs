@@ -67,8 +67,16 @@ struct Slot {
 }
 
 impl Slot {
+    /// The room before the first square and after the last. A toolbar's
+    /// slot (`layer`) is as high as its row, which a chat block beside it
+    /// raises (a paragraph, the recent emojis' row): its ends keep the
+    /// island's padding, or a higher row would hold fewer squares.
     fn padding(self) -> f32 {
-        let height = if self.vertical { islands::HEIGHT } else { self.rect.height() };
+        let height = if self.vertical || self.layer.is_some() {
+            islands::HEIGHT
+        } else {
+            self.rect.height()
+        };
         (height - self.size) / 2.0
     }
 
@@ -77,7 +85,7 @@ impl Slot {
         let min = if self.vertical {
             Pos2::new(self.rect.center().x - self.size / 2.0, self.rect.top() + along)
         } else {
-            Pos2::new(self.rect.left() + along, self.rect.top() + self.padding())
+            Pos2::new(self.rect.left() + along, self.rect.center().y - self.size / 2.0)
         };
         Rect::from_min_size(min, Vec2::splat(self.size))
     }
@@ -567,6 +575,34 @@ mod tests {
         };
         assert_eq!(row.square(0).center().y, row.square(1).center().y);
         assert!(row.square(1).left() > row.square(0).right());
+    }
+
+    /// A toolbar's row raised by the chat block beside it (a paragraph, the
+    /// recent emojis' row) holds as many squares as before, centred in its
+    /// height: the ends used to take half the extra height each, and the
+    /// only conversation became "+1".
+    #[test]
+    fn a_higher_toolbar_row_keeps_its_squares() {
+        let width = row_width(2, islands::SLOT, islands::PAD);
+        let slot = |height: f32| Slot {
+            rect: Rect::from_min_size(Pos2::new(10.0, 40.0), Vec2::new(width, height)),
+            size: islands::SLOT,
+            island: false,
+            layer: Some(egui::LayerId::background()),
+            clip: None,
+            vertical: false,
+        };
+        let (usual, raised) = (slot(islands::HEIGHT), slot(islands::HEIGHT + 26.0));
+        assert_eq!(fit(width, usual.size, usual.padding()), 2);
+        assert_eq!(fit(width, raised.size, raised.padding()), 2, "as many in the higher row");
+        for index in 0..2 {
+            let (was, now) = (usual.square(index), raised.square(index));
+            assert_eq!(now.size(), Vec2::splat(islands::SLOT));
+            assert_eq!((now.left(), now.right()), (was.left(), was.right()), "same place along the row");
+            assert_eq!(now.center().y, raised.rect.center().y, "centred in the row's height");
+            assert!(raised.rect.contains_rect(now));
+        }
+        assert_eq!(usual.square(0).top(), usual.rect.top() + islands::PAD, "the usual row is unchanged");
     }
 
     fn items(unread: &[usize]) -> Vec<(Uuid, usize)> {
