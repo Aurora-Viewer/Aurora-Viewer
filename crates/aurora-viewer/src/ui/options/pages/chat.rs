@@ -192,6 +192,20 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     0..=50,
                     "",
                 );
+                // the lines follow the chat bar wherever the interface's
+                // edit mode put it (Aurora's own: the Legacy Viewer's
+                // console and chat bar stay at the bottom left)
+                use crate::settings::ChatLinesDirection;
+                cx.combo(
+                    tr!("ui-options-chat-lines-direction"),
+                    tr!("ui-options-chat-lines-direction-hint"),
+                    &field!(chat_lines_direction),
+                    &[
+                        (ChatLinesDirection::Auto, tr!("ui-options-chat-lines-direction-auto")),
+                        (ChatLinesDirection::Up, tr!("ui-options-chat-lines-direction-up")),
+                        (ChatLinesDirection::Down, tr!("ui-options-chat-lines-direction-down")),
+                    ],
+                );
                 // the Legacy Viewer's Chat › Visuals (UseChatBubbles and what
                 // depends on it; ChatBubbleOpacity is in Appearance › Skin,
                 // as it is in its Colors), #673

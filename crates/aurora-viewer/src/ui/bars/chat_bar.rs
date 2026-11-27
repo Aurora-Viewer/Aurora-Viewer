@@ -76,6 +76,8 @@ mod tests {
         let icons = Icons::default();
         let favorites = crate::ui::bars::favorites::View::default();
         let mut width = 380.0;
+        // where the block says it was drawn, read in the frame
+        let placed = std::cell::Cell::new(None);
         let mut frame = |bar: Bar, events, editing: bool, chat: &mut crate::ui::chat::ChatUi| {
             let mut sent = None;
             toolbar.open = editing;
@@ -121,6 +123,7 @@ mod tests {
                         &settings,
                     );
                     sent = chrome::show_chat(ui, &p, &icons, &mut panels, chat, &gestures, None, &row, &mut width).0;
+                    placed.set(chrome::chat_place(ui.ctx()));
                 },
             )
             .textures_delta
@@ -135,7 +138,12 @@ mod tests {
             assert!(chat.has_focus, "{bar:?}: the existing input keeps keyboard focus");
             assert_eq!(chat.input, "a draft with é");
             assert!(ctx.read_response(crate::ui::chat::bar_input_id()).is_some());
+            // the block says where it stands, for the chat lines that follow it
+            let place = placed.get().expect("the block's place");
+            assert_eq!((place.bar, place.floating), (bar, false), "{bar:?}: the block's bar");
+            assert_eq!(place.rect.left_top(), egui::pos2(30.0, 30.0), "{bar:?}: the block's rect");
             assert!(frame(bar, vec![], true, &mut chat).is_none());
+            assert!(placed.get().is_none(), "{bar:?}: no block drawn while the interface is edited");
             let source = ctx
                 .read_response(crate::ui::bars::tool_button_id("bar_chat"))
                 .expect("movable edit cell");
