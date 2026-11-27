@@ -21518,6 +21518,14 @@ impl App {
                     .filter(|_| self.demo)
                     .unwrap_or(self.settings.presence_position);
                 let classic_bars = self.bars_look().0;
+                // the center's width dragged by the user; AURORA_DEMO_NOTIF_WIDTH
+                // sets it for this run only, nothing saved
+                let demo_notif_width = self
+                    .demo
+                    .then(|| std::env::var("AURORA_DEMO_NOTIF_WIDTH").ok()?.trim().parse::<f32>().ok())
+                    .flatten()
+                    .filter(|w| w.is_finite());
+                self.notif_ui.width = demo_notif_width.unwrap_or(self.settings.notification_width);
                 let mut toast_env = ui::notifications::ToastEnv {
                     pics: &self.avatar_pics,
                     images: &self.ui_images,
@@ -21561,6 +21569,14 @@ impl App {
                 };
                 self.world.notifications = list;
                 self.world.notification_history = hist;
+                // the grip moved the center's width: kept, and saved when released
+                let width_committed = std::mem::take(&mut self.notif_ui.width_committed);
+                if demo_notif_width.is_none() {
+                    self.settings.notification_width = self.notif_ui.width;
+                    if width_committed {
+                        self.settings.save();
+                    }
+                }
                 // the region restart over the toasts, under the open list
                 self.show_region_restart(&ctx, &p);
                 self.show_link_health(&ctx, &p);
