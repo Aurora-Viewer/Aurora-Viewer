@@ -112,7 +112,8 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, set: Option<&Set>, runtime: &
         ui,
         egui::Rect::from_min_max(
             egui::pos2(rect.left(), caption.top() - FADE),
-            egui::pos2(rect.right(), bottom + 6.0),
+            // (to the panel's bottom edge, under the stage's buttons too)
+            rect.right_bottom(),
         ),
         ground,
     );

@@ -1301,6 +1301,9 @@ pub struct App {
     /// When the AO preview last looked at the parts of our body its stage
     /// shows, and whether some show (app/ao_preview.rs).
     ao_preview_body: Option<(std::time::Instant, bool)>,
+    /// The stage ground the AO preview was given last frame: the window's
+    /// toggle is read against it (app/ao_preview.rs).
+    ao_preview_light: Option<bool>,
     ao_catalog: crate::ao::inventory::Catalog,
     ao_bootstrap: crate::ao::bootstrap::Bootstrap,
     ao_runtime: crate::ao::runtime::Runtime,
@@ -2497,6 +2500,7 @@ impl App {
             demo_offer_shown: None,
             ao_ui: Default::default(),
             ao_preview_body: None,
+            ao_preview_light: None,
             ao_catalog: Default::default(),
             ao_bootstrap: Default::default(),
             ao_runtime: Default::default(),

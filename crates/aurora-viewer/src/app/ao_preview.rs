@@ -23,6 +23,7 @@ impl App {
                 self.world.remove_ao_preview();
                 self.ao_ui.stage.stage.clear(&self.scene);
                 self.ao_ui.stage.restart();
+                self.ao_preview_light = None;
             }
             return;
         }
@@ -65,7 +66,18 @@ impl App {
         stage.stage.update(w, &self.scene, &roots, group, Place::Worn(own), ctx, now);
         stage.worn = true;
         stage.single = false;
+        stage.picking = false;
+        stage.bar_face = false;
+        // the stage's ground, light or dark, shared with Inspect's: a change
+        // made in the window is kept, as Inspect keeps it (app/inspect.rs)
+        if self.ao_preview_light.is_some_and(|given| given != stage.light) {
+            self.settings.stage_light = stage.light;
+            if !self.demo {
+                self.settings.save();
+            }
+        }
         stage.light = self.settings.stage_light;
+        self.ao_preview_light = Some(stage.light);
         let joints = stage.wants_joints().then(|| {
             let model = stage.stage.model().ok();
             crate::object_stage::shown_joints(w, &copy, model.map(|m| &**m))

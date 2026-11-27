@@ -67,6 +67,12 @@ pub struct StageUi {
     pub worn: bool,
     /// One item is inspected: it does not move.
     pub single: bool,
+    /// What the pointer is on is outlined, named and clicked (Inspect, Area
+    /// Search); off, the view only turns (the AO window's preview).
+    pub picking: bool,
+    /// The bar of buttons on a face of its own; off, on the view's ground
+    /// (the AO window's preview, whose caption lies on a fade there).
+    pub bar_face: bool,
     /// The animation plays; None: it was not chosen (it does, unless motion is
     /// reduced).
     playing: Option<bool>,
@@ -116,6 +122,8 @@ impl Default for StageUi {
             light: false,
             worn: false,
             single: false,
+            picking: true,
+            bar_face: true,
             playing: None,
             live: None,
             joints: None,
@@ -242,11 +250,20 @@ impl StageUi {
         };
         let frame = self.stand(ui, id, &model, standing);
         let view = self.view(p, &frame, view_rect, free, middle);
-        self.look(ui, &resp, &model, &frame, &view, view_rect, standing);
+        if self.picking {
+            self.look(ui, &resp, &model, &frame, &view, view_rect, standing);
+        } else {
+            self.over = None;
+        }
         let pose = self.pose(&model, standing, frame);
-        let highlight = self.highlight(ui, p, id, &model, showing);
+        let highlight = if self.picking {
+            self.highlight(ui, p, id, &model, showing)
+        } else {
+            None
+        };
         aurora_render::preview::paint_stage(ui, id, model.model.clone(), view, view_rect, Some(pose), highlight);
-        let hit = resp.clicked().then(|| resp.interact_pointer_pos()).flatten().and_then(|at| {
+        let clicked = resp.clicked() && self.picking;
+        let hit = clicked.then(|| resp.interact_pointer_pos()).flatten().and_then(|at| {
             let (from, dir) = view.ray(&model.model, view_rect, at);
             let unit = model.pick(standing, &frame, &self.bones, from, dir)?;
             Some(Hit {
@@ -552,13 +569,15 @@ impl StageUi {
     /// The controls: turn, look from higher or lower, nearer or further, and
     /// back to the start; what dragging does, written at their right.
     fn bar(&mut self, ui: &mut egui::Ui, p: &Palette, rect: Rect) {
-        let radius = ui.visuals().window_corner_radius;
-        let face = if self.light {
-            p.bar.to_opaque()
-        } else {
-            p.bar.gamma_multiply(0.78)
-        };
-        ui.painter().rect_filled(rect, radius, face);
+        if self.bar_face {
+            let radius = ui.visuals().window_corner_radius;
+            let face = if self.light {
+                p.bar.to_opaque()
+            } else {
+                p.bar.gamma_multiply(0.78)
+            };
+            ui.painter().rect_filled(rect, radius, face);
+        }
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt("object_stage_bar")
