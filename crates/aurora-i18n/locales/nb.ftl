@@ -13347,7 +13347,6 @@ ao-combine-title = Kombiner animasjoner
 ao-combine-existing = Flytt animasjoner hit fra { $state }
 ao-combine-existing-help = Avmerkede animasjoner fjernes fra hovedlisten.
 ao-combine-empty = Legg til animasjoner her.
-ao-entry-help = Klikk for å velge eller åpne · Dra for å endre rekkefølgen
 movement-run-speed = Løpefart
 movement-flight-speed = Flygefart
 ao-combine-group-choice = Spill av flere animasjoner samtidig

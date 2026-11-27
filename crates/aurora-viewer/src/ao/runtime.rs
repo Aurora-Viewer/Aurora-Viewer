@@ -313,6 +313,12 @@ impl Runtime {
         self.choose(state, config.folder, index);
         true
     }
+    /// Whether the AO plays `id` on our avatar now (the AO window's preview
+    /// leaves these out of what it lays its entry over).
+    pub fn plays(&self, id: &Uuid) -> bool {
+        self.active.iter().any(|a| a.id == *id)
+    }
+
     pub fn finished(&mut self, id: Uuid) {
         if self.owned.contains_key(&id) {
             self.completed.insert(id);

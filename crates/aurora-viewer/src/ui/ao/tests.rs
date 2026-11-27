@@ -258,9 +258,54 @@ fn ao_groups_show_their_members_together_and_layers_are_tabs() {
     assert_eq!(f.state.container, None);
 }
 
-/// Opens the entry card of a main-list row by its name.
-fn open_entry(f: &mut Fixture, name: &str) {
-    assert!(f.click(name).is_empty(), "opening an entry sends nothing");
+/// The remove button at the end of the row that shows `name`.
+fn row_bin(f: &mut Fixture, name: &str) -> egui::Pos2 {
+    fn meshes(shape: &egui::Shape, texture: egui::TextureId, out: &mut Vec<egui::Rect>) {
+        match shape {
+            egui::Shape::Mesh(m) if m.texture_id == texture => out.push(m.calc_bounds()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| meshes(s, texture, out)),
+            _ => {}
+        }
+    }
+    let shapes = f.draw(Vec::new()).1;
+    let (mut texts, mut bins) = (Vec::new(), Vec::new());
+    let bin = super::super::icons::global("trash-filled").expect("remove icon").id();
+    for shape in &shapes {
+        text_rects(&shape.shape, name, &mut texts);
+        meshes(&shape.shape, bin, &mut bins);
+    }
+    let row = *texts.first().expect(name);
+    bins.into_iter()
+        .find(|b| (b.center().y - row.center().y).abs() < 6.0 && b.left() > row.right())
+        .expect("the row's remove button")
+        .center()
+}
+
+/// A click with the secondary button (or with Shift held) on `name`.
+fn click_with(f: &mut Fixture, name: &str, button: egui::PointerButton, modifiers: egui::Modifiers) -> Vec<Action> {
+    let mut texts = Vec::new();
+    for shape in f.draw(Vec::new()).1 {
+        text_rects(&shape.shape, name, &mut texts);
+    }
+    let pos = texts.first().expect(name).center();
+    let mut out = Vec::new();
+    for pressed in [true, false] {
+        out.extend(
+            f.draw(vec![
+                egui::Event::ModifiersChanged(modifiers),
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button,
+                    pressed,
+                    modifiers,
+                },
+            ])
+            .0,
+        );
+    }
+    out.extend(f.draw(vec![egui::Event::ModifiersChanged(Default::default())]).0);
+    out
 }
 
 #[test]
@@ -304,16 +349,12 @@ fn ao_manager_at_reduced_ui_scale_keeps_its_size() {
         assert!(rects[29].width() < before.width() - 40.0, "AO at scale {zoom} can be made narrower");
         let c = &f.catalog.selected(f.account.selected).expect("set").states[&State::Standing];
         let (first, name) = (c.steps[1].id, c.steps[1].name.clone());
-        open_entry(&mut f, &name);
-        let mut labels = Vec::new();
-        for shape in f.draw(Vec::new()).1 {
-            text_rects(&shape.shape, aurora_i18n::tr!("common-remove"), &mut labels);
-        }
+        let bin = row_bin(&mut f, &name);
         assert!(
-            labels.iter().all(|r| rects[29].contains_rect(*r)) && !labels.is_empty(),
-            "AO at scale {zoom}: the entry's Remove stays in the window"
+            rects[29].contains(bin),
+            "AO at scale {zoom}: the row's remove button stays in the window"
         );
-        let out = f.click(aurora_i18n::tr!("common-remove"));
+        let out = f.click_at(bin);
         assert!(
             matches!(&out[..], [Action::Edit(change, None)]
                 if matches!(&change.operations[..], [Operation::Delete { id, folder: false }] if *id == first)),
@@ -334,8 +375,8 @@ fn an_animation_is_removed_at_once_and_the_next_one_too() {
         .map(|s| (s.id, s.name.clone()))
         .collect();
     for (step, name) in &steps {
-        open_entry(&mut f, name);
-        let out = f.click(aurora_i18n::tr!("common-remove"));
+        let bin = row_bin(&mut f, name);
+        let out = f.click_at(bin);
         let [Action::Edit(change, None)] = out.as_slice() else {
             panic!("one inventory edit per click")
         };
@@ -399,10 +440,12 @@ fn removing_a_set_or_a_group_asks_first() {
         .copied()
         .find(|id| f.inv.folders.contains_key(id))
         .expect("the group is a folder");
-    f.state.open_entry = Some(group);
+    // the stack's row shows its member
+    let member = "Aurora Stand A";
     for round in 0..2 {
         f.settle();
-        assert!(f.click(aurora_i18n::tr!("common-remove")).is_empty(), "a group asks first");
+        let bin = row_bin(&mut f, member);
+        assert!(f.click_at(bin).is_empty(), "a group asks first");
         assert_eq!(f.state.remove, Some(group));
         f.draw(Vec::new());
         let rect = f.ctx.memory(|m| m.area_rect(question.id)).expect("the question is drawn");
@@ -422,7 +465,8 @@ fn removing_a_set_or_a_group_asks_first() {
             .data_mut(|d| d.insert_persisted(egui::Id::unique(("ao_remove", "minimized")), true));
     }
     assert!(super::super::widgets::floater_minimized(&f.ctx, "ao_remove"));
-    f.click(aurora_i18n::tr!("common-remove"));
+    let bin = row_bin(&mut f, member);
+    f.click_at(bin);
     assert!(
         !super::super::widgets::floater_minimized(&f.ctx, "ao_remove"),
         "the question opens unfolded"
@@ -717,8 +761,16 @@ fn native_animation_rows_choose_on_single_click_and_drag_through_inventory_ack()
     let mut f = Fixture::new();
     let c = &f.catalog.selected(f.account.selected).expect("set").states[&State::Standing];
     let (folder, second) = (c.folder, c.steps[1].id);
+    // a click previews; Shift+click plays it in the world
     assert!(f.click("Aurora Stand B").is_empty());
-    assert_eq!(f.runtime.index(State::Standing, folder), 1);
+    assert_eq!(f.runtime.index(State::Standing, folder), 0, "a click only previews");
+    assert!(f.state.preview.previews(None, 1));
+    let shift = egui::Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+    assert!(click_with(&mut f, "Aurora Stand B", egui::PointerButton::Primary, shift).is_empty());
+    assert_eq!(f.runtime.index(State::Standing, folder), 1, "Shift+click plays it in the world");
     fn locate(shape: &egui::Shape, name: &str) -> Option<egui::Pos2> {
         match shape {
             egui::Shape::Text(t) if t.galley.text() == name => Some(t.pos + egui::vec2(5.0, 5.0)),
@@ -1596,8 +1648,9 @@ fn adding_to_a_stack_does_not_send_later_animations_into_it() {
     f.catalog.invalidate();
     f.catalog.refresh(&mut f.inv);
     let stack = steps_of(&f).into_iter().find(|id| f.inv.folders.contains_key(id)).expect("stack");
-    f.state.open_entry = Some(stack);
     f.settle();
+    // the stack's right-click menu
+    click_with(&mut f, "Aurora Stand A", egui::PointerButton::Secondary, Default::default());
     f.click(aurora_i18n::tr!("ao-add-to-stack"));
     assert_eq!(f.state.picker, Some(false));
     assert_eq!(f.state.pick_into, Some(stack));

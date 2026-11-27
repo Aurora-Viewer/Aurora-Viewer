@@ -29,8 +29,11 @@ pub struct AoPreview {
     /// What we wore when it was made: an outfit change makes it again, so
     /// that its joints stay those of what we wear.
     worn: Vec<Uuid>,
-    /// The animations it plays: the previewed entry's assets.
+    /// The previewed entry's assets, and their animations started when the
+    /// entry was chosen.
     assets: Vec<Uuid>,
+    previewed: Vec<PlayingAnimation>,
+    /// What it plays: ours (`base`) with the previewed entry laid over.
     animations: Vec<PlayingAnimation>,
 }
 
@@ -64,9 +67,11 @@ impl World {
     }
 
     /// Make the copy (or keep it), where we stand and turned as we are, and
-    /// have it play `assets` from `now` when they change. It follows us once
-    /// we walk away from it. None while our avatar is not in the world.
-    pub fn update_ao_preview(&mut self, assets: &[Uuid], now: Instant) -> Option<Uuid> {
+    /// have it play `base` (what we play ourselves that the preview keeps:
+    /// face, tail, deformers, gestures) with `assets` over it, these from
+    /// `now` when they change. It follows us once we walk away from it. None
+    /// while our avatar is not in the world.
+    pub fn update_ao_preview(&mut self, base: Vec<PlayingAnimation>, assets: &[Uuid], now: Instant) -> Option<Uuid> {
         let id = preview_id(self.agent_id);
         let here = self.agent.position;
         let rotation = self.agent.body_rotation();
@@ -93,6 +98,7 @@ impl World {
                 at: here,
                 worn,
                 assets: old.as_ref().map_or_else(Vec::new, |p| p.assets.clone()),
+                previewed: old.as_ref().map_or_else(Vec::new, |p| p.previewed.clone()),
                 animations: old.map_or_else(Vec::new, |p| p.animations),
             });
             if !alive {
@@ -102,12 +108,17 @@ impl World {
         let preview = self.ao_preview.as_mut()?;
         if preview.assets != assets {
             preview.assets = assets.to_vec();
-            preview.animations = assets
+            preview.previewed = assets
                 .iter()
                 .filter(|a| !a.is_nil())
                 .map(|&a| PlayingAnimation::from_signal(a, 1, now, None))
                 .collect();
         }
+        // (the entry wins where both move the same joints at one priority:
+        // it comes last)
+        let mut animations: Vec<PlayingAnimation> = base.into_iter().filter(|a| !preview.assets.contains(&a.id)).collect();
+        animations.extend(preview.previewed.iter().copied());
+        preview.animations = animations;
         Some(id)
     }
 
@@ -168,18 +179,23 @@ mod tests {
         let mut world = world_with_avatar();
         let now = Instant::now();
         let anim = Uuid::from_u128(0xA11);
-        let id = world.update_ao_preview(&[anim], now).expect("a copy");
+        let gesture = PlayingAnimation::from_signal(Uuid::from_u128(0xF4CE), 1, now, None);
+        let id = world.update_ao_preview(vec![gesture], &[anim], now).expect("a copy");
         let idx = world.objects.index_of_uuid(&id).expect("in the world's objects");
         assert!(world.on_ao_preview(idx));
         assert!(world.is_local_copy(&id), "a local copy: not on the radar, our appearance");
         assert_eq!(world.appearance_of(&id), world.agent_id);
-        assert_eq!(world.animations_of(&id).iter().map(|a| a.id).collect::<Vec<_>>(), [anim]);
+        assert_eq!(
+            world.animations_of(&id).iter().map(|a| a.id).collect::<Vec<_>>(),
+            [gesture.id, anim],
+            "what we play, the previewed entry over it"
+        );
         let own = world.objects.index_of_uuid(&world.agent_id).expect("our avatar");
         assert!(!world.on_ao_preview(own), "our own avatar is not the copy");
         // the same entry: the animation keeps its start
-        let start = world.animations_of(&id)[0];
-        world.update_ao_preview(&[anim], now + std::time::Duration::from_secs(2));
-        assert_eq!(world.animations_of(&id)[0], start);
+        let start = world.animations_of(&id)[1];
+        world.update_ao_preview(vec![gesture], &[anim], now + std::time::Duration::from_secs(2));
+        assert_eq!(world.animations_of(&id)[1], start);
         world.remove_ao_preview();
         assert!(world.objects.index_of_uuid(&id).is_none());
         assert!(world.ao_preview().is_none());

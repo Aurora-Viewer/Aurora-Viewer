@@ -101,8 +101,6 @@ pub struct AoUi {
     renaming: Option<Uuid>,
     /// The set whose deletion waits for its confirmation in that panel.
     confirm_delete: Option<Uuid>,
-    /// The entry of the open slot whose details are unfolded.
-    open_entry: Option<Uuid>,
     /// Where the animation picker adds: a stack or a layer of the open
     /// slot, `None` for its main list.
     pick_into: Option<Uuid>,
@@ -149,7 +147,9 @@ impl AoUi {
         };
         self.container = set.states.get(&self.state).and_then(|c| {
             if mode == "interface-group" {
-                self.open_entry = c.steps.iter().find(|s| s.group).map(|s| s.id);
+                if let Some(index) = c.steps.iter().position(|s| s.group) {
+                    self.preview.show_entry(index);
+                }
                 None
             } else if mode == "interface-track" {
                 c.tracks.first().map(|t| t.id)
@@ -187,7 +187,6 @@ impl AoUi {
         self.cycle_edit = None;
         self.picker = None;
         self.combination = None;
-        self.open_entry = None;
         self.pick_into = None;
     }
 }
@@ -273,7 +272,6 @@ pub fn show(
         state.container = None;
         state.cycle_edit = None;
         state.combination = None;
-        state.open_entry = None;
         state.pick_into = None;
         state.renaming = None;
         state.confirm_delete = None;

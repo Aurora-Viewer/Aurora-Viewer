@@ -70,8 +70,9 @@ pub struct StageUi {
     /// What the pointer is on is outlined, named and clicked (Inspect, Area
     /// Search); off, the view only turns (the AO window's preview).
     pub picking: bool,
-    /// The bar of buttons on a face of its own; off, on the view's ground
-    /// (the AO window's preview, whose caption lies on a fade there).
+    /// The bar of buttons on a face of its own, drawn with the view; off, on
+    /// the view's ground and drawn by the caller (`show_bar`) over what it
+    /// lays on the view (the AO window's preview, its caption on a fade).
     pub bar_face: bool,
     /// The animation plays; None: it was not chosen (it does, unless motion is
     /// reduced).
@@ -282,14 +283,26 @@ impl StageUi {
         if controls && self.animated() {
             self.badge(ui, p, free);
         }
-        if controls {
-            let bar = Rect::from_min_max(
-                egui::pos2(rect.left() + 8.0, rect.bottom() - BAR - 8.0),
-                egui::pos2(rect.right() - 8.0, rect.bottom() - 8.0),
-            );
-            self.bar(ui, p, bar);
+        if controls && self.bar_face {
+            self.bar(ui, p, Self::bar_rect(rect));
         }
         hit
+    }
+
+    /// Where the bar of buttons lies over a view of `rect`.
+    fn bar_rect(rect: Rect) -> Rect {
+        Rect::from_min_max(
+            egui::pos2(rect.left() + 8.0, rect.bottom() - BAR - 8.0),
+            egui::pos2(rect.right() - 8.0, rect.bottom() - 8.0),
+        )
+    }
+
+    /// The bar of buttons over the view of `rect`, for a caller that drew the
+    /// view without it (`bar_face` off): after what it lays on the view.
+    pub fn show_bar(&mut self, ui: &mut egui::Ui, p: &Palette, rect: Rect) {
+        if rect.height() >= WITH_BAR && self.stage.model().is_ok() {
+            self.bar(ui, p, Self::bar_rect(rect));
+        }
     }
 
     /// Drag to turn, right or middle drag (or Shift) to move, wheel to come

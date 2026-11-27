@@ -13363,7 +13363,6 @@ ao-combine-title = Animasyonları birleştir
 ao-combine-existing = Animasyonları buraya taşı (kaynak: { $state })
 ao-combine-existing-help = İşaretlenen animasyonlar ana listeden kaldırılacak.
 ao-combine-empty = Animasyonları buraya ekleyin.
-ao-entry-help = Seçmek veya açmak için tıklayın · Yeniden sıralamak için sürükleyin
 movement-run-speed = Koşu hızı
 movement-flight-speed = Uçuş hızı
 ao-combine-group-choice = Birden fazla animasyonu birlikte oynat

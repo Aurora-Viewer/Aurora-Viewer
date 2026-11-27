@@ -22,14 +22,32 @@ const FADE: f32 = 36.0;
 #[derive(Default)]
 pub(super) struct Preview {
     index: usize,
+    /// A layer member previewed over the main entry (the layer, its index),
+    /// in place of the one the layer plays in the world.
+    layer: Option<(Uuid, usize)>,
     /// The stage was drawn this frame (taken by the app, `AoUi::take_stage`).
     shown: bool,
 }
 
 impl Preview {
-    /// Shows that entry of the main list.
+    /// Shows that entry of the main list, each layer as it plays.
     pub(super) fn show_entry(&mut self, index: usize) {
         self.index = index;
+        self.layer = None;
+    }
+
+    /// Shows that member of a layer over the main entry.
+    pub(super) fn show_layer(&mut self, layer: Uuid, index: usize) {
+        self.layer = Some((layer, index));
+    }
+
+    /// Whether that entry is previewed: of the main list (`layer` None), or
+    /// of a layer.
+    pub(super) fn previews(&self, layer: Option<Uuid>, index: usize) -> bool {
+        match layer {
+            None => self.index == index,
+            Some(id) => self.layer == Some((id, index)),
+        }
     }
 }
 
@@ -51,7 +69,11 @@ impl AoUi {
         };
         let mut assets: Vec<Uuid> = entry.members.iter().map(|m| m.asset).collect();
         for track in &config.tracks {
-            let index = runtime.index(state, track.id).min(track.members.len().saturating_sub(1));
+            let index = match self.preview.layer {
+                Some((id, picked)) if id == track.id => picked,
+                _ => runtime.index(state, track.id),
+            };
+            let index = index.min(track.members.len().saturating_sub(1));
             assets.extend(track.members.get(index).map(|m| m.asset));
         }
         assets.retain(|a| !a.is_nil());
@@ -141,6 +163,8 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, set: Option<&Set>, runtime: &
         }
     }
     caption_text(ui, p, set, runtime, state, &names, caption, (ink, muted));
+    // the stage's buttons over the fade
+    state.stage.show_bar(ui, p, rect);
 }
 
 /// A fade from nothing at the top of `rect` to the stage's ground at its

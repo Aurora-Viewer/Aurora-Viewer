@@ -13336,7 +13336,6 @@ ao-combine-title = 合并动画
 ao-combine-existing = 将动画从 { $state } 移到这里
 ao-combine-existing-help = 勾选的动画将从主列表中移除。
 ao-combine-empty = 在此添加动画。
-ao-entry-help = 点击以选择或打开 · 拖动以重新排序
 movement-run-speed = 跑步速度
 movement-flight-speed = 飞行速度
 ao-combine-group-choice = 同时播放多个动画

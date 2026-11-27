@@ -35,7 +35,17 @@ impl App {
             .get(&self.world.agent_id)
             .map_or(Uuid::nil(), |a| a.selected);
         let assets = self.ao_ui.preview_assets(self.ao_catalog.selected(selected), &self.ao_runtime);
-        let Some(copy) = self.world.update_ao_preview(&assets, now) else {
+        // what we play ourselves, less the AO's own and the stock animations
+        // of the states (the preview's entry stands in for them): the face,
+        // the tail, deformers and gestures stay under it
+        let base: Vec<_> = self
+            .world
+            .animations_of(&self.world.agent_id)
+            .iter()
+            .filter(|a| !self.ao_runtime.plays(&a.id) && crate::ao::State::from_motion(a.id).is_none())
+            .copied()
+            .collect();
+        let Some(copy) = self.world.update_ao_preview(base, &assets, now) else {
             return;
         };
         // posed every frame, wherever the camera looks

@@ -8,7 +8,7 @@
 //! (`:RN`) and cycle time (`:CT`), shown as one order menu (In order,
 //! Shuffle, Manual) and a time slider.
 use super::*;
-use crate::ao::{Animation, StateConfig, Track, inventory::editor::List};
+use crate::ao::{StateConfig, Track, inventory::editor::List};
 
 #[derive(Clone, Copy, Debug)]
 struct EntryDrag {
@@ -167,6 +167,12 @@ pub(super) fn inventory_drop(
     }
 }
 
+/// A double click, or a click with Shift, plays an entry in the world; a
+/// click alone previews it.
+fn in_world(ui: &egui::Ui, response: &egui::Response) -> bool {
+    response.double_clicked() || (response.clicked() && ui.input(|i| i.modifiers.shift))
+}
+
 struct Editor<'a> {
     p: &'a Palette,
     inv: &'a Inventory,
@@ -191,12 +197,16 @@ impl Editor<'_> {
 
     fn body(&mut self, ui: &mut egui::Ui, c: &StateConfig) {
         // A layer shows its tab; a stack just made (`AoUi::finish_editor`)
-        // unfolds in the main list; anything gone (dissolved, or another
+        // is previewed in the main list; anything gone (dissolved, or another
         // slot's) falls back to the main list.
         let track = self.state.container.and_then(|id| c.tracks.iter().find(|t| t.id == id));
         if track.is_none() {
-            if let Some(stack) = self.state.container.filter(|id| c.steps.iter().any(|s| s.group && s.id == *id)) {
-                self.state.open_entry = Some(stack);
+            if let Some(index) = self
+                .state
+                .container
+                .and_then(|id| c.steps.iter().position(|s| s.group && s.id == id))
+            {
+                self.state.preview.show_entry(index);
             }
             self.state.container = None;
         }
@@ -205,7 +215,7 @@ impl Editor<'_> {
         if let Some(track) = track {
             self.layer_bar(ui, c, track);
             self.turns(ui, c, Some(track));
-            self.members(ui, c, track.id, &track.members, true);
+            self.members(ui, track);
         } else {
             self.turns(ui, c, None);
             self.main_list(ui, c);
@@ -229,7 +239,6 @@ impl Editor<'_> {
             if changed {
                 self.state.container = selected.checked_sub(1).and_then(|i| c.tracks.get(i)).map(|t| t.id);
                 self.state.cycle_edit = None;
-                self.state.open_entry = None;
             }
             if widgets::icon_button(ui, self.p, "plus", aurora_i18n::tr!("ao-new-layer"), !self.busy()) {
                 let mut dialog = super::combinations::Dialog::new(self.set.id, self.state.state);
@@ -458,7 +467,9 @@ impl Editor<'_> {
         }
     }
 
-    /// The main list: single animations and groups that play together.
+    /// The main list: single animations and stacks that play together. A
+    /// click previews an entry; a double click or Shift+click plays it in
+    /// the world (FloaterAO's list click, `AOEngine::selectAnimation`).
     fn main_list(&mut self, ui: &mut egui::Ui, c: &StateConfig) {
         let playing = self.runtime.index(self.state.state, c.folder);
         for (index, step) in c.steps.iter().enumerate() {
@@ -468,70 +479,69 @@ impl Editor<'_> {
                 } else {
                     vec![step.name.as_str()]
                 };
-                let open = self.state.open_entry == Some(step.id);
-                if self.row(ui, step.id, index, &names, step.group, List::Main, playing == index) {
+                let previewed = self.state.preview.previews(None, index);
+                let (response, remove) = self.row(ui, step.id, index, &names, step.group, List::Main, playing == index, previewed);
+                if remove {
+                    self.remove(ui, step.id);
+                }
+                self.entry_menu(&response, c, step, index);
+                if in_world(ui, &response) {
                     self.runtime.choose(self.state.state, c.folder, index);
                     self.state.preview.show_entry(index);
-                    self.state.open_entry = if open { None } else { Some(step.id) };
-                }
-                if self.state.open_entry == Some(step.id) {
-                    self.entry_card(ui, c, step, index);
+                } else if response.clicked() {
+                    self.state.preview.show_entry(index);
                 }
             });
         }
     }
 
-    /// The unfolded details of a main entry: a group's members, and the
-    /// entry's actions.
-    fn entry_card(&mut self, ui: &mut egui::Ui, c: &StateConfig, step: &crate::ao::Step, index: usize) {
-        egui::Frame::new()
-            .inner_margin(egui::Margin {
-                left: 24,
-                right: 4,
-                top: 2,
-                bottom: 8,
-            })
-            .show(ui, |ui| {
-                if step.group {
-                    ui.label(RichText::new(aurora_i18n::tr!("ao-stack-explanation")).small().color(self.p.muted));
-                    self.members(ui, c, step.id, &step.members, false);
+    /// A main entry's right-click menu: preview, play in the world, a
+    /// stack's own actions and its members' removal, and removal.
+    fn entry_menu(&mut self, response: &egui::Response, c: &StateConfig, step: &crate::ao::Step, index: usize) {
+        let p = self.p;
+        let busy = self.busy();
+        super::super::menu::context_menu(response, p, |ui| {
+            if super::super::menu::item(ui, p, "eye-filled", aurora_i18n::tr!("ao-preview")) {
+                self.state.preview.show_entry(index);
+            }
+            if super::super::menu::item(ui, p, "player-play-filled", aurora_i18n::tr!("ao-play-in-world")) {
+                self.runtime.choose(self.state.state, c.folder, index);
+                self.state.preview.show_entry(index);
+            }
+            if step.group {
+                super::super::menu::separator(ui, p);
+                if super::super::menu::item_if(ui, p, "plus", aurora_i18n::tr!("ao-add-to-stack"), !busy) {
+                    self.picker(Some(step.id));
                 }
-                ui.add_enabled_ui(!self.busy(), |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        let preview = aurora_i18n::tr!("ao-preview");
-                        let size = Vec2::new(widgets::action_button_fit(ui, "eye-filled", preview), 26.0);
-                        if widgets::action_button(ui, self.p, "eye-filled", preview, widgets::ActionKind::Primary, size).clicked() {
-                            self.state.preview.show_entry(index);
-                        }
-                        if step.group {
-                            if widgets::flat_button(ui, self.p, aurora_i18n::tr!("ao-add-to-stack")).clicked() {
-                                self.picker(Some(step.id));
-                            }
-                            if widgets::flat_button(ui, self.p, aurora_i18n::tr!("common-rename")).clicked() {
-                                self.state.combination = Some(super::combinations::Dialog::rename(
-                                    self.set.id,
-                                    self.state.state,
-                                    step.id,
-                                    &step.name,
-                                    false,
-                                ));
-                            }
-                            if widgets::flat_button(ui, self.p, aurora_i18n::tr!("ao-split-stack")).clicked() {
-                                self.dissolve(step.id);
-                            }
-                        }
-                        let remove = aurora_i18n::tr!("common-remove");
-                        let size = Vec2::new(widgets::action_button_fit(ui, "trash-filled", remove), 26.0);
-                        if widgets::action_button(ui, self.p, "trash-filled", remove, widgets::ActionKind::FlatDanger, size).clicked() {
-                            self.remove(ui, step.id);
-                        }
-                    });
-                });
-            });
+                if super::super::menu::item_if(ui, p, "edit-filled", aurora_i18n::tr!("common-rename"), !busy) {
+                    self.state.combination = Some(super::combinations::Dialog::rename(
+                        self.set.id,
+                        self.state.state,
+                        step.id,
+                        &step.name,
+                        false,
+                    ));
+                }
+                if super::super::menu::item_if(ui, p, "arrows-split", aurora_i18n::tr!("ao-split-stack"), !busy) {
+                    self.dissolve(step.id);
+                }
+                // (the members play together: their order does not matter)
+                for member in &step.members {
+                    let label = aurora_i18n::tr!("ao-remove-member", name = member.name.as_str());
+                    if super::super::menu::item_if(ui, p, "trash-filled", &label, !busy) {
+                        push(self.out, self.state, inventory::remove(self.inv, member.link));
+                    }
+                }
+            }
+            super::super::menu::separator(ui, p);
+            if super::super::menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !busy) {
+                self.remove(ui, step.id);
+            }
+        });
     }
 
     /// FloaterAO::onClickTrash (indra/newview/ao.cpp) removes an animation at
-    /// once: it is only a link. A group or a layer is a folder that goes to
+    /// once: it is only a link. A stack or a layer is a folder that goes to
     /// the Trash with what it holds, so it asks first (#3675).
     fn remove(&mut self, ui: &egui::Ui, id: Uuid) {
         if self.inv.folders.contains_key(&id) {
@@ -539,49 +549,74 @@ impl Editor<'_> {
             widgets::bring_floater_front(ui.ctx(), "ao_remove");
         } else {
             push(self.out, self.state, inventory::remove(self.inv, id));
-            if self.state.open_entry == Some(id) {
-                self.state.open_entry = None;
-            }
         }
     }
 
-    /// The members of a group (playing together) or of a layer (taking
-    /// turns), each removable and in its order.
-    fn members(&mut self, ui: &mut egui::Ui, c: &StateConfig, owner: Uuid, members: &[Animation], track: bool) {
-        let playing = self.runtime.index(self.state.state, owner);
-        for (index, member) in members.iter().enumerate() {
+    /// A layer's members, taking turns: a click previews one over the main
+    /// entry, a double click or Shift+click plays it in the world.
+    fn members(&mut self, ui: &mut egui::Ui, track: &Track) {
+        let playing = self.runtime.index(self.state.state, track.id);
+        for (index, member) in track.members.iter().enumerate() {
             ui.push_id(member.link, |ui| {
-                let selected = track && playing == index;
-                if self.row(
+                let previewed = self.state.preview.previews(Some(track.id), index);
+                let names = [member.name.as_str()];
+                let (response, remove) = self.row(
                     ui,
                     member.link,
                     index,
-                    &[member.name.as_str()],
+                    &names,
                     false,
-                    List::Members(owner),
-                    selected,
-                ) {
-                    if track {
-                        self.runtime.choose(self.state.state, owner, index);
-                    } else if let Some(index) = c.steps.iter().position(|s| s.id == owner) {
-                        self.runtime.choose(self.state.state, c.folder, index);
+                    List::Members(track.id),
+                    playing == index,
+                    previewed,
+                );
+                if remove {
+                    self.remove(ui, member.link);
+                }
+                let p = self.p;
+                let busy = self.busy();
+                super::super::menu::context_menu(&response, p, |ui| {
+                    if super::super::menu::item(ui, p, "eye-filled", aurora_i18n::tr!("ao-preview")) {
+                        self.state.preview.show_layer(track.id, index);
                     }
+                    if super::super::menu::item(ui, p, "player-play-filled", aurora_i18n::tr!("ao-play-in-world")) {
+                        self.runtime.choose(self.state.state, track.id, index);
+                    }
+                    super::super::menu::separator(ui, p);
+                    if super::super::menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !busy) {
+                        self.remove(ui, member.link);
+                    }
+                });
+                if in_world(ui, &response) {
+                    self.runtime.choose(self.state.state, track.id, index);
+                    self.state.preview.show_layer(track.id, index);
+                } else if response.clicked() {
+                    self.state.preview.show_layer(track.id, index);
                 }
             });
         }
-        if members.is_empty() {
+        if track.members.is_empty() {
             ui.label(RichText::new(aurora_i18n::tr!("ao-combine-empty")).small().color(self.p.muted));
         }
     }
 
-    /// One entry: its number, its name (a group's members joined by "+"),
-    /// whether it plays now, and a chevron (main list) or a remove button
-    /// (members). Drag it to change its place. Returns whether it was
-    /// clicked.
+    /// One entry: its number, its name (a stack's members joined by "+"),
+    /// whether it plays in the world, and its remove button at the end; the
+    /// previewed one stands out. Drag it to change its place. Returns its
+    /// response and whether its remove button was clicked.
     #[allow(clippy::too_many_arguments)]
-    fn row(&mut self, ui: &mut egui::Ui, id: Uuid, index: usize, names: &[&str], together: bool, list: List, playing: bool) -> bool {
+    fn row(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: Uuid,
+        index: usize,
+        names: &[&str],
+        together: bool,
+        list: List,
+        playing: bool,
+        previewed: bool,
+    ) -> (egui::Response, bool) {
         let p = self.p;
-        let open = self.state.open_entry == Some(id);
         let sense = if self.busy() {
             egui::Sense::click()
         } else {
@@ -589,7 +624,7 @@ impl Editor<'_> {
         };
         let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), sense);
         let radius = ui.visuals().widgets.inactive.corner_radius;
-        if open {
+        if previewed {
             ui.painter().rect_filled(rect, radius, p.raised);
         } else if response.hovered() {
             ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.5));
@@ -601,15 +636,8 @@ impl Editor<'_> {
             .layout_no_wrap((index + 1).to_string(), egui::FontId::proportional(11.5), p.muted);
         widgets::paint_row_text(ui.painter(), number, x, y, p.muted);
         x += 18.0;
-        let mut right = rect.right() - 8.0;
-        let member = matches!(list, List::Members(_));
-        if list == List::Main {
-            let chevron = if open { "chevron-down" } else { "chevron-right" };
-            widgets::paint_glyph(ui.painter(), chevron, egui::pos2(right - 7.0, y), 14.0, p.muted);
-            right -= 22.0;
-        } else if member {
-            right -= 24.0;
-        }
+        // the remove button's room at the end
+        let mut right = rect.right() - 32.0;
         if playing {
             let galley = ui
                 .painter()
@@ -649,8 +677,8 @@ impl Editor<'_> {
             x += w + 2.0 * pad + 6.0;
         }
         let full = names.join(" + ");
-        let response = response.on_hover_text(format!("{full}\n\n{}", aurora_i18n::tr!("ao-entry-help")));
-        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, playing, &full));
+        let response = response.on_hover_text(format!("{full}\n\n{}", aurora_i18n::tr!("ao-row-help")));
+        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, previewed, &full));
         if !self.busy() {
             response.dnd_set_drag_payload(EntryDrag {
                 set: self.set.id,
@@ -678,19 +706,17 @@ impl Editor<'_> {
                 }
             }
         }
-        if member {
-            // A member's own remove button, at its row's end.
-            let bin = egui::Rect::from_center_size(egui::pos2(rect.right() - 16.0, y), Vec2::splat(24.0));
-            let hit = ui
-                .interact(bin, ui.scope_id().with(("ao_member_remove", id)), egui::Sense::click())
-                .on_hover_text(aurora_i18n::tr!("common-remove"));
-            let ink = if hit.hovered() { p.danger } else { p.muted };
-            widgets::paint_glyph(ui.painter(), "trash-filled", bin.center(), 13.0, ink);
-            if hit.clicked() && !self.busy() {
-                self.remove(ui, id);
-            }
+        // its remove button, where the row ends
+        let bin = egui::Rect::from_center_size(egui::pos2(rect.right() - 16.0, y), Vec2::splat(24.0));
+        let hit = ui
+            .interact(bin, ui.scope_id().with(("ao_row_remove", id)), egui::Sense::click())
+            .on_hover_text(aurora_i18n::tr!("common-remove"));
+        if hit.hovered() {
+            ui.painter().rect_filled(bin, radius, p.raised);
         }
-        response.clicked()
+        let ink = if hit.hovered() { p.danger } else { p.muted };
+        widgets::paint_glyph(ui.painter(), "trash-filled", bin.center(), 13.0, ink);
+        (response, hit.clicked() && !self.busy())
     }
 
     /// The box that takes new animations: a drop from the inventory (the

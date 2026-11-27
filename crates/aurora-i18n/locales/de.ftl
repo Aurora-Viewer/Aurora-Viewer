@@ -13492,7 +13492,6 @@ ao-combine-title = Animationen kombinieren
 ao-combine-existing = Animationen aus { $state } hierher verschieben
 ao-combine-existing-help = Markierte Animationen werden aus der Hauptliste entfernt.
 ao-combine-empty = Animationen hier hinzufügen.
-ao-entry-help = Zum Auswählen oder Öffnen anklicken · Zum Neuanordnen ziehen
 movement-run-speed = Laufgeschwindigkeit
 movement-flight-speed = Fluggeschwindigkeit
 ao-combine-group-choice = Mehrere Animationen zusammen abspielen
