@@ -2242,25 +2242,36 @@ mod imp {
                     script.display(),
                     dir.join("update.log").display()
                 );
+                // (the script writes update.log itself, once it holds the
+                // folder's lock: a second viewer's run, which finds it held,
+                // exits 4 without touching the log of the run under way)
                 let log_path = dir.join("update.log");
-                let run = std::fs::File::create(&log_path).and_then(|out| {
-                    let err = out.try_clone()?;
-                    std::process::Command::new("bash")
-                        .arg(&script)
-                        .arg("--update")
-                        .stdin(std::process::Stdio::null())
-                        .stdout(out)
-                        .stderr(err)
-                        .status()
-                });
-                let last = std::fs::read_to_string(&log_path)
+                let started = std::time::SystemTime::now();
+                let run = std::process::Command::new("bash")
+                    .arg(&script)
+                    .arg("--update")
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+                // its last line, when this run wrote it
+                let last = std::fs::metadata(&log_path)
+                    .and_then(|m| m.modified())
                     .ok()
-                    .and_then(|text| text.lines().rev().find(|l| !l.trim().is_empty()).map(str::to_owned))
-                    .unwrap_or_default();
+                    .filter(|modified| *modified >= started)
+                    .and_then(|_| std::fs::read_to_string(&log_path).ok())
+                    .and_then(|text| text.lines().rev().find(|l| !l.trim().is_empty()).map(str::to_owned));
                 let state = match run {
-                    Ok(status) if status.success() => State::Done(last),
+                    Ok(status) if status.success() => State::Done(last.unwrap_or_default()),
                     Ok(status) if status.code() == Some(3) => State::Licence,
-                    Ok(_) => State::Failed(last),
+                    // another viewer's update holds the folder: it builds
+                    // the same sl-ngx, loaded from the next start
+                    Ok(status) if status.code() == Some(4) => {
+                        log::info!("DLSS: another viewer is updating sl-ngx in {}", dir.display());
+                        set(State::Running);
+                        return;
+                    }
+                    Ok(status) => State::Failed(last.unwrap_or_else(|| format!("{} --update: {status}", crate::DLSS_SETUP))),
                     Err(e) => State::Failed(format!("bash {}: {e}", script.display())),
                 };
                 match &state {
@@ -2562,6 +2573,9 @@ mod imp {
     /// library's other presenter extensions (present_id2, present_wait2,
     /// present_timing) want feature structures this ash does not have:
     /// the presenter runs without them, its shown counts unmeasured.
+    /// Nor is VK_KHR_swapchain_maintenance1 asked for: it needs the
+    /// instance's surface_maintenance1, which wgpu does not enable, so
+    /// the presenter lets an old swapchain go once its queue is idle.
     /// After [`device_extensions`] (which named the adapter), under the
     /// lock.
     #[cfg(target_os = "linux")]
@@ -3580,8 +3594,16 @@ mod imp {
         released: vk::Semaphore,
         /// the last value given to `ready` (and `released`)
         value: u64,
+        /// the value of the last frame the presenter took: `released`
+        /// reaches it once it has read every frame handed over
+        taken: u64,
         /// Reflex in low-latency mode on the presenter's swapchain
         reflex: bool,
+        /// Reflex was wanted (the device has `VK_NV_low_latency2`): off
+        /// with this, one of its calls failed
+        reflex_wanted: bool,
+        /// destroyed, its timelines with it ([`Presenter::end`])
+        ended: bool,
         /// this frame's token, from [`Presenter::begin`], and its value
         token: Option<(usize, u32)>,
         /// a Reflex or PCL call failed: said once, then they stop
@@ -3724,7 +3746,10 @@ mod imp {
                 ready,
                 released,
                 value: 0,
+                taken: 0,
                 reflex,
+                reflex_wanted,
+                ended: false,
                 token: None,
                 latency_failed: false,
             })
@@ -3745,6 +3770,12 @@ mod imp {
         /// Reflex in low-latency mode on the presenter's swapchain.
         pub(crate) fn reflex(&self) -> bool {
             self.reflex && !self.latency_failed
+        }
+
+        /// Reflex is off because one of its calls failed (the log says
+        /// which), not for want of the driver's support.
+        pub(crate) fn reflex_failed(&self) -> bool {
+            self.latency_failed || (self.reflex_wanted && !self.reflex)
         }
 
         /// The frame's start, before its input is read: its token, with
@@ -3828,6 +3859,16 @@ mod imp {
             unsafe { self.vk.wait_semaphores(&info, 1_000_000_000) }.is_ok()
         }
 
+        /// Waits until the presenter has read every frame it took, at most
+        /// 1 s: with [`Presenter::pause`] held, before images handed over
+        /// are let go. A pause returns once nothing is queued, which an
+        /// sl-ngx before its fix of the review said before the last copy
+        /// was done; `released` is the presenter's own word that it was.
+        /// False past that, or on a lost device.
+        pub(crate) fn settle(&self) -> bool {
+            self.taken == 0 || self.wait_released(self.taken)
+        }
+
         /// Hands this frame over, once its commands are submitted:
         /// `generated` (none: the rendered frame alone) and `real`, both
         /// left by the frame in the transfer source layout. `ready` is
@@ -3897,7 +3938,10 @@ mod imp {
             self.mark(sl::pcl::PRESENT_END);
             self.token = None;
             match r {
-                Some(vk::Result::SUCCESS) => Ok(Some(value)),
+                Some(vk::Result::SUCCESS) => {
+                    self.taken = value;
+                    Ok(Some(value))
+                }
                 Some(vk::Result::TIMEOUT | vk::Result::NOT_READY) => Ok(None),
                 Some(r) => Err(format!("slngxPresent: {r}")),
                 None => Err(String::from("the presenter was ended (Streamline shut down, or the device lost)")),
@@ -3931,12 +3975,18 @@ mod imp {
     }
 
     #[cfg(target_os = "linux")]
-    impl Drop for Presenter {
-        fn drop(&mut self) {
-            // the presenter destroyed first (its swapchain, before the
-            // renderer lets the surface go), also on a lost device; then
-            // the timelines, once the viewer's queue is through the last
-            // signal of `ready`
+    impl Presenter {
+        /// The presenter destroyed (its swapchain, before the renderer
+        /// lets the surface go), also on a lost device; then the
+        /// timelines, once the viewer's queue is through the last signal
+        /// of `ready`. False when Streamline's lock could not be had: the
+        /// presenter is left running, to the start's end, and with it its
+        /// timelines and every image it took, which the caller must then
+        /// leave too (and the window's surface may stay its swapchain's).
+        pub(crate) fn end(&mut self) -> bool {
+            if std::mem::replace(&mut self.ended, true) {
+                return true;
+            }
             if let Some(mut held) = super::lock_within(&STARTED, END_WAIT) {
                 if let Some(st) = held.as_mut().filter(|st| st.start == self.start && st.presenter == Some(self.raw)) {
                     st.presenter = None;
@@ -3948,7 +3998,8 @@ mod imp {
                     }
                 }
             } else {
-                log::error!("DLSS frame generation: Streamline still busy: the presenter is left to it");
+                log::error!("DLSS frame generation: Streamline still busy: the presenter, its timelines and images are left to it");
+                return false;
             }
             let semaphores = [self.ready];
             let values = [self.value];
@@ -3959,19 +4010,38 @@ mod imp {
             unsafe {
                 if self.lost.get() || self.vk.wait_semaphores(&info, END_WAIT.as_nanos() as u64).is_err() {
                     log::warn!("DLSS frame generation: the presenter's timelines are left (the device did not finish)");
-                    return;
+                    return true;
                 }
                 self.vk.destroy_semaphore(self.ready, None);
                 self.vk.destroy_semaphore(self.released, None);
             }
             log::info!("DLSS frame generation: sl-ngx's presenter stopped");
+            true
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for Presenter {
+        fn drop(&mut self) {
+            self.end();
         }
     }
 
     /// Linux: sl-ngx's presenter held paused ([`pause_presenter`]),
-    /// resumed when this goes.
+    /// resumed when this goes. The second field: what refused the pause
+    /// (the presenter then stopped on it, and the frames it had not taken
+    /// are never released).
     #[cfg(target_os = "linux")]
-    pub(crate) struct PresenterPause(Option<(u64, usize)>);
+    pub(crate) struct PresenterPause(Option<(u64, usize)>, Option<vk::Result>);
+
+    #[cfg(target_os = "linux")]
+    impl PresenterPause {
+        /// The pause refused: the presenter stopped, what it had not taken
+        /// is never released.
+        pub(crate) fn refused(&self) -> Option<vk::Result> {
+            self.1
+        }
+    }
 
     /// Linux: sl-ngx's presenter, if one runs, paused until the guard
     /// goes: its queue idle and every frame handed over released, nothing
@@ -3982,29 +4052,31 @@ mod imp {
     #[cfg(target_os = "linux")]
     pub(crate) fn pause_presenter() -> PresenterPause {
         let Some(lib) = sl::loaded() else {
-            return PresenterPause(None);
+            return PresenterPause(None, None);
         };
         let Some(fns) = lib.presenter.as_ref() else {
-            return PresenterPause(None);
+            return PresenterPause(None, None);
         };
         let Some(mut held) = super::lock_within(&STARTED, END_WAIT) else {
-            return PresenterPause(None);
+            return PresenterPause(None, None);
         };
         let Some(st) = held.as_mut() else {
-            return PresenterPause(None);
+            return PresenterPause(None, None);
         };
         let Some(raw) = st.presenter else {
-            return PresenterPause(None);
+            return PresenterPause(None, None);
         };
+        let mut refused = None;
         if st.presenter_pauses == 0 {
             // SAFETY: under the lock, the presenter live on this start
             let r = unsafe { (fns.pause)(raw as *mut std::ffi::c_void) };
             if r != vk::Result::SUCCESS {
-                log::warn!("DLSS frame generation: slngxPresenterPause: {r}");
+                log::warn!("DLSS frame generation: slngxPresenterPause: {r}: the presenter stopped");
+                refused = Some(r);
             }
         }
         st.presenter_pauses += 1;
-        PresenterPause(Some((st.start, raw)))
+        PresenterPause(Some((st.start, raw)), refused)
     }
 
     #[cfg(target_os = "linux")]
@@ -4544,9 +4616,12 @@ mod imp {
         /// status, for the log
         presents: u64,
         status: Option<u32>,
-        /// frames presented per frame drawn, as the last state read said
-        /// (`numFramesActuallyPresented`), for Preferences
-        per_drawn: u32,
+        /// frames presented and frames drawn, running totals while it is
+        /// asked on: each present's state adds the frames presented since
+        /// the last read (`numFramesActuallyPresented`), for Preferences
+        /// to count over a second ([`Dlss::fg_totals`])
+        presented_total: u64,
+        drawn_total: u64,
         /// frames the GPU can generate per frame drawn
         /// (`numFramesToGenerateMax`) and the smallest side the window
         /// may have (`minWidthOrHeight`), read before the first ask
@@ -4559,8 +4634,12 @@ mod imp {
         /// them at the present, after later passes have changed the
         /// originals' layouts
         inputs: Option<[wgpu::TextureView; 2]>,
-        /// the video memory refused those copies: off for this DLSS
-        inputs_refused: bool,
+        /// those copies could not be had (the video memory refused them,
+        /// or the originals cannot be copied): off for this DLSS
+        inputs_held: Option<crate::dlss_fg::FgHeld>,
+        /// the last present was asked off as the window is smaller than
+        /// the smallest side frame generation takes (`min`)
+        small: bool,
         /// the window's size at the last present asked on, and the size a
         /// status other than OK was read at: off there, until the window
         /// takes another size (DLSS-G guide §14.3: on in an invalid state,
@@ -5634,16 +5713,19 @@ mod imp {
         /// off for this DLSS.
         #[cfg(windows)]
         fn fg_copy_inputs(&mut self, encoder: &mut wgpu::CommandEncoder) {
-            if self.fg_win.token.is_none() || self.fg_win.inputs_refused {
+            if self.fg_win.token.is_none() || self.fg_win.inputs_held.is_some() {
                 return;
             }
             let (depth, motion) = (self.depth.texture(), self.motion.texture());
             let fits =
                 |copy: &wgpu::TextureView, of: &wgpu::Texture| copy.texture().size() == of.size() && copy.texture().format() == of.format();
             if !self.fg_win.inputs.as_ref().is_some_and(|[d, m]| fits(d, depth) && fits(m, motion)) {
-                self.fg_win.inputs = None;
+                // (the last present may still have Streamline read them)
+                if let Some(old) = self.fg_win.inputs.take() {
+                    super::after_streamline(&self.queue, old);
+                }
                 if !(depth.usage() & motion.usage()).contains(wgpu::TextureUsages::COPY_SRC) {
-                    self.fg_win.inputs_refused = true;
+                    self.fg_win.inputs_held = Some(crate::dlss_fg::FgHeld::NoCopy);
                     self.fg_failed("the depth or the motion DLSS reads cannot be copied");
                     return;
                 }
@@ -5664,7 +5746,7 @@ mod imp {
                 };
                 let (made, refused) = crate::gpu_alloc::scoped(device, || [copy(depth, "DLSS FG depth"), copy(motion, "DLSS FG motion")]);
                 if refused {
-                    self.fg_win.inputs_refused = true;
+                    self.fg_win.inputs_held = Some(crate::dlss_fg::FgHeld::Memory);
                     log::warn!("DLSS frame generation: the video memory refused its copies of the depth and the motion: off");
                     return;
                 }
@@ -5724,6 +5806,7 @@ mod imp {
                 self.fg_win.bad = None;
             }
             let small = size.is_some_and(|(w, h)| w.min(h) < self.fg_win.min);
+            self.fg_win.small = small;
             let hudless = hudless.filter(|_| !small && self.fg_win.bad.is_none());
             let mut tagged = match (hudless, &self.fg_win.inputs) {
                 (Some(hudless), Some([depth, motion])) => (|| {
@@ -5891,14 +5974,30 @@ mod imp {
             }
         }
 
-        /// Windows' frame generation for Preferences: frames presented per
-        /// frame drawn (0 while it is not asked on), and Streamline's
-        /// status when it turned it off at this window size.
+        /// Windows' frame generation for Preferences: Streamline's status
+        /// when it turned it off at this window size, or why the viewer
+        /// asks it off (its copies not had, a window too small).
         #[cfg(windows)]
-        pub fn fg_shown(&self) -> (u32, Option<String>) {
+        pub fn fg_shown(&self) -> crate::dlss_fg::FgShown {
+            use crate::dlss_fg::{FgHeld, FgShown};
             let refused = self.fg_win.bad.filter(|b| Some(*b) == self.fg_win.size).and(self.fg_win.status);
-            let per_drawn = if self.fg_win.asked == 0 { 0 } else { self.fg_win.per_drawn };
-            (per_drawn, refused.map(sl::dlssg_status))
+            if let Some(status) = refused {
+                return FgShown::Streamline(Some(sl::dlssg_status(status)));
+            }
+            if let Some(held) = &self.fg_win.inputs_held {
+                return FgShown::StreamlineHeld(held.clone());
+            }
+            if self.fg_win.small {
+                return FgShown::StreamlineHeld(FgHeld::Small(self.fg_win.min));
+            }
+            FgShown::Streamline(None)
+        }
+
+        /// Windows' frame generation's running totals of frames presented
+        /// and of frames drawn, while it was asked on.
+        #[cfg(windows)]
+        pub fn fg_totals(&self) -> (u64, u64) {
+            (self.fg_win.presented_total, self.fg_win.drawn_total)
         }
 
         /// Windows' frame generation: the frame's commands are submitted
@@ -5963,7 +6062,8 @@ mod imp {
                 return;
             };
             (self.fg_win.max, self.fg_win.min) = (state.num_frames_to_generate_max, state.min_width_or_height);
-            self.fg_win.per_drawn = state.num_frames_actually_presented;
+            self.fg_win.presented_total += u64::from(state.num_frames_actually_presented);
+            self.fg_win.drawn_total += 1;
             let n = self.fg_win.presents;
             if n == 1 || n.is_multiple_of(600) || self.fg_win.status != Some(state.status) {
                 let level = if state.status == 0 { log::Level::Info } else { log::Level::Warn };
@@ -6137,6 +6237,12 @@ mod imp {
                 fg_inputs,
             );
             let begun = std::time::Instant::now();
+            // (frame generation's copies: an empty submission first, which
+            // is behind the last present's work, `after_streamline`)
+            #[cfg(windows)]
+            if self.fg_win.used {
+                self.queue.submit(std::iter::empty());
+            }
             self.queue.on_submitted_work_done(move || {
                 release(lib, &lost, start, viewport);
                 drop(held);
@@ -6429,7 +6535,31 @@ mod imp {
         pub fn fg_end(&mut self) {
             match self.0 {}
         }
+
+        #[cfg(windows)]
+        pub fn fg_shown(&self) -> crate::dlss_fg::FgShown {
+            match self.0 {}
+        }
+
+        #[cfg(windows)]
+        pub fn fg_totals(&self) -> (u64, u64) {
+            match self.0 {}
+        }
     }
+}
+
+/// Windows: `held` (frame generation's images) let go once Streamline is
+/// through with them. It reads them at the present, on its own queue,
+/// which wgpu does not track; its queue parallelism mode 0
+/// (eBlockPresentingClientQueue, `DlssgOptions`) holds the presenting
+/// queue, the viewer's only one, until that work ends. So an empty
+/// submission made now, after the present that last named them, finishes
+/// after it, and they go then, where the device is polled. Called only
+/// after that present.
+#[cfg(windows)]
+pub(crate) fn after_streamline<T: Send + 'static>(queue: &wgpu::Queue, held: T) {
+    queue.submit(std::iter::empty());
+    queue.on_submitted_work_done(move || drop(held));
 }
 
 pub(crate) use imp::{

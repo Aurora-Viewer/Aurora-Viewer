@@ -49,6 +49,12 @@ pub fn dlss_retry() {
 pub fn dlss_wanted(setting: bool) -> bool {
     dlss::wanted(setting)
 }
+/// DLSS frame generation is wanted, for the setting given:
+/// `AURORA_DLSS_FG` wins over it (what `RenderSettings::frame_generation`
+/// asks), so that Preferences shows its status when the variable turns it on.
+pub fn dlss_fg_wanted(setting: bool) -> bool {
+    dlss::fg_wanted(setting)
+}
 pub use device_lost::{
     GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_drop, in_guarded_poll, in_guarded_start, in_guarded_ui_upload, is_drop_loss_panic,
     is_loss_panic, is_start_loss_panic, loss_details, start_guarded,
@@ -212,7 +218,9 @@ pub use dlss_fg::running as dlss_fg_running;
 /// DLSS frame generation as it runs in the window, over the last second:
 /// what shows its frames, Reflex, frames shown per frame drawn and both
 /// rates (dlss_fg.rs), for Preferences.
-pub use dlss_fg::{FgRefusal as DlssFgRefusal, FgShown as DlssFgShown, FgStatus as DlssFgStatus, status as dlss_fg_status};
+pub use dlss_fg::{
+    FgHeld as DlssFgHeld, FgRefusal as DlssFgRefusal, FgShown as DlssFgShown, FgStatus as DlssFgStatus, status as dlss_fg_status,
+};
 
 /// The DLSS folder's sl-ngx against this viewer's (Linux; dlss.rs): one
 /// built for another viewer version is updated in the background at the

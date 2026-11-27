@@ -1415,7 +1415,9 @@ fn image(cx: &mut Cx) {
         // restart: `dlss_fg_restart(true)`)
         cx.conditional(dlss && cfg!(any(target_os = "linux", windows)), |cx| {
             let p = cx.p;
-            let on = cx.s.dlss_fg;
+            // (`AURORA_DLSS_FG` for a test overrides the setting: the notes
+            // and the status follow what runs, as RenderSettings does)
+            let on = aurora_render::dlss_fg_wanted(cx.s.dlss_fg);
             let ready = aurora_render::dlss_fg_ready();
             let restart = aurora_render::dlss_fg_restart(on);
             let blocked = (!ready && !restart).then(|| tr!("ui-options-dlss-fg-unavailable"));
@@ -1847,7 +1849,7 @@ fn parcel_rows<'a, T, K: egui::AsIdSalt>(
 /// the frames shown per second against the drawn ones.
 fn fg_status_lines(status: &aurora_render::DlssFgStatus) -> Vec<String> {
     use aurora_i18n::tr;
-    use aurora_render::{DlssFgRefusal, DlssFgShown};
+    use aurora_render::{DlssFgHeld, DlssFgRefusal, DlssFgShown};
     let mut lines = Vec::new();
     match &status.shown {
         DlssFgShown::Off => {
@@ -1860,21 +1862,43 @@ fn fg_status_lines(status: &aurora_render::DlssFgStatus) -> Vec<String> {
             lines.push(tr!("ui-options-dlss-fg-status-streamline-off", status = status.as_str()));
             return lines;
         }
+        // (Windows: the viewer asked it off)
+        DlssFgShown::StreamlineHeld(held) => {
+            lines.push(match held {
+                DlssFgHeld::Small(min) => {
+                    let min = min.to_string();
+                    tr!("ui-options-dlss-fg-status-held-small", min = min.as_str())
+                }
+                DlssFgHeld::Memory => tr!("ui-options-dlss-fg-status-held-memory").to_owned(),
+                DlssFgHeld::NoCopy => tr!("ui-options-dlss-fg-status-held-no-copy").to_owned(),
+            });
+            return lines;
+        }
         DlssFgShown::TwoPresents(why) => {
             let why = match why {
-                Some(DlssFgRefusal::OldSlNgx) => tr!("ui-options-dlss-fg-why-old-sl-ngx").to_owned(),
-                Some(DlssFgRefusal::NoQueue) => tr!("ui-options-dlss-fg-why-no-queue").to_owned(),
-                Some(DlssFgRefusal::SecondCamera) => tr!("ui-options-dlss-fg-why-second-camera").to_owned(),
-                Some(DlssFgRefusal::Stalled) => tr!("ui-options-dlss-fg-why-stalled").to_owned(),
-                Some(DlssFgRefusal::Failed(detail)) => tr!("ui-options-dlss-fg-why-failed", detail = detail.as_str()),
-                None => tr!("ui-options-dlss-fg-why-none").to_owned(),
+                // (a forced mode is not paced at half the refresh rate:
+                // a line of its own, not the fallback's)
+                Some(DlssFgRefusal::PresentMode) => None,
+                Some(DlssFgRefusal::OldSlNgx) => Some(tr!("ui-options-dlss-fg-why-old-sl-ngx").to_owned()),
+                Some(DlssFgRefusal::NoQueue) => Some(tr!("ui-options-dlss-fg-why-no-queue").to_owned()),
+                Some(DlssFgRefusal::SecondCamera) => Some(tr!("ui-options-dlss-fg-why-second-camera").to_owned()),
+                Some(DlssFgRefusal::Stalled) => Some(tr!("ui-options-dlss-fg-why-stalled").to_owned()),
+                Some(DlssFgRefusal::Failed(detail)) => Some(tr!("ui-options-dlss-fg-why-failed", detail = detail.as_str())),
+                None => Some(tr!("ui-options-dlss-fg-why-none").to_owned()),
             };
-            lines.push(tr!("ui-options-dlss-fg-status-fallback", why = why.as_str()));
+            lines.push(match why {
+                Some(why) => tr!("ui-options-dlss-fg-status-fallback", why = why.as_str()),
+                None => tr!("ui-options-dlss-fg-status-present-mode").to_owned(),
+            });
         }
     }
+    // (the fallback's line already says Reflex is off)
     let presenter = status.shown == DlssFgShown::Presenter;
+    let fallback = matches!(status.shown, DlssFgShown::TwoPresents(_));
     if status.reflex {
         lines.push(tr!("ui-options-dlss-fg-status-reflex-on").to_owned());
+    } else if status.reflex_failed && !fallback {
+        lines.push(tr!("ui-options-dlss-fg-status-reflex-failed").to_owned());
     } else if presenter {
         lines.push(tr!("ui-options-dlss-fg-status-reflex-off").to_owned());
     }
@@ -1916,13 +1940,14 @@ fn dlss_update_line(update: &aurora_render::DlssUpdate) -> Option<String> {
 #[cfg(test)]
 mod fg_status_tests {
     use super::{dlss_update_line, fg_status_lines};
-    use aurora_render::{DlssFgRefusal, DlssFgShown, DlssFgStatus, DlssUpdate};
+    use aurora_render::{DlssFgHeld, DlssFgRefusal, DlssFgShown, DlssFgStatus, DlssUpdate};
 
     #[test]
     fn the_presenter_says_reflex_and_the_frames_shown_against_the_drawn() {
         let status = DlssFgStatus {
             shown: DlssFgShown::Presenter,
             reflex: true,
+            reflex_failed: false,
             per_drawn: 1.98,
             drawn_fps: 59.6,
             shown_fps: 118.4,
@@ -1954,6 +1979,61 @@ mod fg_status_tests {
         let lines = fg_status_lines(&status);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("eFailResolutionTooLow"));
+    }
+
+    #[test]
+    fn frame_generation_held_by_the_viewer_says_why_alone() {
+        let held = |held| {
+            fg_status_lines(&DlssFgStatus {
+                shown: DlssFgShown::StreamlineHeld(held),
+                reflex: true,
+                ..DlssFgStatus::default()
+            })
+        };
+        let small = held(DlssFgHeld::Small(64));
+        assert_eq!(small.len(), 1, "{small:?}");
+        assert!(small[0].starts_with("Not running") && small[0].contains("64"), "{small:?}");
+        let memory = held(DlssFgHeld::Memory);
+        assert_eq!(memory.len(), 1, "{memory:?}");
+        assert!(memory[0].contains("video memory"), "{memory:?}");
+        let copy = held(DlssFgHeld::NoCopy);
+        assert_eq!(copy.len(), 1, "{copy:?}");
+        assert!(copy[0].contains("cannot be copied"), "{copy:?}");
+    }
+
+    #[test]
+    fn a_forced_present_mode_says_so_not_half_the_refresh_rate() {
+        let status = DlssFgStatus {
+            shown: DlssFgShown::TwoPresents(Some(DlssFgRefusal::PresentMode)),
+            ..DlssFgStatus::default()
+        };
+        let lines = fg_status_lines(&status);
+        assert!(lines[0].contains("AURORA_PRESENT_MODE"), "{lines:?}");
+        assert!(!lines[0].contains("half"), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.contains("Reflex: ")), "{lines:?}");
+    }
+
+    #[test]
+    fn reflex_says_a_failed_call_apart_from_a_driver_without_it() {
+        let status = |reflex_failed| DlssFgStatus {
+            shown: DlssFgShown::Presenter,
+            reflex_failed,
+            ..DlssFgStatus::default()
+        };
+        let failed = fg_status_lines(&status(true)).join("\n");
+        assert!(failed.contains("Reflex: off") && failed.contains("failed"), "{failed}");
+        assert!(!failed.contains("VK_NV_low_latency2"), "{failed}");
+        let driver = fg_status_lines(&status(false)).join("\n");
+        assert!(driver.contains("VK_NV_low_latency2") && !driver.contains("failed"), "{driver}");
+        // Windows: a failed call is said there too; the driver line is
+        // the presenter's alone
+        let streamline = |reflex_failed| DlssFgStatus {
+            shown: DlssFgShown::Streamline(None),
+            reflex_failed,
+            ..DlssFgStatus::default()
+        };
+        assert!(fg_status_lines(&streamline(true)).iter().any(|l| l.contains("failed")));
+        assert!(!fg_status_lines(&streamline(false)).iter().any(|l| l.contains("Reflex: ")));
     }
 
     #[test]

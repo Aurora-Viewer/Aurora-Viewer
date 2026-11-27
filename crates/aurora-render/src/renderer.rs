@@ -2519,6 +2519,10 @@ pub(crate) struct Backend {
     dlss_aside: Option<(crate::dlss::Dlss, Instant)>,
     /// DLSS frame generation's images while it runs (`fg_on`, dlss_fg.rs)
     fg: Option<crate::dlss_fg::FrameGen>,
+    /// The size (and whether the presenter's ring) the video memory last
+    /// refused frame generation's images at: off at that size, the frame
+    /// presented as drawn, until the window's size changes (`make_fg`)
+    fg_refused: Option<((u32, u32), bool)>,
     /// Linux: sl-ngx's presenter on the window's surface while frame
     /// generation runs (dlss.rs `Presenter`), and why it last could not
     /// run or stopped: frame generation then presents the prototype's way
@@ -2585,9 +2589,14 @@ impl Drop for Backend {
     /// (#1650). A lost device only closes the viewer, so the surface is left
     /// to the process, which releases it with the driver's objects.
     fn drop(&mut self) {
-        // sl-ngx's presenter before the surface it presents to
+        // sl-ngx's presenter before the surface it presents to (its ring
+        // left to it when it could not be ended: `Presenter::end`)
         #[cfg(all(feature = "dlss", target_os = "linux"))]
-        drop(self.fg_presenter.take());
+        if let Some(mut presenter) = self.fg_presenter.take()
+            && !presenter.end()
+        {
+            std::mem::forget(self.fg.take());
+        }
         if self.lost.get() {
             // (DLSS's features stay with the lost device: the flag says so
             // to dlss.rs, which never calls Streamline on it again)
@@ -2596,6 +2605,19 @@ impl Drop for Backend {
             return;
         }
         self.wait_pipeline_workers();
+        // Windows: frame generation asked off and DLSS's feature let go
+        // (`Dlss::retire`: off without its memory, then freed) before the
+        // swapchain Streamline's proxy holds goes with the surface
+        // (DLSS-G guide §6.4, §17), its image before the interface once
+        // Streamline is through with it
+        #[cfg(windows)]
+        {
+            if let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut()) {
+                dlss.fg_off();
+            }
+            self.taa = None;
+            self.fg_hudless_drop();
+        }
         // SAFETY: dropped once, here, and never used again: the backend is
         // being dropped.
         unsafe { std::mem::ManuallyDrop::drop(&mut self.surface) };
@@ -5524,6 +5546,7 @@ impl Backend {
             dlss_drew: None,
             dlss_aside: None,
             fg: None,
+            fg_refused: None,
             #[cfg(all(feature = "dlss", target_os = "linux"))]
             fg_presenter: None,
             #[cfg(all(feature = "dlss", target_os = "linux"))]
@@ -9355,7 +9378,8 @@ impl Backend {
     /// The presentation mode for the vsync setting, or Fifo while Linux's
     /// frame generation runs (`fg`): its two presents a frame are paced by
     /// the screen, the drawn frames at half its rate (dlss_fg.rs).
-    /// `AURORA_PRESENT_MODE` wins over both.
+    /// `AURORA_PRESENT_MODE` wins over both (and keeps sl-ngx's presenter,
+    /// Fifo only, from starting: `sync_fg_presenter`).
     fn set_presentation(&mut self, vsync: bool, fg: bool) {
         if (vsync, fg) == (self.vsync, self.fg_paced) {
             return;
@@ -9427,9 +9451,23 @@ impl Backend {
         if Arc::strong_count(&self.surface) != 1 {
             return Err(SURFACE_SHARED);
         }
+        // A panic between the take and the write below (wgpu's drop of the
+        // old surface, on a device lost meanwhile) would unwind into
+        // `Drop` with the field moved out: abort instead, as below.
+        struct AbortOnUnwind;
+        impl Drop for AbortOnUnwind {
+            fn drop(&mut self) {
+                if std::thread::panicking() {
+                    log::error!("presentation: the window's surface panicked while let go");
+                    std::process::abort();
+                }
+            }
+        }
+        let unwind = AbortOnUnwind;
         // SAFETY: the surface is taken out once and `self.surface` is
-        // written again below, on every path that does not abort, before
-        // anything reads it or `Drop` lets it go.
+        // written again below, on every path that does not abort (a panic
+        // meanwhile aborts: `unwind`), before anything reads it or `Drop`
+        // lets it go.
         let old = unsafe { std::mem::ManuallyDrop::take(&mut self.surface) };
         // (the only holder, checked above: the old Vulkan surface, with the
         // driver's fifo and commit timer of the wl_surface, is gone before
@@ -9447,6 +9485,7 @@ impl Backend {
                 std::process::abort();
             }
         }
+        drop(unwind);
         Ok(())
     }
 
@@ -9473,6 +9512,15 @@ impl Backend {
         // (the second camera's hold on the surface ends: tried again)
         if !want || (self.fg_present_refused == Some(FgRefusal::SecondCamera) && Arc::strong_count(&self.surface) == 1) {
             self.fg_present_refused = None;
+        }
+        // (a mode forced for this launch, other than the presenter's Fifo,
+        // keeps the window the viewer's: it presents both frames in it)
+        if want
+            && self.fg_present_refused.is_none()
+            && crate::present::forced().is_some_and(|m| m != wgpu::PresentMode::Fifo && self.present_modes.contains(&m))
+        {
+            log::info!("DLSS frame generation: AURORA_PRESENT_MODE forces another mode than Fifo: sl-ngx's presenter does not start");
+            self.fg_present_refused = Some(FgRefusal::PresentMode);
         }
         let want = want && self.fg_present_refused.is_none();
         if want == self.fg_presenter.is_some() {
@@ -9517,11 +9565,55 @@ impl Backend {
             log::error!("DLSS frame generation: sl-ngx's presenter stops: {why:?}; frame generation presents the prototype's way");
             self.fg_present_refused = Some(why);
         }
-        if let Some(presenter) = self.fg_presenter.take() {
+        if let Some(mut presenter) = self.fg_presenter.take() {
             // (every frame handed over released by it, before the images go)
+            if presenter.end() {
+                self.fg = None;
+            } else {
+                // Streamline's lock not had: the presenter may still read
+                // the ring, which is left to it (`Presenter::end`)
+                std::mem::forget(self.fg.take());
+            }
             drop(presenter);
-            self.fg = None;
             crate::present::configure(&self.surface, &self.device, &self.config);
+        }
+    }
+
+    /// Frame generation's images made at `size` (the ring handed to
+    /// sl-ngx's presenter, or the prototype's), under the video memory's
+    /// error scope. False, with none, when it refuses them: remembered for
+    /// that size, where frame generation stays off and the frame presents
+    /// as drawn. The images they replace go first (with the presenter, the
+    /// caller has paused it and seen every frame released).
+    fn make_fg(&mut self, size: (u32, u32), format: wgpu::TextureFormat, ring: bool) -> bool {
+        self.fg = None;
+        if self.fg_refused == Some((size, ring)) {
+            return false;
+        }
+        let (made, refused) = crate::gpu_alloc::scoped(&self.device, || {
+            crate::dlss_fg::FrameGen::new(&self.device, &self.queue, size, format, ring)
+        });
+        if self.memory_refused(refused) {
+            log::warn!(
+                "DLSS frame generation: the video memory refused its images at {}x{}: off at this size",
+                size.0,
+                size.1
+            );
+            self.fg_refused = Some((size, ring));
+            return false;
+        }
+        (self.fg, self.fg_refused) = (Some(made), None);
+        true
+    }
+
+    /// Windows: frame generation's image before the interface let go,
+    /// once Streamline is through with it: it reads it at the present, on
+    /// its own queue, which wgpu does not track ([`crate::dlss::after_streamline`]).
+    /// Only after the present that last named it, as every caller is.
+    #[cfg(windows)]
+    fn fg_hudless_drop(&mut self) {
+        if let Some(hudless) = self.fg_hudless.take() {
+            crate::dlss::after_streamline(&self.queue, hudless);
         }
     }
 
@@ -9535,12 +9627,29 @@ impl Backend {
         };
         let (size, format) = ((self.config.width, self.config.height), self.config.format);
         if self.fg.as_ref().is_none_or(|fg| !fg.fits(size, format, true)) {
-            // (the old ring's images may still be read: paused first)
+            // (the old ring's images may still be read: the presenter
+            // paused, and every frame it took released, before they go)
+            // (a refused pause stopped the presenter: what it took is
+            // never released, so nothing is waited for)
             let paused = presenter.pause();
-            self.fg = Some(crate::dlss_fg::FrameGen::new(&self.device, &self.queue, size, format, true));
+            let refused = paused.refused();
+            let settled = refused.is_none() && presenter.settle();
+            let made = settled && self.make_fg(size, format, true);
             drop(paused);
+            if !made {
+                use crate::dlss_fg::FgRefusal;
+                let why = if let Some(r) = refused {
+                    FgRefusal::Failed(format!("slngxPresenterPause: {r}"))
+                } else if settled {
+                    FgRefusal::Failed(String::from("the video memory refused its images"))
+                } else {
+                    FgRefusal::Stalled
+                };
+                self.stop_fg_presenter(Some(why));
+                return false;
+            }
         }
-        let Some(fg) = &mut self.fg else {
+        let (Some(presenter), Some(fg)) = (&self.fg_presenter, &mut self.fg) else {
             return false;
         };
         let wait = fg.advance();
@@ -9620,33 +9729,46 @@ impl Backend {
                 Some(presenter) => {
                     status.shown = FgShown::Presenter;
                     status.reflex = presenter.reflex() && presenter.stats().is_some_and(|st| st.low_latency != 0);
+                    status.reflex_failed = presenter.reflex_failed();
                 }
                 None => status.shown = FgShown::TwoPresents(self.fg_present_refused.clone()),
             }
         }
-        // (Windows: Streamline paces and counts its presents; Reflex in
-        // low-latency mode is what frame generation was allowed on)
+        // (Windows: Streamline paces and counts its presents, `fg_totals`;
+        // Reflex in low-latency mode is what frame generation was allowed
+        // on. Off at this size for want of its image before the interface:
+        // the viewer holds it.)
         #[cfg(windows)]
         {
-            let (per_drawn, refused) = self
-                .taa
-                .as_ref()
-                .and_then(|t| t.dlss.as_ref())
-                .map(|(d, _)| d.fg_shown())
-                .unwrap_or_default();
-            status.shown = crate::dlss_fg::FgShown::Streamline(refused);
+            use crate::dlss_fg::{FgHeld, FgShown};
+            let size = wgpu::Extent3d {
+                width: self.config.width,
+                height: self.config.height,
+                depth_or_array_layers: 1,
+            };
+            status.shown = if self.fg_hudless_refused == Some(size) {
+                FgShown::StreamlineHeld(FgHeld::Memory)
+            } else {
+                self.taa
+                    .as_ref()
+                    .and_then(|t| t.dlss.as_ref())
+                    .map_or(FgShown::Streamline(None), |(d, _)| d.fg_shown())
+            };
             status.reflex = true;
-            status.per_drawn = per_drawn as f32;
-            status.shown_fps = status.drawn_fps * per_drawn as f32;
         }
         crate::dlss_fg::set_status(Some(status));
     }
 
     /// Frame generation's running totals of frames shown and of real
-    /// frames shown (Linux): sl-ngx's presenter's (what the screen showed,
+    /// frames shown: on Linux sl-ngx's presenter's (what the screen showed,
     /// with present timing; else what it presented), or the prototype's
-    /// presents. None where they are not counted (Windows).
+    /// presents; on Windows what Streamline presented, and the frames
+    /// drawn while it was asked on.
     fn fg_totals(&self) -> Option<(u64, u64)> {
+        #[cfg(windows)]
+        if let Some((dlss, _)) = self.taa.as_ref().and_then(|t| t.dlss.as_ref()) {
+            return Some(dlss.fg_totals());
+        }
         #[cfg(all(feature = "dlss", target_os = "linux"))]
         if let Some(presenter) = &self.fg_presenter {
             let st = presenter.stats()?;
@@ -10969,6 +11091,8 @@ impl Backend {
                 dlss.fg_begin();
             }
         }
+        // (frame generation's state is the window's own frames' alone)
+        let window_frame = output.is_none() && snapshot.is_none() && !self.external;
         let t_acquire = Instant::now();
         // Linux: with sl-ngx's presenter, the frame is drawn into its ring
         // and handed over at its end, no window image acquired (never on a
@@ -11102,20 +11226,23 @@ impl Backend {
         // images go when it stops. Windows' Streamline makes its frames at
         // the present, from the window's image
         let fg_on = self.fg_on();
-        let fg_linux = cfg!(target_os = "linux") && fg_on;
-        if !fg_linux && self.fg.take().is_some() {
+        // (the window's own frames only: a photo's or a caller's frame,
+        // drawn offscreen, leaves the window's frame generation as it is,
+        // its ring maybe still read by the presenter; the second camera
+        // never runs it, nor speaks for the window's frame cap)
+        let fg_linux = cfg!(target_os = "linux") && fg_on && window_frame;
+        if window_frame && !fg_linux && self.fg.take().is_some() {
             log::info!("DLSS frame generation: stopped, images let go");
         }
         #[cfg(windows)]
-        if !fg_on {
-            self.fg_hudless = None;
+        if window_frame && !fg_on {
+            self.fg_hudless_drop();
         }
-        crate::dlss_fg::set_running(fg_linux);
         let (surface_tex, fg_held) = match surface_tex {
             FrameTarget::Surface(t) if fg_linux => {
                 let (size, format) = ((self.config.width, self.config.height), self.config.format);
                 if self.fg.as_ref().is_none_or(|fg| !fg.fits(size, format, false)) {
-                    self.fg = Some(crate::dlss_fg::FrameGen::new(&self.device, &self.queue, size, format, false));
+                    self.make_fg(size, format, false);
                 }
                 match &self.fg {
                     Some(fg) => (FrameTarget::Offscreen(fg.real().clone()), Some(t)),
@@ -11124,6 +11251,12 @@ impl Backend {
             }
             other => (other, None),
         };
+        // (and runs on it: through the presenter, or the prototype's two
+        // presents; not where the video memory refused its images)
+        let fg_linux = fg_linux && (fg_presented || fg_held.is_some());
+        if window_frame {
+            crate::dlss_fg::set_running(fg_linux);
+        }
         // CPU encode time excludes waiting for the swapchain (vsync).
         let t0 = Instant::now();
         let mut prof = Marks::start("acquire", t0);
@@ -15753,8 +15886,12 @@ impl Backend {
                     && self.fg_hudless_refused != Some(size)
                 {
                     // checked apart: refused, frame generation is off at
-                    // this size and the frame presents
-                    self.fg_hudless = None;
+                    // this size and the frame presents (the old image once
+                    // Streamline is through with it: `fg_hudless_drop`,
+                    // field by field as the frame's closures borrow `self`)
+                    if let Some(old) = self.fg_hudless.take() {
+                        crate::dlss::after_streamline(&self.queue, old);
+                    }
                     let (made, refused) = crate::gpu_alloc::scoped(&self.device, || {
                         self.device.create_texture(&wgpu::TextureDescriptor {
                             label: Some("DLSS FG hudless"),
@@ -16403,7 +16540,9 @@ impl Backend {
             stats.presented = true;
             stats.input_ms = input_at.map(|at| at.elapsed().as_secs_f32() * 1000.0);
         }
-        self.publish_fg_status(if cfg!(windows) { fg_on } else { fg_linux });
+        if window_frame {
+            self.publish_fg_status(if cfg!(windows) { fg_on } else { fg_linux });
+        }
         self.lost.poll(&self.device);
         // a click answered by now goes back with this frame's result
         self.depth_pick.harvest_clicks();

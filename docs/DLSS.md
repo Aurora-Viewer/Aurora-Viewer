@@ -115,16 +115,26 @@ inside an SDK checkout.
 **After a viewer update.** Each viewer version names the sl-ngx commit it
 was made for, and loads `libsl_ngx.<commit>.so` when the folder has it
 (else `libsl_ngx.so`). When the folder lacks it, the viewer runs
-`dlss-setup.sh --update` in the background at its start, with the SDK
-already installed: it builds that commit, installs it under its versioned
-name only and keeps the three newest, so viewers of other versions on the
-PC keep theirs. Its output goes to `update.log` in the folder. The new
+`dlss-setup.sh --update` in the background at its start. It downloads
+NVIDIA's DLSS SDK again (its licence, headers and Linux files, about
+60 MB), builds that commit against it, installs sl-ngx under its versioned
+name only (keeping the three newest, so viewers of other versions on the
+PC keep theirs) and replaces the folder's `libnvidia-ngx-dlss*.so` with
+the SDK's. Its output goes to `update.log` in the folder. The new
 sl-ngx is used from the next start; until then the viewer runs with the
 one it loaded. Preferences › Graphics › Anti-aliasing says it under
 **Frame generation**: being built, built (restart to use it), or why not.
 The update never shows NVIDIA's licence: when the SDK's licence differs
-from the one you accepted, it stops, and you run `./dlss-setup.sh` to read
-it.
+from the one you accepted, it stops with status 3, and you run
+`./dlss-setup.sh` to read it.
+
+One run of the script at a time changes the folder: an install, `--update`
+and `--remove` each hold a lock, `.aurora-dlss.dlss-setup.lock` beside the
+folder (named after the folder). An install or `--remove` started during
+another run waits for it and says so; `--update` does not wait: it exits
+with status 4 at once, writing nothing (not even `update.log`), and
+Preferences says the update is running. `./dlss-setup.sh --help` lists its
+exit statuses.
 
 ## Ray Reconstruction
 
@@ -220,14 +230,18 @@ second camera holds the window: the presenter starts once it closes.
 **Under the switch**, while it runs, Preferences says what shows the frames
 (the presenter, or the fallback and why), whether Reflex is on, and the
 mode with the frames shown per second against the frames drawn: the
-viewer's own frame rate counts only the drawn ones. With the presenter
-the shown frames are the ones it presented, or, where the driver has
-present timing, the ones the screen showed.
+viewer's own frame rate counts only the drawn ones. The shown frames are
+the ones presented: the viewer does not turn on present timing, so they
+are not the ones the screen showed.
+
+sl-ngx's presenter runs on Wayland; on X11 frame generation presents the
+fallback way, and Preferences says why.
 
 DLSS makes the frame from the drawn one before
 the interface; the interface on the generated frame is the drawn frame's,
 laid over it wherever the interface drew. While it runs the window presents under Fifo,
-whatever the vsync setting, and the frame rate limit stands aside (the
+whatever the vsync setting (not an `AURORA_PRESENT_MODE` forced for a
+test: *For a test*, below), and the frame rate limit stands aside (the
 background limit does not): the screen paces the pairs, so the viewer draws
 at half the refresh rate and shows a frame at every refresh. It stops
 while the viewer is not in front (neither its window nor one of its windows
@@ -388,8 +402,10 @@ more than K does.
   `AURORA_DLSS_RR_BEHIND`) and the traced passes' denoisers
   (`AURORA_RT_RAW`, `AURORA_RT_GI_RAW`) are in docs/TESTING.md.
 - `AURORA_DLSS_FG=1` or `0` turns frame generation (*Frame generation*,
-  above) on or off for one launch, whatever the setting;
-  `AURORA_PRESENT_MODE` still wins over its Fifo.
+  above) on or off for one launch, whatever the setting. With it on, an
+  `AURORA_PRESENT_MODE` other than `fifo` (and one the window offers)
+  keeps sl-ngx's presenter from starting: the viewer presents both frames
+  itself, in that mode, and Preferences says why.
   `AURORA_DLSS_FG_DUMP=<folder>` writes three frames' images as PPM
   (docs/TESTING.md). On Windows `AURORA_DLSS_FG_FRAMES=<n>` asks for `n`
   generated frames per frame drawn (1 by default).

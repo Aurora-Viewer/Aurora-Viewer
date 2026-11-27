@@ -13,10 +13,23 @@
 # sl-ngx of the commit below (libsl_ngx.<commit>.so), so a viewer update
 # brings its sl-ngx along. Each viewer loads its own commit's, so viewers
 # of different versions on one PC share the folder without rebuilding it
-# in turn; the three newest are kept. It installs only when NVIDIA's
-# licence is the one accepted at the install, word for word; otherwise it
-# exits with status 3 and installs nothing (run this script to read the new
-# licence). Its last line says what it did, or why it did not.
+# in turn; the three newest are kept. It downloads NVIDIA's SDK again
+# (about 60 MB), whose libnvidia-ngx-dlss*.so replace the folder's, and
+# installs only when NVIDIA's licence is the one accepted at the install,
+# word for word. Once it holds the folder's lock its output goes to
+# update.log in the folder, whose last line says what it did, or why not.
+# Its exit status:
+#   0  done, or nothing to do (this sl-ngx is already there)
+#   3  NVIDIA's licence changed: nothing installed (run this script to
+#      read the new licence)
+#   4  another run of this script is changing the folder: nothing
+#      done, update.log left as it was
+#   other  failed (update.log's last line says why; no folder, no log)
+#
+# One run at a time changes the folder: every mode that writes holds a
+# lock, the file .<folder name>.dlss-setup.lock beside the folder (it
+# outlives --remove). An install or --remove waits for it; --update does
+# not.
 #
 # The files go to $AURORA_DLSS_DIR, else $XDG_DATA_HOME/aurora-dlss, else
 # ~/.local/share/aurora-dlss: the folder the viewer looks in at start.
@@ -25,6 +38,7 @@
 #   libnvidia-ngx-dlssg.so.<version>  the same, for frame generation
 #   libsl_ngx.so                      sl-ngx, built here against the SDK
 #   libsl_ngx.<commit>.so             the same, by its commit's first 12 digits
+#   update.log                        the last --update's output
 set -euo pipefail
 
 REPO=https://github.com/NVIDIA/DLSS.git
@@ -50,9 +64,29 @@ VERSIONED=libsl_ngx.${SL_NGX_COMMIT:0:12}.so
 old_files() {
     [[ -f $dest/LICENSE.txt ]] && [[ $(head -n 1 "$dest/LICENSE.txt") == "NVIDIA RTX SDKs LICENSE"* ]] \
         && rm -f "$dest/LICENSE.txt"
-    # what an earlier version of this script built in sl-ngx's place
-    rm -f "$dest/libnvsdk_ngx.so"
+    # what an earlier version of this script built in sl-ngx's place, and
+    # its lock, which lived in the folder
+    rm -f "$dest/libnvsdk_ngx.so" "$dest/.update.lock"
     return 0
+}
+
+# The folder's lock, beside it rather than in it so that --remove can
+# delete the folder while holding it, and named from the folder alone so
+# that every run (the viewer's, a terminal's) takes the same one. Opened
+# to append, never truncated, and never deleted: a run waiting on a lock
+# file that went would hold a lock no other run sees.
+dest_real=$(realpath -m "$dest")
+lock=$(dirname "$dest_real")/.$(basename "$dest_real").dlss-setup.lock
+# take_lock wait|nowait: wait for another run to finish, or exit with 4
+# at once (--update; nothing written). Without flock (util-linux), runs
+# are not kept apart.
+take_lock() {
+    exec 9>>"$lock" || die "cannot open the lock $lock"
+    command -v flock >/dev/null || return 0
+    flock -n 9 && return 0
+    [[ $1 == wait ]] || exit 4
+    echo "Another run of dlss-setup.sh is changing $dest: waiting for it to finish..."
+    flock 9
 }
 
 # AURORA_DLSS_DIR anywhere inside an SDK checkout, at any depth (links
@@ -82,26 +116,36 @@ case ${1:-} in
     --sdk) [[ -n ${2:-} ]] || die "--sdk needs the SDK's folder"; sdk=$2 ;;
     --update)
         update=1
+        # (two viewers starting at once: one update; the other exits 4
+        # and writes nothing)
+        [[ -d $dest ]] || die "no install in $dest to update: run this script without --update"
+        take_lock nowait
+        # what the lock's holder left: removed, or already updated
+        [[ -d $dest ]] || die "no install in $dest to update: run this script without --update"
+        exec >"$dest/update.log" 2>&1
         [[ -f $dest/libsl_ngx.so && -f $dest/$LICENCE_NAME ]] \
             || die "no install in $dest to update: run this script without --update"
         if [[ -f $dest/$VERSIONED ]]; then
             echo "sl-ngx in $dest is already ${SL_NGX_COMMIT:0:12}: nothing to do."
             exit 0
         fi
-        # (two viewers starting at once: one update)
-        exec 9>"$dest/.update.lock"
-        command -v flock >/dev/null && { flock -n 9 || die "another update of $dest is running"; }
         ;;
     --remove)
         ! in_sdk "$dest" \
             || die "AURORA_DLSS_DIR is inside NVIDIA's DLSS SDK ($dest): nothing removed, choose another"
+        if [[ ! -d $dest ]]; then
+            echo "No NVIDIA DLSS in $dest: nothing to remove."
+            exit 0
+        fi
+        take_lock wait
         rm -f "$dest"/libnvidia-ngx-dlss.so.* "$dest"/libnvidia-ngx-dlssd.so.* "$dest"/libnvidia-ngx-dlssg.so.* \
-            "$dest"/libsl_ngx.so "$dest/$LICENCE_NAME" "$dest"/libsl_ngx.*.so "$dest/.update.lock"
+            "$dest"/libsl_ngx.so "$dest/$LICENCE_NAME" "$dest"/libsl_ngx.*.so "$dest/update.log"
         old_files
         rmdir "$dest" 2>/dev/null || true
         echo "Removed NVIDIA DLSS from $dest. The viewer offers FSR alone from its next start."
         exit 0 ;;
-    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # (the comment block at the top, whatever its length)
+    -h|--help) awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
 esac
 
@@ -142,7 +186,6 @@ fg_snippet=
 [[ -f ${fg_snippets[0]} ]] && fg_snippet=$(printf '%s\n' "${fg_snippets[@]}" | sort -V | tail -n 1)
 # AURORA_DLSS_DIR inside an SDK (in_sdk), or the selected SDK's own folder
 # whatever its shape
-dest_real=$(realpath -m "$dest")
 ! in_sdk "$dest" || die "AURORA_DLSS_DIR is inside NVIDIA's DLSS SDK ($dest): choose another"
 for d in "$sdk" "$sdk/lib/Linux_x86_64" "$sdk/lib/Linux_x86_64/rel"; do
     [[ $dest_real != "$(realpath -m "$d")" ]] \
@@ -174,6 +217,11 @@ git -C "$src" checkout --quiet FETCH_HEAD
 make --quiet -C "$src" DLSS_SDK="$(realpath "$sdk")" libsl_ngx.so >/dev/null \
     || die "sl-ngx did not build (its messages are above)"
 
+# (an --update holds the lock since its start)
+if [[ -z $update ]]; then
+    mkdir -p "$(dirname "$dest_real")"
+    take_lock wait
+fi
 mkdir -p "$dest"
 # Staged beside the install, on its filesystem: each file copied under a
 # hidden temporary name and compared with its source, then renamed over

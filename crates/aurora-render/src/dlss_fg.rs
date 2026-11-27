@@ -63,6 +63,22 @@ pub enum FgShown {
     /// Windows: Streamline, at the present; with the status it gave when
     /// it turned frame generation off at this window size
     Streamline(Option<String>),
+    /// Windows: frame generation asked off by the viewer, for this reason
+    StreamlineHeld(FgHeld),
+}
+
+/// Why the viewer asks Streamline's frame generation off (Windows) while
+/// the setting is on.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FgHeld {
+    /// the window is smaller than this many pixels on a side, the least
+    /// Streamline takes (DLSS-G guide §17)
+    Small(u32),
+    /// the video memory refused frame generation's copies of the depth
+    /// and the motion
+    Memory,
+    /// the depth or the motion DLSS reads cannot be copied
+    NoCopy,
 }
 
 /// Why sl-ngx's presenter does not show frame generation's frames
@@ -80,6 +96,9 @@ pub enum FgRefusal {
     SecondCamera,
     /// a frame handed over was not released within 1 s
     Stalled,
+    /// `AURORA_PRESENT_MODE` forces another presentation mode than the
+    /// presenter's Fifo: the viewer presents, in that mode
+    PresentMode,
     /// anything else, as the log says it (a Vulkan result, a call)
     Failed(String),
 }
@@ -90,13 +109,17 @@ pub struct FgStatus {
     pub shown: FgShown,
     /// Reflex in low-latency mode on the swapchain that shows the frames
     pub reflex: bool,
+    /// Reflex stopped as one of its calls failed (the log says which);
+    /// with `reflex` false and this false, the driver lacks it
+    pub reflex_failed: bool,
     /// frames shown per frame drawn (2: one generated for each); 0 not
     /// known yet
     pub per_drawn: f32,
     /// frames drawn and frames shown per second; `shown_fps` 0 not known
-    /// yet. Linux counts what was presented (or, with present timing,
-    /// what the screen showed); Windows multiplies the drawn by what
-    /// Streamline says it presents per frame drawn.
+    /// yet. Both count what was presented (the viewer asks sl-ngx's
+    /// presenter for no present timing, which would count what the screen
+    /// showed): on Linux the presenter's or the prototype's presents, on
+    /// Windows what Streamline says it presented at each present.
     pub drawn_fps: f32,
     pub shown_fps: f32,
 }
