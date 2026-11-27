@@ -312,7 +312,10 @@ pub fn draw_hitboxes(ctx: &egui::Context, world: &World, scene: &Scene, proj: &P
         if scene.gpu.get(idx).is_none() {
             continue;
         }
-        let Some((pp, _, _)) = Scene::object_transform(world, idx, now, 0) else {
+        // The Legacy Viewer draws the box at the simulator's object position
+        // (`getPositionAgent`): the hover, shape and water offsets only lift
+        // the drawn body (`LLVOAvatar::updateCharacter`), never the box.
+        let Some((pp, _, _)) = Scene::object_transform_unshifted(world, idx, now) else {
             continue;
         };
         if pp.distance(eye) > hitbox_draw_range(dv.avatar_hitbox_range) {
@@ -764,6 +767,46 @@ mod tests {
         let seated = hitbox_rotation(reported, Some(parent));
         assert!(seated.abs_diff_eq(parent * reported, 1e-6));
         assert!(!seated.abs_diff_eq(reported, 1e-6));
+    }
+
+    /// The hitbox stays on the simulator's object position when hover height
+    /// lifts the drawn body, like the Legacy Viewer: it draws the box at
+    /// `getPositionAgent` while the hover offset only moves the render root
+    /// (`LLDrawPoolAvatar::renderAvatars`, `LLVOAvatar::updateCharacter` in
+    /// indra/newview).
+    #[test]
+    fn the_hitbox_ignores_hover_height_like_the_legacy_viewer() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = uuid::Uuid::from_u128(0xB0B0_2026_1127);
+        let mut avatar = crate::demo::action_avatar(false);
+        avatar.full_id = id;
+        let sim_z = avatar.position.z;
+        world.apply(aurora_net::NetEvent::MainRegionChanged { handle: 1 });
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![avatar],
+        });
+        world.apply(aurora_net::NetEvent::Appearance(aurora_net::AvatarAppearance {
+            avatar_id: id,
+            texture_entry: None,
+            visual_params: vec![128; 6],
+            cof_version: 1,
+            appearance_version: 1,
+            hover_height: 0.5,
+            attachments: Vec::new(),
+        }));
+        let hover = world.appearance_hover(&id);
+        assert!((hover - 0.5).abs() < 1e-6, "the fixture must hover, got {hover}");
+        let idx = world.objects.index_of_uuid(&id).expect("avatar");
+        let now = Instant::now();
+        let shifted = Scene::object_transform(&world, idx, now, 0).expect("avatar").0;
+        let raw = Scene::object_transform_unshifted(&world, idx, now).expect("avatar").0;
+        assert!((raw.z - sim_z).abs() < 1e-4, "the box sits on the sim position: {}", raw.z);
+        assert!(
+            (shifted.z - raw.z - hover).abs() < 1e-4,
+            "hover lifts the drawn body, never the box: {} vs {hover}",
+            shifted.z - raw.z
+        );
     }
 
     /// The debug texts go where the floating text goes
