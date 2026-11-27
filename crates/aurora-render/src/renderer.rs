@@ -2295,6 +2295,10 @@ pub(crate) struct Backend {
     /// The pipeline workers still running, a set no longer wanted included:
     /// waited for when the renderer is dropped (`wait_pipeline_workers`).
     pipeline_workers: Vec<std::thread::JoinHandle<()>>,
+    /// Development builds' shader reload (shader_reload.rs): the last
+    /// request taken, and the set compiling for it.
+    reload_seen: u64,
+    reload_build: Option<ReloadBuild>,
     /// Rain prototype's wetness memory bookkeeping.
     rain_wet: RainWet,
     snow_trail: SnowTrail,
@@ -2804,6 +2808,18 @@ pub(crate) fn common_shader_for(soft: bool) -> std::borrow::Cow<'static, str> {
         return common;
     }
     common.replace(SOFT_PATH_ON, "const SOFT_PATH: bool = false;").into()
+}
+
+/// The scene's module (`Backend::make_pipelines`): common, object and env
+/// without the stochastic transparency's passes.
+pub(crate) fn scene_shader_source(features: wgpu::Features, soft: bool) -> String {
+    let src = format!(
+        "{}\n{}\n{}",
+        common_shader_for(soft),
+        crate::oit_stochastic::without_st(&crate::object_shader_source(features)),
+        crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
+    );
+    crate::blend_exact::scene_source(src, features)
 }
 
 /// Rain prototype: the wetness memory's bookkeeping. The memory covers
@@ -3523,6 +3539,29 @@ struct PipelineBuild {
     done: std::sync::mpsc::Receiver<(Pipelines, ImpostorPipelines)>,
 }
 
+/// A shader reload compiling on a worker thread (shader_reload.rs), for
+/// the samples, SSR and soft shadows the scene drew with when it started.
+struct ReloadBuild {
+    generation: u64,
+    samples: u32,
+    ssr: bool,
+    soft: bool,
+    /// The water textures its water shaders bind.
+    water: crate::water_effects::WaterBindings,
+    started: std::time::Instant,
+    done: std::sync::mpsc::Receiver<Result<Reloaded, crate::shader_reload::Failure>>,
+}
+
+/// What a shader reload made.
+struct Reloaded {
+    scene: Pipelines,
+    impostors: ImpostorPipelines,
+    water: crate::water_effects::WaterShaders,
+    /// The stochastic transparency's, for the samples it had.
+    stochastic: Option<crate::oit_stochastic::Pipes>,
+    changed: Vec<&'static str>,
+}
+
 /// What a worker thread made for ray tracing: the ray tracer, or the parts
 /// of it an effect turned on later needs.
 enum RtMade {
@@ -3712,7 +3751,7 @@ impl Impostors {
 
     /// The pictures are drawn with the scene's own shaders.
     /// `soft`: with the soft shadows' path (`common_shader_for`).
-    fn shader_source(features: wgpu::Features, soft: bool) -> String {
+    pub(crate) fn shader_source(features: wgpu::Features, soft: bool) -> String {
         format!(
             "{}\n{}\n{}",
             common_shader_for(soft),
@@ -4870,6 +4909,8 @@ impl Backend {
             gbuf_pipelines,
             gbuf_wide,
             pipeline_workers: Vec::new(),
+            reload_seen: crate::shader_reload::generation(),
+            reload_build: None,
             rain_wet: RainWet::default(),
             snow_trail: SnowTrail::default(),
             vsync,
@@ -5211,13 +5252,7 @@ impl Backend {
         let ssr = gbuf.is_some();
         // (without the stochastic transparency's passes: its own module,
         // `make_st`, when the method is first on)
-        let src = format!(
-            "{}\n{}\n{}",
-            common_shader_for(soft),
-            crate::oit_stochastic::without_st(&crate::object_shader_source(device.features())),
-            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
-        );
-        let src = crate::blend_exact::scene_source(src, device.features());
+        let src = scene_shader_source(device.features(), soft);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scene"),
             source: wgpu::ShaderSource::Wgsl(src.as_str().into()),
@@ -7654,6 +7689,205 @@ impl Backend {
         (build, worker)
     }
 
+    /// Development builds: starts a shader reload asked for since the last
+    /// one, and swaps in what a finished one made (shader_reload.rs). The
+    /// frame never waits for it: the worker reads, checks and compiles.
+    fn poll_shader_reload(&mut self) {
+        crate::shader_reload::watch_tick();
+        let generation = crate::shader_reload::generation();
+        // (a lost device makes nothing: the remade renderer reads the files)
+        if generation != self.reload_seen && self.reload_build.is_none() && !self.lost.get() {
+            self.reload_seen = generation;
+            self.start_shader_reload(generation);
+        }
+        let Some(build) = &self.reload_build else { return };
+        if self.lost.get() {
+            // (its pipelines would be of a device gone)
+            let generation = build.generation;
+            self.reload_build = None;
+            crate::shader_reload::report(
+                generation,
+                crate::shader_reload::Outcome::Failed(crate::shader_reload::Failure {
+                    place: None,
+                    message: "the GPU device was lost".into(),
+                }),
+            );
+            return;
+        }
+        let result = match build.done.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(crate::shader_reload::Failure {
+                place: None,
+                message: "the reload's worker stopped".into(),
+            }),
+        };
+        let Some(build) = self.reload_build.take() else { return };
+        let made = match result {
+            Ok(made) => made,
+            Err(failure) => {
+                log::error!("shader reload {}: {failure}; the shaders in use are kept", build.generation);
+                crate::shader_reload::report(build.generation, crate::shader_reload::Outcome::Failed(failure));
+                return;
+            }
+        };
+        let ms = build.started.elapsed().as_millis() as u64;
+        let water = self.water_effects.set_shaders(&build.water, made.water);
+        let current = (self.msaa_samples, self.settings.gbuffer(), self.soft_pipelines);
+        let scene = (build.samples, build.ssr, build.soft) == current && self.pipeline_build.is_none();
+        if scene {
+            self.pipelines = made.scene;
+            self.impostors.set_pipelines(made.impostors);
+        } else {
+            // the settings changed meanwhile: their set may have been made
+            // from the files before the reload, so it is made again
+            self.reload_seen = 0;
+        }
+        // (one made meanwhile for other samples already reads the files)
+        let stochastic = match made.stochastic {
+            Some(p) if self.st_pipes.as_ref().is_some_and(|old| old.samples == p.samples) => {
+                self.st_pipes = Some(p);
+                true
+            }
+            _ => false,
+        };
+        log::info!(
+            "shader reload {}: {} in {ms} ms ({} sample(s), SSR {}, soft shadows {}); changed: {}; rebuilt: {}",
+            build.generation,
+            if scene {
+                "swapped in"
+            } else {
+                "settings changed meanwhile, compiling again"
+            },
+            build.samples,
+            if build.ssr { "on" } else { "off" },
+            if build.soft { "on" } else { "off" },
+            if made.changed.is_empty() {
+                "nothing".to_string()
+            } else {
+                made.changed.join(", ")
+            },
+            [
+                scene.then_some("scene, impostors"),
+                water.then_some("water simulation, caustics, wake"),
+                stochastic.then_some("stochastic transparency"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(", ")
+        );
+        if scene {
+            crate::shader_reload::report(
+                build.generation,
+                crate::shader_reload::Outcome::Reloaded {
+                    changed: made.changed.iter().map(|f| f.to_string()).collect(),
+                    ms,
+                },
+            );
+        }
+    }
+
+    /// Reads, checks and compiles the reloadable shaders on a worker
+    /// thread, for the samples, SSR and soft shadows drawn with now.
+    fn start_shader_reload(&mut self, generation: u64) {
+        let (tx, done) = std::sync::mpsc::sync_channel(1);
+        let device = self.device.clone();
+        let layouts = [
+            self.frame_layout.clone(),
+            self.records_layout.clone(),
+            self.tex_layout.clone(),
+            self.shadow_layout.clone(),
+            self.post_layout.clone(),
+            self.bloom.post_layout.clone(),
+            self.gbuf_layout.clone(),
+            self.impostors.layout.clone(),
+        ];
+        let format = self.config.format;
+        let (samples, ssr, soft) = (self.msaa_samples, self.settings.gbuffer(), self.soft_pipelines);
+        let water = self.water_effects.bindings();
+        let worker_water = water.clone();
+        // (its pipelines made again only when it has some now)
+        let stochastic = self
+            .st
+            .as_ref()
+            .zip(self.st_pipes.as_ref())
+            .map(|(st, p)| (st.shared().clone(), p.samples));
+        log::info!("shader reload {generation}: compiling for {samples} sample(s)");
+        let spawned = std::thread::Builder::new().name("aurora-shader-reload".into()).spawn(move || {
+            let made = (|| {
+                let candidate = crate::shader_reload::load()?;
+                let made = crate::shader_reload::with_candidate(&candidate, || {
+                    let features = device.features();
+                    let mut modules: Vec<(&str, String)> = vec![
+                        ("scene", scene_shader_source(features, soft)),
+                        ("impostors", Impostors::shader_source(features, soft)),
+                        ("water simulation", crate::water_effects::sim_source().into_owned()),
+                        ("water caustics", crate::water_effects::caustics_source().into_owned()),
+                        ("water wake", crate::water_wake::source().into_owned()),
+                    ];
+                    // (also those made later from the same files: SSR or the
+                    // stochastic transparency turned on after the reload)
+                    modules.push(("SSR", format!("{}\n{}", common_shader_for(soft), include_str!("shaders/ssr.wgsl"))));
+                    modules.push(("stochastic transparency", crate::oit_stochastic::st_scene_source(&device)));
+                    for (label, source) in &modules {
+                        crate::shader_reload::validate(label, source, &candidate)?;
+                    }
+                    // what naga lets through and the device still refuses (a
+                    // binding the layouts lack, an output of another type,
+                    // Metal's compiler), on this thread and on the batch's
+                    // workers (pipeline_batch.rs), or memory
+                    let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
+                    let (made, refused) = crate::gpu_alloc::scoped_error(&device, || Reloaded {
+                        scene: Self::make_pipelines(
+                            &device,
+                            frame,
+                            records,
+                            tex,
+                            shadow,
+                            [post, bloom],
+                            gbuf,
+                            samples,
+                            format,
+                            ssr,
+                            soft,
+                        ),
+                        impostors: Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr, soft),
+                        water: worker_water.shaders(&device),
+                        stochastic: stochastic
+                            .as_ref()
+                            .map(|(shared, st_samples)| Self::make_st_pipes(&device, frame, records, tex, shared, *st_samples)),
+                        changed: candidate.changed.clone(),
+                    });
+                    match refused {
+                        Some(report) => Err(crate::shader_reload::device_failure(&report)),
+                        None => Ok(made),
+                    }
+                })?;
+                crate::shader_reload::promote(&candidate);
+                Ok(made)
+            })();
+            let _ = tx.send(made);
+        });
+        match spawned {
+            Ok(worker) => {
+                self.pipeline_workers.retain(|w| !w.is_finished());
+                self.pipeline_workers.push(worker);
+            }
+            // (the receiver reports the worker gone)
+            Err(e) => log::error!("shader reload: cannot start its worker: {e}"),
+        }
+        self.reload_build = Some(ReloadBuild {
+            generation,
+            samples,
+            ssr,
+            soft,
+            water,
+            started: std::time::Instant::now(),
+            done,
+        });
+    }
+
     /// Take over `other`'s pipeline workers, to wait for them when this one
     /// goes: a backend dropped while the viewer goes on (a remade renderer,
     /// the VR eyes) must not hold the frame for them.
@@ -8847,6 +9081,7 @@ impl Backend {
     }
 
     fn render_frame(&mut self, packet: FramePacket) -> FrameResult {
+        self.poll_shader_reload();
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         if self.xr_world.is_none() && !self.vr.wanted() && self.vr.state() == crate::VrState::Stopping {
             self.vr.finish(false);

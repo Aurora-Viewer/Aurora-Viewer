@@ -81,6 +81,7 @@ mod rt_light_changes;
 mod rt_shadows;
 pub mod second_view;
 mod selection;
+pub mod shader_reload;
 pub mod shadow_cull;
 mod shadow_merge;
 mod soft_shadows;
@@ -180,21 +181,25 @@ pub(crate) const COMMON_SHADER: &str = concat!(
     include_str!("shaders/water_spectrum.wgsl")
 );
 
-/// Offline material iteration only. Normal viewers always use their baked shaders.
+/// The baked shader, or its files read from the source checkout: in the
+/// offline demo with `AURORA_DEMO_WATER_SHADERS=1` (material iteration),
+/// and in a development build that reloads its shaders (shader_reload.rs).
+/// Normal viewers always use their baked shaders.
 pub(crate) fn water_shader_source(files: &[&str], baked: &'static str) -> std::borrow::Cow<'static, str> {
-    if std::env::var_os("AURORA_DEMO").is_none() || std::env::var("AURORA_DEMO_WATER_SHADERS").as_deref() != Ok("1") {
+    let demo = std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_DEMO_WATER_SHADERS").as_deref() == Ok("1");
+    let reload = files.iter().all(|f| shader_reload::reloadable(f)) && shader_reload::active();
+    if !demo && !reload {
         return baked.into();
     }
-    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shaders");
     let mut source = String::new();
     for file in files {
-        match std::fs::read_to_string(directory.join(file)) {
+        match shader_reload::read(file) {
             Ok(text) => {
                 source.push_str(&text);
                 source.push('\n');
             }
             Err(error) => {
-                log::warn!("offline water shader {file}: {error}; using baked source");
+                log::warn!("shader from the checkout {file}: {error}; using baked source");
                 return baked.into();
             }
         }

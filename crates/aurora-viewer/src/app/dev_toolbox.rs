@@ -240,7 +240,39 @@ impl App {
             Kind::Toggle => self.flip_toggle(id),
             Kind::Copy | Kind::Live => self.build_result(id, renderer),
             Kind::Window => self.open_tool_window(id),
+            Kind::Action => self.run_tool_action(id),
         }
+    }
+
+    fn run_tool_action(&mut self, id: &'static str) {
+        if id == "T2" && aurora_render::shader_reload::request() {
+            self.world.system_message(tr!("dev-toolbox-shader-reload-started"));
+        }
+    }
+
+    /// The end of a shader reload (T2, AURORA_SHADER_RELOAD=watch), said once.
+    pub(super) fn shader_reload_notice(&mut self) {
+        use aurora_render::shader_reload::Outcome;
+        // AURORA_DEMO_SHADER_RELOAD=<frame>: T2 pressed at that frame
+        if self.demo
+            && std::env::var("AURORA_DEMO_SHADER_RELOAD")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                == Some(self.frame_count)
+        {
+            self.run_tool_action("T2");
+        }
+        let Some(outcome) = aurora_render::shader_reload::take_outcome() else {
+            return;
+        };
+        let text = match outcome {
+            Outcome::Reloaded { changed, ms } => {
+                let files = if changed.is_empty() { "-".to_string() } else { changed.join(", ") };
+                tr!("dev-toolbox-shader-reload-done", files = files, ms = ms)
+            }
+            Outcome::Failed(failure) => tr!("dev-toolbox-shader-reload-failed", error = failure.to_string()),
+        };
+        self.world.system_message(text);
     }
 
     /// Whether a toggle is on.

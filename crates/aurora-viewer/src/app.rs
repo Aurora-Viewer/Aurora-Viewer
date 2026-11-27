@@ -12010,6 +12010,7 @@ impl App {
         self.update_radar();
         self.update_bridge();
         self.update_rlva_selftest();
+        self.shader_reload_notice();
         self.update_region_restart();
         if self.demo && self.frame_count == 350 && std::env::var("AURORA_DEMO_IK_EDIT").is_ok_and(|m| !m.starts_with("poser")) {
             {

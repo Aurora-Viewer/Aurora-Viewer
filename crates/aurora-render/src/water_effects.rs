@@ -309,9 +309,194 @@ pub(crate) struct WaterGpu {
     flags: u32,
     quality: u8,
     pub particles: u32,
+    /// Which one this is (`WATER_MADE`): a reload's shaders are for it only.
+    made: u64,
+}
+
+/// The water's shaders (water_sim, water_caustics, water_wake) and the
+/// groups their own layouts bind, apart from the textures they work on: a
+/// shader reload (shader_reload.rs) makes them again for the same textures,
+/// so the ripples, the wetness memory and the snow trails go on.
+pub(crate) struct WaterShaders {
+    pipeline: wgpu::ComputePipeline,
+    group: wgpu::BindGroup,
+    caustics_pipeline: wgpu::RenderPipeline,
+    caustics_group: wgpu::BindGroup,
+    wake: crate::water_wake::WakeGpu,
+}
+
+/// What [`WaterShaders`] bind, taken from a [`WaterGpu`] for a worker thread.
+#[derive(Clone)]
+pub(crate) struct WaterBindings {
+    uniform: wgpu::Buffer,
+    events: wgpu::Buffer,
+    view: wgpu::TextureView,
+    output: wgpu::TextureView,
+    ground_view: wgpu::TextureView,
+    /// The [`WaterGpu`] they come from (`WaterGpu::made`).
+    made: u64,
+}
+
+impl WaterBindings {
+    pub fn shaders(&self, device: &wgpu::Device) -> WaterShaders {
+        WaterShaders::new(device, &self.uniform, &self.events, &self.view, &self.output, &self.ground_view)
+    }
+}
+
+/// The water simulation's source (water_sim.wgsl).
+pub(crate) fn sim_source() -> std::borrow::Cow<'static, str> {
+    crate::water_shader_source(&["water_sim.wgsl"], include_str!("shaders/water_sim.wgsl"))
+}
+
+/// The caustics' source (water_spectrum.wgsl, water_caustics.wgsl).
+pub(crate) fn caustics_source() -> std::borrow::Cow<'static, str> {
+    crate::water_shader_source(
+        &["water_spectrum.wgsl", "water_caustics.wgsl"],
+        concat!(
+            include_str!("shaders/water_spectrum.wgsl"),
+            "\n",
+            include_str!("shaders/water_caustics.wgsl")
+        ),
+    )
+}
+
+/// Tells the [`WaterGpu`]s apart: a resize makes a new one.
+static WATER_MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl WaterShaders {
+    fn new(
+        device: &wgpu::Device,
+        uniform: &wgpu::Buffer,
+        events: &wgpu::Buffer,
+        view: &wgpu::TextureView,
+        output: &wgpu::TextureView,
+        ground_view: &wgpu::TextureView,
+    ) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("water simulation"),
+            source: wgpu::ShaderSource::Wgsl(sim_source()),
+        });
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+            label: Some("water simulation"),
+            layout: None,
+            module: &module,
+            entry_point: Some("simulate"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("water simulation"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: events.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(output),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(ground_view),
+                },
+            ],
+        });
+        let caustics_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("refracted water caustics"),
+            source: wgpu::ShaderSource::Wgsl(caustics_source()),
+        });
+        let additive = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let caustics_pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+            label: Some("refracted water caustics"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &caustics_shader,
+                entry_point: Some("vs_caustic"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &caustics_shader,
+                entry_point: Some("fs_caustic"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: Some(wgpu::BlendState {
+                        color: additive,
+                        alpha: additive,
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let caustics_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("caustics controls"),
+            layout: &caustics_pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            }],
+        });
+        let wake = crate::water_wake::WakeGpu::new(device, uniform, events, ground_view);
+        Self {
+            pipeline,
+            group,
+            caustics_pipeline,
+            caustics_group,
+            wake,
+        }
+    }
 }
 
 impl WaterGpu {
+    /// What its shaders bind, for a reload on a worker thread.
+    pub fn bindings(&self) -> WaterBindings {
+        WaterBindings {
+            uniform: self.uniform.clone(),
+            events: self.events.clone(),
+            view: self.view.clone(),
+            output: self.textures[1].create_view(&Default::default()),
+            ground_view: self.ground_view.clone(),
+            made: self.made,
+        }
+    }
+
+    /// Takes reloaded shaders made from its own [`bindings`](Self::bindings);
+    /// false (and nothing changed) when it was made again meanwhile (a
+    /// resize), whose shaders already come from the reloaded sources.
+    pub fn set_shaders(&mut self, from: &WaterBindings, shaders: WaterShaders) -> bool {
+        if from.made != self.made {
+            return false;
+        }
+        self.pipeline = shaders.pipeline;
+        self.group = shaders.group;
+        self.caustics_pipeline = shaders.caustics_pipeline;
+        self.caustics_group = shaders.caustics_group;
+        self.wake = shaders.wake;
+        true
+    }
+
     /// Rain prototype: the terrain heights around the camera, when they
     /// changed.
     pub fn upload_rain_ground(&mut self, queue: &wgpu::Queue, ground: &RainGround) {
@@ -411,21 +596,6 @@ impl WaterGpu {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("water simulation"),
-            source: wgpu::ShaderSource::Wgsl(crate::water_shader_source(
-                &["water_sim.wgsl"],
-                include_str!("shaders/water_sim.wgsl"),
-            )),
-        });
-        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
-            label: Some("water simulation"),
-            layout: None,
-            module: &module,
-            entry_point: Some("simulate"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
         let ground_view = ground.create_view(&Default::default());
         let rain_ground = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("rain ground heights"),
@@ -469,32 +639,6 @@ impl WaterGpu {
             wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         );
         let snow_trail_view = snow_trail.create_view(&Default::default());
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("water simulation"),
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: events.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&output),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&ground_view),
-                },
-            ],
-        });
         let caustics = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("refracted water light"),
             size: wgpu::Extent3d {
@@ -510,62 +654,13 @@ impl WaterGpu {
             view_formats: &[],
         });
         let caustics_view = caustics.create_view(&Default::default());
-        let caustics_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("refracted water caustics"),
-            source: wgpu::ShaderSource::Wgsl(crate::water_shader_source(
-                &["water_spectrum.wgsl", "water_caustics.wgsl"],
-                concat!(
-                    include_str!("shaders/water_spectrum.wgsl"),
-                    "\n",
-                    include_str!("shaders/water_caustics.wgsl")
-                ),
-            )),
-        });
-        let additive = wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::One,
-            operation: wgpu::BlendOperation::Add,
-        };
-        let caustics_pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
-            label: Some("refracted water caustics"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &caustics_shader,
-                entry_point: Some("vs_caustic"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState {
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &caustics_shader,
-                entry_point: Some("fs_caustic"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: Some(wgpu::BlendState {
-                        color: additive,
-                        alpha: additive,
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-        let caustics_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("caustics controls"),
-            layout: &caustics_pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform.as_entire_binding(),
-            }],
-        });
-        let wake = crate::water_wake::WakeGpu::new(device, &uniform, &events, &ground_view);
+        let WaterShaders {
+            pipeline,
+            group,
+            caustics_pipeline,
+            caustics_group,
+            wake,
+        } = WaterShaders::new(device, &uniform, &events, &view, &output, &ground_view);
         Self {
             wake,
             event_count: 0,
@@ -601,6 +696,7 @@ impl WaterGpu {
             flags: 0,
             quality: 0,
             particles: 0,
+            made: WATER_MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 
