@@ -3147,7 +3147,10 @@ mod imp {
         let open = |with_rr: bool, with_fg: bool| {
             let mut added = Err(String::from("the device was opened without asking"));
             let mut rr = false;
+            #[cfg(target_os = "linux")]
             let mut fg = 0u32;
+            #[cfg(not(target_os = "linux"))]
+            let fg = 0u32;
             // (the presenter's two queues share family 0, as wgpu's does)
             #[cfg(target_os = "linux")]
             static PRIORITIES: [f32; 2] = [1.0, 1.0];
