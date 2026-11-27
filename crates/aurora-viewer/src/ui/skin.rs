@@ -225,6 +225,9 @@ mod tests {
         let bar = Layout::default().toolbar;
         assert!(bar.iter().all(|b| b.command != "texture_library"));
         assert!(bar.iter().any(|b| b.command == "inventory"));
-        assert!(crate::ui::toolbar::command("texture_library").is_some_and(|c| c.ready), "still offered in Customize");
+        assert!(
+            crate::ui::toolbar::command("texture_library").is_some_and(|c| c.ready),
+            "still offered in Customize"
+        );
     }
 }
