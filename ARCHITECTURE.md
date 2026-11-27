@@ -2325,8 +2325,8 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 ├─ packaging/macos/            `Info.plist` of `Aurora Viewer.app` (its texts translated in `*.lproj/InfoPlist.strings`) and the entitlements of its hardened runtime; `scripts/package-macos.ps1` builds the bundle, the release signs it
 ├─ scripts/                     tools for agents and humans (PowerShell)
 │  ├─ automation-window-border.ps1 dashed yellow outline of the automated-test windows (Windows)
-│  ├─ review-queue.ps1          the maintainers' review queue: others' PRs in review order, claims, what waits on the maintainer (`-Pending`) (rules in `tools/review-queue.ps1`, tested by `test-review-queue.ps1`; the agents' routine is `.claude/skills/review-next`)
 │  ├─ ffmpeg-pack.sh            the Director's ffmpeg pack (bash): its pinned sources, build per system, check, archive and corresponding source; run by `.github/workflows/ffmpeg-pack.yml`
+│  ├─ review-queue.ps1          the maintainers' review queue: others' PRs in review order, claims, what waits on the maintainer (`-Pending`) (rules in `tools/review-queue.ps1`, tested by `test-review-queue.ps1`; the agents' routine is `.claude/skills/review-next`)
 │  └─ tools/                    aurora-tools: menu, interface (ui), checks and repair (checks), actions, live PRs (prs), releases, reset (reset), Claude Code permissions (claude), review slots (pr-slots), review queue rules (review-queue)
 ├─ .claude/                     Claude Code settings shared by every contributor's agents: `settings.json` runs `hooks/shell-rules.sh` before each shell command of an agent, which refuses the ones AGENTS.md forbids (section 5, "Tools"; tested by `scripts/test-agent-hook.ps1`); `skills/` holds the routines the agents load by name (`review-next`: the next PR of the review queue)
 └─ .github/                     CI and wiki publication (workflows/, actions/), release and nightly betas, PR template, Dependabot

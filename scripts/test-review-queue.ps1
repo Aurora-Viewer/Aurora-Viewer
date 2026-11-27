@@ -213,11 +213,20 @@ $nodes = @(
     (New-Node 93 -Comments @(, @('maya', 'MEMBER', 100, $onHead)))                         # maya's ✅: to merge, not here
 )
 $items = @($nodes | ForEach-Object { ConvertTo-ReviewItem $_ @{} })
+$noCommit = New-Node 94 -Reviews @(, @('maya', 'MEMBER', 100, 'APPROVED'))
+$noCommit.reviews.nodes[0].commit = $null
+$e = Get-Entry $noCommit
+Assert-Queue ($e.SkipKind -eq 'Approved' -and -not $e.OnHead) 'a GitHub approval whose commit is unknown names no head'
+$e = Get-Entry (New-Node 95 -Comments @(, @('maya', 'MEMBER', 100, "$decision`n`nReviewed head: ``abc1234de``")) -Commits @(@(200, 1), @(5, 2)) -Head '9990000aaaa1111bbbb2222cccc3333dddd4444')
+Assert-Queue ($e.SkipKind -eq 'Decision' -and -not $e.OnHead) 'a decision left open, then a merge of main: still waiting, on a head the review did not read'
 $waiting = (@(Get-WaitingOnDecision (Get-ReviewQueue $items 'maya' $now) 'maya') | ForEach-Object { $_.Number }) -join ','
 Assert-Queue ($waiting -eq '90') "waiting on your decision: your own ⚠️ reviews with no answer since; got $waiting"
 Assert-Queue (Test-HeadNamed 'Re-review of head `abc1234`.' 'abc1234def') 'a short sha names the head'
 Assert-Queue (-not (Test-HeadNamed 'Re-review of head `abc123`.' 'abc1234def')) 'six characters name no head'
 Assert-Queue (-not (Test-HeadNamed 'see 1234567 tests' 'abc1234def')) 'another number is not the head'
+Assert-Queue (-not (Test-HeadNamed 'Re-review of head `0000000` (commits `abc1234`).' 'abc1234def')) 'a commit the review quotes is not the head it read'
+Assert-Queue (Test-HeadNamed 'Reviewed head: `ABC1234DEF5678901234567890ABCDEF12345678`' 'abc1234def5678901234567890abcdef12345678') 'a full sha in capitals names the head'
+Assert-Queue (-not (Test-HeadNamed "Reviewed head:`n``abc1234``" 'abc1234def')) 'the head and its sha are on one line'
 Assert-Queue (-not (Test-HeadNamed 'abc1234' '')) 'no head known: not reviewed'
 
 # --- helpers ---------------------------------------------------------------

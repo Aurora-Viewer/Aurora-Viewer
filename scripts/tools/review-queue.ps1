@@ -53,15 +53,19 @@ function Get-ReviewCommentKind([string]$Body) {
     'Decision'
 }
 
-# Whether a review comment names the head commit $Head (its first 7 to 40
-# characters, as the review routine writes "Reviewed head: `<sha>`"): an
-# approval counts for the merge only on the head it read. A commit date is
-# set by its author's git and a merge of main is no answer, so the date
-# alone cannot tell (a commit made before the approval, pushed after it).
+# Whether a review comment names the head commit $Head as the one it read:
+# the word "head", then within the same line a commit in backticks (7 to 40
+# characters), as the review routine writes "Reviewed head: `<sha>`" and
+# earlier reviews "Re-review of head `<sha>`". Another commit the review
+# quotes ("commits `<sha>`") is not its head. An approval counts for the
+# merge only on the head it read: a commit's date is set by its author's
+# git and a merge of main is no answer, so the date alone cannot tell (a
+# commit made before the approval, pushed after it).
 function Test-HeadNamed([string]$Body, [string]$Head) {
     if (-not $Head) { return $false }
-    foreach ($m in [regex]::Matches($Body, '\b[0-9a-f]{7,40}\b')) {
-        if ($Head.StartsWith($m.Value)) { return $true }
+    $head = $Head.ToLowerInvariant()
+    foreach ($m in [regex]::Matches($Body, '(?i)\bhead\b[^`\n]{0,40}`([0-9a-f]{7,40})`')) {
+        if ($head.StartsWith($m.Groups[1].Value.ToLowerInvariant())) { return $true }
     }
     $false
 }

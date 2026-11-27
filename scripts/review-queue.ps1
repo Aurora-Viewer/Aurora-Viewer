@@ -244,7 +244,7 @@ if ($queue.Count) {
 $out = @($entries | Where-Object { $_.Tier -eq 0 })
 if ($approvedList.Count) {
     Write-Host ''
-    Write-Host "Approved by $me, to merge ($($approvedList.Count)): ./scripts/merge-pr.ps1 -Pr <n> once CI is green" -ForegroundColor Green
+    Write-Host "Approved by $me, waiting for the merge ($($approvedList.Count)): on your yes, for the head the review names (-Pending)" -ForegroundColor Green
     foreach ($e in $approvedList) { Write-Host (' {0,-6} {1}  ({2})' -f "#$($e.Number)", (Format-Cut $e.Title 60), (Format-MergeState $e)) }
 }
 if ($decisionList.Count) {
