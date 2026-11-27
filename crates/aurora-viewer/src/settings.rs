@@ -1264,6 +1264,10 @@ pub struct Settings {
     /// Points between two stacked toasts, in both notification styles
     /// (ToastGap, 7, its slider 0–30; LLScreenChannel::redrawToasts).
     pub toast_gap: f32,
+    /// Width of Aurora's notification center (px, 0 = its default: the
+    /// width of the system and bell islands, or 360 under the Legacy
+    /// bars), dragged on its left edge (`ui::notification_center`).
+    pub notification_width: f32,
     /// Write instant messages, group chats and conferences to text files in
     /// the account's folder (Firestorm KeepConversationLogTranscripts = 2).
     pub log_im: bool,
@@ -2752,6 +2756,7 @@ impl Default for Settings {
             im_toast_seconds: 30.0,
             tip_toast_seconds: 10.0,
             toast_gap: TOAST_GAP,
+            notification_width: 0.0,
             log_im: true,
             log_nearby: false,
             log_conversations: true,
@@ -3989,6 +3994,9 @@ impl Settings {
             10.0
         };
         self.toast_gap = toast_gap(self.toast_gap);
+        if !self.notification_width.is_finite() || self.notification_width < 0.0 {
+            self.notification_width = 0.0;
+        }
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
             self.name_tag_show_seconds.clamp(1.0, 60.0)

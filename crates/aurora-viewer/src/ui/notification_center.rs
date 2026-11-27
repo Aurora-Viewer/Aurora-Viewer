@@ -17,7 +17,7 @@ use crate::world::chat_log::format::Slt;
 use crate::world::notification_history::{self as history, Entry, Follow, History, Outcome};
 use crate::world::notifications::{Data, Kind, Notification, Notifications, Response};
 use aurora_i18n::UiUpper;
-use egui::{Rect, RichText, Vec2};
+use egui::{Rangef, Rect, RichText, Vec2};
 
 /// Width of the panel under the bell (the mockup's 360 px), with
 /// Firestorm's bars; the islands give it theirs (`NotifUi::column`).
@@ -25,6 +25,11 @@ pub const WIDTH: f32 = 360.0;
 /// What the panel's overlay adds around its content: 6 px of margin and the
 /// 1 px border on each side.
 const PANEL_FRAME: f32 = 14.0;
+/// The room the panel keeps from the screen's sides, widened or not.
+const SCREEN_INSET: f32 = 6.0;
+/// The width of the grip along the panel's left edge (inside it: a press
+/// just outside would close the list).
+const GRIP: f32 = 5.0;
 /// Seconds a card stays rolled out: information / waiting for an answer.
 pub const SHOW_INFO: f64 = 6.0;
 pub const SHOW_ANSWER: f64 = 12.0;
@@ -395,18 +400,23 @@ pub fn show(
     let Some(bell) = nui.bell else {
         return (answers, asks);
     };
-    presence_toasts(ctx, p, list, nui, env, column, now, &mut answers);
     let screen = ctx.content_rect();
     // with the islands, exactly under the system and bell islands, the
     // overlay's margins and border within that width; with Firestorm's bars
-    // its own width, ending under the bell
-    let (x, inner) = match column {
-        Some(c) => (c.left(), c.width() - PANEL_FRAME),
-        None => (
-            ((bell.right() + 4.0).min(screen.right() - 6.0) - WIDTH).max(screen.left() + 6.0),
-            WIDTH - 12.0,
-        ),
+    // its own width, ending under the bell. Either widens to the left to the
+    // width the user dragged it to (`NotifUi::width`), the friends' toasts
+    // under the bell with it.
+    let (base, frame) = match column {
+        Some(c) => (c.x_range(), PANEL_FRAME),
+        None => {
+            let left = ((bell.right() + 4.0).min(screen.right() - SCREEN_INSET) - WIDTH).max(screen.left() + SCREEN_INSET);
+            (Rangef::new(left, left + WIDTH), 12.0)
+        }
     };
+    let span = widened(base, nui.width, screen.x_range(), SCREEN_INSET);
+    let column = column.map(|c| Rect::from_x_y_ranges(span, c.y_range()));
+    presence_toasts(ctx, p, list, nui, env, column, now, &mut answers);
+    let (x, inner) = (span.min, span.span() - frame);
     nui.center.inner_width = inner;
     let (anchor_y, above, available) = super::widgets::popup_vertical(screen, bell, screen.height() * 0.65 + 80.0, 6.0);
     let pos = egui::pos2(x, anchor_y);
@@ -443,7 +453,7 @@ pub fn show(
                 ui.set_clip_rect(clip.intersect(ui.clip_rect()));
                 ui.multiply_opacity(unroll);
             }
-            super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
+            let panel = super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                 ui.set_width(inner);
                 ui.set_max_height((available - PANEL_FRAME).max(1.0));
                 if nui.open {
@@ -451,7 +461,12 @@ pub fn show(
                 } else {
                     rolled_out(ui, p, icons, world, list, nui, env, now, &mut answers);
                 }
-            });
+            })
+            .response
+            .rect;
+            if unroll >= 1.0 {
+                width_grip(ui, panel, base.span(), nui);
+            }
         });
     nui.center.panel = Some(area.response.rect);
     if unroll >= 1.0 {
@@ -493,6 +508,56 @@ pub fn show(
         ctx.request_repaint();
     }
     (answers, asks)
+}
+
+/// The panel's span across the screen: `base` (the islands' column, or the
+/// default width under the bell) widened to the left to the user's `wanted`
+/// width, never narrower than `base` (0 or less: `base` itself), and kept
+/// `inset` from the screen's sides; out of room on the left, it grows to the
+/// right.
+fn widened(base: Rangef, wanted: f32, screen: Rangef, inset: f32) -> Rangef {
+    if !wanted.is_finite() || wanted <= base.span() {
+        return base;
+    }
+    let room = (screen.span() - inset * 2.0).max(base.span());
+    let width = wanted.min(room);
+    let left = (base.max - width).max(screen.min + inset).min(base.min);
+    let right = (left + width).min(screen.max - inset).max(base.max);
+    Rangef::new(left, right)
+}
+
+/// The width a drag of the grip asks for: the panel's width this frame less
+/// the pointer's move (to the left widens), 0 (the default) when it comes
+/// back to `base` or below; the screen bounds it on the next frame
+/// (`widened`), so a drag past the edge leaves no dead stretch on return.
+fn dragged_width(panel: f32, delta: f32, base: f32) -> f32 {
+    let width = panel - delta;
+    if !width.is_finite() || width <= base + 0.5 { 0.0 } else { width }
+}
+
+/// The grip along the panel's left edge: dragged, the panel widens or
+/// narrows back (saved when released, `NotifUi::width_committed`);
+/// double-clicked, it takes its default width again. An Aurora addition:
+/// the Legacy Viewer's notification well has a fixed width.
+fn width_grip(ui: &mut egui::Ui, panel: Rect, base: f32, nui: &mut NotifUi) {
+    let grip = Rect::from_min_max(
+        egui::pos2(panel.left(), panel.top() + 6.0),
+        egui::pos2(panel.left() + GRIP, panel.bottom() - 6.0),
+    );
+    let h = ui.interact(grip, egui::Id::unique("notification_center_width"), egui::Sense::click_and_drag());
+    if h.hovered() || h.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    if h.dragged() {
+        nui.width = dragged_width(panel.width(), h.drag_delta().x, base);
+    }
+    if h.drag_stopped() {
+        nui.width_committed = true;
+    }
+    if h.double_clicked() {
+        nui.width = 0.0;
+        nui.width_committed = true;
+    }
 }
 
 /// The new cards under the bell, each with its time left, folding away.
