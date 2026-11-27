@@ -62,6 +62,15 @@ scripts, as they are:
   section 11), a merge of `main` included, and only once your human chose
   it over a fix of yours (step 6).
 
+## The task list
+
+Keep your human's task list (Claude Code: the plan the app shows) at the
+level of the steps below and of each PR: one line per step while it is
+general (follow-up, what waits on your human, the selection), then one per
+PR and step once there are several (`#3935: CI approved, waiting`, `#4664:
+conflict fixed, pushed`, `check.ps1: #3935, #4664`), so the broader progress
+shows. Rewrite the list when a pick or an answer changes what is left.
+
 ## 0. Follow-up first
 
 Once per session, before anything else: AGENTS.md section 8, step 0 (merged
