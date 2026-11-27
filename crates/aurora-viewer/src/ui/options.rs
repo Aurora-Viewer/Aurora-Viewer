@@ -2017,7 +2017,24 @@ fn sidebar(
     ui.add_space(12.0);
     let width = ui.available_width();
     ui.horizontal(|ui| {
-        let field = super::widgets::clearable_search_box(ui, p, &mut st.query, aurora_i18n::tr!("ui-options-search-settings"), width);
+        // "Copy search as link" twice: a link icon in the field, before its
+        // clear "x" and shown like it while there is a search, and an entry
+        // of its right-click menu (below)
+        let copy = aurora_i18n::tr!("ui-options-copy-search-link");
+        let (field, copy_clicked) = super::widgets::clearable_search_box_with(
+            ui,
+            p,
+            &mut st.query,
+            aurora_i18n::tr!("ui-options-search-settings"),
+            width,
+            "link",
+            copy,
+        );
+        if copy_clicked && let Some(link) = crate::slapp::preferences_search_link(&st.query) {
+            ui.ctx().copy_text(link);
+            // the field keeps the keyboard, as after its "x"
+            field.request_focus();
+        }
         if st.focus_search && !ui.is_sizing_pass() && ui.is_enabled() {
             st.focus_search = false;
             field.request_focus();
@@ -2037,7 +2054,7 @@ fn sidebar(
             ui.ctx(),
             field.id,
             "link-filled",
-            aurora_i18n::tr!("ui-options-copy-search-link"),
+            copy,
             crate::slapp::preferences_search_link(&st.query),
         );
     });

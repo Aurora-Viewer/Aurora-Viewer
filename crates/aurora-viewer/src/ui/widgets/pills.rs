@@ -339,12 +339,28 @@ pub fn filter_pill_width(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
 
 /// The search field of a list: a magnifier then the text, on the field's face.
 pub fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
-    icon_field_inner(ui, p, "search-filled", text, hint, width, Field::Search)
+    icon_field_inner(ui, p, "search-filled", text, hint, width, Field::Search, None).0
 }
 
 /// `search_box` with an in-field clear button while filled.
 pub fn clearable_search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
-    icon_field_inner(ui, p, "search-filled", text, hint, width, Field::ClearableSearch)
+    icon_field_inner(ui, p, "search-filled", text, hint, width, Field::ClearableSearch, None).0
+}
+
+/// `clearable_search_box` with a second in-field button just before the
+/// clear one, drawn and shown like it (only while filled, so an empty
+/// field keeps its whole hint): its Tabler `icon` and `tip`, also its name
+/// for screen readers. True when clicked.
+pub fn clearable_search_box_with(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    icon: &str,
+    tip: &str,
+) -> (egui::Response, bool) {
+    icon_field_inner(ui, p, "search-filled", text, hint, width, Field::ClearableSearch, Some((icon, tip)))
 }
 
 /// A plain filter input with the same clear button as `clearable_search_box`.
@@ -555,7 +571,7 @@ pub fn field_frame(ui: &egui::Ui, p: &Palette) -> egui::Frame {
 /// destination, as the Legacy Viewer's location_input.xml sets
 /// `select_on_focus="false"`).
 pub fn icon_field(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut String, hint: &str, width: f32) -> egui::Response {
-    icon_field_inner(ui, p, icon, text, hint, width, Field::Plain)
+    icon_field_inner(ui, p, icon, text, hint, width, Field::Plain, None).0
 }
 
 /// What an `icon_field_inner` is.
@@ -568,10 +584,22 @@ enum Field {
     ClearableSearch,
 }
 
-fn icon_field_inner(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut String, hint: &str, width: f32, kind: Field) -> egui::Response {
+/// `extra`: the icon and tip of a second button before the clear one
+/// (`clearable_search_box_with`); the second value is its click.
+#[allow(clippy::too_many_arguments)]
+fn icon_field_inner(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    kind: Field,
+    extra: Option<(&str, &str)>,
+) -> (egui::Response, bool) {
     let clear = kind == Field::ClearableSearch;
     let was_filled = !text.is_empty();
-    let response = field_frame(ui, p)
+    let (response, extra_clicked) = field_frame(ui, p)
         .show(ui, |ui| {
             ui.set_width(width - 18.0);
             // left to right even in a row laid out from the right
@@ -581,6 +609,9 @@ fn icon_field_inner(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut Strin
                 let mut centre = super::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
                 if clear && !text.is_empty() {
                     centre.right += CLEAR_WIDTH;
+                    if extra.is_some() {
+                        centre.right += CLEAR_WIDTH;
+                    }
                 }
                 let mut response = ui.add(
                     egui::TextEdit::singleline(text)
@@ -591,19 +622,39 @@ fn icon_field_inner(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut Strin
                 if kind != Field::Plain {
                     select_on_focus(ui, &response, text);
                 }
+                let mut extra_clicked = false;
                 if clear {
                     clear_filter(ui, p, text, &mut response);
+                    if let Some((icon, tip)) = extra
+                        && !text.is_empty()
+                    {
+                        extra_clicked = field_button(ui, p, &response, icon, tip);
+                    }
                 }
-                response
+                (response, extra_clicked)
             })
             .inner
         })
         .inner;
     note_search_clear(ui, &response, clear && was_filled && text.is_empty());
-    response
+    (response, extra_clicked)
 }
 
 const CLEAR_WIDTH: i8 = 20;
+
+/// The second in-field button, in the slot just before the clear one, drawn
+/// and sensed like it (`clear_filter`): not a Tab stop either.
+fn field_button(ui: &mut egui::Ui, p: &Palette, response: &egui::Response, icon: &str, tip: &str) -> bool {
+    let right = response.rect.right() - f32::from(CLEAR_WIDTH);
+    let rect = Rect::from_min_max(
+        egui::pos2(right - f32::from(CLEAR_WIDTH), response.rect.top()),
+        egui::pos2(right, response.rect.bottom()),
+    );
+    let button = ui.interact(rect, response.id.with("field_button"), Sense::CLICK);
+    super::paint_title_button(ui, p, icon, &button);
+    button.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tip));
+    button.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
 
 fn clear_filter(ui: &mut egui::Ui, p: &Palette, text: &mut String, response: &mut egui::Response) {
     if text.is_empty() {

@@ -250,6 +250,54 @@ fn the_search_fields_menu_copies_the_search_as_a_legacy_link_once_there_is_one()
     );
 }
 
+/// Where the button named `label` is, from the accessibility tree.
+fn button_at(output: &egui::PlatformOutput, label: &str) -> Option<egui::Pos2> {
+    output.accesskit_update.as_ref()?.nodes.iter().find_map(|(_, node)| {
+        let named = node.role() == egui::accesskit::Role::Button && node.label().is_some_and(|l| l == label);
+        let b = node.bounds().filter(|_| named)?;
+        Some(pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32))
+    })
+}
+
+/// The link icon in the search field, just before its clear "x" and shown
+/// like it: absent without a search (the hint stays whole), the Legacy
+/// Viewer's link with one.
+#[test]
+fn the_search_fields_link_icon_copies_the_search_once_there_is_one() {
+    let (mut frames, p, icons) = search_link_frames();
+    frames.ctx.enable_accesskit();
+    let mut settings = Settings::default();
+    let mut st = OptionsUi::default();
+    let copy = aurora_i18n::tr!("ui-options-copy-search-link");
+    let clear = aurora_i18n::tr!("common-clear");
+    let mut frame = |st: &mut OptionsUi, events: Vec<egui::Event>| {
+        let mut open = true;
+        frames.run_with_output(events, |ui| {
+            show(ui.ctx(), &p, &icons, &mut settings, st, &mut open);
+        })
+    };
+    let mut last = frame(&mut st, Vec::new());
+    for _ in 0..2 {
+        last = frame(&mut st, Vec::new());
+    }
+    // no search: neither the icon nor the "x", the hint whole
+    assert_eq!(button_at(&last.1, copy), None);
+    assert_eq!(button_at(&last.1, clear), None);
+    let hint = aurora_i18n::tr!("ui-options-search-settings");
+    assert!(!crate::ui::widgets::elide_tests::painted(&last.0, hint).cut, "{hint}");
+    // a search: the icon just before the "x", on its line
+    st.query = "# of lines".into();
+    let last = frame(&mut st, Vec::new());
+    let at = button_at(&last.1, copy).expect("the link icon");
+    let x = button_at(&last.1, clear).expect("the clear button");
+    assert!(at.x < x.x && x.x - at.x < 30.0, "{at:?} {x:?}");
+    assert!((at.y - x.y).abs() < 1.0, "{at:?} {x:?}");
+    let outputs: Vec<_> = click(at).into_iter().map(|events| frame(&mut st, events).1).collect();
+    let url = "secondlife:///app/openfloater/preferences?search=%23%20of%20lines";
+    assert_eq!(copied(&outputs), vec![url.to_owned()]);
+    assert_eq!(st.query, "# of lines", "copying leaves the search as it is");
+}
+
 #[test]
 fn opening_preferences_focuses_search_without_taking_it_back() {
     let mut frames = Frames::new();
