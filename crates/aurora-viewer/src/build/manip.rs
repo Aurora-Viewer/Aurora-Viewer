@@ -1811,6 +1811,11 @@ fn drag_update(
             EditMode::Stretch => scale_target(d, m),
         })
         .collect();
+    let targets = if d.mode == EditMode::Move && cam.hud.is_none() {
+        clamp_world_moves(world, &d.movers, targets)
+    } else {
+        targets
+    };
     apply(world, d, &targets);
     if d.mode == EditMode::Stretch && adjust_textures(world, &d.textures, d.stretch_textures) {
         d.te_due = true;
@@ -1827,6 +1832,39 @@ fn drag_update(
         // the textures follow locally (adjustTexturesByScale(false) in
         // handleHover); the simulator gets them once, on release
     }
+}
+
+/// Highest place an object may be dragged to (LLWorld::getRegionMaxHeight,
+/// MAX_OBJECT_Z).
+const MAX_OBJECT_Z: f32 = 4096.0;
+
+/// The bounds of a world move, from LLManipTranslate::handleHover
+/// (indra/newview/llmaniptranslate.cpp, originally LGPL 2.1): an object's
+/// centre goes no deeper than half its diagonal under the ground
+/// (LLWorld::getMinAllowedZ), no higher than [`MAX_OBJECT_Z`], and a root is
+/// kept in the regions we see (LLWorld::clipToVisibleRegions), so a drag past
+/// the last region stops at its edge instead of sending the object off-world
+/// (#4877). The clip starts from where the object is drawn now, as the Legacy
+/// Viewer's does, so it slides along the edge. The ground is read under the
+/// new place, where the Legacy Viewer reads it under the current one: the
+/// same bound one frame sooner. Attachments are left alone.
+fn clamp_world_moves(world: &World, movers: &[Mover], mut targets: Vec<(Vec3, Quat, Vec3)>) -> Vec<(Vec3, Quat, Vec3)> {
+    for (m, target) in movers.iter().zip(targets.iter_mut()) {
+        if super::select_type(world, m.idx) != super::SelectType::World {
+            continue;
+        }
+        let mut to = target.0;
+        if let Some(ground) = world.ground_height(to) {
+            to.z = to.z.max(ground - 0.5 * m.scale.length());
+        }
+        to.z = to.z.min(MAX_OBJECT_Z);
+        if m.root && m.parent.is_none() {
+            let from = world.objects.get(m.idx).map_or(m.pos, |o| m.region_off + o.position);
+            to = world.clip_to_visible_regions(from, to);
+        }
+        target.0 = to;
+    }
+    targets
 }
 
 /// Snap to objects (`SnapMode::Objects`, an Aurora addition): where the
@@ -2822,6 +2860,38 @@ mod tests {
             assert_eq!(pick_translate(&at_100, &f, near_tip), Some(Part::Arrow(i)));
             assert_eq!(pick_translate(&at_200, &f, near_tip), Some(Part::Arrow(i)));
         }
+    }
+
+    #[test]
+    fn world_moves_stop_at_the_visible_regions_edge_and_the_height_limits() {
+        let world = hud_world();
+        let now = Instant::now();
+        let movers = world
+            .objects
+            .iter()
+            .filter(|(idx, o)| {
+                !o.is_avatar()
+                    && super::super::root_of(&world, *idx) == *idx
+                    && super::super::select_type(&world, *idx) == super::super::SelectType::World
+            })
+            .find_map(|(_, o)| Some(save_movers(&world, &[o.key], false, EditMode::Move, now)).filter(|m| !m.is_empty()))
+            .expect("a movable demo object");
+        let m = &movers[0];
+        let at = |to: Vec3| clamp_world_moves(&world, &movers, vec![(to, m.rot, m.scale)])[0].0;
+        let size = world.objects.get(m.idx).and_then(|o| world.region_offset(o.key.region)).unwrap();
+        let region = world.regions.values().next().unwrap();
+        let edge = size.x + region.heightmap.size_x as f32;
+        // Past the last region: held at its edge, like clipToVisibleRegions.
+        let held = at(Vec3::new(edge + 40.0, m.pos.y, m.pos.z));
+        assert!(held.x < edge && held.x > m.pos.x, "{held}");
+        // Too high: MAX_OBJECT_Z; underground: half the diagonal below the ground.
+        assert_eq!(at(Vec3::new(m.pos.x, m.pos.y, 9000.0)).z, MAX_OBJECT_Z);
+        let ground = world.ground_height(m.pos).unwrap();
+        let deep = at(Vec3::new(m.pos.x, m.pos.y, ground - 100.0));
+        assert!((deep.z - (ground - 0.5 * m.scale.length())).abs() < 1e-4, "{deep}");
+        // Inside the region, the move is left as it is.
+        let inside = m.pos + Vec3::new(0.5, 0.5, 1.0);
+        assert!(at(inside).abs_diff_eq(inside, 1e-5));
     }
 
     fn hud_world() -> World {

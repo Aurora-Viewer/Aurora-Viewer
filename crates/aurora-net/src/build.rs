@@ -260,6 +260,16 @@ pub enum BuildCmd {
         set: bool,
         mask: u32,
     },
+    /// The next owner rights of a prim the Create tool made, in one
+    /// ObjectPermissions of three blocks (Modify, Copy, Transfer), as
+    /// FSCommon::applyDefaultBuildPreferences sends it.
+    SetNewObjectNextOwner {
+        handle: RegionHandle,
+        local_id: u32,
+        modify: bool,
+        copy: bool,
+        transfer: bool,
+    },
     /// ObjectGroup.
     SetGroup {
         handle: RegionHandle,

@@ -1272,6 +1272,7 @@ import-share-group = グループと共有
 import-permissions-group = グループ
 import-permissions-everyone = 全員にコピーを許可
 inventory-default-permissions = デフォルトの権限
+build-default-object-permissions-failed = デフォルトのオブジェクト権限を保存するときに問題が発生しました：{ $reason }。後でデフォルトの権限を設定してください。
 inventory-default-permissions-help = 変更、コピー、譲渡は、次の所有者に適用されます。これらの設定は新規アイテムにのみ適用され、自動的に保存されます。
 inventory-default-permissions-creations = Second Lifeで作成
 inventory-default-permissions-type = アイテム種別

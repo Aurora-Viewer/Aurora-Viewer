@@ -54,6 +54,9 @@ pub enum BarAction {
     SaveToObjectContents,
     /// Build › Options: the switches as the menu left them.
     BuildOptions(crate::build::MenuOptions),
+    /// Build › Options › Default permissions (the Legacy Viewer's "Set
+    /// Default Permissions...", Floater.ToggleOrBringToFront perms_default).
+    DefaultPermissions,
     Portals,
     CheckUpdates,
     ReportBug,
@@ -2159,6 +2162,12 @@ fn build_options_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, op
         aurora_i18n::tr!("build-options-probe-volumes"),
         &mut o.probe_volumes,
     );
+    menu::separator(ui, p);
+    // the same window as the inventory's New › Default permissions
+    if menu::command(ui, p, "inventory-default-permissions").item("shield-lock-filled", aurora_i18n::tr!("inventory-default-permissions")) {
+        *action = BarAction::DefaultPermissions;
+        return;
+    }
     if o != options {
         *action = BarAction::BuildOptions(o);
     }

@@ -1196,6 +1196,14 @@ pub struct BuildTool {
     /// Prims the Create tool asked for whose new objects' look is still to
     /// be given (new_defaults.rs).
     new_defaults_pending: u32,
+    /// The Objects default permissions a new prim is given itself
+    /// (FSCommon::applyDefaultBuildPreferences): while the region was not
+    /// told them this session (LLFloaterPermsDefault::getCapSent), and on
+    /// OpenSim always. None once Second Life has them. Set by the app.
+    pub default_object_perms: Option<crate::creation_permissions::Rights>,
+    /// A post of them succeeded this session (sCapSent): a later failure
+    /// is told (the DefaultObjectPermissions alert).
+    pub default_object_perms_posted: bool,
     /// For each of those, the place and rotation it is put at once it
     /// arrives, when the Aurora window's Center or Rotate chose them (the
     /// region's own placement is not exact: FSFloaterImport::
@@ -1283,6 +1291,8 @@ impl Default for BuildTool {
             pending_create: None,
             shape_capture: false,
             new_defaults_pending: 0,
+            default_object_perms: None,
+            default_object_perms_posted: false,
             new_poses: Default::default(),
             creation_hit: None,
             rect: None,

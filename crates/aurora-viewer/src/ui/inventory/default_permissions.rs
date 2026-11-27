@@ -58,6 +58,9 @@ fn creation_rows(ui: &mut egui::Ui, p: &Palette, defaults: &mut Defaults) {
             }
             ui.end_row();
             for (label, icon, settings, rights) in [
+                // the Legacy Viewer's Objects row (floater_perm_prefs.xml): what a
+                // created prim gives its next owner
+                (aurora_i18n::tr!("common-objects"), "cube", false, &mut defaults.objects),
                 (aurora_i18n::tr!("common-scripts"), "code", false, &mut defaults.scripts),
                 (aurora_i18n::tr!("common-notes"), "file-text-filled", false, &mut defaults.notecards),
                 (

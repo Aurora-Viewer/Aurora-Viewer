@@ -103,7 +103,7 @@ pub(super) fn ruler_controls(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettin
         label(ui, p, aurora_i18n::tr!("build-ui-floaters-opacity"));
         ui.add(
             egui::Slider::new(&mut s.grid_opacity, 0.0..=1.0)
-                .custom_parser(aurora_i18n::parse_number)
+                .custom_parser(super::common::parse_expression)
                 .step_by(0.05),
         );
     });
@@ -120,7 +120,7 @@ pub(super) fn handle_controls(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSetti
         if ui
             .add(
                 egui::Slider::new(&mut percent, range.start() * 100.0..=range.end() * 100.0)
-                    .custom_parser(aurora_i18n::parse_number)
+                    .custom_parser(super::common::parse_expression)
                     .step_by(10.0),
             )
             .changed()

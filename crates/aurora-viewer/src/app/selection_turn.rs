@@ -26,6 +26,14 @@ pub(super) fn wanted_yaw(position: Vec3, yaw: f32, center: Vec3) -> Option<f32> 
     (at.dot(dir) < FACING_DOT).then(|| dir.y.atan2(dir.x))
 }
 
+/// Whether a build press is a selection the avatar may turn to: the Edit
+/// tool (LLToolCompTranslate, LLToolCompRotate, LLToolCompScale; not Create,
+/// Grab or Land), with something selected, and not a press on a handle,
+/// which the manipulator takes before LLToolSelect sees it (#4102).
+pub(super) fn press_selects(tool: crate::build::Tool, handle_grabbed: bool, selected: bool) -> bool {
+    tool == crate::build::Tool::Edit && !handle_grabbed && selected
+}
+
 /// One frame of the turn: the change of yaw (+ to the left) and whether the
 /// turn is over.
 pub(super) fn step(target: f32, yaw: f32, dt: f32) -> (f32, bool) {
@@ -152,6 +160,17 @@ impl App {
 mod tests {
     use super::*;
     use std::f32::consts::{FRAC_PI_2, PI};
+
+    #[test]
+    fn only_a_selecting_click_of_the_edit_tool_turns_the_avatar() {
+        use crate::build::Tool;
+        assert!(press_selects(Tool::Edit, false, true));
+        // A move, rotate or stretch handle grabbed over the floor (#4102).
+        assert!(!press_selects(Tool::Edit, true, true));
+        assert!(!press_selects(Tool::Edit, false, false));
+        assert!(!press_selects(Tool::Create, false, true));
+        assert!(!press_selects(Tool::Grab, false, true));
+    }
 
     #[test]
     fn an_object_in_front_does_not_turn_the_avatar() {

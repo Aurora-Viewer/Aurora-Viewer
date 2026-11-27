@@ -2466,7 +2466,7 @@ impl World {
 
     /// Port of LLWorld::clipToVisibleRegions (indra/newview/llworld.cpp,
     /// originally LGPL 2.1). Coordinates here are relative to our main region.
-    fn clip_to_visible_regions(&self, start: Vec3, end: Vec3) -> Vec3 {
+    pub(crate) fn clip_to_visible_regions(&self, start: Vec3, end: Vec3) -> Vec3 {
         let region_at = |p: Vec3| {
             self.regions.values().find_map(|r| {
                 let origin = self.region_offset(r.handle)?;

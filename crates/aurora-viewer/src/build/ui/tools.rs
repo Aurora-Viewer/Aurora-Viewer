@@ -56,7 +56,7 @@ pub fn focus_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: M
         let r = ui.add_enabled(
             tool.focus_mode == FocusMode::Zoom,
             egui::Slider::new(&mut v, 0.0..=0.5)
-                .custom_parser(aurora_i18n::parse_number)
+                .custom_parser(super::common::parse_expression)
                 .show_value(false),
         );
         // no step, and only the user's own move: egui rounded a value off
@@ -457,7 +457,7 @@ pub fn land_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             label(ui, p, aurora_i18n::tr!("build-ui-tools-size"));
             ui.add(
                 egui::Slider::new(&mut s.land_brush_size, 1.0..=11.0)
-                    .custom_parser(aurora_i18n::parse_number)
+                    .custom_parser(super::common::parse_expression)
                     .show_value(false),
             );
         });
@@ -468,7 +468,7 @@ pub fn land_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             if ui
                 .add(
                     egui::Slider::new(&mut lg, -1.0..=2.0)
-                        .custom_parser(aurora_i18n::parse_number)
+                        .custom_parser(super::common::parse_expression)
                         .show_value(false),
                 )
                 .changed()

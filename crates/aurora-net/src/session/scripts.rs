@@ -330,6 +330,7 @@ mod tests {
         let (inventory_move_tx, _) = mpsc::unbounded_channel();
         let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         let mut session = Session {
+            default_perms: Default::default(),
             sh: &sh,
             sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock.clone())),
             login,

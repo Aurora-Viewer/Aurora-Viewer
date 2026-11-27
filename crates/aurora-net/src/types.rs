@@ -730,6 +730,11 @@ pub enum NetEvent {
     /// simulator's frame rate, which paces GameControlData
     /// (LLGameControl::setServerFrameRate).
     SimFrameRate(f32),
+    /// The default object permissions' post ended (updateCapCoro): sent, or
+    /// given up after its retries with the reason of the last failure.
+    DefaultObjectPermsSent {
+        result: Result<(), String>,
+    },
     HoverHeightUpdated {
         region: RegionHandle,
         request: u64,
@@ -1660,6 +1665,14 @@ pub enum NetCommand {
         region: RegionHandle,
         request: u64,
         value: f32,
+    },
+    /// The permissions new objects take (LLFloaterPermsDefault): `initial`
+    /// at login posts them once per session, when no post succeeded yet
+    /// (sendInitialPerms); otherwise they changed and are posted again
+    /// (LLFloaterPermsDefault::ok, updateCap).
+    SetDefaultObjectPerms {
+        masks: crate::caps::ObjectPermMasks,
+        initial: bool,
     },
     /// Ask for the mute list (MuteListRequest; CRC of our cached copy, 0 if none).
     RequestMuteList {

@@ -329,6 +329,7 @@ mod tests {
         let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         let (object_cache, mut files) = ObjectCaches::new(Some(dir.clone()));
         let mut session = Session {
+            default_perms: Default::default(),
             sh: &sh,
             sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock)),
             login,

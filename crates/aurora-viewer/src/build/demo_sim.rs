@@ -739,6 +739,26 @@ impl DemoSim {
                 }
                 self.reply_props(world, &ids)
             }
+            BuildCmd::SetNewObjectNextOwner {
+                handle,
+                local_id,
+                modify,
+                copy,
+                transfer,
+            } => {
+                let ids = Self::uuids(world, *handle, &[*local_id]);
+                for id in &ids {
+                    let p = self.props_of(world, *id);
+                    for (set, mask) in [(*modify, perm::MODIFY), (*copy, perm::COPY), (*transfer, perm::TRANSFER)] {
+                        if set {
+                            p.next_owner_mask |= mask;
+                        } else {
+                            p.next_owner_mask &= !mask;
+                        }
+                    }
+                }
+                self.reply_props(world, &ids)
+            }
             BuildCmd::SetGroup {
                 handle,
                 local_ids,
