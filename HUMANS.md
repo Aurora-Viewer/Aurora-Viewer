@@ -113,6 +113,21 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
   the team's PRs never wait. To see the
   plan without changing anything: Actions › Review slots › Run workflow
   (dry run ticked), or `./scripts/pr-slots.ps1 -Sweep -DryRun`.
+- **Review queue**: to know which PR of someone else to review next, run
+  `./scripts/review-queue.ps1` (your agents do it before each review). It
+  lists the open PRs in order: **re-reviews** first (you or another
+  maintainer reviewed it and its author answered since: a commit, a
+  comment), then the PRs tied to a **crash** (a linked issue the crash
+  triage signed, or a crash in the title), then the **`fix`** label, then
+  the rest **not reviewed yet**, the longest waiting first. Several
+  maintainers review at once, so the queue keeps them apart: whoever starts
+  a PR **claims** it (`-Claim <n>`, which makes them its assignee) and the
+  others' queues leave it out until their review is posted; a re-review
+  goes back to the maintainer who wrote the last review for 2 days, then to
+  anyone. `-Release <n>` hands a claimed PR back, `-All` also lists every
+  PR left out with the reason, `-As <login>` shows another maintainer's
+  queue. A claim with no word from its maintainer for 3 days shows in
+  yellow: ask them rather than taking it.
 - **Outside contributors' CI** waits for a maintainer: on their PR, "Approve
   and run" (look first that it does not change `.github/`). Review it only
   once that CI is green and the description is complete.
@@ -361,7 +376,7 @@ there (`scripts/test-tools-console.py`, Python 3).
 | PR tracking | The live panel (see below) |
 | Manage releases | Create or delete a release (see [Publishing a release](#publishing-a-release)) |
 | Shortcuts | "Aurora Tools" and "Aurora PR" (the PR panel directly) on the Desktop and in the Start menu, with the logo |
-| Claude permissions | Lets your Claude Code agents follow their PRs and CI, post their review and their screenshots, merge their PR, triage the issues and reply to them (`gh pr view / list / checks / comment`, `gh run view / list / watch`, `gh issue list / view / edit / comment / close / reopen`, `merge-pr.ps1`, `pr-captures.ps1`), which auto mode can otherwise refuse them ("auto-approval", "write to an external system", "interference with workloads"). `gh api`, `git push`, `gh pr merge`, the releases and `end-task.ps1` stay without a rule, left to the judgement of auto mode. Adds these rules to your Claude Code settings (`%USERPROFILE%\.claude\settings.json`) without touching the rest, keeping a copy of the former file; the merge queue and the protection of `main` still apply. Run it again after a tools update that adds a rule: only the missing rules are added. Then open a new Claude Code session |
+| Claude permissions | Lets your Claude Code agents follow their PRs and CI, post their review and their screenshots, merge their PR, triage the issues and reply to them (`gh pr view / list / checks / comment`, `gh run view / list / watch`, `gh issue list / view / edit / comment / close / reopen`, `merge-pr.ps1`, `pr-captures.ps1`, `review-queue.ps1`), which auto mode can otherwise refuse them ("auto-approval", "write to an external system", "interference with workloads"). `gh api`, `git push`, `gh pr merge`, the releases and `end-task.ps1` stay without a rule, left to the judgement of auto mode. Adds these rules to your Claude Code settings (`%USERPROFILE%\.claude\settings.json`) without touching the rest, keeping a copy of the former file; the merge queue and the protection of `main` still apply. Run it again after a tools update that adds a rule: only the missing rules are added. Then open a new Claude Code session |
 | Check again | The full table of the environment |
 | Reset the repository | Start again from a fresh clone of the `main` of GitHub: the tool first lists everything that would be lost (uncommitted changes, commits never pushed, stashes, agents' tasks with their changes, ignored files such as a `.env`), refuses if a build or a viewer is running, and does nothing unless you type `RESET`. It then deletes the tasks of `work\` and `RELEASE\`, puts the repository back on `origin/main` (untracked files and builds erased, local branches and stashes deleted), then repairs the environment. Your git identity, your GitHub login and the Legacy Viewer sources are kept |
 
