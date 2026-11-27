@@ -997,6 +997,94 @@ fn configured_pages_promote_same_origin_direct_media_only() {
     assert!(declared_video(page, cross_site).is_none());
 }
 
+/// The native media and attribution advertised by Reddit's public post embed.
+pub(super) struct RedditEmbed {
+    pub post: super::PostInfo,
+    pub media: Option<String>,
+    pub poster: Option<String>,
+    pub clip: Option<super::Clip>,
+}
+
+pub(super) fn reddit_embed(page: &str, html: &str) -> Option<RedditEmbed> {
+    let page = Url::parse(page).ok()?;
+    let parts = segments(&page);
+    let index = parts.iter().position(|part| *part == "comments")?;
+    let id = parts.get(index + 1)?;
+    let (_, body) = html.split_once("<shreddit-screenview-data ")?;
+    let (tag, body) = body.split_once('>')?;
+    let data: serde_json::Value = serde_json::from_str(&unescape(attribute(&format!(" {tag}"), "data")?)).ok()?;
+    let media = &data["post"];
+    if media["id"].as_str()? != format!("t3_{id}") || media["nsfw"].as_bool()? {
+        return None;
+    }
+
+    let (_, title) = body.split_once(r#"<a id="embed-title""#)?;
+    let anchor = title.split_once("</a>")?.0;
+    let (_, title) = anchor.split_once("<h1")?.1.split_once('>')?;
+    let title: String = unescape(title.split_once("</h1>")?.0).trim().chars().take(200).collect();
+    if title.is_empty() {
+        return None;
+    }
+    let channel = data["subreddit"]["name"]
+        .as_str()
+        .filter(|name| (1..=80).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+        .map_or_else(String::new, |name| format!("r/{name}"));
+    let source = media["url"].as_str().unwrap_or_default();
+    let kind = media["type"].as_str().unwrap_or_default();
+    let clip = (kind == "video")
+        .then(|| super::Clip::of(source))
+        .flatten()
+        .filter(super::Clip::native_video);
+    let media = (matches!(kind, "image" | "gif") && picture_host_ok(Service::Reddit, source)).then(|| source.to_owned());
+    let poster = body
+        .split("<img ")
+        .skip(1)
+        .filter_map(|img| img.split_once('>'))
+        .find_map(|(img, _)| {
+            let tag = format!(" {img}");
+            if !matches!(attribute(&tag, "alt"), Some("Media error" | "media poster")) {
+                return None;
+            }
+            let source = unescape(attribute(&tag, "src")?);
+            picture_host_ok(Service::Reddit, &source).then_some(source)
+        });
+    Some(RedditEmbed {
+        post: super::PostInfo {
+            title,
+            channel,
+            summary: String::new(),
+        },
+        media,
+        poster,
+        clip,
+    })
+}
+
+#[test]
+fn reddit_embed_reads_media_only_for_the_requested_non_sensitive_post() {
+    let page = "https://www.reddit.com/r/demo/comments/demo01/example/";
+    let html = r#"<shreddit-screenview-data data="{&quot;post&quot;:{&quot;id&quot;:&quot;t3_demo01&quot;,&quot;type&quot;:&quot;gif&quot;,&quot;url&quot;:&quot;https://i.redd.it/example.gif&quot;,&quot;nsfw&quot;:false},&quot;subreddit&quot;:{&quot;name&quot;:&quot;demo&quot;}}"></shreddit-screenview-data>
+      <a id="embed-title"><h1>Example &amp; title</h1></a>
+      <img alt="Media error" src="https://external-preview.redd.it/example.jpg">"#;
+    let result = reddit_embed(page, html).unwrap();
+    assert_eq!(result.post.title, "Example & title");
+    assert_eq!(result.post.channel, "r/demo");
+    assert_eq!(result.media.as_deref(), Some("https://i.redd.it/example.gif"));
+    assert_eq!(result.poster.as_deref(), Some("https://external-preview.redd.it/example.jpg"));
+    assert!(reddit_embed(&page.replace("demo01", "demo02"), html).is_none());
+    assert!(reddit_embed(page, &html.replace("false", "true")).is_none());
+    assert!(
+        reddit_embed(page, &html.replace("i.redd.it", "other.example"))
+            .unwrap()
+            .media
+            .is_none()
+    );
+    let video = html
+        .replace("&quot;gif&quot;", "&quot;video&quot;")
+        .replace("i.redd.it/example.gif", "v.redd.it/5o5cu4n0upeb1");
+    assert!(reddit_embed(page, &video).unwrap().clip.is_some());
+}
+
 pub(super) fn reddit_feed(xml: &str) -> Option<super::PostInfo> {
     let entry = xml.split("<entry").nth(1)?.split("</entry>").next()?;
     let field = |name: &str| {

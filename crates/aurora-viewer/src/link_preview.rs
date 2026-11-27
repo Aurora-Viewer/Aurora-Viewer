@@ -1273,6 +1273,9 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
             })
         }
         Step::Feed { feed, page, share_image } => {
+            if let Some(preview) = reddit_embed_preview(client, &page).await {
+                return Ok(preview);
+            }
             let now = std::time::Instant::now();
             let paused = REDDIT_PAUSE.lock().ok().and_then(|p| *p).is_some_and(|until| now < until);
             if !paused {
@@ -1328,6 +1331,33 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
         source,
         sensitive,
     })
+}
+
+async fn reddit_embed_preview(client: &reqwest::Client, page: &str) -> Option<Content> {
+    let embed = page.replacen("https://www.reddit.com/", "https://embed.reddit.com/", 1);
+    let (body, _) = download(client, &embed, "text/html", 768 * 1024).await.ok()?;
+    let entry = services::reddit_embed(page, std::str::from_utf8(&body).ok()?)?;
+    if let Some(clip) = entry.clip
+        && let Some(shape) = stream_aspect(client, &clip).await
+    {
+        let thumbnail = match entry.poster {
+            Some(source) => fetch_picture(client, &source).await.ok(),
+            None => None,
+        };
+        return Some(Content::Clip(ClipInfo {
+            clip,
+            title: entry.post.title,
+            channel: entry.post.channel,
+            thumbnail,
+            aspect: Some(shape),
+        }));
+    }
+    for source in entry.media.into_iter().chain(entry.poster) {
+        if let Some(picture) = post_picture(client, source).await {
+            return Some(Content::Post(entry.post, Some(picture)));
+        }
+    }
+    None
 }
 
 async fn reddit_post_picture(client: &reqwest::Client, page: &str, share_image: &str, feed: Option<&str>) -> Option<(Picture, String)> {

@@ -1774,6 +1774,8 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         "streamable" => "https://streamable.com/hn8hq",
                         "vimeo" => "https://vimeo.com/1084537",
                         "imgur" => "https://imgur.com/KDM0UfE",
+                        "imgur-photo" => "https://i.imgur.com/KDM0UfE.jpg?fbplay",
+                        "imgur-missing" => "https://i.imgur.com/zzq6vRx483Z.jpg",
                         "giphy" => "https://giphy.com/gifs/dance-happy-cute-l0HU3vwj7M52g35Be",
                         "tenor" => "https://tenor.com/view/happy-dance-dan%C3%A7ando-gif-25925999",
                         "tiktok" => "https://www.tiktok.com/@scout2015/video/6718335390845095173",
@@ -1782,6 +1784,10 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         "twitch" => "https://clips.twitch.tv/IncredulousAbstemiousFennelImGlitch",
                         "twitch-live" => "https://www.twitch.tv/lofigirl",
                         "kick" => "https://kick.com/chessbrah",
+                        "reddit-photo" => "https://www.reddit.com/r/pics/comments/1u58ant/photo_of_my_friends_cousins_door/",
+                        "reddit-gif" => {
+                            "https://www.reddit.com/r/spaceporn/comments/1v9hwzg/spacex_shares_hd_video_of_the_starship_flight_13/"
+                        }
                         "reddit-post" => {
                             "https://www.reddit.com/r/funnyvideos/comments/15byye8/turning_delay_into_play_these_guys_know_how_to/"
                         }
