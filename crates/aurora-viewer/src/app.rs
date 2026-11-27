@@ -7548,6 +7548,9 @@ impl App {
             self.send(NetCommand::SetAlwaysRun(false));
         }
         self.set_mouselook_grab(false);
+        if !self.settings.confirm_quit {
+            self.confirm_exit(ui::exit::Action::Quit);
+        }
         self.egui_ctx.request_repaint();
     }
 
@@ -11060,8 +11063,14 @@ impl App {
             self.shutdown(event_loop);
             return;
         }
-        if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
+        if self.demo
+            && self.frame_count == 650
+            && let Ok(mode) = std::env::var("AURORA_DEMO_EXIT")
+        {
+            let confirm_quit = self.settings.confirm_quit;
+            self.settings.confirm_quit = mode != "no-confirm";
             self.request_exit();
+            self.settings.confirm_quit = confirm_quit;
         }
         // AURORA_DEMO_TELEPORT_ACCESS: a teleport to the eastern neighbour
         // (a lure accepted for `lure`), once settled

@@ -1176,13 +1176,6 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::identified(ui, "immersive_item", |ui| immersive_item(ui, p)) {
             *action = BarAction::ToggleImmersive;
         }
-        menu::separator(ui, p);
-        if menu::command(ui, p, "ui-bars-log-out").item("logout", aurora_i18n::tr!("ui-bars-log-out")) {
-            *action = BarAction::Logout;
-        }
-        if menu::command(ui, p, "ui-bars-quit-aurora-viewer").item("power", aurora_i18n::tr!("ui-bars-quit-aurora-viewer")) {
-            *action = BarAction::Quit;
-        }
     });
     menu::command(ui, p, "ui-bars-communicate").submenu("messages-filled", aurora_i18n::tr!("ui-bars-communicate"), true, |ui| {
         menu::identified(ui, "common-conversations", |ui| {
@@ -1912,6 +1905,13 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             aurora_i18n::tr!("ui-bars-editable-shortcuts-preferences-shortcuts"),
         );
     });
+    menu::separator(ui, p);
+    if menu::command(ui, p, "ui-bars-log-out").item("logout", aurora_i18n::tr!("ui-bars-log-out")) {
+        *action = BarAction::Logout;
+    }
+    if menu::command(ui, p, "ui-bars-quit-aurora-viewer").item("power", aurora_i18n::tr!("ui-bars-quit-aurora-viewer")) {
+        *action = BarAction::Quit;
+    }
 }
 
 /// Me › Avatar health (menu_viewer.xml "avhealth"): the usual fixes of a

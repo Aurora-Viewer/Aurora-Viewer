@@ -8732,8 +8732,16 @@ failure. Grid validation and any paid upload are performed by the human.
   minimize (Hyprland, Sway) keeps the window focused, so nothing is shown
   unless the window is moved away from the screen first.
   `AURORA_DEMO_OPTIONS=3:attention` opens the switches.
-- **`AURORA_DEMO_EXIT=1|cancel|logout|quit`**: opens the modal at frame 650.
-  `1` leaves it interactive; the other modes make the choice at frame 800.
+- **`AURORA_DEMO_EXIT=1|cancel|logout|quit|no-confirm`**: opens the modal at frame 650.
+  `1` leaves it interactive; `cancel`, `logout` and `quit` make the choice
+  at frame 800. `no-confirm` requests quit at frame 650 without the
+  confirmation modal, retaining the existing unsaved-work protections
+  and leaving the saved confirmation preference unchanged.
+  For manual validation, disable Confirm before quitting in Preferences,
+  open an inventory script with `AURORA_DEMO_SCRIPTS=inventory`, modify
+  its source and select Quit Aurora Viewer from the main menu.
+  The unsaved-script warning must still appear. Resolving it leaves the
+  viewer open, matching the existing exit behaviour.
   Take screenshots at `740,900` to compare the blurred background then the
   resumed session or the return to the login. `quit` ends the process at
   frame 800 (capture only 740, without `AURORA_CAPTURE_EXIT`). Combine with

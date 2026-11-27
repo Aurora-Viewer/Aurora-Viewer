@@ -251,6 +251,7 @@ const BEFORE: &[&str] = &[
     "loading_backdrop",
     "reduce_motion",
     "confirm_teleports",
+    "confirm_quit",
     "confirm_no_transfer_settings",
     "confirm_object_bonus",
     "confirm_return_to_owner",
