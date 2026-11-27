@@ -13438,6 +13438,14 @@ impl App {
             sharpen: self.settings.sharpen,
             glow: self.settings.glow,
             bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
+            sun_rays: if self.settings.sun_rays {
+                self.settings.sun_rays_strength.clamp(
+                    *crate::settings::SUN_RAYS_STRENGTH.start(),
+                    *crate::settings::SUN_RAYS_STRENGTH.end(),
+                )
+            } else {
+                0.0
+            },
             water_height: self.world.main_water_height(),
             shadows: self.photo_shadow_quality() > 0 && matches!(self.screen, Screen::World),
             shadow_distance: Settings::shadow_params_of(self.photo_shadow_quality()).1,

@@ -4988,6 +4988,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_FOG_COLOUR=sky\|<r>,<g>,<b>` | The fog's colour (the sky's light, or its own in sRGB 0..1) until the Aurora Weather window is used |
 | `AURORA_DEMO_FOG=sunset\|neon\|indoor\|underwater\|shelter\|aerial\|ground` | Fog under a fixed sky with props and a placed camera |
 | `AURORA_DEMO_FOG_SWING=<degrees>` | The fog scene's camera swings side to side, through its view at full speed every 100 frames |
+| `AURORA_SUN_RAYS=<0..1>\|off` | The sun's and the moon's shafts at this strength, or none, whatever Preferences say (see Details) |
 
 ### Details
 
@@ -5026,6 +5027,17 @@ both open states and the selection count. Capture at frame 620.
   meet without a seam; under the height fog, a room under a roof stays
   clear (the shelter map, three taps along each view).
 
+- **Sun and moon rays (`AURORA_SUN_RAYS`)**: Preferences › Graphics ›
+  "Sun and moon rays" for this launch only: `<0..1>` their strength, `off`
+  (or `0`) none. A post process (`sun_shafts.rs`): the sky around the sun
+  (the moon at night) streaked from it across the image, cut by what
+  stands in front; nothing behind the camera, fading as the light leaves
+  the view's axis and as it sets; none in debug views, cut-out photos and
+  photos drawn in tiles. Compare `AURORA_DEMO_FOG=sunset AURORA_FOG=off
+  AURORA_SUN_RAYS=0.7` (dark streaks behind the posts and the torus in the
+  low sun's light, the ground beside them as without) against
+  `AURORA_SUN_RAYS=off`. `AURORA_PROFILE=1` counts their GPU time in
+  `g_bloom`.
 - **Weather (`AURORA_RAIN`, `AURORA_SNOW*`, `AURORA_THUNDER_*`)**: the
   weather of the Aurora Weather window is drawn for
   this viewer only. `AURORA_RAIN=<0..1>` sets the rain (0 none, 1 a

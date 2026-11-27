@@ -1544,12 +1544,16 @@ fn fog_optical_depth(za: f32, zb: f32, len: f32, base: f32) -> f32 {
 // The sun's light on the fog `rel` metres from the camera, as the surfaces
 // there take it: a classic sky's is the Legacy sunlight (ll_sun_linear,
 // the radiance of a white face turned to it: pi times that is the
-// irradiance the others' sun_color is), the others' sun_color.
+// irradiance the others' sun_color is), the others' sun_color. At night
+// both are the moon's, as the surfaces take it (world/env.rs: the light of
+// `sun_dir` is the moon's while the sun is down); sun_color was once
+// scaled by the sun being up (`sun_dir.w`), which left the fog unlit, and
+// with no moon's rays, by night.
 fn fog_sun(rel: vec3<f32>) -> vec3<f32> {
     if (is_classic_sky()) {
         return ll_sun_linear(ll_atmos(rel)) * PI;
     }
-    return frame.sun_color.rgb * max(frame.sun_dir.w, 0.0);
+    return frame.sun_color.rgb;
 }
 
 // The light the fog scatters toward the camera, per unit of it, looking

@@ -1808,6 +1808,13 @@ pub struct Settings {
     /// default until tried on modest GPUs, and left alone by the two buttons
     /// of Preferences › Aurora, as the water effects once were.
     pub volumetric_clouds: bool,
+    /// The sun's and the moon's shafts (aurora-render sun_shafts.rs): the
+    /// sky's light around them streaked across the image, cut by what stands
+    /// in front, with no visible mist. An Aurora feature (the Legacy Viewer
+    /// has none), off by default.
+    pub sun_rays: bool,
+    /// Their strength, 0.05..1.
+    pub sun_rays_strength: f32,
     /// 0 Khronos PBR Neutral, 1 ACES (RenderTonemapType: ACES by default,
     /// like the Legacy Viewer)
     pub tonemapper: u8,
@@ -2087,6 +2094,10 @@ pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 pub(crate) const PLANET_RADIUS_KM: f32 = aurora_render::curvature::EARTH_RADIUS / 1000.0;
 pub(crate) const PLANET_RADIUS_KM_RANGE: std::ops::RangeInclusive<f32> =
     aurora_render::curvature::RADIUS_MIN / 1000.0..=aurora_render::curvature::RADIUS_MAX / 1000.0;
+
+/// The sun's and the moon's rays' strength (`Settings::sun_rays_strength`).
+pub(crate) const SUN_RAYS_STRENGTH_DEFAULT: f32 = 0.5;
+pub(crate) const SUN_RAYS_STRENGTH: std::ops::RangeInclusive<f32> = 0.05..=1.0;
 
 /// RenderTonemapMix's default (settings.xml).
 pub(crate) const TONEMAP_MIX: f32 = 0.7;
@@ -2933,6 +2944,8 @@ impl Default for Settings {
             specular_aa: true,
             colored_sky_ambient: false,
             volumetric_clouds: false,
+            sun_rays: false,
+            sun_rays_strength: SUN_RAYS_STRENGTH_DEFAULT,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
             hdr_emissive: true,
