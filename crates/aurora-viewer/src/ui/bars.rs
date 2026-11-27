@@ -3989,7 +3989,9 @@ pub(crate) fn toolbar_row(
         };
         painter.set_clip_rect(ui.clip_rect().expand2(padding).intersect(ui.ctx().content_rect()));
         let slot = painter.add(egui::Shape::Noop);
-        (painter, slot)
+        // (the chat island hung under the top bar's row has a clip of its own)
+        let hung = painter.add(egui::Shape::Noop);
+        (painter, slot, hung)
     });
     let reveal = |ui: &mut egui::Ui, command: &str, rect: egui::Rect| {
         if super::toolbar::ToolbarUi::is_preview_item(ui.ctx(), command) && !ui.clip_rect().contains_rect(rect) {
@@ -4331,13 +4333,14 @@ pub(crate) fn toolbar_row(
             }
         }
     }
-    if let Some((painter, underlay)) = underlay {
+    if let Some((mut painter, underlay, hung)) = underlay {
         let bounds = rects.iter().copied().filter(|rect| rect.is_positive()).reduce(egui::Rect::union);
         if let Some(bounds) = bounds {
             let outer = bounds.expand(islands::PAD).intersect(painter.clip_rect());
-            // the chat block's island, raised over the dock's row
-            // (`chrome::lift_chat`)
-            let lifted = (row.bar == super::toolbar::Bar::Bottom && !row.floating && !row.editing)
+            // the chat block's island, raised over the dock's row or hung
+            // under the top bar's (`chrome::lift_chat`)
+            let hangs = row.bar == super::toolbar::Bar::Top;
+            let lifted = ((hangs || row.bar == super::toolbar::Bar::Bottom) && !row.floating && !row.editing)
                 .then(|| chrome::chat_lift(ui.ctx()))
                 .flatten()
                 .filter(|lift| *lift > 0.0)
@@ -4345,18 +4348,38 @@ pub(crate) fn toolbar_row(
                     let chat = buttons.iter().position(|button| button.command == "bar_chat")?;
                     Some((rects.get(chat)?.center(), lift))
                 });
+            let mut under = None;
             let shapes = super::toolbar::structure::groups(buttons, &rects, outer, row.bar.vertical())
                 .into_iter()
-                .map(|mut rect| {
+                .filter_map(|mut rect| {
                     if let Some((chat, lift)) = lifted
                         && rect.contains(chat)
                     {
+                        if hangs {
+                            rect.max.y += lift;
+                            under = Some((super::widgets::island_shape(ui.ctx(), p, rect), lift));
+                            return None;
+                        }
+                        // (the side bars keep their place beside it:
+                        // `chrome::side_room`)
+                        chrome::raise_chat(ui.ctx(), rect.x_range(), lift);
                         rect.min.y -= lift;
                     }
-                    super::widgets::island_shape(ui.ctx(), p, rect)
+                    Some(super::widgets::island_shape(ui.ctx(), p, rect))
                 })
                 .collect();
             painter.set(underlay, egui::Shape::Vec(shapes));
+            if let Some((shape, lift)) = under {
+                // The top bar clips its islands to its row, their shadow
+                // with them: the island that hangs under it is drawn down
+                // to its own foot, and it alone, or the other islands'
+                // shadows showed under the bar each time it hung (the
+                // human's report, 2026-11-27).
+                let mut clip = painter.clip_rect();
+                clip.max.y += lift;
+                painter.set_clip_rect(clip);
+                painter.set(hung, shape);
+            }
         }
     }
     super::toolbar::blocks::collect(ui, row.bar, buttons, &rects);

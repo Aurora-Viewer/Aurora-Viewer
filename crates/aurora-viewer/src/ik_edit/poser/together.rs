@@ -90,7 +90,15 @@ pub(super) enum Change {
 /// `after`: a rotation turned by the same amount in the follower's own
 /// frame, a move by the same offset in the avatar's frame, a scale by the
 /// same ratio. A follower's world lock goes, as the leader's does.
-pub(super) fn follow(rig: &Rig, before: &SubjectPose, after: &mut SubjectPose, lead: usize, followers: &[usize], change: Change) {
+pub(super) fn follow(
+    rig: &Rig,
+    before: &SubjectPose,
+    after: &mut SubjectPose,
+    lead: usize,
+    followers: &[usize],
+    change: Change,
+    only: bool,
+) {
     let followers: Vec<_> = followers.iter().copied().filter(|f| *f != lead && *f < rig.len()).collect();
     if followers.is_empty() {
         return;
@@ -118,14 +126,47 @@ pub(super) fn follow(rig: &Rig, before: &SubjectPose, after: &mut SubjectPose, l
             if !offset.is_finite() {
                 return;
             }
-            for &bone in &followers {
-                after.move_joint(rig, bone, was[bone].w_axis.truncate() + offset);
+            // parents before their children: a target is a world place, and
+            // a parent moved later would carry the child off it. `only` is the
+            // Position tab's "Move this joint only": every selected joint moves
+            // the same way (setSelectedJointsPosition), so the leader takes
+            // its place in the same pass, back on the spot it was dragged to
+            // after a follower above it carried it along, and before the
+            // followers below it, which it carries in turn.
+            let mut order = followers.clone();
+            if only {
+                order.push(lead);
+            }
+            order.sort_by_key(|b| depth(rig, *b));
+            for &bone in &order {
+                let target = if bone == lead {
+                    now[lead].w_axis.truncate()
+                } else {
+                    was[bone].w_axis.truncate() + offset
+                };
+                after.move_joint(rig, bone, target, only);
+            }
+            // bending: one chain, and the dragged joint wins. It goes back on
+            // its target after a follower above it carried it along; a
+            // follower below it may then be carried off its own.
+            if !only && order.iter().any(|f| is_ancestor(rig, *f, lead)) {
+                after.move_joint(rig, lead, now[lead].w_axis.truncate(), only);
             }
         }
     }
     for bone in followers {
         after.locks.remove(&bone);
     }
+}
+
+/// How many joints lie above `bone`.
+fn depth(rig: &Rig, bone: usize) -> usize {
+    std::iter::successors(rig.parent[bone], |b| rig.parent[*b]).count()
+}
+
+/// Whether `above` is a parent, grandparent… of `bone`.
+fn is_ancestor(rig: &Rig, above: usize, bone: usize) -> bool {
+    std::iter::successors(rig.parent[bone], |b| rig.parent[*b]).any(|b| b == above)
 }
 
 #[cfg(test)]
@@ -152,7 +193,7 @@ mod tests {
         let mut after = before.clone();
         let look = Quat::from_rotation_z(0.4);
         after.rotations[left] = before.rotations[left] * look;
-        follow(rig, &before, &mut after, left, &[right], Change::Rotate);
+        follow(rig, &before, &mut after, left, &[right], Change::Rotate, false);
         let world = rig.world_with(&after.rotations, Vec3::ZERO, &after.positions, &after.scales);
         let (_, l, _) = world[left].to_scale_rotation_translation();
         let (_, r, _) = world[right].to_scale_rotation_translation();
@@ -173,7 +214,7 @@ mod tests {
         let mut after = before.clone();
         let turn = Quat::from_rotation_y(-0.5);
         after.rotations[lead] = before.rotations[lead] * turn;
-        follow(rig, &before, &mut after, lead, &[other], Change::Rotate);
+        follow(rig, &before, &mut after, lead, &[other], Change::Rotate, false);
         assert!(after.rotations[other].abs_diff_eq(before.rotations[other] * turn, 1e-5));
         assert!(!after.locks.contains_key(&other));
     }
@@ -186,7 +227,7 @@ mod tests {
         let before = rest(rig);
         let mut after = before.clone();
         after.scales[lead] = before.scales[lead] * 1.5;
-        follow(rig, &before, &mut after, lead, &[other], Change::Scale);
+        follow(rig, &before, &mut after, lead, &[other], Change::Scale, false);
         assert!(after.scales[other].abs_diff_eq(before.scales[other] * 1.5, 1e-5));
         assert_eq!(after.rotations[other], before.rotations[other]);
         assert_eq!(after.positions[other], before.positions[other]);
@@ -205,12 +246,12 @@ mod tests {
         for step in 1..=20 {
             let before = after.clone();
             let target = was[lead].w_axis.truncate() + offset * (step as f32 / 20.0);
-            assert!(after.move_joint(rig, lead, target));
-            follow(rig, &before, &mut after, lead, &[other], Change::Move);
+            assert!(after.move_joint(rig, lead, target, false));
+            follow(rig, &before, &mut after, lead, &[other], Change::Move, false);
         }
         let mut alone = start.clone();
         for step in 1..=20 {
-            alone.move_joint(rig, lead, was[lead].w_axis.truncate() + offset * (step as f32 / 20.0));
+            alone.move_joint(rig, lead, was[lead].w_axis.truncate() + offset * (step as f32 / 20.0), false);
         }
         let alone = rig.world_with(&alone.rotations, Vec3::ZERO, &alone.positions, &alone.scales);
         let now = rig.world_with(&after.rotations, Vec3::ZERO, &after.positions, &after.scales);
@@ -229,6 +270,88 @@ mod tests {
             "{moved} vs {led}"
         );
         assert!((moved.y + led.y).abs() < 0.005, "{moved} vs {led}");
+    }
+
+    /// Position tab, "Move this joint only", with a second shoulder selected:
+    /// the follower moves by the same offset and its collar does not bend
+    /// (`setSelectedJointsPosition`).
+    #[test]
+    fn move_this_joint_only_moves_a_follower_without_bending_its_collar() {
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let rig = &lib.rig;
+        let (lead, other) = (rig.names["mShoulderLeft"], rig.names["mShoulderRight"]);
+        let collar = rig.parent[other].unwrap();
+        let start = rest(rig);
+        let was = rig.world_with(&start.rotations, Vec3::ZERO, &start.positions, &start.scales);
+        let offset = Vec3::new(0.04, 0.06, -0.03);
+        let mut after = start.clone();
+        assert!(after.move_joint(rig, lead, was[lead].w_axis.truncate() + offset, true));
+        follow(rig, &start, &mut after, lead, &[other], Change::Move, true);
+        assert_eq!(after.rotations[collar], start.rotations[collar], "the follower's collar bent");
+        assert_eq!(after.rotations[other], start.rotations[other]);
+        assert_eq!(after.rotations[lead], start.rotations[lead]);
+        let now = rig.world_with(&after.rotations, Vec3::ZERO, &after.positions, &after.scales);
+        let led = now[lead].w_axis.truncate() - was[lead].w_axis.truncate();
+        let moved = now[other].w_axis.truncate() - was[other].w_axis.truncate();
+        assert!(led.distance(offset) < 0.002, "leader {led} vs {offset}");
+        assert!(moved.distance(led) < 0.002, "follower {moved} vs leader {led}");
+    }
+
+    /// The elbow dragged with its own shoulder selected: the elbow ends where
+    /// it was dragged, not carried a second time by its parent, in both
+    /// Position modes; with "Move this joint only" the shoulder moves by the
+    /// drag's offset.
+    #[test]
+    fn a_follower_above_the_leader_does_not_carry_it_off_its_target() {
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let rig = &lib.rig;
+        let (lead, above) = (rig.names["mElbowLeft"], rig.names["mShoulderLeft"]);
+        assert!(is_ancestor(rig, above, lead) && !is_ancestor(rig, lead, above));
+        let offset = Vec3::new(0.0, 0.03, 0.04);
+        for only in [true, false] {
+            let before = rest(rig);
+            let was = rig.world_with(&before.rotations, Vec3::ZERO, &before.positions, &before.scales);
+            let target = was[lead].w_axis.truncate() + offset;
+            let mut after = before.clone();
+            assert!(after.move_joint(rig, lead, target, only));
+            let dragged = rig.world_with(&after.rotations, Vec3::ZERO, &after.positions, &after.scales)[lead]
+                .w_axis
+                .truncate();
+            follow(rig, &before, &mut after, lead, &[above], Change::Move, only);
+            let now = rig.world_with(&after.rotations, Vec3::ZERO, &after.positions, &after.scales);
+            assert!(
+                now[lead].w_axis.truncate().distance(dragged) < 1e-3,
+                "only={only}: the elbow left its target"
+            );
+            let moved = now[above].w_axis.truncate() - was[above].w_axis.truncate();
+            if only {
+                assert!(moved.distance(offset) < 1e-3, "the shoulder moved {moved}, not {offset}");
+            } else {
+                // one chain: the elbow's bend wins over the shoulder's offset
+                assert!(moved.length() > 1e-3, "the shoulder did not follow");
+            }
+        }
+    }
+
+    #[test]
+    fn move_this_joint_only_moves_every_joint_of_a_chain_by_the_drag() {
+        // shoulder, elbow and wrist selected, the elbow dragged: the shoulder
+        // carries the elbow and the wrist, the elbow carries the wrist back
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let rig = &lib.rig;
+        let (above, lead, below) = (rig.names["mShoulderLeft"], rig.names["mElbowLeft"], rig.names["mWristLeft"]);
+        assert!(is_ancestor(rig, above, lead) && is_ancestor(rig, lead, below));
+        let offset = Vec3::new(0.0, 0.03, 0.04);
+        let before = rest(rig);
+        let was = rig.world_with(&before.rotations, Vec3::ZERO, &before.positions, &before.scales);
+        let mut after = before.clone();
+        assert!(after.move_joint(rig, lead, was[lead].w_axis.truncate() + offset, true));
+        follow(rig, &before, &mut after, lead, &[above, below], Change::Move, true);
+        let now = rig.world_with(&after.rotations, Vec3::ZERO, &after.positions, &after.scales);
+        for (bone, name) in [(above, "shoulder"), (lead, "elbow"), (below, "wrist")] {
+            let moved = now[bone].w_axis.truncate() - was[bone].w_axis.truncate();
+            assert!(moved.distance(offset) < 1e-3, "the {name} moved {moved}, not {offset}");
+        }
     }
 
     #[test]

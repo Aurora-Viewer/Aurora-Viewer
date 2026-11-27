@@ -241,6 +241,7 @@ impl Editor {
         if !self.position.is_finite() || self.position.abs().max_element() > 100.0 || !rotation.is_finite() {
             return true;
         }
+        let move_joint_only = self.poser.move_joint_only;
         let Some(session) = self.poser.sessions.get_mut(&self.poser.subject) else {
             return false;
         };
@@ -256,7 +257,7 @@ impl Editor {
             let matrices = rig.world_with(&before.rotations, Vec3::ZERO, &before.positions, &edited.scales);
             let parent_q = rig.parent[bone].map_or(Quat::IDENTITY, |p| matrices[p].to_scale_rotation_translation().1);
             edited.rotations[bone] = (parent_q.inverse() * rotation).normalize();
-        } else if !edited.move_joint(rig, bone, self.position) {
+        } else if !edited.move_joint(rig, bone, self.position, move_joint_only) {
             return true;
         }
         // the joints this drag changed itself (the leader, the followers and
@@ -270,12 +271,32 @@ impl Editor {
             start.rotations.clone_from(&before.rotations);
             start.positions.clone_from(&before.positions);
             let change = if rotate { together::Change::Rotate } else { together::Change::Move };
-            together::follow(rig, &start, &mut edited, bone, &followers, change);
+            together::follow(rig, &start, &mut edited, bone, &followers, change, !rotate && move_joint_only);
             for (joint, dragged) in dragged.iter_mut().enumerate() {
-                *dragged = edited.rotations[joint] != before.rotations[joint] || joint == bone || followers.contains(&joint);
+                *dragged = edited.rotations[joint] != before.rotations[joint]
+                    || edited.positions[joint] != before.positions[joint]
+                    || joint == bone
+                    || followers.contains(&joint);
             }
         }
         if self.symmetry {
+            // a joint the drag moved directly (the leader or a follower with
+            // "Move this joint only", or a joint whose parent is a spine joint
+            // even without it): only its position changed, so the rotation
+            // mirror below would miss it (FSPoserAnimator::setJointPosition
+            // also moves the opposite joint in its MIRROR styles)
+            let positions = edited.positions.clone();
+            for (changed, position) in positions.into_iter().enumerate() {
+                if position != before.positions[changed]
+                    && let Some(other) = self.mirrors.counterpart(changed)
+                    && Some(other) != selected
+                    && !dragged[other]
+                {
+                    edited.positions[other] =
+                        session.base.positions[other] + crate::ik_edit::rig_controls::reflect(position - session.base.positions[changed]);
+                    edited.locks.remove(&other);
+                }
+            }
             let rotations = edited.rotations.clone();
             for (changed, rotation) in rotations.into_iter().enumerate() {
                 // a joint selected with the others takes their change, not a reflection
