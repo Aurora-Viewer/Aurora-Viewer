@@ -21,6 +21,7 @@ mod transport;
 mod ui;
 
 pub use demo::fixture as demo_fixture;
+pub use demo::repaint_fixture as demo_repaint_fixture;
 pub use demo::sleeves_fixture as demo_sleeves_fixture;
 pub use demo::static_fixture as demo_static_fixture;
 pub use demo::warnings_fixture as demo_warnings_fixture;
@@ -157,6 +158,12 @@ pub struct Live {
     pub undo_requested: bool,
     /// Reduce animations: the thumbnails' update sweep stands still.
     pub still: bool,
+    /// Demo: the revision received last, when and at which frame, until all
+    /// its objects are drawn (the `drawn … after it arrived` log line).
+    pub arrival: Option<(u64, std::time::Instant, u64)>,
+    /// Images of the snapshot staged again from their pixels on a job
+    /// (`restage_missing`), and the pool they were staged in.
+    restaging: Option<staging::Restaging>,
 }
 impl Default for Live {
     fn default() -> Self {
@@ -208,6 +215,8 @@ impl Default for Live {
             undo: None,
             undo_requested: false,
             still: false,
+            arrival: None,
+            restaging: None,
         }
     }
 }
@@ -289,6 +298,7 @@ impl Live {
     /// (`STAGING_BUSY`).
     pub fn forget_gpu(&mut self) {
         self.revision = None;
+        self.restaging = None;
         for image in self.snapshot.iter_mut().flat_map(|snapshot| &mut snapshot.images) {
             image.staged = None;
         }
@@ -319,6 +329,64 @@ impl Live {
                 staging::restage(&mut snapshot.images, pool.as_deref(), &mut done);
             }
             server.shared.staging.lock().gpu_reset(pool);
+        }
+    }
+
+    /// Gives up the staged copies of the snapshot's images that are on the
+    /// GPU (`on_gpu`): a staged region kept alive pins its staging chunk, and
+    /// held every upload of the viewer back by up to 9 frames
+    /// (`StagingPool::prepare`). The pixels stay, to stage them again.
+    pub fn release_staged(&mut self, on_gpu: impl Fn(&Uuid) -> bool) {
+        for image in self.snapshot.iter_mut().flat_map(|snapshot| &mut snapshot.images) {
+            if on_gpu(&image.id) {
+                image.staged = None;
+            }
+        }
+    }
+
+    /// The snapshot's images that are neither on the GPU nor staged, and
+    /// whose pixels must be staged again before it can be shown.
+    fn unstaged(&self, on_gpu: impl Fn(&Uuid) -> bool) -> Vec<protocol::PreparedImage> {
+        self.snapshot
+            .iter()
+            .flat_map(|snapshot| &snapshot.images)
+            .filter(|image| image.staged.is_none() && !on_gpu(&image.id))
+            .cloned()
+            .collect()
+    }
+
+    /// Stages again, on a job, the images of the snapshot that are neither
+    /// on the GPU nor staged, and hands them to the snapshot when done. Not
+    /// expected: the GPU keeps a snapshot's images while it has them, and the
+    /// listener stages those new to it. A safety net, so that the preview
+    /// never waits for one forever.
+    pub fn restage_missing(&mut self, pool: Arc<aurora_render::StagingPool>, on_gpu: impl Fn(&Uuid) -> bool) {
+        if let Some(done) = self.restaging.as_ref().and_then(|restaging| restaging.done(&pool)) {
+            self.restaging = None;
+            let mut given = false;
+            for image in self.snapshot.iter_mut().flat_map(|snapshot| &mut snapshot.images) {
+                if image.staged.is_none()
+                    && let Some(staged) = done.get(&image.id)
+                {
+                    image.staged = Some(staged.clone());
+                    given = true;
+                }
+            }
+            if given {
+                self.revision = None;
+                return;
+            }
+        }
+        if self.restaging.is_some() {
+            return;
+        }
+        let images = self.unstaged(on_gpu);
+        if !images.is_empty() {
+            log::warn!(
+                "Blender live: {} image(s) neither on the GPU nor staged; staged again",
+                images.len()
+            );
+            self.restaging = Some(staging::Restaging::start(images, pool));
         }
     }
 

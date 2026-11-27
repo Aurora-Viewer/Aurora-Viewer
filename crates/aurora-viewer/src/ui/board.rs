@@ -18,6 +18,8 @@ const ROW: f32 = 64.0;
 const PAD: Vec2 = Vec2::new(10.0, 8.0);
 /// The line of a tile's title.
 pub const TITLE: f32 = 24.0;
+/// The line of a small tile's figure (`figure`), at the text's usual size.
+const FIGURE: f32 = 26.0;
 
 /// A tile to place: how many columns and rows it takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +101,7 @@ fn pack<T: Copy>(tiles: &[Tile<T>], columns: usize) -> (Vec<Slot>, usize) {
 pub fn place<T: Copy + PartialEq>(tiles: &[Tile<T>], grown: Option<T>, area: Rect, text_scale: f32) -> (Vec<Placed<T>>, f32) {
     let columns = columns(area.width(), text_scale);
     if let Some(open) = grown.filter(|g| tiles.iter().any(|t| t.id == *g)) {
-        return (place_grown(tiles, open, area, columns), area.height());
+        return place_grown(tiles, open, area, columns, text_scale);
     }
     let (slots, rows) = pack(tiles, columns);
     let width = (area.width() - GAP * (columns - 1) as f32) / columns as f32;
@@ -121,14 +123,18 @@ pub fn place<T: Copy + PartialEq>(tiles: &[Tile<T>], grown: Option<T>, area: Rec
     (placed, rows as f32 * (height + GAP) - GAP)
 }
 
-fn place_grown<T: Copy + PartialEq>(tiles: &[Tile<T>], open: T, area: Rect, columns: usize) -> Vec<Placed<T>> {
+fn place_grown<T: Copy + PartialEq>(tiles: &[Tile<T>], open: T, area: Rect, columns: usize, text_scale: f32) -> (Vec<Placed<T>>, f32) {
     let others = tiles.iter().filter(|t| t.id != open).count();
     // no room beside it: alone
     let beside = columns >= 4 && others > 0;
     let large = if beside { area.with_max_x(area.right() - SIDE - GAP) } else { area };
-    let height = (area.height() - GAP * others.saturating_sub(1) as f32) / others.max(1) as f32;
+    // a small tile keeps room for its title and its figure: in a short
+    // window the column beside runs past the area and the board scrolls,
+    // the grown tile as tall as the area
+    let least = 2.0 * PAD.y + TITLE + FIGURE * text_scale.max(1.0);
+    let height = ((area.height() - GAP * others.saturating_sub(1) as f32) / others.max(1) as f32).max(least);
     let mut y = area.top();
-    tiles
+    let placed = tiles
         .iter()
         .filter_map(|tile| {
             if tile.id == open {
@@ -149,7 +155,8 @@ fn place_grown<T: Copy + PartialEq>(tiles: &[Tile<T>], open: T, area: Rect, colu
                 form: Form::Small,
             })
         })
-        .collect()
+        .collect();
+    (placed, (y - GAP - area.top()).max(area.height()))
 }
 
 /// A tile slides to its place (at once with Reduce motion, which takes egui's
@@ -163,6 +170,15 @@ pub fn slide(ui: &egui::Ui, id: egui::Id, to: Rect) -> Rect {
     let x = at(0, to.left() - o.x);
     let y = at(1, to.top() - o.y);
     Rect::from_min_size(o + Vec2::new(x, y), Vec2::new(at(2, to.width()), at(3, to.height())))
+}
+
+/// A grown tile stays in sight while the tiles beside it scroll: on a board
+/// that scrolls, it follows the top of the view (#5027).
+pub fn in_sight(ui: &egui::Ui, rect: Rect, form: Form) -> Rect {
+    if form != Form::Grown {
+        return rect;
+    }
+    rect.translate(Vec2::new(0.0, (ui.clip_rect().top() - rect.top()).max(0.0)))
 }
 
 /// A size that slides to its new value.
@@ -550,65 +566,6 @@ pub fn figure_cell(ui: &egui::Ui, rect: Rect, text: &str, color: egui::Color32) 
     text_ending(ui, rect.right() - 8.0, rect.center().y, text, 12.5, color);
 }
 
-/// A window with a small and a wide view: the wide one from a width of
-/// `from` points inside.
-#[derive(Debug, Clone, Copy)]
-pub struct Views {
-    pub window: &'static str,
-    pub small: Vec2,
-    pub wide: Vec2,
-    pub from: f32,
-}
-
-/// Whether the window shows its wide view this frame. A window that opens
-/// takes the view chosen last, whatever size the layout kept.
-pub fn is_wide(ctx: &egui::Context, views: &Views, saved: bool, opening: bool) -> bool {
-    let last = widgets::floater_size(ctx, views.window);
-    let measured = last.map(|s| s.x - widgets::floater_chrome(ctx).x >= views.from);
-    let placed = ctx.data_mut(|d| d.get_temp::<bool>(egui::Id::unique(views.window).with("restore_size")));
-    // a size kept from before the window had two views is not one of theirs
-    let known = egui::Id::unique(views.window).with("board_views");
-    let first = opening && !ctx.data_mut(|d| d.get_persisted::<bool>(known)).unwrap_or(false);
-    if first {
-        ctx.data_mut(|d| d.insert_persisted(known, true));
-    }
-    let other = measured.is_some_and(|wide| wide != saved);
-    if opening && placed != Some(true) && (other || (first && last.is_some())) {
-        widgets::size_floater(ctx, views.window, views.size(ctx, saved));
-        return saved;
-    }
-    measured.unwrap_or(saved)
-}
-
-impl Views {
-    /// The size of a view, as much of it as the screen has room for.
-    pub fn size(&self, ctx: &egui::Context, wide: bool) -> Vec2 {
-        let room = super::layout::work_area(ctx).size() - Vec2::splat(2.0 * super::layout::GAP);
-        let size = if wide { self.wide } else { self.small };
-        size.min(room).max(Vec2::new(300.0, 300.0))
-    }
-}
-
-/// After the window: its size button was pressed, or an edge was dragged
-/// across the limit between the two views.
-pub fn after(ctx: &egui::Context, views: &Views, toggled: bool, wide: bool, saved: &mut bool) {
-    if toggled {
-        widgets::size_floater(ctx, views.window, views.size(ctx, !wide));
-        *saved = !wide;
-    } else if let Some(resized) = widgets::take_floater_resize(ctx, views.window) {
-        *saved = resized.x - widgets::floater_chrome(ctx).x >= views.from;
-    }
-}
-
-/// The icon and the tooltip of the size button.
-pub fn size_button(wide: bool) -> (&'static str, &'static str) {
-    if wide {
-        ("arrows-minimize", aurora_i18n::tr!("common-compact-view"))
-    } else {
-        ("arrows-maximize", aurora_i18n::tr!("inventory-widen"))
-    }
-}
-
 /// The search of a wide window over `rect`, with its shortcut written in it
 /// while it is empty.
 pub fn search(ui: &mut egui::Ui, p: &Palette, rect: Rect, text: &mut String, hint: &str) {
@@ -801,5 +758,27 @@ mod tests {
         // nothing beside a grown tile: it stands alone
         let (placed, _) = place(&BOARD, Some(1), area(764.0, 616.0), 2.0);
         assert_eq!(placed.len(), 1);
+    }
+
+    #[test]
+    fn the_small_tiles_beside_a_grown_one_keep_their_title_and_figure_in_a_short_window() {
+        for (text, h) in [(1.0, 616.0), (1.0, 220.0), (1.0, 120.0), (1.4, 220.0)] {
+            let area = area(764.0, h);
+            let (placed, height) = place(&BOARD, Some(5), area, text);
+            apart(&placed);
+            let least = 2.0 * PAD.y + TITLE + FIGURE * text;
+            let small: Vec<_> = placed.iter().filter(|t| t.form == Form::Small).collect();
+            assert_eq!(small.len(), 6);
+            assert!(small.iter().all(|t| t.rect.height() >= least - 0.01), "{text} {h}: {small:?}");
+            let grown = placed.iter().find(|t| t.form == Form::Grown).expect("grown");
+            assert!((grown.rect.height() - h).abs() < 0.5, "the grown tile as tall as the area");
+            let bottom = small.iter().map(|t| t.rect.bottom()).fold(0.0, f32::max);
+            assert!((height - (bottom - area.top()).max(h)).abs() < 0.5, "{text} {h}: {height}");
+            assert_eq!(
+                height > h + 1.0,
+                bottom > area.bottom() + 1.0,
+                "it scrolls only when they do not fit"
+            );
+        }
     }
 }

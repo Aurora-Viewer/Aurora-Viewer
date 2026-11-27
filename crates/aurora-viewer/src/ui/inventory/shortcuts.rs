@@ -366,6 +366,7 @@ pub(crate) fn tip(ctx: &egui::Context, text: &str, command: Command) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keybinds::letter;
     use winit::keyboard::KeyCode;
 
     const CTRL: Modifiers = Modifiers::COMMAND.plus(Modifiers::CTRL);
@@ -374,10 +375,27 @@ mod tests {
         InventoryKeys::of(&KeyBindings::default())
     }
 
+    /// The physical key a press of the letter `key` comes from on this PC:
+    /// the defaults follow the layout (`keybinds::letter`), so Ctrl+A is
+    /// the key at Q's place on AZERTY. Other keys stay where they are.
+    fn physical(key: Key) -> Key {
+        // the letters these tests press
+        let us_key = match key {
+            Key::A => KeyCode::KeyA,
+            Key::D => KeyCode::KeyD,
+            Key::I => KeyCode::KeyI,
+            Key::N => KeyCode::KeyN,
+            Key::Y => KeyCode::KeyY,
+            Key::Z => KeyCode::KeyZ,
+            other => return other,
+        };
+        Key::from_name(&format!("{:?}", letter(us_key))).expect("egui names every letter key")
+    }
+
     #[test]
     fn each_default_key_gives_its_command() {
         let keys = defaults();
-        let hit = |key: Key, m: Modifiers| keys.command(key, Some(key), m);
+        let hit = |key: Key, m: Modifiers| keys.command(key, Some(physical(key)), m);
         if !cfg!(target_os = "macos") {
             assert_eq!(hit(Key::ArrowLeft, Modifiers::ALT), Some(Command::Back));
             assert_eq!(hit(Key::ArrowUp, Modifiers::ALT), Some(Command::Up));
@@ -427,7 +445,8 @@ mod tests {
     #[test]
     fn the_focused_list_keeps_its_bound_chords_from_the_viewer_shortcuts() {
         let keys = defaults();
-        let key = |code: KeyCode| Input::key(code);
+        // a letter at its place on this PC's layout (`physical`)
+        let key = |code: KeyCode| Input::key(letter(code));
         // People, the sunset, the Texture Library, OOC chat elsewhere
         assert!(keys.keeps(&key(KeyCode::KeyA), true, true, false, true));
         assert!(keys.keeps(&key(KeyCode::KeyN), true, true, false, true));

@@ -227,12 +227,20 @@ pub(super) fn row(
             let detached = block.filter(|block| super::detach::is_detached(s, *block));
             let (active, tip) = match detached {
                 Some(block) => {
-                    let shown = tool.tool == Tool::Edit && s.detached.get(&block).copied().unwrap_or(false);
+                    let shown = tool.main_tool() == Some(Tool::Edit) && s.detached.get(&block).copied().unwrap_or(false);
                     (shown, super::detach::toggle_hint(block, shown))
                 }
                 None => (
-                    section(item).is_some_and(|tab| tool.tool == Tool::Edit && tool.tab == tab)
-                        || mode(item).is_some_and(|mode| tool.tool == mode),
+                    section(item).is_some_and(|tab| tool.main_tool() == Some(Tool::Edit) && tool.tab == tab)
+                        // the Aurora style's Camera, Move, Create and Land:
+                        // their window is shown; Edit: the tool in use
+                        || mode(item).is_some_and(|mode| {
+                            if s.legacy_window || mode == Tool::Edit {
+                                tool.tool == mode
+                            } else {
+                                tool.tool_window_open(mode)
+                            }
+                        }),
                     title(item).to_owned(),
                 ),
             };
@@ -266,10 +274,14 @@ pub(super) fn row(
                     } else {
                         super::second_tab::click(tool, tab, mods.shift);
                     }
-                } else if let Some(mode) = mode(item)
-                    && tool.tool != mode
-                {
-                    tool.set_tool(mode);
+                } else if let Some(mode) = mode(item) {
+                    if s.legacy_window || mode == Tool::Edit {
+                        tool.activate(mode);
+                    } else {
+                        // a window of its own, opened or closed
+                        let can_build = world.rlva_can_build();
+                        tool.bar_click(Some(mode), true, can_build, world, s);
+                    }
                 }
             }
             // Inventory held over a section's button opens that section,

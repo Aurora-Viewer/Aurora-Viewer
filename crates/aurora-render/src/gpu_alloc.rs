@@ -92,6 +92,27 @@ pub fn try_texture(
 /// invalid and unfilled, like any other object the memory refused, and the
 /// error scopes around it see the failure.
 pub fn buffer_init(device: &wgpu::Device, label: &str, contents: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
+    let (buffer, refused) = filled(device, label, contents, usage);
+    if let Some(why) = refused {
+        log::warn!("{label}: buffer refused ({why})");
+    }
+    buffer
+}
+
+/// [`buffer_init`] for a buffer the caller can do without: the reason when
+/// the memory or a lost device refused it, so that nothing copies from an
+/// unfilled buffer (an invalid source voids the encoder's whole command
+/// buffer). The caller says so in the log.
+pub fn try_buffer_init(device: &wgpu::Device, label: &str, contents: &[u8], usage: wgpu::BufferUsages) -> Result<wgpu::Buffer, String> {
+    match filled(device, label, contents, usage) {
+        (buffer, None) => Ok(buffer),
+        (_, Some(why)) => Err(why),
+    }
+}
+
+/// The buffer made and filled, and why it could not be filled: mapped at
+/// its creation, whose mapping a refused buffer does not give.
+fn filled(device: &wgpu::Device, label: &str, contents: &[u8], usage: wgpu::BufferUsages) -> (wgpu::Buffer, Option<String>) {
     let align = wgpu::COPY_BUFFER_ALIGNMENT;
     let size = (contents.len() as u64).div_ceil(align).max(1) * align;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -101,17 +122,18 @@ pub fn buffer_init(device: &wgpu::Device, label: &str, contents: &[u8], usage: w
         mapped_at_creation: !contents.is_empty(),
     });
     if contents.is_empty() {
-        return buffer;
+        return (buffer, None);
     }
-    match buffer.get_mapped_range_mut(..) {
+    let refused = match buffer.get_mapped_range_mut(..) {
         Ok(mut view) => {
             view.slice(..contents.len()).copy_from_slice(contents);
             drop(view);
             buffer.unmap();
+            None
         }
-        Err(e) => log::warn!("{label}: buffer refused ({})", reason(&e.to_string())),
-    }
-    buffer
+        Err(e) => Some(reason(&e.to_string())),
+    };
+    (buffer, refused)
 }
 
 /// Runs `make`, which makes GPU objects with no check of their own (a set
@@ -1129,6 +1151,41 @@ mod tests {
         device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
         let bytes = read.slice(..).get_mapped_range().expect("mapped");
         assert_eq!(&bytes[..], &[7u8; 16], "the probe's clear never ran");
+    }
+
+    /// `try_buffer_init`, the staging of a photo's later rounds (#4845): a
+    /// buffer made is filled with what was given, and one a lost device
+    /// refuses is an error, where wgpu's `create_buffer_init` panicked.
+    /// Needs a GPU: `cargo test --workspace a_staged_buffer -- --ignored`.
+    #[test]
+    #[ignore]
+    fn a_staged_buffer_is_filled_or_refused_without_a_panic() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        device.on_uncaptured_error(std::sync::Arc::new(|_| {}));
+        let bytes: Vec<u8> = (0..24u8).collect();
+        let staged = try_buffer_init(&device, "staged", &bytes, wgpu::BufferUsages::COPY_SRC).expect("made");
+        let read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("read back"),
+            size: crate::readback::readback_size(24),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        enc.copy_buffer_to_buffer(&staged, 0, &read, 0, 24);
+        queue.submit([enc.finish()]);
+        read.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        assert_eq!(&read.slice(..).get_mapped_range().expect("mapped")[..], &bytes[..]);
+        // the device gone, as after a driver reset
+        device.destroy();
+        let refused = try_buffer_init(&device, "staged", &bytes, wgpu::BufferUsages::COPY_SRC);
+        assert!(refused.is_err(), "a lost device gives no buffer to copy from");
     }
 
     #[test]

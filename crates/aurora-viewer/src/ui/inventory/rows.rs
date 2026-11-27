@@ -561,9 +561,7 @@ pub(super) fn scroll(
     let navigated = keyboard::navigate(ui, inv, st, false);
     let now = std::time::Instant::now();
     for id in &st.plain.listed_open {
-        if inv.shown_needs_fetch(*id, now) {
-            inv.request(*id);
-        }
+        inv.request_shown(*id, now);
     }
     let height_of_row = row_height(ui, p, st);
     let pitch = height_of_row + ui.spacing().item_spacing.y;
@@ -669,6 +667,9 @@ fn rows(
                 Kind::Folder { open, branches } => {
                     let mut now = open;
                     folder_row(ui, p, icons, inv, row.id, &mut now, branches, st, prefs, facts, actions);
+                    if now && !open {
+                        inv.open_folder(row.id);
+                    }
                     if now != open && st.aurora.is_none() && st.lists_flat() {
                         // the Legacy-style single folder window goes in
                         // (Aurora's explorer goes in from its own row),
@@ -990,6 +991,62 @@ mod tests {
         let mut tree = PlainTree::default();
         tree.persist(&next, key);
         assert!(tree.is_open(id(10)));
+    }
+
+    /// #2956: Collapse, then a new session: the folders stay closed, only
+    /// the root opening again as it does the first time it is shown.
+    #[test]
+    fn collapsed_folders_stay_collapsed_in_a_new_session() {
+        let mut inv = Inventory {
+            root: id(1),
+            ..Default::default()
+        };
+        inv.folders.insert(
+            inv.root,
+            Folder {
+                info: InvFolder {
+                    id: inv.root,
+                    type_default: 8,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: crate::world::inventory::FetchState::Fetched,
+                library: false,
+            },
+        );
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let prefs = InventoryPreferences::default();
+        let mut view = ViewCache::default();
+        view.prepare(&inv, prefs.sort_for(0));
+        let ctx = egui::Context::default();
+        let key = egui::Id::unique("test_collapsed_folders");
+        let mut tree = PlainTree::default();
+        tree.persist(&ctx, key);
+        tree.expand(&view, &inv, inv.root, true, false, true);
+        tree.persist(&ctx, key);
+        let opened = folders(&view, &inv, inv.root, true, false)
+            .into_iter()
+            .filter(|id| tree.is_open(*id))
+            .count();
+        assert!(
+            opened > 3,
+            "the demo inventory has folders to open ({opened} of {}, {} folders)",
+            folders(&view, &inv, inv.root, true, false).len(),
+            inv.folders.len()
+        );
+        tree.expand(&view, &inv, inv.root, true, false, false);
+        tree.persist(&ctx, key);
+        let saved = ron::to_string(&ctx.memory(|m| m.clone())).expect("layout");
+        let next = egui::Context::default();
+        next.memory_mut(|m| *m = ron::from_str(&saved).expect("restored layout"));
+        let mut tree = PlainTree::default();
+        tree.persist(&next, key);
+        let open: Vec<Uuid> = folders(&view, &inv, inv.root, true, false)
+            .into_iter()
+            .filter(|id| tree.is_open(*id))
+            .collect();
+        assert_eq!(open, vec![inv.root]);
     }
 
     /// The list scrolls by a pitch of `row_height`: drawn rows taller than it,

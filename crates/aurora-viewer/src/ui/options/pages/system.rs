@@ -16,7 +16,13 @@ fn language_choices() -> &'static [(&'static str, String)] {
         aurora_i18n::language_menu_order(&mut languages, aurora_i18n::system_language());
         languages
             .into_iter()
-            .map(|(code, name)| (code, format!("{name} ({code})")))
+            .map(|(code, name)| {
+                let label = match code {
+                    "en" | "en-GB" | "en-AU" => name.to_owned(),
+                    _ => format!("{name} ({code})"),
+                };
+                (code, label)
+            })
             .collect()
     })
 }

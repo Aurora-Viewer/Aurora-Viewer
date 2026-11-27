@@ -47,7 +47,7 @@ pub(crate) enum Capture {
     /// A film's frame, read back without waiting (film_readback.rs): the 3D
     /// view of the window's frame, or (`Some`) the frame drawn offscreen at
     /// the film's size, as a photo is.
-    Film(u64, Option<crate::SnapshotSpec>),
+    Film(u64, Option<crate::SnapshotSpec>, Option<crate::Shutter>),
 }
 
 /// Which capture a frame carries: the scene alone wins over the whole
