@@ -23,9 +23,10 @@ wakes you reliably. Wait in the turn (step 4), or release the claim (step 8).
 **Ask your human mid-turn.** What only they can say before the reviews go
 on goes in a question dialog that keeps the turn going (Claude Code:
 `AskUserQuestion`, one question per subject, up to four), never in the
-end-of-turn box, which ends the turn. Two dialogs at most: the selection
-(step 2, with the merges and conditions of step 1), then the CI approvals
-of the PRs claimed (step 3, once it has gathered them all). The end-of-turn question is only for what comes
+end-of-turn box, which ends the turn: the selection (step 2, with the
+merges and conditions of step 1), the CI approvals of the PRs claimed
+(step 3, once it has gathered them all), and the demo or grid test of the
+PRs whose diff reads clean (step 5). The end-of-turn question is only for what comes
 after the reviews: the merge of the PRs reviewed ✅ in this turn and the
 decisions of step 6.
 
@@ -155,14 +156,34 @@ decisions of step 6.
      `main` too): rerun it (`gh run rerun <id> --failed`) and wait again.
 
 5. **Review it** as AGENTS.md section 11 says: no conflict with `main`, the
-   diff read in full, the PR merged into the latest `main` to run its tests
-   and demo scenarios when it touches the viewer, Legacy Viewer fidelity,
-   creators' permissions, no data of our own in shared places, credits,
-   secrets, docs. For the merged build, a detached worktree beside the
-   others (`git worktree add --detach ../work/review-<n> origin/main`, then
-   merge the PR's head into it), removed once the review is posted
-   (`git worktree remove ../work/review-<n>`). Draft the comment in a
-   `.scratch/review-<n>.md` (ignored by git).
+   diff read in full, Legacy Viewer fidelity, creators' permissions, no
+   data of our own in shared places, credits, secrets, docs. Draft the
+   comment in a `.scratch/review-<n>.md` (ignored by git).
+
+   **Offer a demo or a grid test** once CI is green and the diff reads
+   clean, before posting a ✅, when the change can be seen or felt in the
+   viewer: a window, a rendering, a behaviour, a demo scenario it adds or
+   touches (`AURORA_DEMO_*`), or something only the grid shows (network,
+   teleports, voice, other residents, permissions on real assets). Ask in a
+   mid-turn dialog, one question per PR, saying what you would run and what
+   to look at:
+   - **Demo** (default for what a scenario shows): you build the PR merged
+     into the latest `main` in a detached worktree (`git worktree add
+     --detach ../work/review-<n> origin/main`, then merge the PR's head
+     into it), run its tests and the scenarios it touches, before and
+     after, with `--title "Test review-<n>"` (AGENTS.md section 4), look at
+     the captures and put them in the review (`pr-captures.ps1`).
+   - **Grid test**: you launch that build for your human with the same
+     title; they log in and test (AGENTS.md section 1, rule 1), and you say
+     precisely what to do and what they should see. Their result goes in
+     the review.
+   - **Skip**: the review says that no demo or grid test was run by the
+     maintainer.
+
+   A PR with nothing to see (docs, tests, tooling, a change no scenario
+   reaches) gets no offer. Remove the worktree once the review is posted
+   (`git worktree remove ../work/review-<n>`). A problem the test shows is
+   a finding like the others: `## Changes requested`.
 
 6. **Post it yourself**, without asking first:
 
