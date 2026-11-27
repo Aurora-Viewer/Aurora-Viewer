@@ -16,6 +16,7 @@ pub use phototools::{PhotoLayer, PhotoState, Section as PhotoSection};
 mod saved_graphics;
 mod scale;
 
+pub(crate) use pages::aurora::{Look, set_all as set_look};
 pub use pages::privacy;
 pub(crate) use pages::sound::{ear_choice, noise_choice};
 pub(crate) use scale::keyboard as scale_keyboard;
@@ -437,6 +438,9 @@ pub struct OptionsUi {
     pub selected_parcel: Option<crate::world::parcel_visibility::Entry>,
     pub rlva_tools: super::rlva::Tools,
     pub rlva_restrictions: Vec<(uuid::Uuid, String)>,
+    /// RLVa's switch differs from what runs and waits for the next start
+    /// (world/rlva/switch.rs): its row says so.
+    pub rlva_waits: bool,
     pub rlva_camera_preset_locked: bool,
     pub rlva_camera_fov_locked: bool,
     /// RLVa `@sendim`: the Do Not Disturb response is an IM, its field greyed.
@@ -2224,7 +2228,9 @@ fn page_area(
     ui.add_space(10.0);
     if !searching && !modified_view && tabs.len() > 1 {
         let labels: Vec<(&str, bool)> = tabs.iter().map(|t| (*t, true)).collect();
-        if super::widgets::tabs(&mut ui, p, &mut st.tab, &labels) {
+        // whole names on a second row in a narrow window, where the strip
+        // cut them down to "…" (#4935)
+        if super::widgets::wrapping_tabs(&mut ui, p, &mut st.tab, &labels) {
             st.cancel_capture();
             st.flash = None;
         }
@@ -2256,7 +2262,11 @@ fn page_area(
     // Its animated appearance otherwise changes the cells' width, invalidates
     // their control measurements and can alternate short/tall rows forever.
     let rows_width = (super::widgets::scrolled_width(&ui) - 6.0).max(0.0);
-    egui::ScrollArea::vertical()
+    // The rows are laid out at the window's width; a control wider than
+    // that (a row of fixed buttons, a long translation) scrolls into view
+    // sideways instead of being cut off under the scrollbar in a narrow
+    // window (#4935).
+    egui::ScrollArea::both()
         .id_salt(scroll_id)
         .auto_shrink([false, false])
         .max_height(rows_h)

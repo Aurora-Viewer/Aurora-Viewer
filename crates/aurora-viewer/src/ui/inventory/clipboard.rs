@@ -1819,9 +1819,17 @@ mod tests {
             active_range_chars: Some(0..2),
         })]);
         assert_eq!(h.st.selected, Some(id(8100)), "a preedit does not jump");
-        h.frame(vec![Event::Ime(egui::ImeEvent::Commit("demo t".into()))]);
+        // "demo t" in English: the demo texture's name up to the first
+        // letter of its second word, as this PC's catalogue names it (the
+        // demo names go through `tr!`: "Texture de démonstration" in French)
+        let texture = aurora_i18n::tr!("world-inventory-demo-demo-texture").to_lowercase();
+        let prefix = match texture.split_once(' ') {
+            Some((first, rest)) => format!("{first} {}", rest.chars().take(1).collect::<String>()),
+            None => texture.clone(),
+        };
+        h.frame(vec![Event::Ime(egui::ImeEvent::Commit(prefix.clone()))]);
         assert_eq!(h.st.selected, Some(id(8104)), "Demo texture");
-        assert_eq!(h.st.type_ahead.text(), "demo t");
+        assert_eq!(h.st.type_ahead.text(), prefix);
         assert!(h.st.search.is_empty(), "the filter field is untouched");
 
         // A click on another row starts a new prefix, as LLFolderView::handleMouseDown.
@@ -1830,7 +1838,7 @@ mod tests {
         assert!(h.st.type_ahead.text().is_empty());
 
         // A click on the filter field clears the prefix too (Aurora's choice).
-        let field = h.text("Filter inventory");
+        let field = h.text(aurora_i18n::tr!("ui-inventory-filter-inventory"));
         h.click(field.center(), Default::default());
         assert!(h.st.type_ahead.text().is_empty());
         h.frame(vec![Event::Text("demo s".into())]);

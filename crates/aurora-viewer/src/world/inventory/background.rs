@@ -16,8 +16,8 @@
 //! parent, at most [`LEGACY_IN_FLIGHT`] reads at once.
 
 use super::{FetchState, Inventory};
-use aurora_net::NetCommand;
 use aurora_net::inventory::ais::{FetchError, FetchFailure, MAX_FOLDER_DEPTH};
+use aurora_net::{NetCommand, inventory::FolderContents};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 use uuid::Uuid;
@@ -274,10 +274,45 @@ impl BackgroundFetch {
         // already known to the model.
         let mut retries = std::mem::take(&mut self.retries);
         let mut waiting = Vec::new();
-        for retry in retries.drain(..) {
-            if retry.due > now || self.in_flight.len() + usize::from(self.orphans_pending.is_some()) >= max {
+        for mut retry in retries.drain(..) {
+            let targets = if retry.children.is_empty() {
+                vec![retry.folder]
+            } else {
+                retry.children.clone()
+            };
+            let mut unresolved = Vec::new();
+            let mut externally_active = false;
+            for id in targets {
+                match inv.folders.get(&id).map(|folder| folder.state) {
+                    Some(FetchState::Fetched) => {
+                        inv.retrying_folders.remove(&id);
+                        self.queue.push_back((id, Kind::Recursive));
+                    }
+                    None => {
+                        inv.retrying_folders.remove(&id);
+                    }
+                    _ if inv.too_big.contains(&id) => {
+                        inv.retrying_folders.remove(&id);
+                        self.queue.push_back((id, Kind::ContentRecursive));
+                    }
+                    state => {
+                        externally_active |= state == Some(FetchState::Fetching);
+                        unresolved.push(id);
+                    }
+                }
+            }
+            if unresolved.is_empty() {
+                continue;
+            }
+            if !retry.children.is_empty() {
+                retry.children = unresolved.clone();
+            }
+            if externally_active || retry.due > now || self.in_flight.len() + usize::from(self.orphans_pending.is_some()) >= max {
                 waiting.push(retry);
             } else {
+                for id in unresolved {
+                    inv.retrying_folders.remove(&id);
+                }
                 self.send(
                     inv,
                     agent,
@@ -386,7 +421,7 @@ impl BackgroundFetch {
                 continue;
             }
             let Some(f) = inv.folders.get(&id) else { continue };
-            if f.info.type_default == MARKETPLACE_LISTINGS || inv.too_big.contains(&id) {
+            if f.info.type_default == MARKETPLACE_LISTINGS || inv.too_big.contains(&id) || inv.retrying_folders.contains(&id) {
                 continue;
             }
             match f.state {
@@ -533,7 +568,7 @@ impl BackgroundFetch {
             inv.too_big.len(),
             inv.items.len(),
             inv.unreadable_items(),
-            inv.confirmed_missing.iter().filter(|id| !inv.items.contains_key(id)).count(),
+            inv.missing_items.len(),
             if !self.started {
                 "not started"
             } else if self.is_idle() {
@@ -566,9 +601,13 @@ impl BackgroundFetch {
     }
 
     fn step(&mut self, inv: &mut Inventory, agent: Uuid, id: Uuid, kind: Kind, out: &mut Vec<NetCommand>) {
-        // (a split part's own read: its parent's batches may take it again)
+        // Consume the split marker with its queue entry, even when another
+        // retry owns the folder. That retry still excludes it from batches.
         if kind == Kind::FolderAndContent {
             self.split.remove(&id);
+        }
+        if inv.retrying_folders.contains(&id) {
+            return;
         }
         let Some(folder) = inv.folders.get(&id) else {
             return;
@@ -618,7 +657,7 @@ impl BackgroundFetch {
             match c.state {
                 _ if c.info.type_default == MARKETPLACE_LISTINGS => {}
                 // (read in parts after a timeout, on its own)
-                _ if self.split.contains(child) => {}
+                _ if self.split.contains(child) || inv.retrying_folders.contains(child) => {}
                 FetchState::Unknown | FetchState::Failed if batch.len() < BATCH => batch.push(*child),
                 FetchState::Unknown | FetchState::Failed => done = false,
                 FetchState::Fetching if self.pending.contains(child) => {}
@@ -731,11 +770,18 @@ impl BackgroundFetch {
         self.busy.get_or_insert_with(|| (Instant::now(), 0)).1 += 1;
     }
 
-    /// onAISFolderCalback / onAISContentCalback, once the reply's snapshots
-    /// are applied. `stale` are the folders `Inventory::apply` queued again;
-    /// `outcome` is why the read failed, when it did.
-    pub fn on_reply(&mut self, inv: &mut Inventory, request: u64, stale: &[Uuid], outcome: Result<(), FetchError>) {
-        self.on_reply_at(inv, request, stale, outcome, Instant::now())
+    /// Apply results only while this request still owns the read. A reply
+    /// that missed the deadline cannot complete or acknowledge its replacement.
+    pub fn on_reply(&mut self, inv: &mut Inventory, request: u64, result: Result<Vec<FolderContents>, FetchError>) -> bool {
+        if !self.in_flight.contains_key(&request) {
+            return false;
+        }
+        let (stale, outcome) = match result {
+            Ok(contents) => (inv.apply_snapshots(contents, true), Ok(())),
+            Err(error) => (Vec::new(), Err(error)),
+        };
+        self.on_reply_at(inv, request, &stale, outcome, Instant::now());
+        true
     }
 
     /// [`on_reply`] with the clock given (the tests drive the retries).
@@ -800,6 +846,7 @@ impl BackgroundFetch {
                         && f.state == FetchState::Fetching
                     {
                         f.state = FetchState::Unknown;
+                        inv.retrying_folders.insert(*id);
                     }
                 }
                 let delay = BACKGROUND_BACKOFF[attempt.min(BACKGROUND_BACKOFF.len() as u32 - 1) as usize];

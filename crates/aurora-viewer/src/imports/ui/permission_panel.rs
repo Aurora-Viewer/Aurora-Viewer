@@ -1,20 +1,38 @@
-//! Five independent rights per import type; payment remains a common setting.
+//! Five independent rights per import type, then the options common to
+//! every type.
 use super::*;
 
+/// The import window's Settings: the rights without their notes, which the
+/// inventory's Default Permissions window keeps (human request, 2026-11-25).
 pub(super) fn show(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
-    defaults(ui, p, prefs);
+    rights(ui, p, prefs, false);
     ui.add_space(14.0);
-    widgets::section_header(ui, p, "coin-filled", aurora_i18n::tr!("import-permissions-payment"));
+    widgets::section_header(ui, p, "adjustments-filled", aurora_i18n::tr!("import-other-options"));
     checkbox(ui, p, &mut prefs.show_payment, aurora_i18n::tr!("import-show-payment"));
+    checkbox(
+        ui,
+        p,
+        &mut prefs.quick_free_full_size,
+        aurora_i18n::tr!("import-quick-free-full-size"),
+    )
+    .on_hover_text(aurora_i18n::tr!("import-quick-free-full-size-help"));
 }
 
 pub(crate) fn defaults(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
+    rights(ui, p, prefs, true);
+}
+
+/// The rights of each type, with their `notes` (how they are saved, why
+/// Transfer is forced) or without.
+fn rights(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences, notes: bool) {
     widgets::section_header(ui, p, "shield-lock-filled", aurora_i18n::tr!("import-permissions"));
-    ui.label(
-        RichText::new(aurora_i18n::tr!("import-permissions-basic-help"))
-            .small()
-            .color(p.muted),
-    );
+    if notes {
+        ui.label(
+            RichText::new(aurora_i18n::tr!("import-permissions-basic-help"))
+                .small()
+                .color(p.muted),
+        );
+    }
     ui.add_space(10.0);
     let columns = [
         (64.0, aurora_i18n::tr!("common-modify"), aurora_i18n::tr!("common-modify")),
@@ -89,12 +107,14 @@ pub(crate) fn defaults(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) 
                 ui.end_row();
             }
         });
-    ui.add_space(8.0);
-    ui.label(
-        RichText::new(aurora_i18n::tr!("import-permissions-fair-use"))
-            .small()
-            .color(p.muted),
-    );
+    if notes {
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("import-permissions-fair-use"))
+                .small()
+                .color(p.muted),
+        );
+    }
 }
 
 fn cell(ui: &mut egui::Ui, width: f32, body: impl FnOnce(&mut egui::Ui)) {

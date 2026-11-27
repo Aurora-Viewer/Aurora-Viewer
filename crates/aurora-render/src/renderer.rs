@@ -62,7 +62,58 @@ fn demo_vr_closed() -> Option<u64> {
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// The G-buffer at the Standard precision: 8 bits per channel.
+const GBUF_STANDARD: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// A colour target of 16 normalized bits per channel, on the device that has
+/// it (`main_thread.rs` `open_device` asks for it where `gbuf_wide` holds).
+pub(crate) const GBUF_WIDE: wgpu::Features = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM;
+
+/// The adapter draws into that target, resolves it and filters it: what the
+/// G-buffer needs of its format.
+pub(crate) fn gbuf_wide(adapter: &wgpu::Adapter) -> bool {
+    if !adapter
+        .features()
+        .contains(GBUF_WIDE | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
+    {
+        return false;
+    }
+    let f = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba16Unorm);
+    f.allowed_usages
+        .contains(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING)
+        && f.flags.contains(
+            wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4
+                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE
+                | wgpu::TextureFormatFeatureFlags::FILTERABLE,
+        )
+}
+
+/// The G-buffer's format (octahedral normal, roughness, metallic). `high`
+/// ([`NormalPrecision::high`]): 16 bits per channel, as the normals of
+/// LLPipeline::addDeferredAttachments (indra/newview/pipeline.cpp,
+/// GL_RGBA16; originally LGPL 2.1), in 8 bits' place: eight step the normal
+/// by 0.45 degrees, and a mirror doubles it, so that the traced reflection
+/// of a smooth face came in terraces, 30 cm apart at 20 m. `wide`: the
+/// device draws 16 normalized bits at the pass's sample count
+/// (`Backend::gbuf_wide`); without, 16-bit floats, the HDR target's format,
+/// which every device draws and resolves at each sample count offered:
+/// steps of 0.06 degrees at most.
+pub(crate) fn gbuf_format(high: bool, wide: bool) -> wgpu::TextureFormat {
+    match (high, wide) {
+        (false, _) => GBUF_STANDARD,
+        (true, true) => wgpu::TextureFormat::Rgba16Unorm,
+        (true, false) => HDR_FORMAT,
+    }
+}
+
+/// The G-buffer `s` asks of a renderer of `device` at `samples`: none, or
+/// its format. `wide`: the sample counts of the 16 normalized bits
+/// (`Backend::gbuf_wide`). The reflections count as traced with the sun's
+/// shadows on only: nothing is traced without them (`rt_now`).
+fn gbuf_wanted(device: &wgpu::Device, external: bool, wide: &[u32], s: &RenderSettings, samples: u32) -> Option<wgpu::TextureFormat> {
+    let traced = s.shadow_resolution > 0 && crate::rt_shadows::traced(device, external, s.ray_tracing).reflections;
+    s.gbuffer()
+        .then(|| gbuf_format(s.normal_precision.high(s.ssr, traced), wide.contains(&samples)))
+}
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -233,6 +284,8 @@ struct FrameU {
     snow_far: [f32; 4],
     /// Planet curvature (`Curvature::uniform`): xy the main camera, z 1 / 2R.
     curvature: [f32; 4],
+    /// Aurora Weather's fog (fog.rs `frame_terms`; zero: none).
+    fog_look: [[f32; 4]; 7],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -395,7 +448,7 @@ impl Smaa {
             a2c: false,
             samples: 1,
             format: Some(format),
-            gbuf: false,
+            gbuf: None,
             range: None,
             depth_format: None,
             depth_bias: Default::default(),
@@ -727,7 +780,7 @@ impl Glow {
             a2c: false,
             samples: 1,
             format: Some(fmt),
-            gbuf: false,
+            gbuf: None,
             range: None,
             depth_format: None,
             depth_bias: Default::default(),
@@ -836,8 +889,14 @@ struct Taa {
 /// The depth prepass's colour target this frame, when something reads the
 /// motion (`Backend::motion_now`): the mesh normals (xy) and each pixel's
 /// screen motion (zw, object.wgsl `depth_normal`). GTAO's normals when its
-/// targets exist (TAA then reads the same), else TAA's own.
-fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>) -> Option<&'a wgpu::TextureView> {
+/// targets exist (TAA then reads the same), else TAA's own, else the motion
+/// blur's (`Backend::blur_motion`).
+fn motion_view<'a>(
+    motion_now: bool,
+    targets: &'a Targets,
+    taa: Option<&'a Taa>,
+    blur: Option<&'a wgpu::TextureView>,
+) -> Option<&'a wgpu::TextureView> {
     if !motion_now {
         return None;
     }
@@ -846,6 +905,7 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
         .as_ref()
         .map(|g| &g.normals)
         .or_else(|| taa.and_then(|t| t.motion.as_ref()))
+        .or(blur)
 }
 
 /// The coverage from which a blended face gives FSR its own depth and
@@ -1240,6 +1300,9 @@ struct Pipelines {
     /// lying on what the map says, left every slope bare.
     shelter: wgpu::RenderPipeline,
     shelter_terrain: wgpu::RenderPipeline,
+    /// Aurora Weather's fog: the walls drawn into its flow grid (fog.rs
+    /// `Flow`, object.wgsl `fs_fog_voxel`).
+    fog_voxel: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
     /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
     /// one-sided and two-sided faces.
@@ -1306,7 +1369,7 @@ struct GpuTimer {
     /// order.
     last_effects: Option<[f32; 4]>,
     /// Last times of the weather (ms), in [`GPU_WEATHER_PARTS`] order.
-    last_weather: Option<[f32; 4]>,
+    last_weather: Option<[f32; 5]>,
     /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
     /// drawn with, and the frames measured since the variant last changed.
     slot_prepass: [std::cell::Cell<bool>; 3],
@@ -1380,7 +1443,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 39;
+const GPU_MARKS: u32 = 41;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1430,7 +1493,8 @@ const GPU_SHADOW_PARTS: [&[(u32, u32)]; 5] = [
 /// After the prepass of the multisampled depth, which opens the scene
 /// encoder (written right after `MARK_SCENE_BEGIN` without MSAA).
 const MARK_DEPTH_MSAA_END: u32 = 20;
-/// Around the bloom levels (bloom.rs), after the glow; part of the post.
+/// Around the sun shafts (sun_shafts.rs) and the bloom levels (bloom.rs),
+/// after the glow; part of the post.
 const MARK_BLOOM_BEGIN: u32 = 21;
 const MARK_BLOOM_END: u32 = 22;
 /// The depth prepasses on their own, both counted in the first element:
@@ -1472,6 +1536,11 @@ const MARK_CLOUDS_END: u32 = 39;
 /// there when they are off); in the effects' range from `MARK_SSAO_END` to
 /// `MARK_WATER_AIR_BEGIN`.
 const MARK_SOFT_END: u32 = 40;
+/// Aurora Weather's fog volume (fog.rs): around its compute, after the
+/// clouds' and before scene pass A (both written together when it is not
+/// drawn).
+const MARK_FOG_BEGIN: u32 = 41;
+const MARK_FOG_END: u32 = 42;
 /// The effects beyond the occlusion, the contact shadows and the soft
 /// shadows (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1488,12 +1557,14 @@ const GPU_EFFECT_PARTS: [&[(u32, u32)]; 4] = [
 ];
 /// What `GpuElement::Weather` is made of (`RenderStats::gpu_weather`): the
 /// shelter map, the wetness and footprints memories, the wet ground (with
-/// the snow lying), the drops and flakes with the distant layers.
-const GPU_WEATHER_PARTS: [(u32, u32); 4] = [
+/// the snow lying), the drops and flakes with the distant layers, the fog's
+/// volume.
+const GPU_WEATHER_PARTS: [(u32, u32); 5] = [
     (MARK_SHELTER_BEGIN, MARK_SHELTER_END),
     (MARK_WEATHER_MEMORY_BEGIN, MARK_WEATHER_MEMORY_END),
     (MARK_WET_BEGIN, MARK_SSR_END),
     (MARK_RAIN_BEGIN, MARK_RAIN_END),
+    (MARK_FOG_BEGIN, MARK_FOG_END),
 ];
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
@@ -1514,8 +1585,12 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
         (MARK_WEATHER_MEMORY_END, MARK_COPY_END),
         (MARK_COPY_END, MARK_WET_BEGIN),
     ],
-    // terrain and sky
-    &[(MARK_DEPTH_MSAA_END, MARK_SKY_END), (MARK_SKY_END, MARK_TERRAIN_END)],
+    // terrain and sky (the fog's volume is the weather's)
+    &[
+        (MARK_DEPTH_MSAA_END, MARK_FOG_BEGIN),
+        (MARK_FOG_END, MARK_SKY_END),
+        (MARK_SKY_END, MARK_TERRAIN_END),
+    ],
     // objects and avatars (opaque, masked), impostor pictures and cards
     &[
         (MARK_TERRAIN_END, MARK_OBJECTS_END),
@@ -1918,6 +1993,10 @@ struct Dummies {
     white: wgpu::TextureView,
     black: wgpu::TextureView,
     depth: wgpu::TextureView,
+    /// A 1^3 fog volume that lets everything through (0, 0, 0, 1).
+    volume: wgpu::TextureView,
+    /// A 1 x 1 fog ground (never read: `fog_look[6]` says none).
+    ground: wgpu::TextureView,
 }
 
 /// Frame bind groups (group 0) for the different passes.
@@ -2050,6 +2129,13 @@ pub(crate) struct Backend {
     equirect_reads: crate::equirect::Readbacks,
     /// The Director's film frames on their way back (film_readback.rs).
     film_reads: crate::film_readback::FilmReads,
+    /// The Director's shutter (shutter.rs), made the first time a render
+    /// uses it.
+    shutter: Option<crate::shutter::ShutterAccum>,
+    /// This frame's sub-frame of an offline frame with a shutter.
+    shutter_now: Option<crate::Shutter>,
+    /// Frames drawn since the last film frame (`SHUTTER_KEPT_FRAMES`).
+    shutter_idle: u32,
     /// The six faces of a 360° capture are drawn one after the other: the
     /// snapshot size stays (the render targets are made once, not twice per
     /// face) from the first face to the frame after the last.
@@ -2093,6 +2179,15 @@ pub(crate) struct Backend {
     /// made again until ray tracing is turned off and on.
     rt_failed: bool,
     rt_now: bool,
+    /// Aurora Weather's fog (fog.rs), made while it is on.
+    fog: Option<crate::fog::Fog>,
+    /// This frame's fog: the height fog's terms of every view (none: no
+    /// fog, or the camera under the water), and whether the main view
+    /// reads the volume.
+    fog_terms: Option<(crate::types::FogLook, f32)>,
+    fog_volume_now: bool,
+    /// The fog's volume is on: the shelter map is drawn for it.
+    fog_shelter: bool,
     /// The soft sun shadows' pipelines, made with the first frame that
     /// wants them.
     soft: Option<crate::soft_shadows::SoftShadows>,
@@ -2168,6 +2263,15 @@ pub(crate) struct Backend {
     glow: Glow,
     /// Depth of field, made the first time it is on.
     dof: Option<crate::dof::Dof>,
+    /// Motion blur, made the first time it is on.
+    motion_blur: Option<crate::motion_blur::MotionBlurPass>,
+    /// The motion target of the depth prepass while the motion blur reads
+    /// it and neither GTAO nor TAA has one (`motion_view`); its size.
+    blur_motion: Option<((u32, u32), wgpu::TextureView)>,
+    /// This frame draws the motion blur (`motion_blur_wanted`).
+    blur_now: bool,
+    /// The sun's and the moon's shafts, made the first time they are on.
+    sun_shafts: Option<crate::sun_shafts::SunShafts>,
     /// The photo's look, made the first time one is on.
     looks: Option<crate::looks::Looks>,
     /// The photo filters' catalogue pictures, while the catalogue asks for
@@ -2230,7 +2334,16 @@ pub(crate) struct Backend {
     /// The scene's pipelines were compiled with the soft shadows' path
     /// (`soft_path`): the mask is drawn and read only while they were.
     soft_pipelines: bool,
-    /// The pipelines being compiled for other samples or SSR, if any.
+    /// The G-buffer the scene's pipelines were compiled for: its format,
+    /// none without it (`gbuf_wanted`). The targets are made of it, not of
+    /// the settings: a set compiling for another precision draws into the
+    /// one of before until it arrives.
+    gbuf_pipelines: Option<wgpu::TextureFormat>,
+    /// The sample counts the device draws 16 normalized bits at, 1
+    /// included: none without the format (`GBUF_WIDE`).
+    gbuf_wide: Vec<u32>,
+    /// The pipelines being compiled for other samples, SSR or another
+    /// G-buffer format, if any.
     pipeline_build: Option<PipelineBuild>,
     /// The pipeline workers still running, a set no longer wanted included:
     /// waited for when the renderer is dropped (`wait_pipeline_workers`).
@@ -2580,8 +2693,8 @@ struct PipeDesc<'a> {
     a2c: bool,
     samples: u32,
     format: Option<wgpu::TextureFormat>,
-    /// Second color target (G-buffer for SSR).
-    gbuf: bool,
+    /// Second color target (G-buffer for SSR), of this format.
+    gbuf: Option<wgpu::TextureFormat>,
     /// Second color target of the passes of the exact blend order
     /// (`blend_exact::Lists::range`): its blend, and what is written.
     range: Option<(Option<wgpu::BlendState>, wgpu::ColorWrites)>,
@@ -3013,7 +3126,7 @@ impl Backend {
     /// to it, where the camera goes, from it); with the shadows off too,
     /// alone in the atlas (low settings keep the rain out of the houses).
     fn rain_shelter(&self, f: &FrameParams) -> bool {
-        rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
+        rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && (self.rain_wet.active() || self.fog_shelter)
     }
 
     /// How many of the frame's first lights have their projector shadows
@@ -3066,8 +3179,81 @@ impl Backend {
         let by = Vec2::from(by);
         self.rain_wet.shift(by);
         self.snow_trail.shift(by);
+        // (the fog's history is of the old positions: it starts afresh)
+        if let Some(fog) = &mut self.fog {
+            fog.skipped();
+        }
         if let Some(c) = &mut self.shelter_centre {
             *c += by.extend(0.0);
+        }
+    }
+}
+
+impl Backend {
+    /// Aurora Weather's fog this frame (fog.rs): made while it is on, its
+    /// volume's textures while its tier has one (the frame groups bound to
+    /// them again when they change). The height fog's terms of every view
+    /// are kept for `frame_uniforms`. Under the water, and in a cut-out
+    /// photo, none is drawn: the water's fog alone.
+    fn prepare_fog(&mut self, f: &FrameParams, ground: &FogGround, camera_water_level: f32) {
+        self.fog_shelter = f.fog.is_some();
+        let Some(look) = f.fog.filter(|_| !f.cutout && f.camera_pos.z >= camera_water_level) else {
+            self.fog_terms = None;
+            self.fog_volume_now = false;
+            self.fog_shelter = false;
+            // off: everything goes, the frame groups lose its textures
+            if f.fog.is_none() && self.fog.take().is_some() {
+                self.remake_frame_groups();
+            }
+            return;
+        };
+        let made = self.fog.is_none();
+        if made {
+            // (its noise is made on a thread of its own the first time:
+            // until it is ready, none, as below)
+            if let Some(noise) = crate::fog::noise_ready() {
+                let queue = &self.queue;
+                self.fog = extra(&mut self.oom, &self.device, self.lost.get(), "fog", |d| {
+                    crate::fog::Fog::new(d, queue, noise)
+                });
+            }
+        }
+        self.fog_volume_now = false;
+        let Some(fog) = &mut self.fog else {
+            // (refused or not ready yet: none at all rather than a fogged
+            // ground under a clear sky)
+            self.fog_terms = None;
+            self.fog_shelter = false;
+            return;
+        };
+        let level = crate::fog::ground_level_at(ground, f.camera_pos.truncate()).unwrap_or(f.water_height);
+        self.fog_terms = Some((look, level));
+        fog.upload_ground(&self.queue, ground);
+        let changed = if look.tier == FogTier::Height {
+            fog.release_targets()
+        } else if !self.oom.extras_ready(Instant::now()) {
+            false
+        } else {
+            let (made, refused) = crate::gpu_alloc::scoped(&self.device, || fog.ensure_targets(&self.device, look.quality));
+            if first_use(&mut self.oom, "fog volume", false, refused && !self.lost.get()) {
+                // refused: the height fog until it can be made
+                fog.release_targets();
+                true
+            } else {
+                made
+            }
+        };
+        self.fog_volume_now = fog.volume().is_some();
+        // (before the uniforms: the scene reads the flow grid where it is now)
+        if self.fog_volume_now && !f.cutout {
+            fog.place_flow(f.camera_pos);
+        }
+        // the shelter map for the fog drawn, the height fog's too (it keeps
+        // the rooms clear)
+        self.fog_shelter = true;
+        // (made this frame: the frame groups take its ground)
+        if changed || made {
+            self.remake_frame_groups();
         }
     }
 }
@@ -3128,9 +3314,9 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
             write_mask: d.write_mask,
         }));
     }
-    if d.gbuf {
+    if let Some(format) = d.gbuf {
         targets.push(Some(wgpu::ColorTargetState {
-            format: GBUF_FORMAT,
+            format,
             blend: None,
             write_mask: wgpu::ColorWrites::ALL,
         }));
@@ -3356,6 +3542,66 @@ fn cloud_targets(
     true
 }
 
+/// Whether the frame draws its motion blur: asked for, and not on a photo
+/// nor an offline film's frame (drawn at their own size, a frame apart
+/// from the last one the window drew), nor on a cut-out frame, whose empty
+/// background keeps its coverage.
+fn motion_blur_wanted(f: &FrameParams, snapshot: bool) -> bool {
+    f.motion_blur.is_some_and(|m| m.scale > 0.0) && !snapshot && !f.cutout
+}
+
+/// The motion blur's targets for `size` are made, checked: false while
+/// refused or waiting (the frame goes without the effect).
+fn motion_blur_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    blur: &mut Option<crate::motion_blur::MotionBlurPass>,
+    device: &wgpu::Device,
+    post: &crate::dof::PostInputs,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let b = blur.get_or_insert_with(|| crate::motion_blur::MotionBlurPass::new(device, HDR_FORMAT));
+    if b.has_targets(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || b.ensure_targets(device, size, HDR_FORMAT, post));
+    if first_use(oom, "motion blur", false, refused && !lost) {
+        b.release();
+        return false;
+    }
+    true
+}
+
+/// Frames without a film frame after which the shutter's sum is let go.
+const SHUTTER_KEPT_FRAMES: u32 = 600;
+
+/// The shutter's sum for `size` is made, checked: false while refused or
+/// waiting (the frame is its last sub-frame alone).
+fn shutter_target(
+    oom: &mut crate::gpu_alloc::Refusals,
+    accum: &mut Option<crate::shutter::ShutterAccum>,
+    device: &wgpu::Device,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let a = accum.get_or_insert_with(|| crate::shutter::ShutterAccum::new(device));
+    if a.has_target(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || a.ensure_target(device, size));
+    if first_use(oom, "shutter", false, refused && !lost) {
+        a.release();
+        return false;
+    }
+    true
+}
+
 /// The depth of field's targets for `size` are made, checked: false while
 /// refused or waiting (the frame goes without the effect).
 fn dof_targets(
@@ -3376,6 +3622,32 @@ fn dof_targets(
     let (_, refused) = crate::gpu_alloc::scoped(device, || d.ensure_targets(device, size, HDR_FORMAT, post));
     if first_use(oom, "depth of field", false, refused && !lost) {
         d.release();
+        return false;
+    }
+    true
+}
+
+/// The sun shafts' targets for `size` (sun_shafts.rs), made on first use
+/// and checked as the depth of field's: refused by a full video memory, the
+/// frame goes without them.
+fn shafts_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    shafts: &mut Option<crate::sun_shafts::SunShafts>,
+    device: &wgpu::Device,
+    post: &crate::dof::PostInputs,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let s = shafts.get_or_insert_with(|| crate::sun_shafts::SunShafts::new(device, post.layout, HDR_FORMAT));
+    if s.has_targets(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || s.ensure_targets(device, size, HDR_FORMAT, post));
+    if first_use(oom, "sun shafts", false, refused && !lost) {
+        s.release();
         return false;
     }
     true
@@ -3447,14 +3719,16 @@ type ImpostorPipelines = (
     wgpu::RenderPipeline,
 );
 
-/// The pipelines that depend on the MSAA samples and SSR, compiled on a
-/// worker thread when one of them changes (#1722, #1746). Built on the render
+/// The pipelines that depend on the MSAA samples, SSR and the G-buffer's
+/// format, compiled on a worker thread when one of them changes (#1722,
+/// #1746). Built on the render
 /// thread, the whole set stopped the frames for as long as the driver took:
 /// 9 s on amdvlk, 36 s on an Intel Arc, reported as a GPU stall. The frames keep their samples and SSR meanwhile, and take the
 /// new ones with their targets on the frame the set arrives.
 struct PipelineBuild {
     samples: u32,
-    ssr: bool,
+    /// The G-buffer's format, none without it (`gbuf_wanted`).
+    gbuf: Option<wgpu::TextureFormat>,
     /// Compiled with the soft shadows' path (`soft_path`).
     soft: bool,
     started: std::time::Instant,
@@ -3485,7 +3759,7 @@ impl Impostors {
         records_layout: &wgpu::BindGroupLayout,
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
-        ssr: bool,
+        gbuf: Option<wgpu::TextureFormat>,
         soft: bool,
     ) -> Impostors {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3546,7 +3820,7 @@ impl Impostors {
             mapped_at_creation: false,
         });
         let (capture_opaque, capture_blend, sprite, sprite_depth) =
-            Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, ssr, soft);
+            Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, gbuf, soft);
         Impostors {
             layout,
             atlas,
@@ -3666,7 +3940,7 @@ impl Impostors {
         records_layout: &wgpu::BindGroupLayout,
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
-        ssr: bool,
+        gbuf: Option<wgpu::TextureFormat>,
         soft: bool,
     ) -> ImpostorPipelines {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -3684,7 +3958,7 @@ impl Impostors {
             bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout)],
             immediate_size: 0,
         });
-        let desc = |label: &'static str, vs: &'static str, fs: &'static str, vb: Vb, samples: u32, gbuf: bool| PipeDesc {
+        let desc = |label: &'static str, vs: &'static str, fs: &'static str, vb: Vb, samples: u32, gbuf| PipeDesc {
             label,
             vs,
             fs: Some(fs),
@@ -3710,13 +3984,13 @@ impl Impostors {
             device,
             &module,
             &capture_pl,
-            desc("impostor capture", "vs_main", "fs_impostor_capture", Vb::Mesh, 1, false),
+            desc("impostor capture", "vs_main", "fs_impostor_capture", Vb::Mesh, 1, None),
         );
         let capture_blend = make_pipeline(
             device,
             &module,
             &capture_pl,
-            desc("impostor capture blend", "vs_main", "fs_impostor_capture_blend", Vb::Mesh, 1, false),
+            desc("impostor capture blend", "vs_main", "fs_impostor_capture_blend", Vb::Mesh, 1, None),
         );
         // cards in scene pass A (its sample count and SSR G-buffer); the scene
         // alpha holds the glow: color only
@@ -3729,10 +4003,10 @@ impl Impostors {
                 ..desc(
                     "impostor cards",
                     "vs_impostor",
-                    if ssr { "fs_impostor_g" } else { "fs_impostor" },
+                    if gbuf.is_some() { "fs_impostor_g" } else { "fs_impostor" },
                     Vb::Sprite,
                     samples,
-                    ssr,
+                    gbuf,
                 )
             },
         );
@@ -3744,7 +4018,7 @@ impl Impostors {
             PipeDesc {
                 format: None,
                 depth_compare: wgpu::CompareFunction::Greater,
-                ..desc("impostor cards depth", "vs_impostor", "fs_impostor_depth", Vb::Sprite, 1, false)
+                ..desc("impostor cards depth", "vs_impostor", "fs_impostor_depth", Vb::Sprite, 1, None)
             },
         );
         (capture_opaque, capture_blend, sprite, sprite_depth)
@@ -3916,6 +4190,12 @@ struct Ranges {
 }
 
 impl Backend {
+    /// The device-lost callback said the device is gone (device_lost.rs):
+    /// the backend is then dropped through `drop_guarded` (render_thread.rs).
+    pub(crate) fn device_lost(&self) -> bool {
+        self.lost.get()
+    }
+
     /// Surface configuration, pipelines, targets and per-frame buffers.
     ///
     /// Made in one error scope: a full video memory that refuses any of it
@@ -4259,6 +4539,40 @@ impl Backend {
                 },
                 count: None,
             },
+            // Aurora Weather's fog volume (fog.rs; 31 and 32 are the sun
+            // glass and the GI's openness, of the lighting's group)
+            wgpu::BindGroupLayoutEntry {
+                binding: 33,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // its flow grid (fog.rs `Flow`): how open the air is
+            wgpu::BindGroupLayoutEntry {
+                binding: 34,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // the ground it pools on (fog.rs `upload_ground`)
+            wgpu::BindGroupLayoutEntry {
+                binding: 35,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ];
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
@@ -4464,12 +4778,72 @@ impl Backend {
                     depth_or_array_layers: 1,
                 },
             );
-            Dummies { white, black, depth }
+            let volume_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("dummy fog volume"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D3,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            // (half floats 0, 0, 0, 1)
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &volume_tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&[0u16, 0, 0, 0x3c00]),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(8),
+                    rows_per_image: Some(1),
+                },
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let volume = volume_tex.create_view(&Default::default());
+            let ground = device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("dummy fog ground"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rg32Float,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default());
+            Dummies {
+                white,
+                black,
+                depth,
+                volume,
+                ground,
+            }
         };
 
         let fmt_features = adapter.get_texture_format_features(HDR_FORMAT);
         let depth_features = adapter.get_texture_format_features(DEPTH_FORMAT);
-        let gbuf_features = adapter.get_texture_format_features(GBUF_FORMAT);
+        // (the anti-aliasing choices are those of the Standard G-buffer: a
+        // sample count the 16 normalized bits lack takes 16-bit floats,
+        // `gbuf_format`, and stays offered)
+        let gbuf_features = adapter.get_texture_format_features(GBUF_STANDARD);
         let msaa_supported: Vec<u32> = [2u32, 4, 8]
             .into_iter()
             .filter(|n| *n == 4 || adapter_specific)
@@ -4481,6 +4855,13 @@ impl Backend {
             .collect();
         let msaa_samples = if msaa_supported.contains(&4) { 4 } else { 1 };
         let settings = RenderSettings::default();
+        let gbuf_wide: Vec<u32> = if device.features().contains(GBUF_WIDE) {
+            let wide = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba16Unorm).flags;
+            [1u32, 2, 4, 8].into_iter().filter(|n| wide.sample_count_supported(*n)).collect()
+        } else {
+            Vec::new()
+        };
+        let gbuf_pipelines = gbuf_wanted(&device, external, &gbuf_wide, &settings, msaa_samples);
         let bloom = crate::bloom::Bloom::new(&device, &post_layout);
         // what the stochastic transparency is made from, the first frame the
         // method is on (`make_st`): nothing of it exists before
@@ -4516,7 +4897,7 @@ impl Backend {
             &gbuf_layout,
             msaa_samples,
             format,
-            settings.gbuffer(),
+            gbuf_pipelines,
             soft_path(&settings),
         );
         let ssao = Self::make_ssao(&device);
@@ -4545,6 +4926,7 @@ impl Backend {
                 config.width,
                 config.height,
                 msaa_samples,
+                gbuf_pipelines,
                 &settings,
                 external,
                 refuse,
@@ -4615,6 +4997,8 @@ impl Backend {
             &water_effects,
             &stars,
             &milky_way,
+            None,
+            None,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -4637,7 +5021,7 @@ impl Backend {
             &records_layout,
             &tex_layout,
             msaa_samples,
-            settings.gbuffer(),
+            gbuf_pipelines,
             soft_path(&settings),
         );
         let particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -4687,6 +5071,9 @@ impl Backend {
             cube: None,
             equirect_reads: Default::default(),
             film_reads: Default::default(),
+            shutter: None,
+            shutter_now: None,
+            shutter_idle: 0,
             cube_hold: false,
             cube_keep: false,
             cube_step: None,
@@ -4716,6 +5103,10 @@ impl Backend {
             rt_build: None,
             rt_failed: false,
             rt_now: false,
+            fog: None,
+            fog_terms: None,
+            fog_volume_now: false,
+            fog_shelter: false,
             soft: None,
             soft_now: false,
             contact_now: false,
@@ -4758,6 +5149,10 @@ impl Backend {
             shadow_sampler,
             glow,
             dof: None,
+            motion_blur: None,
+            blur_motion: None,
+            blur_now: false,
+            sun_shafts: None,
             looks: None,
             look_thumbs: None,
             rlva_spheres: None,
@@ -4794,6 +5189,8 @@ impl Backend {
             msaa_samples,
             pipeline_build: None,
             soft_pipelines: soft_path(&settings),
+            gbuf_pipelines,
+            gbuf_wide,
             pipeline_workers: Vec::new(),
             rain_wet: RainWet::default(),
             snow_trail: SnowTrail::default(),
@@ -4966,7 +5363,7 @@ impl Backend {
             samples,
             format: Some(HDR_FORMAT),
             range: None,
-            gbuf: false,
+            gbuf: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
             constants: &[],
@@ -5130,9 +5527,10 @@ impl Backend {
         gbuf_layout: &wgpu::BindGroupLayout,
         samples: u32,
         surface_format: wgpu::TextureFormat,
-        ssr: bool,
+        gbuf: Option<wgpu::TextureFormat>,
         soft: bool,
     ) -> Pipelines {
+        let ssr = gbuf.is_some();
         // (without the stochastic transparency's passes: its own module,
         // `make_st`, when the method is first on)
         let src = format!(
@@ -5173,7 +5571,7 @@ impl Backend {
             a2c: false,
             samples,
             format: Some(HDR_FORMAT),
-            gbuf: false,
+            gbuf: None,
             range: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
@@ -5189,7 +5587,7 @@ impl Backend {
         let hud_desc = |label, blend, depth_write| PipeDesc {
             format: Some(surface_format),
             samples: 1,
-            gbuf: false,
+            gbuf: None,
             range: None,
             cull: None,
             blend,
@@ -5220,7 +5618,7 @@ impl Backend {
             cull: None,
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Always,
-            gbuf: ssr,
+            gbuf,
             ..base("sky", "vs_sky", g("fs_sky", "fs_sky_g"))
         });
         let clouds_weather = pipe(PipeDesc {
@@ -5235,15 +5633,15 @@ impl Backend {
             ..base("cloud weather", "vs_sky", "fs_cloud_weather")
         });
         let terrain = pipe(PipeDesc {
-            gbuf: ssr,
+            gbuf,
             ..base("terrain", "vs_terrain", g("fs_terrain", "fs_terrain_g"))
         });
         let terrain_pbr = pipe(PipeDesc {
-            gbuf: ssr,
+            gbuf,
             ..base("terrain pbr", "vs_terrain_pbr", g("fs_terrain_pbr", "fs_terrain_pbr_g"))
         });
         let opaque = pipe(PipeDesc {
-            gbuf: ssr,
+            gbuf,
             ..base("opaque", "vs_main", g("fs_opaque", "fs_opaque_g"))
         });
         let creation_preview = pipe(PipeDesc {
@@ -5252,19 +5650,19 @@ impl Backend {
         });
         let opaque_2s = pipe(PipeDesc {
             cull: None,
-            gbuf: ssr,
+            gbuf,
             ..base("opaque 2s", "vs_main", g("fs_opaque", "fs_opaque_g"))
         });
         let mask = pipe(PipeDesc {
             a2c: samples > 1,
-            gbuf: ssr,
+            gbuf,
             constants: &a2c,
             ..base("mask", "vs_main", g("fs_mask", "fs_mask_g"))
         });
         let mask_2s = pipe(PipeDesc {
             a2c: samples > 1,
             cull: None,
-            gbuf: ssr,
+            gbuf,
             constants: &a2c,
             ..base("mask 2s", "vs_main", g("fs_mask", "fs_mask_g"))
         });
@@ -6195,7 +6593,7 @@ impl Backend {
             a2c: false,
             samples: 1,
             format: None,
-            gbuf: false,
+            gbuf: None,
             range: None,
             depth_format: Some(SHADOW_FORMAT),
             depth_bias: wgpu::DepthBiasState {
@@ -6243,6 +6641,30 @@ impl Backend {
                 ..shadow_desc("rain shelter terrain", Some("fs_shadow_terrain"))
             },
         );
+        // Aurora Weather's fog: the shelter map's casters drawn into the
+        // flow grid's solid cells (no depth; a stand-in target, its writes discarded with the pass)
+        let voxel_layout = crate::fog::voxel_layout(device);
+        let voxel_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fog walls"),
+            bind_group_layouts: &[None, Some(records_layout), Some(tex_layout), Some(&voxel_layout)],
+            immediate_size: 0,
+        });
+        let fog_voxel = batch.add(
+            &module,
+            &voxel_pl,
+            PipeDesc {
+                format: Some(wgpu::TextureFormat::R8Unorm),
+                // (a write to it, discarded with the pass: a fragment shader
+                // with nothing to write could be left out by a driver, and
+                // its storage writes with it)
+                write_mask: wgpu::ColorWrites::RED,
+                depth_format: None,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                depth_bias: level,
+                ..shadow_desc("fog walls", Some("fs_fog_voxel"))
+            },
+        );
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/post.wgsl").into()),
@@ -6268,7 +6690,7 @@ impl Backend {
                 a2c: false,
                 samples: 1,
                 format: Some(surface_format),
-                gbuf: false,
+                gbuf: None,
                 range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
@@ -6375,6 +6797,7 @@ impl Backend {
             shadow_terrain: shadow_terrain.resolve(&mut done),
             shelter: shelter.resolve(&mut done),
             shelter_terrain: shelter_terrain.resolve(&mut done),
+            fog_voxel: fog_voxel.resolve(&mut done),
             post: post.resolve(&mut done),
             pick: pick.resolve(&mut done),
             pick_terrain: pick_terrain.resolve(&mut done),
@@ -6426,7 +6849,7 @@ impl Backend {
                     a2c: false,
                     samples: 1,
                     format: Some(AO_FORMAT),
-                    gbuf: false,
+                    gbuf: None,
                     range: None,
                     depth_format: None,
                     depth_bias: Default::default(),
@@ -6465,6 +6888,7 @@ impl Backend {
         width: u32,
         height: u32,
         samples: u32,
+        gbuf: Option<wgpu::TextureFormat>,
         s: &RenderSettings,
         external: bool,
         refuse: bool,
@@ -6517,13 +6941,13 @@ impl Backend {
         );
         let water_interface = make_view(device, "nearest water interface", w, h, DEPTH_FORMAT, 1, sampled).1;
         let water_mask = make_view(device, "water exclusion mask", w, h, wgpu::TextureFormat::R8Unorm, 1, sampled).1;
-        let (gbuf_msaa, gbuf) = if s.gbuffer() {
-            (
-                (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, GBUF_FORMAT, samples, att).1),
-                Some(make_view(device, "gbuffer", w, h, GBUF_FORMAT, 1, sampled).1),
-            )
-        } else {
-            (None, None)
+        // (of the format the pipelines in use were compiled for)
+        let (gbuf_msaa, gbuf) = match gbuf {
+            Some(format) => (
+                (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, format, samples, att).1),
+                Some(make_view(device, "gbuffer", w, h, format, 1, sampled).1),
+            ),
+            None => (None, None),
         };
         let ao_override = crate::gtao::Override::from_env();
         let (legacy_ao, gtao_ao) = ao_override.needed(s.ao_method);
@@ -6664,6 +7088,8 @@ impl Backend {
         water_effects: &crate::water_effects::WaterGpu,
         stars: &wgpu::Buffer,
         milky_way: &wgpu::TextureView,
+        fog_volume: Option<(&wgpu::TextureView, &wgpu::TextureView)>,
+        fog_ground: Option<&wgpu::TextureView>,
     ) -> FrameGroups {
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
@@ -6701,6 +7127,26 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 30,
                         resource: wgpu::BindingResource::TextureView(soft.unwrap_or(milky_way)),
+                    },
+                    // the fog volume (main view only: the others take the
+                    // height fog, `fog_look[2].w`)
+                    wgpu::BindGroupEntry {
+                        binding: 33,
+                        resource: wgpu::BindingResource::TextureView(match fog_volume {
+                            Some((v, _)) if std::ptr::eq(buffer, frame_buffer) => v,
+                            _ => &dummies.volume,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 34,
+                        resource: wgpu::BindingResource::TextureView(match fog_volume {
+                            Some((_, flow)) if std::ptr::eq(buffer, frame_buffer) => flow,
+                            _ => &dummies.volume,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 35,
+                        resource: wgpu::BindingResource::TextureView(fog_ground.unwrap_or(&dummies.ground)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 26,
@@ -7157,6 +7603,8 @@ impl Backend {
             &self.water_effects,
             &self.stars,
             &self.milky_way,
+            self.fog.as_ref().and_then(|f| f.volume().map(|v| (v, f.flow_view()))),
+            self.fog.as_ref().map(|f| f.ground_view()),
         );
     }
 
@@ -7286,6 +7734,37 @@ impl Backend {
         }
     }
 
+    /// The motion blur's own motion target, while it draws and neither
+    /// GTAO nor TAA keeps one (`motion_view`), at the world's size; let go
+    /// otherwise. Refused by a full video memory, the blur follows the
+    /// camera alone.
+    fn ensure_blur_motion(&mut self) {
+        let shared = self.targets.gtao.is_some() || self.taa.as_ref().is_some_and(|t| t.motion.is_some());
+        if !self.blur_now || shared {
+            self.blur_motion = None;
+            return;
+        }
+        let size = self.scene_size();
+        if self.blur_motion.as_ref().is_some_and(|(s, _)| *s == size) {
+            return;
+        }
+        self.blur_motion = None;
+        let lost = self.lost.get();
+        self.blur_motion = extra(&mut self.oom, &self.device, lost, "motion blur motion", |device| {
+            let view = make_view(
+                device,
+                "motion blur motion",
+                size.0,
+                size.1,
+                crate::gtao::NORMAL_FORMAT,
+                1,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            )
+            .1;
+            (size, view)
+        });
+    }
+
     /// The targets made on first use, let go: each is made again, checked,
     /// when next needed.
     fn drop_first_use_targets(&mut self) {
@@ -7298,6 +7777,13 @@ impl Backend {
         self.fit_clip = None;
         if let Some(dof) = &mut self.dof {
             dof.release();
+        }
+        if let Some(blur) = &mut self.motion_blur {
+            blur.release();
+        }
+        self.blur_motion = None;
+        if let Some(accum) = &mut self.shutter {
+            accum.release();
         }
         if let Some(looks) = &mut self.looks {
             looks.release();
@@ -7360,6 +7846,7 @@ impl Backend {
             size.0,
             size.1,
             self.msaa_samples,
+            self.gbuf_pipelines,
             &self.settings,
             self.external,
             refuse,
@@ -7427,7 +7914,8 @@ impl Backend {
             _ => 1,
         };
         let soft = soft_path(&s);
-        if (samples, s.gbuffer(), soft) == (self.msaa_samples, self.settings.gbuffer(), self.soft_pipelines) {
+        let gbuf = gbuf_wanted(&self.device, self.external, &self.gbuf_wide, &s, samples);
+        if (samples, gbuf, soft) == (self.msaa_samples, self.gbuf_pipelines, self.soft_pipelines) {
             // (a set still compiling for other samples is no longer wanted)
             self.pipeline_build = None;
             self.apply_settings_with(s, None);
@@ -7436,15 +7924,26 @@ impl Backend {
         if self
             .pipeline_build
             .as_ref()
-            .is_none_or(|b| (b.samples, b.ssr, b.soft) != (samples, s.gbuffer(), soft))
+            .is_none_or(|b| (b.samples, b.gbuf, b.soft) != (samples, gbuf, soft))
         {
             log::info!(
                 "compiling the pipelines for {samples} sample(s), SSR {}, G-buffer {}, soft shadows {}",
                 if s.ssr { "on" } else { "off" },
-                if s.gbuffer() { "on" } else { "off" },
+                gbuf.map_or_else(|| "off".to_owned(), |f| format!("{f:?}")),
                 if soft { "on" } else { "off" }
             );
-            let (build, worker) = self.start_pipeline_build(samples, s.gbuffer(), soft);
+            if gbuf.is_some() && self.gbuf_pipelines.is_some() && gbuf != self.gbuf_pipelines {
+                // (what `gbuf_wanted` read, when the precision changes
+                // between two sets: which of them moved tells why)
+                log::info!(
+                    "G-buffer precision {:?}: sun shadows {} px, ray tracing asked {:?}, traced {:?}",
+                    s.normal_precision,
+                    s.shadow_resolution,
+                    s.ray_tracing,
+                    crate::rt_shadows::traced(&self.device, self.external, s.ray_tracing)
+                );
+            }
+            let (build, worker) = self.start_pipeline_build(samples, gbuf, soft);
             self.pipeline_workers.retain(|w| !w.is_finished());
             self.pipeline_workers.extend(worker);
             self.pipeline_build = Some(build);
@@ -7459,12 +7958,13 @@ impl Backend {
                     build.started.elapsed().as_millis()
                 );
                 self.pipeline_build = None;
-                self.apply_settings_with(s, Some((samples, scene, impostors)));
+                self.apply_settings_with(s, Some((samples, gbuf, scene, impostors)));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 // the other settings now, the samples, SSR and soft shadows
                 // with their pipelines (the soft shadows' mask is made
-                // once the pipelines that read it are there)
+                // once the pipelines that read it are there; the G-buffer
+                // keeps the format of the pipelines in use, `gbuf_pipelines`)
                 let now = RenderSettings {
                     aa: self.settings.aa,
                     ssr: self.settings.ssr,
@@ -7489,7 +7989,7 @@ impl Backend {
                     &self.gbuf_layout,
                     samples,
                     self.config.format,
-                    s.gbuffer(),
+                    gbuf,
                     soft,
                 );
                 let impostors = Impostors::make_pipelines(
@@ -7499,17 +7999,22 @@ impl Backend {
                     &self.records_layout,
                     &self.tex_layout,
                     samples,
-                    s.gbuffer(),
+                    gbuf,
                     soft,
                 );
-                self.apply_settings_with(s, Some((samples, scene, impostors)));
+                self.apply_settings_with(s, Some((samples, gbuf, scene, impostors)));
             }
         }
     }
 
-    /// Compile the pipelines for `samples`, `ssr` and the soft shadows'
-    /// path `soft` on a worker thread.
-    fn start_pipeline_build(&self, samples: u32, ssr: bool, soft: bool) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
+    /// Compile the pipelines for `samples`, the G-buffer `gbuf` and the
+    /// soft shadows' path `soft` on a worker thread.
+    fn start_pipeline_build(
+        &self,
+        samples: u32,
+        gbuf: Option<wgpu::TextureFormat>,
+        soft: bool,
+    ) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
         let (tx, done) = std::sync::mpsc::sync_channel(1);
         let device = self.device.clone();
         let layouts = [
@@ -7524,7 +8029,7 @@ impl Backend {
         ];
         let format = self.config.format;
         let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
-            let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
+            let [frame, records, tex, shadow, post, bloom, gbuf_layout, impostor] = &layouts;
             let scene = Self::make_pipelines(
                 &device,
                 frame,
@@ -7532,13 +8037,13 @@ impl Backend {
                 tex,
                 shadow,
                 [post, bloom],
-                gbuf,
+                gbuf_layout,
                 samples,
                 format,
-                ssr,
+                gbuf,
                 soft,
             );
-            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr, soft);
+            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, gbuf, soft);
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));
         });
@@ -7550,7 +8055,7 @@ impl Backend {
             .ok();
         let build = PipelineBuild {
             samples,
-            ssr,
+            gbuf,
             soft,
             started: std::time::Instant::now(),
             done,
@@ -7603,8 +8108,13 @@ impl Backend {
     }
 
     /// `apply_settings` once the pipelines for `s` are known: `rebuilt` the
-    /// set compiled for other samples or SSR, `None` when they stay.
-    fn apply_settings_with(&mut self, s: RenderSettings, rebuilt: Option<(u32, Pipelines, ImpostorPipelines)>) {
+    /// set compiled for other samples or another G-buffer, `None` when they
+    /// stay.
+    fn apply_settings_with(
+        &mut self,
+        s: RenderSettings,
+        rebuilt: Option<(u32, Option<wgpu::TextureFormat>, Pipelines, ImpostorPipelines)>,
+    ) {
         let pipelines_dirty = rebuilt.is_some();
         let mut targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
@@ -7623,8 +8133,9 @@ impl Backend {
             || crate::water_optics::scale(s.water_effects) != crate::water_optics::scale(self.settings.water_effects)
             || s.mirror_scale != self.settings.mirror_scale;
         let taa_was = self.taa.is_some();
-        if let Some((samples, scene, impostors)) = rebuilt {
+        if let Some((samples, gbuf, scene, impostors)) = rebuilt {
             self.msaa_samples = samples;
+            self.gbuf_pipelines = gbuf;
             self.soft_pipelines = soft_path(&s);
             self.pipelines = scene;
             self.impostors.set_pipelines(impostors);
@@ -7822,7 +8333,7 @@ impl Backend {
                 a2c: false,
                 samples: 1,
                 format: Some(HDR_FORMAT),
-                gbuf: false,
+                gbuf: None,
                 range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
@@ -8087,6 +8598,16 @@ impl Backend {
         // centred on the main camera in every pass (`f` is the main view's,
         // reflections and probes included)
         u.curvature = Curvature::new(f.camera_pos, f.curvature).uniform();
+        // the height fog in every view; the main view may read the volume
+        // instead (render_frame)
+        if let Some((look, ground)) = &self.fog_terms {
+            let forward = crate::light_tiles::view_forward(view);
+            u.fog_look[..4].copy_from_slice(&crate::fog::frame_terms(look, &f.sky, *ground, forward, crate::fog::MODE_HEIGHT));
+            // the ground the fog lies on, in every view (binding 35)
+            if let Some([x, y, side]) = self.fog.as_ref().and_then(|f| f.ground_rect()) {
+                u.fog_look[6] = [x, y, side, 0.0];
+            }
+        }
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
@@ -8321,7 +8842,21 @@ impl Backend {
         // (a film frame drawn at its size is no photo: its pixels come back
         // in `films`, a later frame's result once the GPU is done)
         let film = self.film_reads.end_frame();
-        let snapshot = self.end_snapshot() && !cube_face && !film;
+        // (nor is a sub-frame of a shutter: nothing answers it)
+        let sub_frame = self.shutter_now.take().is_some_and(|s| !s.last());
+        let snapshot = self.end_snapshot() && !cube_face && !film && !sub_frame;
+        // the shutter's sum goes some frames after the last render's
+        // (the window's own frames come between a render's sub-frames)
+        self.shutter_idle = if film || sub_frame {
+            0
+        } else {
+            self.shutter_idle.saturating_add(1)
+        };
+        if self.shutter_idle > SHUTTER_KEPT_FRAMES
+            && let Some(accum) = &mut self.shutter
+        {
+            accum.release();
+        }
         if self.film_reads.busy() {
             self.lost.poll(&self.device);
         }
@@ -9011,10 +9546,16 @@ impl Backend {
             rt: rt_faces,
         } = packet;
         let external_output = output.is_some();
+        // (a sub-frame before its shutter's last carries no film frame:
+        // only the last is read back, shutter.rs)
         self.film_reads.begin(match wanted {
-            Some(Capture::Film(tag, _)) => Some(tag),
+            Some(Capture::Film(tag, _, shutter)) if shutter.is_none_or(|s| s.last()) => Some(tag),
             _ => None,
         });
+        self.shutter_now = match wanted {
+            Some(Capture::Film(_, Some(_), Some(shutter))) => Some(shutter),
+            _ => None,
+        };
         self.motion_cut |= motion_cut;
         self.shift_weather(world_shift);
         let mut stats = RenderStats::default();
@@ -9067,7 +9608,10 @@ impl Backend {
             self.rebuild_targets();
         }
         stats.present_mode = Some(self.config.present_mode);
-        if settings != self.settings {
+        // (and at each frame while their pipelines compile: a set for another
+        // G-buffer format leaves the settings as asked, with nothing held
+        // back to tell the frames apart, `apply_settings`)
+        if settings != self.settings || self.pipeline_build.is_some() {
             self.apply_frame_settings(settings);
         }
         // (at each frame until its worker is done, whatever else the
@@ -9080,7 +9624,8 @@ impl Backend {
         if !self.remake {
             self.seed = None;
         }
-        stats.settings = Some(self.settings);
+        // (none while their pipelines compile: `Renderer::settings_applied`)
+        stats.settings = self.pipeline_build.is_none().then_some(self.settings);
         stats.snow_lying = self.rain_wet.snow > RAIN_WET_DRY;
         // the tiled photo is done: its context goes with the targets that
         // bind it
@@ -9091,7 +9636,7 @@ impl Backend {
             self.rebuild_targets();
         }
         let snapshot = match wanted {
-            Some(Capture::Snapshot(s) | Capture::Film(_, Some(s))) if s.width > 0 && s.height > 0 => Some(s),
+            Some(Capture::Snapshot(s) | Capture::Film(_, Some(s), _)) if s.width > 0 && s.height > 0 => Some(s),
             _ => None,
         };
         if let Some(s) = snapshot {
@@ -9482,13 +10027,18 @@ impl Backend {
         // (the traced shadows take the soft ones' place)
         self.soft_now = !self.rt_now && self.soft_on(f.shadows, f.shadow_softness);
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
-        self.motion_now = self.gtao_normals_now || self.taa.is_some();
+        self.blur_now = motion_blur_wanted(f, snapshot.is_some());
+        self.motion_now = self.gtao_normals_now || self.taa.is_some() || self.blur_now;
+        self.ensure_blur_motion();
         // nothing kept the matrices while nothing read the motion: the
         // first frame that reads it again starts the history again
         self.motion_cut |= self.motion_now && !self.motion_kept;
         // rain prototype: the terrain heights (and where they are, for the
         // uniforms below)
         self.water_effects.upload_rain_ground(&self.queue, &lists.rain_ground);
+        // Aurora Weather's fog: before the uniforms (its terms) and the
+        // shadows (its shelter map)
+        self.prepare_fog(f, &lists.fog_ground, camera_water_level);
         // snow wets nothing (the ground dries as after rain), it lies
         let (rain, snow) = if f.rain_look.snow > 0.0 { (0.0, f.rain) } else { (f.rain, 0.0) };
         // cleaned up (the Weather window): the memory starts again, every
@@ -9560,6 +10110,17 @@ impl Backend {
         }
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
+        if self.fog_volume_now {
+            main.fog_look[2][3] = crate::fog::MODE_VOLUME;
+            // the fog's flow grid, for the surfaces in closed rooms
+            if let Some(origin) = self.fog.as_ref().and_then(|f| f.flow_grid()) {
+                let d = crate::fog::FLOW_DIMS;
+                main.fog_look[4] = origin.extend(crate::fog::FLOW_CELL).to_array();
+                main.fog_look[5] = [d[0] as f32, d[1] as f32, d[2] as f32, 0.0];
+            }
+        } else if self.fog_terms.is_some() && self.rain_shelter_map(f).is_some() {
+            main.fog_look[2][3] += crate::fog::MODE_SHELTER;
+        }
         if f.photo_tile != Mat4::IDENTITY {
             main.photo = photo_part(f.photo_tile);
         }
@@ -9872,6 +10433,7 @@ impl Backend {
             self.drawn_pick.begin(
                 (self.config.width, self.config.height),
                 main_vp.inverse(),
+                unjittered_vp.inverse(),
                 Curvature::new(f.camera_pos, f.curvature),
             )
         } else {
@@ -10898,6 +11460,8 @@ impl Backend {
             self.shelter_drawn = Some((self.shelter_matrix(), Instant::now()));
         }
         let shelter_only = shelter_only && !shelter_kept;
+        // its draws are this frame's (the fog's walls are drawn with them)
+        let shelter_drawn_now = shelter && (f.shadows || shelter_only);
         // MARK_SHELTER_BEGIN / END written (once, in the Spots step)
         let mut shelter_marked = false;
         if f.shadows || shelter_only {
@@ -11067,7 +11631,12 @@ impl Backend {
         };
         // the mesh normals and the motion, drawn beside the depth when GTAO
         // or TAA reads them; without them the passes keep no colour target
-        let normals = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
+        let normals = motion_view(
+            self.motion_now,
+            &self.targets,
+            self.taa.as_ref(),
+            self.blur_motion.as_ref().map(|(_, v)| v),
+        );
         let normal_target = |load| {
             normals.map(|view| {
                 Some(wgpu::RenderPassColorAttachment {
@@ -11407,7 +11976,12 @@ impl Backend {
                 rt.release_screen();
             }
             // moved surfaces keep their history through the prepass's motion
-            let rt_motion_drawn = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
+            let rt_motion_drawn = motion_view(
+                self.motion_now,
+                &self.targets,
+                self.taa.as_ref(),
+                self.blur_motion.as_ref().map(|(_, v)| v),
+            );
             let rt_motion = rt_motion_drawn.unwrap_or(&self.dummies.black);
             // (the sun's soft shadow too, whether the lights are traced or not)
             let light = crate::rt_shadows::TraceLight {
@@ -11876,7 +12450,7 @@ impl Backend {
         // ---- volumetric clouds: the weather map when its parameters changed,
         // the noise slice, the trace and the reconstruction (clouds.rs)
         let scene_samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
-        let scene_gbuf = self.targets.gbuf.is_some();
+        let scene_gbuf = self.targets.gbuf.as_ref().map(|view| view.texture().format());
         // (until the noise is made `encode` generates it and allocates
         // nothing; after, it needs the targets made above)
         let clouds_encode = self.clouds_now || self.clouds.as_ref().is_some_and(|c| !c.ready());
@@ -11915,11 +12489,85 @@ impl Backend {
                 cloud_size,
                 still,
             );
-            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, GBUF_FORMAT, DEPTH_FORMAT);
+            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, DEPTH_FORMAT);
         } else if let Some(clouds) = &mut self.clouds {
             clouds.skipped(still.is_some());
         }
         mark(&mut encoder, MARK_CLOUDS_END);
+        // ---- Aurora Weather's fog volume (fog.rs): after the shadows it
+        // reads, before the scene that reads it; then the sky's pipeline
+        mark(&mut encoder, MARK_FOG_BEGIN);
+        if let Some(fog) = &mut self.fog {
+            // its walls, drawn with the shelter map's casters into the flow
+            // grid when due (the shelter map's draws are this frame's)
+            if self.fog_volume_now && shelter_drawn_now && still.is_none() && fog.walls_due(&self.queue, self.anim_now) {
+                let walls = fog.walls();
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("fog walls"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: walls.target,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Discard,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.set_vertex_buffer(0, scene.vertices.slice(..));
+                pass.set_vertex_buffer(1, scene.skin.slice(..));
+                pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_pipeline(&self.pipelines.fog_voxel);
+                let k = self.shelter_slot;
+                for (group, (w, h)) in walls.views {
+                    pass.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
+                    pass.set_scissor_rect(0, 0, w, h);
+                    pass.set_bind_group(3, group, &[]);
+                    let (off, count) = rg.spot[k];
+                    if count > 0 {
+                        pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                        calls.set(calls.get() + 1);
+                    }
+                    draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
+                }
+            }
+            match (&self.fog_terms, self.fog_volume_now) {
+                (Some((look, _)), true) => fog.encode(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    &self.frame_buffer,
+                    &self.shadow_view,
+                    &self.shadow_sampler,
+                    &self.lin_clamp,
+                    look,
+                    fu.view,
+                    fu.proj,
+                    fu.camera_pos,
+                    still.is_some(),
+                ),
+                _ => fog.skipped(),
+            }
+            if self.fog_terms.is_some() {
+                fog.prepare_sky(
+                    &self.device,
+                    &self.frame_buffer,
+                    &self.lin_clamp,
+                    &self.dummies.volume,
+                    scene_samples,
+                    scene_gbuf,
+                    HDR_FORMAT,
+                    DEPTH_FORMAT,
+                );
+            }
+        }
+        mark(&mut encoder, MARK_FOG_END);
         // ---- scene pass A: sky, terrain, opaque, masked
         {
             let (view, resolve) = match &self.targets.color_msaa {
@@ -12000,6 +12648,13 @@ impl Backend {
                 {
                     clouds.draw(&mut pass, scene_samples, scene_gbuf);
                     // (the composite has its own group 0)
+                    pass.set_bind_group(0, &self.groups.a, &[]);
+                }
+                // the weather's fog over the sky and the clouds: dst * T + L
+                if self.fog_terms.is_some()
+                    && let Some(fog) = &self.fog
+                {
+                    fog.draw_sky(&mut pass, scene_samples, scene_gbuf);
                     pass.set_bind_group(0, &self.groups.a, &[]);
                 }
             }
@@ -12263,7 +12918,12 @@ impl Backend {
                         &light,
                         &self.targets.depth_ss,
                         gbuf,
-                        motion_view(self.motion_now, &self.targets, self.taa.as_ref()),
+                        motion_view(
+                            self.motion_now,
+                            &self.targets,
+                            self.taa.as_ref(),
+                            self.blur_motion.as_ref().map(|(_, v)| v),
+                        ),
                         &self.dummies.black,
                         &self.targets.scene_copy,
                         &scene,
@@ -13044,6 +13704,65 @@ impl Backend {
                 }
             }
         }
+        // ---- motion blur, on the resolved image and its depth of field,
+        // before the glow, the bloom and the tone mapping (not on a photo,
+        // an offline film's frame nor the first frame after a cut)
+        match (&f.motion_blur, self.prev_view_proj) {
+            (Some(params), Some(prev))
+                if self.blur_now
+                    && !self.motion_cut
+                    && motion_blur_targets(
+                        &mut self.oom,
+                        &mut self.motion_blur,
+                        &self.device,
+                        &crate::dof::PostInputs {
+                            layout: &self.post_layout,
+                            sampler: &self.post_sampler,
+                            buffer: &self.post_buffer,
+                            glow: &self.glow.views[1],
+                        },
+                        post_size,
+                        self.lost.get(),
+                    ) =>
+            {
+                let motion = motion_view(
+                    self.motion_now,
+                    &self.targets,
+                    self.taa.as_ref(),
+                    self.blur_motion.as_ref().map(|(_, v)| v),
+                );
+                let blur = self.motion_blur.as_mut().expect("made by motion_blur_targets");
+                post_bg = blur.encode(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    post_src,
+                    post_depth,
+                    motion,
+                    &crate::motion_blur::Cameras {
+                        view_proj: unjittered_vp,
+                        prev_view_proj: prev,
+                        proj: f.proj,
+                    },
+                    post_size,
+                    params,
+                    HDR_FORMAT,
+                    &crate::dof::PostInputs {
+                        layout: &self.post_layout,
+                        sampler: &self.post_sampler,
+                        buffer: &self.post_buffer,
+                        glow: &self.glow.views[1],
+                    },
+                );
+            }
+            // (refused by a full video memory, or a frame without it)
+            (Some(_), _) => {}
+            (None, _) => {
+                if let Some(blur) = &mut self.motion_blur {
+                    blur.release();
+                }
+            }
+        }
         self.prev_view_proj = Some(unjittered_vp);
         self.prev_motion_view = Some((f.proj, f.view));
         // the camera the depth was drawn with, jitter included: unprojected
@@ -13083,9 +13802,38 @@ impl Backend {
         if glow_on {
             self.glow.encode(&mut encoder, post_bg);
         }
-        // ---- bloom, from the image the post pass reads (after the glow,
-        // which it leaves as it is)
         mark(&mut encoder, MARK_BLOOM_BEGIN);
+        // ---- the sun's and the moon's shafts (sun_shafts.rs), into the
+        // image the bloom and the tone mapping read (after the exposure,
+        // which their mask is measured with, and the glow of faces, which
+        // they leave as it is; timed with the bloom). None under a debug
+        // view (it replaces the image), on a cut-out photo (its empty
+        // background is no sky) or a photo drawn in tiles (each tile's
+        // streaks would end at its seams); kept ready while the light is
+        // merely out of view.
+        let shafts = crate::sun_shafts::strength(f.sun_rays);
+        let debug_view = f.debug_glow || f.debug.shadows || f.debug.ambient_occlusion;
+        if shafts > 0.0 && !debug_view && !f.cutout && f.photo_tile == Mat4::IDENTITY {
+            let post = crate::dof::PostInputs {
+                layout: &self.post_layout,
+                sampler: &self.post_sampler,
+                buffer: &self.post_buffer,
+                glow: &self.glow.views[1],
+            };
+            let ready = shafts_targets(&mut self.oom, &mut self.sun_shafts, &self.device, &post, post_size, self.lost.get());
+            let forward = crate::light_tiles::view_forward(f.view);
+            if ready
+                && let Some(sun) = crate::sun_shafts::sun_on_image(unjittered_vp, forward, f.sun_dir, f.sun_visible)
+                && let Some(s) = &self.sun_shafts
+                && let Some(bg) = s.encode(&self.device, &self.queue, &mut encoder, post_bg, post_depth, sun, shafts * sun.fade)
+            {
+                post_bg = bg;
+            }
+        } else if let Some(s) = &mut self.sun_shafts {
+            s.release();
+        }
+        // ---- bloom, from the image the post pass reads (after the glow,
+        // which it leaves as it is; the shafts included)
         if bloom > 0.0 {
             self.bloom.encode(&mut encoder, post_bg);
         }
@@ -13280,7 +14028,12 @@ impl Backend {
         }
 
         if let Some(debug) = &self.motion_debug {
-            let motion = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
+            let motion = motion_view(
+                self.motion_now,
+                &self.targets,
+                self.taa.as_ref(),
+                self.blur_motion.as_ref().map(|(_, v)| v),
+            );
             debug.encode(
                 &self.device,
                 &self.queue,
@@ -13595,7 +14348,7 @@ impl Backend {
         if wanted == Some(Capture::Scene) {
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             capture = self.encode_capture(&mut encoder, source, false);
-        } else if matches!(wanted, Some(Capture::Film(_, None))) && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
+        } else if matches!(wanted, Some(Capture::Film(_, None, _))) && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
             // a live film's frame: the same view, read back without a wait
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             let bgra = matches!(
@@ -13728,6 +14481,27 @@ impl Backend {
             }
             if let Some(cube) = &mut self.cube {
                 cube.add_face(&mut encoder, surface_tex.texture(), step);
+            }
+        } else if let (Some(_), Some(shutter)) = (snapshot, self.shutter_now) {
+            // a sub-frame of an offline frame with a shutter: added to the
+            // sum; the last writes the average and is read back as below
+            let texture = surface_tex.texture();
+            if shutter_target(
+                &mut self.oom,
+                &mut self.shutter,
+                &self.device,
+                (texture.width(), texture.height()),
+                self.lost.get(),
+            ) {
+                let accum = self.shutter.as_mut().expect("made by shutter_target");
+                accum.encode(&self.device, &self.queue, &mut encoder, texture, shutter);
+            }
+            if shutter.last() {
+                let bgra = matches!(
+                    texture.format(),
+                    wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+                );
+                self.film_reads.encode(&self.device, &mut encoder, texture, bgra, f.cutout);
             }
         } else if snapshot.is_some() && self.film_reads.carried() {
             // an offline render's frame, drawn at its size: read back
@@ -14043,6 +14817,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_gbuffer_keeps_8_bits_or_16_on_every_device() {
+        // Standard: the format of before, whatever the device has
+        assert_eq!(gbuf_format(false, true), wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(gbuf_format(false, false), wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(gbuf_format(true, true), wgpu::TextureFormat::Rgba16Unorm);
+        // without the normalized format, or at a sample count it lacks, the
+        // HDR target's: every device draws into it and resolves it at each
+        // sample count offered
+        assert_eq!(gbuf_format(true, false), HDR_FORMAT);
+    }
+
+    #[test]
     fn the_scene_shader_without_soft_shadows_drops_their_path() {
         let with = common_shader_for(true);
         let without = common_shader_for(false);
@@ -14327,6 +15113,8 @@ mod tests {
         MARK_WATER_INTERFACE_END,
         MARK_DEPTH_MSAA_END,
         MARK_CLOUDS_END,
+        MARK_FOG_BEGIN,
+        MARK_FOG_END,
         MARK_SKY_END,
         MARK_TERRAIN_END,
         MARK_OBJECTS_END,

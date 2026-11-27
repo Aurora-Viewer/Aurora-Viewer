@@ -213,6 +213,36 @@ impl World {
 mod tests {
     use super::*;
 
+    /// At exit the objects of the live store and of a parked region are let
+    /// go, not freed on the main thread: what they hold stays referenced
+    /// (freed, the counts would fall back to the test's own copies).
+    #[test]
+    fn the_live_and_the_parked_objects_are_let_go_at_exit() {
+        // the live store
+        let (mut world, _) = crate::world::derender::tests_support::demo_world();
+        let live = world
+            .objects
+            .iter()
+            .find_map(|(_, o)| o.te.clone())
+            .expect("a live object with faces");
+        let held = Arc::strong_count(&live);
+        world.leak_at_exit();
+        drop(world);
+        assert_eq!(Arc::strong_count(&live), held, "the live store's objects");
+        // a region parked after a far teleport
+        let (mut world, handle) = crate::world::derender::tests_support::demo_world();
+        world.park_region(handle, 1e6);
+        let parked = world.parked[&handle]
+            .objects
+            .iter()
+            .find_map(|o| o.te.clone())
+            .expect("a parked object with faces");
+        let held = Arc::strong_count(&parked);
+        world.leak_at_exit();
+        drop(world);
+        assert_eq!(Arc::strong_count(&parked), held, "the parked region's objects");
+    }
+
     const SIZE: (u32, u32) = (256, 256);
 
     #[test]

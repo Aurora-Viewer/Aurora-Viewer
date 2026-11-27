@@ -3727,7 +3727,11 @@ pub(crate) fn still_gpu_ms(frame_ms: f32, traced_ms: f32, more: u32) -> f32 {
 
 /// Writes a pass's constants. The queue's writes all land before the
 /// frame's commands, so a later round of a photo, which changes them
-/// between two runs of one encoder, goes through a copy the encoder orders.
+/// between two runs of one encoder, goes through a copy the encoder orders:
+/// from a buffer of its own each time, since every copy reads its source
+/// when the encoder runs. wgpu's `create_buffer_init` panicked when the full
+/// video memory or a lost device refused that buffer (#4845); a refused one
+/// now leaves the round on the constants it had, said once in a while.
 pub(crate) fn put(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -3740,15 +3744,30 @@ pub(crate) fn put(
         queue.write_buffer(buffer, 0, bytes);
         return;
     }
-    let staged = wgpu::util::DeviceExt::create_buffer_init(
-        device,
-        &wgpu::util::BufferInitDescriptor {
-            label: Some("rt still round"),
-            contents: bytes,
-            usage: wgpu::BufferUsages::COPY_SRC,
-        },
-    );
-    encoder.copy_buffer_to_buffer(&staged, 0, buffer, 0, bytes.len() as u64);
+    // AURORA_GPU_OOM_STILL=1: every such buffer refused, as on a full card
+    static INJECTED: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("AURORA_GPU_OOM_STILL").is_some_and(|v| v == "1"));
+    let staged = if *INJECTED {
+        Err("AURORA_GPU_OOM_STILL".to_owned())
+    } else {
+        crate::gpu_alloc::try_buffer_init(device, "rt still round", bytes, wgpu::BufferUsages::COPY_SRC)
+    };
+    match staged {
+        Ok(staged) => encoder.copy_buffer_to_buffer(&staged, 0, buffer, 0, bytes.len() as u64),
+        Err(why) => {
+            static SAID: std::sync::LazyLock<std::sync::Mutex<crate::gpu_alloc::LogThrottle>> =
+                std::sync::LazyLock::new(|| std::sync::Mutex::new(crate::gpu_alloc::LogThrottle::new(std::time::Duration::from_secs(10))));
+            let line = SAID.lock().ok().and_then(|mut t| {
+                t.note(
+                    &format!("photo round: constants not updated, buffer refused ({why})"),
+                    std::time::Instant::now(),
+                )
+            });
+            if let Some(line) = line {
+                log::warn!("{line}");
+            }
+        }
+    }
 }
 
 /// The view's last lit frame, kept through a photo for the hits of its

@@ -369,3 +369,74 @@ fn every_native_action_uses_an_available_icon_and_distinct_core_icons() {
     assert_ne!(Action::OfferTeleport.icon(), Action::Teleport.icon());
     assert_ne!(Action::Place.icon(), Action::Teleport.icon());
 }
+
+/// A link, a clickable text or a right-to-left text that wraps whole onto
+/// the next row leaves the link before it its hover and clicks, and its own
+/// box (a selected piece's background) stays off that first row.
+#[test]
+fn a_piece_wrapped_whole_onto_the_next_row_leaves_the_link_before_it_clickable() {
+    #[derive(Clone, Copy, Debug)]
+    enum Next {
+        Link,
+        Text,
+        RightToLeft,
+    }
+    for next in [Next::Link, Next::Text, Next::RightToLeft] {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut point = egui::Pos2::ZERO;
+        let (mut hovered, mut clicked, mut stolen) = (false, false, false);
+        let mut rects = (egui::Rect::NOTHING, egui::Rect::NOTHING);
+        for frame in 0..6 {
+            let events = match frame {
+                2 => vec![egui::Event::PointerMoved(point)],
+                3 | 4 => vec![egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 3,
+                    modifiers: Default::default(),
+                }],
+                _ => Vec::new(),
+            };
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300.0, 200.0))),
+                    time: Some(frame as f64 * 0.1),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        select::row(ui, 1, None, true, |ui| {
+                            let first = action_marker::link(ui, Action::Profile, "First", 14.0, egui::Color32::GRAY, None, false.into());
+                            // the next piece's first word no longer fits on this row
+                            ui.add_space(ui.available_size_before_wrap().x - 8.0);
+                            let second = match next {
+                                Next::Link => action_marker::link(ui, Action::Im, "Second", 14.0, egui::Color32::GRAY, None, false.into()),
+                                Next::Text => select::label_with_sense(ui, egui::RichText::new("Elsewhere").into(), egui::Sense::click()),
+                                Next::RightToLeft => {
+                                    select::label_with_sense(ui, egui::RichText::new("שלום עולם").into(), egui::Sense::click())
+                                }
+                            };
+                            hovered |= first.hovered();
+                            clicked |= first.clicked();
+                            stolen |= second.hovered() || second.clicked();
+                            rects = (first.rect, second.rect);
+                        });
+                    });
+                },
+            );
+            out.textures_delta.clear();
+            select::take_drawn();
+            point = rects.0.center();
+        }
+        let (first, second) = rects;
+        assert!(second.top() >= first.bottom() - 0.5, "{next:?} wraps whole: {first:?} {second:?}");
+        assert!(
+            !second.intersect(first).is_positive(),
+            "{next:?}'s box stays off the first row: {first:?} {second:?}"
+        );
+        assert!(hovered && clicked, "{next:?}: the first link keeps its hover and click");
+        assert!(!stolen, "{next:?} does not take the first link's pointer");
+    }
+}

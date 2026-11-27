@@ -4,8 +4,8 @@
 //! one line each for a crowd; sort pills; and the sheet of the person
 //! held, at the right (`sheet.rs`). The data, rules, options and menus
 //! are those of Firestorm's radar table (`radar.rs`: FSRadar,
-//! fspanelradar.cpp, menu_fs_radar_options.xml), which Preferences â€º Aurora
-//! â€º People brings back.
+//! fspanelradar.cpp, menu_fs_radar_options.xml), which Preferences › Aurora
+//! › People brings back.
 
 use super::radar::{self, Age, Column, Payment, RadarData, RadarSettings, Row};
 use super::{PeopleAction, PeopleUi};
@@ -82,7 +82,7 @@ impl Band {
         }
     }
 
-    /// "Whisper Â· 10 m".
+    /// "Whisper · 10 m".
     pub(super) fn title(self) -> String {
         let m = |r: f32| aurora_i18n::number(f64::from(r), 0);
         let r = chat_ranges();
@@ -676,7 +676,7 @@ fn choose_sort(data: &mut RadarData, column: Column) {
     }
 }
 
-/// "16 near you Â· 7 within earshot Â· 2 friends": the figures in the ink,
+/// "16 near you · 7 within earshot · 2 friends": the figures in the ink,
 /// their words in the muted color.
 fn summary(ui: &mut egui::Ui, p: &Palette, counts: Option<[usize; 3]>) {
     // a line of text, not of buttons
@@ -705,7 +705,7 @@ fn band_header(ui: &mut egui::Ui, p: &Palette, band: Band) {
     section_header(ui, p, &band.title());
 }
 
-/// The header of a part of a list ("Whisper Â· 10 m", "Online Â· 2").
+/// The header of a part of a list ("Whisper · 10 m", "Online · 2").
 pub(super) fn section_header(ui: &mut egui::Ui, p: &Palette, title: &str) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), BAND_H), Sense::hover());
     let galley = ui.painter().layout_no_wrap(
