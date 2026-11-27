@@ -27,6 +27,40 @@ macro_rules! commands {
 /// Every command, in no particular order (the window sorts them by their
 /// label in the interface's language, like LLFloaterToybox::postBuild).
 pub const COMMANDS: &[Command] = commands![
+    "toolbar_separator", "arrows-horizontal", "toolbar-spacer", true;
+    "toolbar_divider", "separator-vertical", "toolbar-separator", true;
+    // a new floating block (human request, 2026-11-25; ui/toolbar/floating.rs)
+    "toolbar_floating", "app-window-filled", "toolbar-floating-new", true;
+    // the presets in a drawer (human request, 2026-11-26; drawers::INTERFACES)
+    "drawer:interfaces", "layout-grid-filled", "toolbar-interfaces", true;
+    "bar_navigation", "map-pin-filled", "toolbar-block-navigation", true;
+    "bar_account", "user-filled", "toolbar-block-account", true;
+    "bar_system", "gauge-filled", "toolbar-block-system", true;
+    "bar_status", "user-filled", "toolbar-block-status", true;
+    "bar_balance", "coin-filled", "toolbar-block-balance", true;
+    "bar_clock", "clock-filled", "toolbar-block-clock", true;
+    "bar_ping", "antenna-bars-5", "toolbar-block-ping", true;
+    "bar_fps", "gauge-filled", "toolbar-block-fps", true;
+    "bar_network", "arrows-down-up", "toolbar-block-network", true;
+    "bar_media", "brand-youtube-filled", "toolbar-block-media", true;
+    "bar_music", "radio", "toolbar-block-music", true;
+    "bar_volume", "volume", "toolbar-block-volume", true;
+    "bar_notifications", "bell-filled", "toolbar-block-notifications", true;
+    "bar_conversations", "messages-filled", "toolbar-block-conversations", true;
+    "bar_chat", "message-filled", "toolbar-block-chat", true;
+    "report_bug", "bug-filled", "bug-title", true;
+    "import_texture", "photo-filled", "toolbar-import-textures", true;
+    "import_sound", "file-music-filled", "toolbar-import-sounds", true;
+    "import_animation", "run", "toolbar-import-animations", true;
+    "import_material", "droplet-filled", "toolbar-import-materials", true;
+    "import_mesh", "cube-3d-sphere", "toolbar-import-meshes", true;
+    "import_local", "eye-filled", "toolbar-import-local", true;
+    // the quick import bar's Folder and Settings as buttons (human
+    // request, 2026-11-25), with the bar's icons (imports/ui/launcher.rs)
+    "import_advanced", "adjustments-filled", "toolbar-import-advanced", true;
+    "import_settings", "settings-filled", "toolbar-import-settings", true;
+    "location_bar", "map-pin-filled", "toolbar-location-bar", true;
+    "aurora_menu", "wolf", "ui-bars-aurora-menu", true;
     // Aurora's toolbar before PR 6
     "conversations", "Command_Chat_Icon", "common-conversations", true;
     "speak", "Command_Speak_Icon", "ui-skin-speak", true;
@@ -86,10 +120,15 @@ pub const COMMANDS: &[Command] = commands![
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
     // Build and Me menu commands that can be added directly to a toolbar.
     "ik_edit", "bone-filled", "ik-edit-title", true;
-    "build_edit", "pencil-filled", "toolbar-command-build-edit", true;
-    "build_create", "circle-plus-filled", "toolbar-command-build-create", true;
-    "build_land", "mountain-filled", "toolbar-command-build-land", true;
+    // the build window's five tools, "Build - " and its tool's name, with
+    // the window's icons (build/ui/layout.rs)
+    "build_focus", "zoom-filled", "toolbar-command-build-tool-focus", true;
+    "build_grab", "hand-grab", "toolbar-command-build-tool-grab", true;
+    "build_edit", "pointer-filled", "toolbar-command-build-tool-edit", true;
+    "build_create", "wand", "toolbar-command-build-tool-create", true;
+    "build_land", "mountain-filled", "toolbar-command-build-tool-land", true;
     "edit_particles", "sparkles-filled", "ui-bars-edit-particles", true;
+    // the quick import bar (human request, 2026-11-25: "Import bar")
     "import", "file-upload-filled", "import-menu", true;
     "blender_live", "cube-3d-sphere", "blender-live-title", true;
     "buy_currency", "coin-filled", "currency-menu", true;
@@ -117,6 +156,7 @@ pub const COMMANDS: &[Command] = commands![
     "gridstatus", "building-broadcast-tower-filled", "toolbar-command-grid-status", true;
     "voice", "Command_Voice_Icon", "toolbar-command-voice", true;
     "quickprefs", "adjustments-filled", "toolbar-command-quickprefs", true;
+    "graphics_preferences", "settings-filled", "ui-bars-graphics-preferences", true;
     "webbrowser", "world-filled", "toolbar-command-web-browser", true;
     "defaultchatbar", "message-filled", "toolbar-command-chat-bar", true;
     "areasearch", "zoom-scan-filled", "toolbar-command-area-search", true;
@@ -152,7 +192,10 @@ impl Command {
 /// Commands the Legacy Viewer dropped: only stale entries of its skins'
 /// toolbars.xml name them, and it skips them. A saved layout (older Aurora,
 /// imported) that still has one drops it, with no empty button.
-const RETIRED: &[&str] = &["howto"];
+/// "Customize interface" alone, and its main menu entry's copy, are no
+/// button any more: the Interfaces block ends with it (human request,
+/// 2026-11-26; `drawers::migrate_interfaces` turns one on a bar into it).
+const RETIRED: &[&str] = &["howto", "edit_interface", "menu:toolbar-interface-edit"];
 
 /// Whether `id` names a command that no longer exists.
 pub fn retired(id: &str) -> bool {

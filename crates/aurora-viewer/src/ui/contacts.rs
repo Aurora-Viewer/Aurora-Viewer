@@ -374,7 +374,7 @@ impl ContactsUi {
         self.ask_new_set_for(Vec::new());
     }
 
-    /// "New contact setâ€¦" of a resident's menu: the new set's name asked
+    /// "New contact set…" of a resident's menu: the new set's name asked
     /// (AddNewContactSet), then these residents added to it.
     pub fn ask_new_set_for(&mut self, ids: Vec<Uuid>) {
         self.new_set_members = ids;
@@ -787,7 +787,7 @@ pub fn panel(
     actions
 }
 
-/// The torn-off Contacts window (floater_fs_contacts.xml, 396 Ã— 390); its
+/// The torn-off Contacts window (floater_fs_contacts.xml, 396 × 390); its
 /// title bar button docks it back into Conversations. It shows what the
 /// docked tab shows (#961): People's friends tab in Aurora's look
 /// (`friends`, the same pane state as the docked tab, so the filter,
@@ -850,8 +850,8 @@ const PICKER_ID: &str = "contacts_avatar_picker";
 fn picked(world: &mut World, st: &mut ContactsUi, what: PickFor, ids: Vec<Uuid>) {
     match what {
         PickFor::Friend => {
-            // onAvatarPicked â†’ requestFriendshipDialog; Firestorm's picker
-            // refuses friends (isItemsFreeOfFriends), the shared one does not
+            // onAvatarPicked → requestFriendshipDialog; the Legacy Viewer's
+            // picker refuses friends (isItemsFreeOfFriends), the shared one does not
             match ids.iter().find(|id| **id != world.agent_id && !world.social.is_friend(id)) {
                 Some(to) => {
                     st.dialog = Some(Dialog::Friendship {
@@ -906,7 +906,7 @@ fn friend_rows(world: &World, settings: &ContactsSettings, filter: &str) -> Vec<
                     full_name(n, &o, settings.full_name_display_first),
                 ),
                 None => {
-                    let legacy = world.social.names.get(&f.id).cloned().unwrap_or_else(|| "â€¦".into());
+                    let legacy = world.social.names.get(&f.id).cloned().unwrap_or_else(|| "…".into());
                     (legacy.clone(), legacy.clone(), legacy)
                 }
             };
@@ -1862,7 +1862,7 @@ fn sets_tab(
             .get_in(NameScope::Roster, id)
             .map(|n| n.complete(&o))
             .or_else(|| social.names.get(id).cloned())
-            .unwrap_or_else(|| "â€¦".into())
+            .unwrap_or_else(|| "…".into())
     };
     let online = |id: &Uuid| social.friends.iter().any(|f| f.id == *id && f.online);
     let count = members.len();
@@ -2384,7 +2384,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                         .hint_text(hint.to_owned()),
                 )
                 .on_hover_text(aurora_i18n::tr!("ui-contacts-enter-to-confirm"));
-            // Enter while the field has focus (or just gave it up) confirms â€”
+            // Enter while the field has focus (or just gave it up) confirms —
             // same pattern as script search. Relying on lost_focus alone missed
             // presses that left the field focused, so Send never ran.
             if (r.has_focus() || r.lost_focus()) && widgets::enter_pressed(ui) {

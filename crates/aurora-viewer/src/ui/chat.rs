@@ -340,6 +340,9 @@ pub struct ChatUi {
     main_was_minimized: bool,
     /// The window whose emoji picker is open (`popout::one_picker`).
     picker_window: Option<popout::WindowKey>,
+    /// The conversation shown, and the Contacts tab, last frame
+    /// (`popout::pickers_follow_view`).
+    picker_view: Option<(Option<uuid::Uuid>, bool)>,
 }
 
 /// What the column's resident picker starts.
@@ -549,6 +552,11 @@ impl ChatUi {
         }
         if self.picker_window == Some(Some(old)) {
             self.picker_window = Some(Some(new));
+        }
+        if let Some((selected, contacts)) = self.picker_view
+            && selected == old
+        {
+            self.picker_view = Some((new, contacts));
         }
         self.popped.rekey(from, to);
         if let Some(draft) = self.drafts.remove(&old) {
@@ -2602,6 +2610,7 @@ pub(crate) fn chat_text_marked(
         world,
         scope,
         want_names,
+        None,
         text,
         size,
         color,
@@ -2609,6 +2618,121 @@ pub(crate) fn chat_text_marked(
         mark,
         false,
     );
+}
+
+/// The sender's name an emote's action follows (`emote_text_marked`).
+#[derive(Clone, Copy)]
+pub(crate) struct EmoteName<'a> {
+    /// The name as the line shows it.
+    pub name: &'a str,
+    pub line: &'a crate::world::ChatLine,
+    /// The names the conversation shows (`LineEnv::names`).
+    pub names: NameScope,
+    /// The conversation's menu of a line (`LineEnv::menu`).
+    pub menu: Option<egui::Id>,
+}
+
+/// An emote's action with its sender's name before it, a link like the
+/// name of the line's header (`name_label`). `appendMessage`
+/// (indra/newview/llchathistory.cpp) writes that name as plain text, so the
+/// Legacy Viewer links an emote's name only in its header; Aurora links the
+/// name in the text too (#4757), to what the header's leads to and no more
+/// (`emote_name`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emote_text_marked(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    emoji: &mut super::emoji::Emoji,
+    world: &World,
+    scope: TextScope,
+    want_names: &mut HashSet<uuid::Uuid>,
+    sender: EmoteName,
+    action: &str,
+    size: f32,
+    color: Color32,
+    emphasis: impl Into<super::fonts::TextEmphasis>,
+    mark: Option<Mark>,
+) {
+    chat_text_all(
+        ui,
+        p,
+        emoji,
+        world,
+        scope,
+        want_names,
+        Some(sender),
+        action,
+        size,
+        color,
+        emphasis.into(),
+        mark,
+        false,
+    );
+}
+
+/// The action of an emote ("/me smiles"), which follows the name the line
+/// shows. None for another line.
+pub(crate) fn emote_action(line: &crate::world::ChatLine) -> Option<&str> {
+    line.text
+        .strip_prefix("/me")
+        .filter(|rest| rest.starts_with(' ') || rest.starts_with('\''))
+}
+
+/// The sender's name before an emote's action, leading where the name of
+/// the line's header leads (`sender_link`): a resident's profile and menu
+/// as the conversation names its people (`EmoteName::names`: `open_in`
+/// refuses a resident `@shownames` hides in the nearby chat, as for the
+/// header), an object's inspector and menu, and plain text for a speaker
+/// hidden when the line arrived. The matches of a searched text are washed
+/// as in the action.
+#[allow(clippy::too_many_arguments)]
+fn emote_name(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    emote: EmoteName,
+    size: f32,
+    color: Color32,
+    emphasis: super::fonts::TextEmphasis,
+    mark: Option<Mark>,
+) {
+    let target = sender_link(world, emote.line);
+    let mut pieces = Vec::new();
+    let mut at = 0;
+    for m in mark.map(|mark| view::find_ci(emote.name, mark.needle)).unwrap_or_default() {
+        pieces.push((at..m.start, None));
+        at = m.end;
+        pieces.push((m, mark.map(|mark| mark.wash)));
+    }
+    pieces.push((at..emote.name.len(), None));
+    for (range, wash) in pieces {
+        if range.is_empty() {
+            continue;
+        }
+        let mut text = emphasis.rich_text(ui.ctx(), &emote.name[range], size, color);
+        if let Some(wash) = wash {
+            text = text.background_color(wash);
+        }
+        match target {
+            None => {
+                select::label(ui, text);
+            }
+            Some(SenderLink::Object(_)) => {
+                let r = select::label_with_sense(ui, text.into(), egui::Sense::click());
+                line_object_sender(r, p, world, emote.line, emote.menu);
+            }
+            Some(SenderLink::Resident(id)) => {
+                let r = select::label_with_sense(ui, text.into(), egui::Sense::click());
+                line_name_menu(&r, p, world, id, emote.names, emote.line, emote.menu);
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(aurora_i18n::tr!("common-view-profile"))
+                    .clicked()
+                {
+                    super::profile::request_open_in(ui.ctx(), emote.names, id);
+                }
+            }
+        }
+    }
 }
 
 /// `chat_text_marked` for a system line, in brackets around it when
@@ -2638,6 +2762,7 @@ pub(crate) fn chat_text_bracketed(
         world,
         scope,
         want_names,
+        None,
         text,
         size,
         color,
@@ -2666,6 +2791,7 @@ fn chat_text_all(
     world: &World,
     scope: TextScope,
     want_names: &mut HashSet<uuid::Uuid>,
+    emote: Option<EmoteName>,
     text: &str,
     size: f32,
     color: Color32,
@@ -2684,9 +2810,10 @@ fn chat_text_all(
     let hide = |t: &str| world.rlva_filter_text_in(wording, t).into_owned();
     let filtered = world.rlva_filter_text_in(wording, text);
     let segs = segments(text);
+    let searched = mark;
     // only a text that has a match is cut into runs
     let mark = mark.filter(|m| !view::find_ci(filtered.as_ref(), m.needle).is_empty());
-    if !brackets && mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
+    if emote.is_none() && !brackets && mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
         emoji.rich_text(ui, filtered.as_ref(), size, color, emphasis);
         return;
     }
@@ -2696,6 +2823,9 @@ fn chat_text_all(
     super::emoji::text_rows_in(ui, size, rtl, |ui| {
         if !open.is_empty() {
             emoji.inline(ui, open, size, color, emphasis);
+        }
+        if let Some(emote) = emote {
+            emote_name(ui, p, world, emote, size, color, emphasis, searched);
         }
         for s in segs {
             match s {
@@ -2943,10 +3073,26 @@ pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
     }
 }
 
+/// A line read back whose sender's name is looked up each time it is drawn,
+/// as a live line's (`cached_line_sender`): one of a private conversation's
+/// history, in the conversation or in its History window
+/// (`ChatLine::private_history`, decided when the history loads, where the
+/// other resident is known: `World::private_peer`), the other resident's or
+/// ours. Both sides resolve when drawn, so a name option changed while the
+/// conversation is open renames them together. Every other history line
+/// keeps the file's name: the nearby chat's, a group's or a conference's
+/// (whose members' names may be cached too, so the line alone cannot
+/// tell), in the conversation and in the History window.
+pub(crate) fn log_names_resolve(line: &crate::world::ChatLine) -> bool {
+    line.origin == Origin::Log && line.private_history
+}
+
 /// The name a line gives its sender
 /// (FSChatHistoryHeader): the display name looked up, mine, else the name
 /// the line came with. A line read back from a transcript keeps the name
-/// the file gives it, under RLVa's `@shownames` and `@showloc` too:
+/// the file gives it (but for a private conversation's, whose names are
+/// looked up as the live lines': `cached_line_sender`), under RLVa's
+/// `@shownames` and `@showloc` too:
 /// FSChatHistory::appendMessage (indra/newview/fschathistory.cpp) writes
 /// `mFromName` as it is for a `message_from_log`, and nothing sets
 /// `mRlvNamesFiltered` on it (`ChatLine::wording`).
@@ -2957,22 +3103,52 @@ pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
 /// and an object the name it was given then, whatever the restriction
 /// became since (FSChatHistory::appendMessage writes `chat.mFromName` once).
 pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
-    if line.origin != Origin::Live || line.anonymous() {
+    if line.anonymous() {
         return line.from.clone();
     }
-    match cached_chat_sender(world, line) {
+    match cached_line_sender(world, line) {
         Some(n) => n.display(&world.social.avatar_names.options),
-        None if line.kind.is_own() => own_name.to_owned(),
+        // (one of our history lines: the file's name, as `draw_line`)
+        None if line.kind.is_own() && line.origin == Origin::Live => own_name.to_owned(),
         None => line.from.clone(),
     }
 }
 
-fn cached_chat_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
-    if line.origin != Origin::Live || line.anonymous() || matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
+/// The cached name of a line's sender, which its header and its text show
+/// (`sender_name`, `draw_line`), in `NameScope::Roster`, which `@shownames`
+/// never hides: a live line's, ours or the other resident's (#4675), and a
+/// private conversation's history line's (`log_names_resolve`). None for an
+/// object, a speaker `@shownames` hid and every other history line: they
+/// keep the name they came with. A name not cached yet is queued by
+/// `get_in`, and the line shows the name it came with until it arrives.
+///
+/// The other resident's history line takes the cached name only when the
+/// name the file gives is theirs (`AvatarName::has_user_name` of its legacy
+/// form, the test that finds a transcript's sender by name): a line whose
+/// name was not recognised took the conversation's other resident as its
+/// source, for its picture and its profile (`World::history_lines`,
+/// `World::service_lines`), and one we wrote under an earlier account name
+/// would show theirs. Ours were told by their name when they loaded
+/// (`World::is_own_log_name`, which also knows "You" and our display name).
+fn cached_line_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
+    let live = line.origin == Origin::Live;
+    if (!live && !log_names_resolve(line)) || line.anonymous() || matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
         return None;
     }
-    let id = if line.kind.is_own() { &world.agent_id } else { &line.source };
-    world.social.avatar_names.get_in(NameScope::Roster, id)
+    let own = line.kind.is_own();
+    let names = &world.social.avatar_names;
+    let cached = names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })?;
+    let written = || cached.has_user_name(&crate::world::names::build_legacy_name(&line.from, names.options.trim_resident));
+    (live || own || written()).then_some(cached)
+}
+
+/// `cached_line_sender` for a live line only: the username a header adds
+/// (`chat_header_name`), which a history line's leaves out (`draw_line`).
+fn cached_chat_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
+    if line.origin != Origin::Live {
+        return None;
+    }
+    cached_line_sender(world, line)
 }
 
 /// Visible header label in Aurora, Compact and Bubbles. Preserve the text
@@ -3088,6 +3264,96 @@ impl Copied<'_> {
     }
 }
 
+/// A press in a conversation's window that leaves no widget of its own with
+/// the keyboard gives it to the conversation's field (#4628): the list, the
+/// header, the title bar, the padding and the strip above the field too, so
+/// that what is typed next never walks the avatar. Port of
+/// LLFloater::handleMouseDown → bringToFront → LLFloater::setFocus →
+/// focusFirstItem (indra/llui/llfloater.cpp), which FSFloaterIM::focusFirstItem
+/// (indra/newview/fsfloaterim.cpp) points at its input editor. A widget
+/// that took the keyboard while the window drew (a search field pressed,
+/// the lines being selected, a find field's clear button) or one that keeps
+/// it under the pointer stays focused; a press over a menu or another window
+/// above is theirs. `before`: the focus when the window's body began
+/// (`focus_before_body`); called at the end of that body, whose `ui` is in
+/// the window's layer.
+///
+/// At the press, as the Legacy Viewer does, and again at its release when
+/// it is a click. The second request is needed: egui takes the keyboard
+/// from a widget clicked away from at the release
+/// (`SurrenderFocusOn::Clicks`), and `click_away_focus.rs` applies that at
+/// the end of the click's pass unless a focus was asked during it, so the
+/// field given the keyboard at the press would lose it again. Like every
+/// `Memory::request_focus`, each request interrupts an IME composition in
+/// progress (a press already ends one in the field it leaves).
+///
+/// A deliberate difference: LLFloater::setFocus keeps the focus in a child
+/// that has it and otherwise restores the last focused control; here a
+/// press on what takes no keyboard always gives it to the message field,
+/// as the report asks.
+fn press_focuses_field(ui: &egui::Ui, before: Option<egui::Id>, field: egui::Id) {
+    let ctx = ui.ctx();
+    let lines = lines_focus(ui);
+    let at = ui.input(|i| {
+        if i.pointer.primary_pressed() {
+            i.pointer.press_origin()
+        } else if i.pointer.primary_clicked() {
+            i.pointer.interact_pos()
+        } else {
+            None
+        }
+    });
+    let Some(origin) = at else {
+        return;
+    };
+    // a window outside the viewer's is its own viewport's background, with
+    // no area under the pointer but a popup of its own
+    if ctx.layer_id_at(origin).unwrap_or(egui::LayerId::background()) != ui.layer_id() || !ui.is_enabled() {
+        return;
+    }
+    // (a widget takes the keyboard at once, `Memory::request_focus`; a
+    // focus elsewhere is surrendered only at the end of the click's pass)
+    let now = ctx.memory(|m| m.focused());
+    // the lines keep the keyboard on a press in their scroll area, its bar
+    // included: a drag of the bar must leave Ctrl+C to the selection, as
+    // LLFloater::setFocus keeps a focused child
+    let in_lines = lines.is_some_and(|(area, id)| now == Some(id) && area.contains(origin));
+    let kept = now.is_some_and(|focused| in_lines || now != before || ctx.read_response(focused).is_some_and(|r| r.hovered()));
+    if !kept {
+        ctx.memory_mut(|m| m.request_focus(field));
+    }
+}
+
+/// The id under which a window's conversation lines leave their scroll
+/// area and their own id for `press_focuses_field`, by the window's layer.
+fn lines_focus_id(layer: egui::LayerId) -> egui::Id {
+    egui::Id::unique("conv_lines_focus").with(layer)
+}
+
+/// Leaves the lines' scroll area (`area`, its bar included) and their id
+/// for this pass's `press_focuses_field` of the same window.
+fn keep_lines_focus(ui: &egui::Ui, area: egui::Rect, id: egui::Id) {
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(lines_focus_id(ui.layer_id()), (area, id, pass)));
+}
+
+/// The lines' scroll area and id left in this pass by `keep_lines_focus`
+/// in the window of `ui`, never those of an earlier pass (the lines no
+/// longer drawn: the Contacts tab, no conversation).
+fn lines_focus(ui: &egui::Ui) -> Option<(egui::Rect, egui::Id)> {
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
+    ui.ctx()
+        .data(|d| d.get_temp::<(egui::Rect, egui::Id, u64)>(lines_focus_id(ui.layer_id())))
+        .and_then(|(area, id, at)| (at == pass).then_some((area, id)))
+}
+
+/// The focus when a conversation window's body begins, for
+/// `press_focuses_field`.
+fn focus_before_body(ui: &egui::Ui) -> Option<egui::Id> {
+    ui.ctx().memory(|m| m.focused())
+}
+
 /// The selection of the lines (`select.rs`), as in the Legacy Viewer's transcript:
 /// a drag selects across them (never moving the window), a double click
 /// selects a word, a triple click selects a paragraph, a click without a drag
@@ -3103,7 +3369,8 @@ fn select_lines(
 ) -> ToField {
     // the lines' own area: egui also hands them a pointer a few points off
     // (interact_radius), on the strip between them and the field, which
-    // stays neutral (no selection, no keyboard)
+    // selects nothing (the window gives the keyboard to its field there,
+    // `press_focuses_field`)
     let area = content.rect.intersect(ui.clip_rect());
     let pressed_in = ui.input(|i| i.pointer.press_origin()).is_some_and(|p| area.contains(p));
     let pressed = ui.input(|i| i.pointer.primary_pressed());
@@ -3331,6 +3598,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     let current = search.find.as_ref().and_then(|f| f.current_line(view));
     // the folded run of blocked lines whose Show was clicked, by its first line
     let mut opened_fold = None;
+    // the lines' id, once they are drawn (`keep_lines_focus`)
+    let mut lines_id = None;
     let area = super::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), ("conv", st.selected));
     let out = area
         .stick_to_bottom(!paused)
@@ -3441,6 +3710,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             if let Some(mode) = st.demo_select.take_if(|_| !drawn.is_empty()) {
                 demo_selection(selection, &mode, &drawn, copied.ends());
             }
+            lines_id = Some(content.id);
             to_field = select_lines(ui, &content, &drawn, selection, &copied);
             if matches!(rows, Rows::Thread(_)) {
                 line_menu::demo_mark(ui, &drawn);
@@ -3456,6 +3726,11 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         });
     if let Some(seq) = opened_fold {
         st.blocked_opened.insert(seq);
+    }
+    if let Some(id) = lines_id {
+        // the scroll bar is beside the lines, never over them (theme)
+        let bar = ui.spacing().scroll.allocated_width();
+        keep_lines_focus(ui, out.inner_rect.with_max_x(out.inner_rect.max.x + bar), id);
     }
     let mut offset = out.state.unclamped_offset();
     let mut store = false;
@@ -3533,8 +3808,10 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let (p, world) = (env.p, env.world);
     ui.spacing_mut().item_spacing.y = 2.0;
     let w = ui.available_width();
-    // history lines: greyed, their name as written (message_from_log); their
-    // sender, when its name was cached, gives the picture and the profile
+    // history lines: greyed, their name as written (message_from_log) but
+    // in a private conversation, where it is the resident's
+    // (`cached_line_sender`); their sender, when its name was cached or as
+    // that conversation's other resident, gives the picture and the profile
     let logged = line.origin != Origin::Live;
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
     if let Some((year, month, day)) = look.marker {
@@ -3597,7 +3874,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     // FSChatHistoryHeader: the display name, then " - username" in small
     let names = &world.social.avatar_names;
-    let cached = cached_chat_sender(world, line);
+    let cached = cached_line_sender(world, line);
     let name = match cached {
         Some(n) => n.display(&names.options),
         None if own && !logged => env.own_name.to_owned(),
@@ -3605,7 +3882,13 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     };
     if look.header {
         ui.add_space(6.0);
-        let username = cached.and_then(|n| n.chat_username(&names.options));
+        // A history line's header names its sender without the " - username"
+        // a live header adds, a private conversation's resolved name too:
+        // history is a record, and the short form keeps it readable. The
+        // Legacy Viewer's history header shows no user name either
+        // (FSChatHistoryHeader::setup cuts " (username)" from a
+        // CHAT_STYLE_HISTORY line's name, fschathistory.cpp).
+        let username = cached.filter(|_| !logged).and_then(|n| n.chat_username(&names.options));
         egui::Frame::new()
             .fill(p.raised.gamma_multiply(0.55))
             .corner_radius(ui.visuals().window_corner_radius)
@@ -3681,19 +3964,45 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
         })
         .show(ui, |ui| {
             if !visible.is_empty() {
-                chat_text_marked(
-                    ui,
-                    p,
-                    env.emoji,
-                    world,
-                    line.wording(env.names),
-                    env.want_names,
-                    &visible,
-                    super::fonts::chat_size(ui.ctx(), 13.5),
-                    tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
-                    line_emphasis(env, line, italics),
-                    mark,
-                );
+                let size = super::fonts::chat_size(ui.ctx(), 13.5);
+                let color = tone.unwrap_or_else(|| super::colors::chat_color(line, world));
+                let emphasis = line_emphasis(env, line, italics);
+                if let Some(action) = emote_action(line) {
+                    let action = previews::text(env.previews.as_deref(), line, action, ui.available_width() - 8.0);
+                    emote_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        world,
+                        line.wording(env.names),
+                        env.want_names,
+                        EmoteName {
+                            name: shown_name(line, &name),
+                            line,
+                            names: env.names,
+                            menu: env.menu,
+                        },
+                        &action,
+                        size,
+                        color,
+                        emphasis,
+                        mark,
+                    );
+                } else {
+                    chat_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        world,
+                        line.wording(env.names),
+                        env.want_names,
+                        &visible,
+                        size,
+                        color,
+                        emphasis,
+                        mark,
+                    );
+                }
             }
             // Aurora also offers its previews in Lines (#976), extending
             // LLChatHistory::appendMessage (indra/newview/llchathistory.cpp).
@@ -4015,6 +4324,7 @@ pub fn show(
         st.contacts = false;
     }
     let style = st.demo_style.unwrap_or(st.style);
+    popout::pickers_follow_view(st);
     popout::one_picker(st);
     st.gifs.close_if_hidden(ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT));
     // every entry of the window, whatever the column's search: it never
@@ -4069,7 +4379,11 @@ pub fn show(
         .attention(conversations_waiting(world))
         .attention_flash(st.button_flash.bar(ctx.input(|i| i.time)))
         .steady_size();
-    if st.contacts {
+    if minimized {
+        // Not on the minimized bar: nothing shows to detach, and the
+        // window's name keeps room (the human's report of 2026-11-23 on
+        // #4756: "Convers…").
+    } else if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
     } else {
@@ -4100,6 +4414,7 @@ pub fn show(
     }
     floater.min_size = floater.min_size.max(least);
     let image_bounds = floater.show(ctx, p, open, |ui| {
+        let focus_before = focus_before_body(ui);
         let bounds = ui.available_rect_before_wrap().intersect(ui.clip_rect());
         if enlarged {
             ui.disable();
@@ -4120,6 +4435,9 @@ pub fn show(
                 compact: style == crate::settings::ChatStyle::Compact,
             };
             workspace::show(ui, env, world, st, &mut actions);
+            if !st.contacts && !minimized {
+                press_focuses_field(ui, focus_before, egui::Id::unique(("conv_input", st.selected)));
+            }
             return bounds;
         }
         let h = (ui.available_height() - 6.0).max(140.0);
@@ -4267,6 +4585,9 @@ pub fn show(
             // ---- conversation pane
             ui.vertical(|ui| classic_pane(ui, p, icons, emoji, pics, gestures, world, st, &mut actions, h, &own_name));
         });
+        if !st.contacts && !minimized {
+            press_focuses_field(ui, focus_before, egui::Id::unique(("conv_input", st.selected)));
+        }
         bounds
     });
     docking::target(ctx, *open && !minimized && image_bounds.is_some());
@@ -4365,6 +4686,8 @@ fn classic_pane(
     h: f32,
     own_name: &str,
 ) {
+    // the conversation may have changed since the pass began (Ctrl+W, a tab)
+    popout::pickers_follow_view(st);
     let pane = ui.available_rect_before_wrap();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
     workspace::drops(ui, p, pane, st, kind, actions);
@@ -4474,6 +4797,7 @@ fn classic_pane(
         Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
     };
     let mut emoji_btn = None;
+    let mut gif_btn = None;
     let mut send_clicked = false;
     let mut draft = std::mem::take(st.draft_mut(st.selected));
     // the recent emojis, over the field (under it with the Legacy chat style)
@@ -4496,6 +4820,7 @@ fn classic_pane(
             // shown once a key is entered (Preferences › Chat › GIFs)
             if st.gifs.usable() {
                 let b = tool_resp(ui, p, icons, "gif", st.gif_open).on_hover_text(aurora_i18n::tr!("ui-chat-gif"));
+                gif_btn = Some(b.rect);
                 gif_picker::button(&b, p, st);
             }
             // leave exactly the send button + spacing (else the row overflows
@@ -4559,11 +4884,12 @@ fn classic_pane(
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
+    let picker_buttons: Vec<egui::Rect> = emoji_btn.into_iter().chain(gif_btn).collect();
     if st.emoji_open && popout::claim_picker(ui.ctx()) {
         let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
         let mut close = false;
         // one per conversation: one in each window (`popout.rs`)
-        egui::Area::new(egui::Id::unique(("emoji_picker", st.selected)))
+        let shown = egui::Area::new(egui::Id::unique(("emoji_picker", st.selected)))
             .fade_in(false)
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::LEFT_BOTTOM)
@@ -4587,10 +4913,24 @@ fn classic_pane(
         if close {
             st.emoji_open = false;
             ui.ctx().memory_mut(|m| m.request_focus(conv_input));
+        } else if popout::pressed_away(ui.ctx(), &shown.response, &picker_buttons) {
+            // the click goes where it landed, the keyboard with it
+            st.emoji_open = false;
         }
     }
     let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
-    gif_picker::popup(ui.ctx(), p, icons, st, anchor, 4.0, conv_input, ChatType::Normal, actions);
+    gif_picker::popup(
+        ui.ctx(),
+        p,
+        icons,
+        st,
+        anchor,
+        4.0,
+        &picker_buttons,
+        conv_input,
+        ChatType::Normal,
+        actions,
+    );
     // the Enter that asked for the keyboard (start_chat) is not one typed in
     // the field (compose.rs, Aurora's style, does the same)
     let focusing = std::mem::take(&mut st.conv_focus_request);
@@ -4893,6 +5233,7 @@ impl Held {
 pub fn toasts(
     ctx: &egui::Context,
     p: &Palette,
+    emoji: &mut super::emoji::Emoji,
     world: &World,
     pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
     want_names: &mut HashSet<uuid::Uuid>,
@@ -4910,6 +5251,7 @@ pub fn toasts(
         console::cards(
             ctx,
             p,
+            emoji,
             world,
             pics,
             want_names,
@@ -5014,7 +5356,7 @@ pub fn toasts(
                         let galley = visual.galley.clone();
                         let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
                         let painter = ui.painter();
-                        painter.galley(rect.min, galley.clone(), p.ink);
+                        emoji.paint_galley(painter, rect.min, galley.clone(), size, p.ink, shown);
                         // the sender's picture (or the object cube) in the room
                         // left before its name
                         if let Some((at, who)) = sender {
@@ -6756,6 +7098,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let job = |l: &crate::world::ChatLine, pill: Option<&egui::FontFamily>| {
             line_job(
@@ -6805,6 +7148,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let mine = message_color(&line, &p, &world);
         for text in ["/me waves", "/me's hat"] {
@@ -6842,6 +7186,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let id = uuid::Uuid::from_u128;
         assert_eq!(
@@ -6879,13 +7224,15 @@ mod tests {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             });
         }
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
         let p = crate::theme::Theme::default().palette();
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1536.0, 864.0));
-        let frame = |events: Vec<egui::Event>| {
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut frame = |events: Vec<egui::Event>| {
             let mut out = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(screen),
@@ -6896,6 +7243,7 @@ mod tests {
                     toasts(
                         ui.ctx(),
                         &p,
+                        &mut emoji,
                         &world,
                         &HashMap::new(),
                         &mut HashSet::new(),
@@ -7234,6 +7582,142 @@ mod tests {
         }
     }
 
+    /// #4628: a press anywhere in the Conversations window that focuses
+    /// nothing of its own (its title bar here) gives the keyboard to the
+    /// conversation's field, as focusFirstItem does (FSFloaterIM), so that
+    /// what is typed next is not a key of the world; a field pressed keeps
+    /// it, inside the window or outside it.
+    #[test]
+    fn a_press_in_the_conversations_window_gives_its_field_the_keyboard() {
+        for style in [
+            crate::settings::ChatStyle::Aurora,
+            crate::settings::ChatStyle::Compact,
+            crate::settings::ChatStyle::Bubbles,
+            crate::settings::ChatStyle::Legacy,
+        ] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = crate::ui::icons::Icons::load(&ctx, None);
+            let mut emoji = crate::ui::emoji::Emoji::load();
+            let pics = HashMap::new();
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let a = uuid::Uuid::from_u128(0xA);
+            world.social.session_mut(a);
+            let gestures = crate::gestures::Manager::default();
+            let mut st = ChatUi {
+                style,
+                selected: Some(a),
+                ..Default::default()
+            };
+            let mut contacts = super::super::contacts::ContactsUi::default();
+            let mut contacts_settings = super::super::contacts::ContactsSettings::default();
+            // a field of the screen behind the window (the world's side)
+            let other_id = egui::Id::unique("field_behind_conversations");
+            let mut other = String::new();
+            let mut frame = |st: &mut ChatUi, events: Vec<egui::Event>| {
+                frames.run(events, |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut other).id(other_id));
+                    let mut open = true;
+                    show(
+                        ui.ctx(),
+                        &p,
+                        &icons,
+                        &mut emoji,
+                        &pics,
+                        &pics,
+                        &mut world,
+                        &gestures,
+                        st,
+                        &mut contacts,
+                        &mut contacts_settings,
+                        false,
+                        None,
+                        &mut open,
+                    );
+                })
+            };
+            /// A press and its release at `at`, the pointer brought there.
+            fn click<R>(frame: &mut impl FnMut(&mut ChatUi, Vec<egui::Event>) -> R, st: &mut ChatUi, at: egui::Pos2) -> R {
+                let press = |pressed| egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                frame(st, vec![egui::Event::PointerMoved(at), press(true)]);
+                frame(st, vec![press(false)])
+            }
+            for _ in 0..2 {
+                frame(&mut st, Vec::new());
+            }
+            let texts = frame(&mut st, Vec::new());
+            let field = egui::Id::unique(("conv_input", Some(a)));
+            let focused = |id| ctx.memory(|m| m.has_focus(id));
+            assert!(focused(field), "{style:?}: the window opened");
+            // the field behind takes the keyboard
+            let behind = ctx.read_response(other_id).expect("the field behind").rect.center();
+            click(&mut frame, &mut st, behind);
+            assert!(focused(other_id), "{style:?}: a field outside the window keeps its press");
+            let window = ctx
+                .memory(|m| m.area_rect(egui::Id::unique("conversations")))
+                .expect("the Conversations window");
+            assert!(!window.contains(behind), "{style:?}: the field behind is in sight");
+            // the places the report names, the keyboard behind the window
+            // before each: the title bar, the list of conversations under
+            // its entries, the strip between the lines and the field
+            let nearby = texts
+                .iter()
+                .filter(|t| t.source == aurora_i18n::tr!("common-nearby-chat") && window.contains(t.rect.center()))
+                .map(|t| t.rect)
+                .min_by(|x, y| x.left().total_cmp(&y.left()))
+                .expect("the list's Nearby chat entry");
+            let input = ctx.read_response(field).expect("the conversation's field").rect;
+            for (place, at) in [
+                ("the title bar", egui::pos2(window.center().x, window.top() + 10.0)),
+                ("the list", egui::pos2(nearby.center().x, nearby.bottom() + 120.0)),
+                ("the strip above the field", egui::pos2(input.center().x, input.top() - 4.0)),
+            ] {
+                assert!(window.contains(at) && !input.contains(at), "{style:?}: {place} at {at:?}");
+                click(&mut frame, &mut st, behind);
+                assert!(focused(other_id), "{style:?}");
+                click(&mut frame, &mut st, at);
+                assert!(
+                    focused(field),
+                    "{style:?}: a press on {place} at {at:?} gives the field the keyboard"
+                );
+            }
+            frame(&mut st, vec![egui::Event::Text("hi".into())]);
+            assert_eq!(st.draft_mut(Some(a)), "hi", "{style:?}");
+            // a field of the window pressed keeps the keyboard
+            if style.workspace() {
+                let search = ctx.read_response(sidebar::search_id()).expect("the column's search").rect.center();
+                click(&mut frame, &mut st, search);
+                assert!(focused(sidebar::search_id()), "{style:?}: the search keeps its press");
+                assert!(!focused(field), "{style:?}");
+            }
+            // the conversation in a window of its own: its title bar
+            st.demo_pop_out(&ctx, Some(a), egui::pos2(40.0, 120.0), egui::vec2(420.0, 300.0));
+            for _ in 0..3 {
+                frame(&mut st, Vec::new());
+            }
+            let own = ctx
+                .memory(|m| m.area_rect(egui::Id::unique(popout::floater_id(Some(a)).as_str())))
+                .expect("the conversation's own window");
+            assert!(!own.contains(behind) && !own.intersects(window), "{style:?}: {own:?}");
+            click(&mut frame, &mut st, behind);
+            assert!(focused(other_id), "{style:?}");
+            click(&mut frame, &mut st, egui::pos2(own.center().x, own.top() + 10.0));
+            assert!(focused(field), "{style:?}: its own window's title bar gives its field the keyboard");
+            frame(&mut st, vec![egui::Event::Text("!".into())]);
+            assert_eq!(st.draft_mut(Some(a)), "hi!", "{style:?}");
+            drop(frame);
+            assert!(other.is_empty(), "{style:?}: nothing typed went behind the window");
+        }
+    }
+
     /// A tab chosen in the list gives its field the keyboard; what is typed
     /// stays with its conversation when another tab is shown, and goes when
     /// the conversation closes.
@@ -7408,6 +7892,114 @@ mod tests {
         select_and_copy_like_a_transcript(crate::settings::ChatStyle::Compact);
     }
 
+    /// A drag of the lines' scroll bar leaves them the keyboard: the
+    /// selection still copies after it, as LLFloater::setFocus keeps a
+    /// focused child (the bar takes no keyboard of its own).
+    #[test]
+    fn a_drag_of_the_scroll_bar_leaves_the_selection_its_copy() {
+        let mut frames = Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let icons = crate::ui::icons::Icons::load(&frames.ctx, None);
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let pics = HashMap::new();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        // more lines than the window holds: the bar shows
+        for i in 0..80 {
+            world.chat.push_back(crate::world::ChatLine {
+                time: std::time::SystemTime::now(),
+                from: "Jane".into(),
+                text: format!("line {i}"),
+                kind: ChatKind::Local(ChatType::Normal),
+                source: uuid::Uuid::from_u128(0xA),
+                origin: Origin::Live,
+                blocked: false,
+                beyond_range: false,
+                speaker: Default::default(),
+                private_history: false,
+            });
+            world.chat_clock.pushed_back();
+        }
+        let gestures = crate::gestures::Manager::default();
+        let mut st = ChatUi {
+            style: crate::settings::ChatStyle::Bubbles,
+            ..ChatUi::default()
+        };
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut contacts_settings = crate::ui::contacts::ContactsSettings::default();
+        let mut open = true;
+        let ctx = frames.ctx.clone();
+        let mut frame = |st: &mut ChatUi, events: Vec<egui::Event>| {
+            frames.run_with_output(events, |ui| {
+                show(
+                    ui.ctx(),
+                    &p,
+                    &icons,
+                    &mut emoji,
+                    &pics,
+                    &pics,
+                    &mut world,
+                    &gestures,
+                    st,
+                    &mut contacts,
+                    &mut contacts_settings,
+                    false,
+                    None,
+                    &mut open,
+                );
+            })
+        };
+        let copied = |out: &egui::PlatformOutput| {
+            out.commands.iter().find_map(|c| match c {
+                egui::OutputCommand::CopyText(t) => Some(t.clone()),
+                _ => None,
+            })
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            texts = frame(&mut st, Vec::new()).0;
+        }
+        // the keyboard on the lines (a click on one), then all of them selected
+        let last = painted(&texts, "line 79").rect;
+        let on = last.center();
+        frame(&mut st, vec![egui::Event::PointerMoved(on), button(on, true)]);
+        frame(&mut st, vec![button(on, false)]);
+        let ctrl_a = egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        frame(&mut st, vec![ctrl_a]);
+        let (_, out) = frame(&mut st, vec![egui::Event::Copy]);
+        assert_eq!(copied(&out).expect("everything is copied").lines().count(), 80);
+        // the bar's thumb, at the bottom of the lines' scroll area (the
+        // conversation stays at its end), dragged up
+        let layer = ctx.layer_id_at(on).expect("the window under the lines");
+        let (area, lines, _) = ctx
+            .data(|d| d.get_temp::<(egui::Rect, egui::Id, u64)>(lines_focus_id(layer)))
+            .expect("the lines' scroll area");
+        let scroll = ctx.global_style().spacing.scroll;
+        let thumb = egui::pos2(
+            area.right() - scroll.bar_outer_margin - scroll.bar_width / 2.0,
+            area.bottom() - 12.0,
+        );
+        frame(&mut st, vec![egui::Event::PointerMoved(thumb), button(thumb, true)]);
+        let up = thumb - egui::vec2(0.0, 60.0);
+        frame(&mut st, vec![egui::Event::PointerMoved(up)]);
+        frame(&mut st, vec![button(up, false)]);
+        assert!(ctx.memory(|m| m.has_focus(lines)), "the lines keep the keyboard");
+        let (_, out) = frame(&mut st, vec![egui::Event::Copy]);
+        let text = copied(&out).expect("the selection is still copied after the drag");
+        assert_eq!(text.lines().count(), 80, "{text:?}");
+    }
+
     fn select_and_copy_like_a_transcript(style: crate::settings::ChatStyle) {
         let mut frames = Frames::new();
         let p = crate::theme::Theme::default().palette();
@@ -7426,6 +8018,7 @@ mod tests {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             });
             world.chat_clock.pushed_back();
         }

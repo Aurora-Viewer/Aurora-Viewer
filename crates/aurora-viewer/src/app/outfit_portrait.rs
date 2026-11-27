@@ -171,6 +171,8 @@ impl App {
             batch,
         });
         if kind == Kind::Viewfinder {
+            // the square viewfinder, not the Photo floater: a minimized
+            // Photo panel stays as it was
             self.panels.snapshot = true;
         } else if !batch {
             crate::ui::widgets::open_floater(&self.egui_ctx, window::WINDOW, &mut true);

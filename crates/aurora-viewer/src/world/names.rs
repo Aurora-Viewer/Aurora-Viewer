@@ -285,6 +285,17 @@ impl AvatarName {
         }
     }
 
+    /// `name`, a legacy name ("Jane Doe", "Jane Resident", "Jane"), is this
+    /// resident's user name, whatever its case, with a "Resident" last name
+    /// written out or not: the test LLAvatarNameCache::findIdByName finds a
+    /// transcript's sender by (`AvatarNames::find_id_by_name`, on the
+    /// `build_legacy_name` of what the file wrote).
+    pub fn has_user_name(&self, name: &str) -> bool {
+        let name = name.trim();
+        let bare = name.strip_suffix(" Resident").unwrap_or(name);
+        !name.is_empty() && self.user_name().eq_ignore_ascii_case(bare)
+    }
+
     /// LLAvatarName::getLegacyName: "Firstname Lastname" with the last name
     /// whatever it is ("Resident" too), the display name without either.
     pub fn legacy_name(&self) -> String {
@@ -486,6 +497,21 @@ impl AvatarNames {
         }
     }
 
+    /// A number that changes with what `shows` answers (RLVa's
+    /// `@shownames`, its exceptions, the residents around), for the views
+    /// that keep names a while (the inventory's creator column).
+    pub fn privacy_key(&self) -> u64 {
+        use std::hash::{BuildHasher, BuildHasherDefault};
+        if !self.rlva_private {
+            return 0;
+        }
+        let hasher = BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default();
+        // order-free: the sum of each id's hash
+        let sum = |ids: &HashSet<Uuid>| ids.iter().fold(0u64, |sum, id| sum.wrapping_add(hasher.hash_one(id)));
+        1u64.wrapping_add(sum(&self.rlva_allowed))
+            .wrapping_add(sum(&self.rlva_nearby).rotate_left(29))
+    }
+
     /// `scope` shows the real name of `id` (see `NameScope`).
     pub fn shows(&self, scope: NameScope, id: &Uuid) -> bool {
         !self.rlva_private || scope.shows(id, self.rlva_allowed.contains(id), || self.rlva_nearby.contains(id))
@@ -593,15 +619,10 @@ impl AvatarNames {
     /// what a transcript wrote in lower case, and user names are unique
     /// whatever their case). Queues nothing: a name not cached stays unknown.
     pub fn find_id_by_name(&self, name: &str) -> Option<Uuid> {
-        let name = name.trim();
-        if name.is_empty() {
+        if name.trim().is_empty() {
             return None;
         }
-        let bare = name.strip_suffix(" Resident").unwrap_or(name);
-        self.cache
-            .iter()
-            .find(|(_, n)| n.user_name().eq_ignore_ascii_case(bare))
-            .map(|(id, _)| *id)
+        self.cache.iter().find(|(_, n)| n.has_user_name(name)).map(|(id, _)| *id)
     }
 
     /// Complete name ("Jane Doe (janedoe)") if known.

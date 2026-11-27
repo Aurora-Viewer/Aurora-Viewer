@@ -177,7 +177,11 @@ pub(super) fn show(
         .inner_margin(4)
         .show(ui, |ui| {
             widgets::inventory_spacing(ui);
-            let height = (ui.available_height() - 8.0).clamp(80.0, 200.0);
+            // the list follows the window's height, as the Legacy Viewer's
+            // object_contents panel does (follows="all",
+            // floater_openobject.xml); it was held at 200 px, about eight
+            // rows, however tall the window was made (#4844)
+            let height = (ui.available_height() - 8.0).max(80.0);
             let background = ui.interact(
                 egui::Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), height)),
                 focus_id(object),

@@ -93,8 +93,9 @@ pub fn view_direction() -> Option<Vec3> {
     Some(Vec3::new(up.cos(), 0.0, up.sin()))
 }
 
-/// An ExtEnvironment `environment` map with a one-key day.
-fn environment(sky: Llsd) -> Llsd {
+/// An ExtEnvironment `environment` map with a one-key day (the fog's
+/// scenario's too).
+pub(super) fn environment(sky: Llsd) -> Llsd {
     let mut frames = aurora_llsd::Map::new();
     frames.insert("sky".into(), sky);
     frames.insert("water".into(), llsd_map! { "type" => "water" });
