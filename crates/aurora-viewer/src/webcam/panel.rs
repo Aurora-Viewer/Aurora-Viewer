@@ -395,7 +395,15 @@ impl Webcam {
             }
         });
         let empty = if self.error {
-            tr!("webcam-preview-error")
+            match self.link_error {
+                Some(LinkError::Unsupported) => tr!("webcam-social-unsupported"),
+                Some(LinkError::Dependencies) => tr!("webcam-social-dependencies"),
+                Some(LinkError::Unavailable) => tr!("webcam-social-unavailable"),
+                Some(LinkError::DirectUnavailable) => tr!("webcam-direct-unavailable"),
+                Some(LinkError::TooLarge) => tr!("webcam-link-too-large"),
+                Some(LinkError::Download) => tr!("webcam-link-failed"),
+                None => tr!("webcam-preview-error"),
+            }
         } else if self.running && matches!(self.panel.source, Source::Link(_)) && self.link_path.is_none() {
             tr!("webcam-link-fetching")
         } else if self.running {
@@ -638,17 +646,6 @@ impl Webcam {
             ui.add(egui::Slider::new(&mut ch.expression_strength, 0.0..=2.0).text(tr!("webcam-expression-strength")));
         });
         ui.colored_label(palette.muted, tr!("webcam-local"));
-        if self.error {
-            let detail = match self.link_error {
-                Some(LinkError::Unsupported) => tr!("webcam-social-unsupported"),
-                Some(LinkError::Dependencies) => tr!("webcam-social-dependencies"),
-                Some(LinkError::Unavailable) => tr!("webcam-social-unavailable"),
-                Some(LinkError::TooLarge) => tr!("webcam-link-too-large"),
-                Some(LinkError::Download) => tr!("webcam-link-failed"),
-                None => tr!("webcam-error"),
-            };
-            ui.colored_label(palette.danger, detail);
-        }
     }
 
     fn capture_controls(&mut self, ui: &mut egui::Ui, palette: &Palette, media_audible: bool) {

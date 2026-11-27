@@ -18,7 +18,8 @@ import sys
 from tempfile import TemporaryDirectory
 from threading import Condition, Lock, Thread
 import time
-from urllib.parse import parse_qs, urlsplit
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 
@@ -1021,8 +1022,16 @@ def media_extension(data):
         return {b"WEBP": "webp", b"AVI ": "avi"}.get(data[8:12])
     if data.startswith(b"\x1a\x45\xdf\xa3"):
         return "webm"
-    if data[4:8] in (b"ftyp", b"moov", b"mdat", b"wide"):
-        return "mp4"
+    # A QuickTime/MP4 file may put padding before its identifying box.
+    offset = 0
+    while offset + 8 <= len(data):
+        length = int.from_bytes(data[offset:offset + 4], "big")
+        kind = data[offset + 4:offset + 8]
+        if kind in (b"ftyp", b"moov", b"mdat", b"wide"):
+            return "mp4"
+        if kind not in (b"free", b"skip") or length < 8:
+            break
+        offset += length
     return None
 
 
@@ -1033,7 +1042,7 @@ def direct_media(url, folder):
         size = response.headers.get("Content-Length")
         if size and size.isdecimal() and int(size) > MEDIA_LIMIT:
             raise MediaLinkError("too_large")
-        header = response.read(64)
+        header = response.read(4096)
         extension = media_extension(header)
         if extension is None:
             raise MediaLinkError("unsupported")
@@ -1149,7 +1158,81 @@ def download_media(raw, folder):
         if share:
             canonical = expand_social_share(platform, canonical)
         return platform_media(platform, canonical, folder)
-    return direct_media(raw, folder)
+    # Web-view embeds from link previews are not decoder URLs. Normalize
+    # GitHub's repository file page to its raw response and keep CDN URLs as-is.
+    if url.hostname == "github.com" and re.fullmatch(r"/[^/]+/[^/]+/blob/[^/]+/.+", url.path):
+        raw = urlunsplit(url._replace(query="raw=true", fragment=""))
+    try:
+        return direct_media(raw, folder)
+    except HTTPError as error:
+        if error.code in (401, 403, 404, 410):
+            raise MediaLinkError("direct_unavailable") from None
+        raise
+
+
+def retrack_hand(path, side, times):
+    import cv2
+    import mediapipe as mp
+
+    video = cv2.VideoCapture(path)
+    try:
+        fps = video.get(cv2.CAP_PROP_FPS)
+        if not video.isOpened() or not math.isfinite(fps) or fps <= 0:
+            raise ValueError("unreadable video")
+        wrist_index, elbow_index = (15, 13) if side == "left" else (16, 14)
+        previous = -2
+        result = None
+        with (
+            mp.solutions.pose.Pose(static_image_mode=True, model_complexity=1) as pose,
+            mp.solutions.hands.Hands(
+                static_image_mode=True, max_num_hands=2, model_complexity=1, min_detection_confidence=0.55,
+            ) as hands,
+        ):
+            for time in times:
+                index = round(time * fps)
+                if index != previous:
+                    if index != previous + 1:
+                        video.set(cv2.CAP_PROP_POS_FRAMES, index)
+                    ok, image = video.read()
+                    result = repair_hand_frame(cv2, pose, hands, image, wrist_index, elbow_index) if ok else None
+                    previous = index
+                print(json.dumps(result, allow_nan=False), flush=True)
+    finally:
+        video.release()
+
+
+def repair_hand_frame(cv2, pose, hands, image, wrist_index, elbow_index):
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    pose_image = resize(cv2, rgb, FILE_TRACKING_SIZE)
+    body = pose.process(pose_image).pose_landmarks
+    if not body:
+        return None
+    wrist, elbow = (body.landmark[i] for i in (wrist_index, elbow_index))
+    if not visible(wrist, 0.35) or not visible(elbow):
+        return None
+    height, width = rgb.shape[:2]
+    wx, wy = wrist.x * width, wrist.y * height
+    dx, dy = wx - elbow.x * width, wy - elbow.y * height
+    radius = round(max(min(width, height) * 0.045, min(min(width, height) * 0.25, math.hypot(dx, dy) * 0.62)))
+    if radius < 4:
+        return None
+    # Shift toward the fingers, retaining the pose wrist to disambiguate when
+    # the other hand passes through the crop.
+    x = max(0, min(width - 2 * radius, round(wx + dx * 0.16) - radius))
+    y = max(0, min(height - 2 * radius, round(wy + dy * 0.16) - radius))
+    crop = rgb[y:y + 2 * radius, x:x + 2 * radius]
+    sample = hands.process(cv2.resize(crop, (320, 320)))
+    candidates = sample.multi_hand_landmarks or ()
+    anchor = ((wx - x) / (2 * radius), (wy - y) / (2 * radius))
+    def gap(hand):
+        start = hand.landmark[0]
+        return math.hypot(start.x - anchor[0], start.y - anchor[1])
+    closest = min(candidates, key=gap, default=None)
+    if closest is not None and gap(closest) <= 0.24:
+        return points(closest, range(21))
+    side = "left" if wrist_index == 15 else "right"
+    fallback = anchored_hands(hands.process(pose_image), body, height / width).get(side)
+    return points(fallback, range(21), height / width) if fallback is not None else None
 
 
 def resolve_media(commands, raw, folder):
@@ -1251,6 +1334,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--list-cameras", action="store_true")
     parser.add_argument("--download-media", nargs=2, metavar=("URL", "DIRECTORY"))
+    parser.add_argument("--retrack-hand", nargs=2, metavar=("FILE", "SIDE"))
     options = parser.parse_args()
     try:
         if options.list_cameras:
@@ -1264,6 +1348,12 @@ if __name__ == "__main__":
                 print(json.dumps({"error": str(error)}))
             except (OSError, ValueError):
                 print(json.dumps({"error": "download"}))
+        elif options.retrack_hand:
+            path, side = options.retrack_hand
+            times = json.loads(sys.stdin.readline())
+            if side not in ("left", "right") or len(times) > 240 or any(not 0 <= t < 86400 for t in times):
+                raise ValueError("invalid hand repair request")
+            retrack_hand(path, side, times)
         else:
             worker()
     except (ImportError, RuntimeError) as error:

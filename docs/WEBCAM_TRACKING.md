@@ -66,7 +66,10 @@ first play downloads a temporary local copy before starting the same
 preview, audio and motion pipeline used for files. **Stop tracking** or
 switching sources cancels a pending download. Replay and loop reuse the
 temporary copy while the panel remains open. Each download is limited to
-128 MiB. Direct links must return a supported media file.
+128 MiB. Direct links are detected from the media bytes after redirects, even
+when the URL has no extension. Public GitHub attachment and release URLs can
+serve the file directly. A public GitHub repository file link uses its raw
+response. An expired or restricted attachment is reported in the preview.
 
 Video pages use the optional [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 package in the tracking interpreter. YouTube may also need Deno. FFmpeg
@@ -156,16 +159,25 @@ can be affected by asset loading or timing on the receiving viewer.
 
 ### Edit a recorded take
 
-Open **Take tools** below the take preview controls. The marker strip
-shows missing observations on commonly tracked joints and any beat
-markers. Click it to move the playhead. **Repair short gaps** uses
+After recording, the timeline shows the source waveform when FFmpeg can
+decode the audio. Pausing and resuming marks a split on the same timeline.
+Click to scrub, drag the violet trim handles or drag a split marker. Use
+**Split at playhead** to add a cut, **Remove split** to combine adjacent
+segments, and **Export split animations…** to save the selected range as
+separate animation files. The waveform, missing-joint marks and optional
+beat guides use the take's time, including joined recording intervals.
+
+Open **Take tools** below the take preview controls. **Repair short gaps** uses
 observations before and after a gap and rejects isolated jumps. **Repair
 at playhead** reruns this over a short window chosen by the user. Choose
 a joint (for example, mWristLeft) and a width, then select **Repair
 selection** to limit the interpolation to that joint and window.
-**Restore original** restores the recorded take. The repair operates on
-recorded joint rotations and estimates neither new depth nor long unseen
-actions.
+For a video-backed take, **Re-track left hand** or **Re-track right hand**
+reads the original frames around the playhead and runs hand detection again
+with a wrist crop. It can replace that side's wrist and finger rotations
+while keeping the rest of the animation. Frames without a usable new
+observation keep their existing motion. **Restore original** restores the
+recorded take, including any changes from joint interpolation.
 
 **Find loop** looks inside the trim range for similar poses and rotation
 directions, favoring leg alignment and matching tracked foot contacts.

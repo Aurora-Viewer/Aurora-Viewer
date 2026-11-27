@@ -215,6 +215,16 @@ impl Pose {
             .collect()
     }
 
+    pub(super) fn retrack_hand(&self, rig: &Rig, animated: &[Quat], side: usize) -> Vec<Option<Quat>> {
+        let mut targets = vec![None; animated.len()];
+        self.hand_targets(rig, &mut targets, side, SIDES[side]);
+        self.solve(rig, animated, &targets)
+            .into_iter()
+            .zip(targets)
+            .map(|(rotation, target)| target.map(|_| rotation))
+            .collect()
+    }
+
     fn targets(&self, rig: &Rig) -> Vec<Option<Target>> {
         let mut targets = vec![None; rig.local_rot.len()];
         if let Some(pelvis) = self.pelvis {

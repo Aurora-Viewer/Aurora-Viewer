@@ -128,6 +128,7 @@ enum LinkError {
     Unsupported,
     Dependencies,
     Unavailable,
+    DirectUnavailable,
     TooLarge,
     Download,
 }
@@ -621,6 +622,7 @@ impl Webcam {
                     now,
                     pose.as_deref().filter(|_| fresh),
                     self.soundtrack_source.as_ref().zip(self.transport.clock),
+                    self.mirror,
                 );
                 if self.transport.duration > 0.0 && recording && !self.recorder.is_active() {
                     self.pause_video(self.transport.position(now));

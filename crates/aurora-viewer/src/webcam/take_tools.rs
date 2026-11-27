@@ -21,11 +21,12 @@ pub(super) struct AudioPass {
     pub(super) end: f32,
     pub(super) offset: f32,
     pub(super) rate: f32,
+    pub(super) mirrored: bool,
 }
 
 #[derive(Clone)]
 pub(super) struct AudioSource {
-    path: PathBuf,
+    pub(super) path: PathBuf,
     _retained: Option<Arc<RetainedMedia>>,
 }
 
@@ -378,6 +379,46 @@ fn accents(pcm: &[u8]) -> Vec<f32> {
         }
     }
     markers.into_iter().map(|(i, _)| (i + 1) as f32 * 0.01).collect()
+}
+
+pub(super) fn waveform(passes: &[AudioPass], duration: f32) -> Vec<f32> {
+    const BINS: usize = 384;
+    const HZ: u32 = 8000;
+    let mut peaks = vec![0.0f32; BINS];
+    let mut any_audio = false;
+    for pass in passes {
+        let length = pass.end.min(duration) - pass.from;
+        if length <= 0.0 {
+            continue;
+        }
+        if let Ok(output) = audio_command(pass, pass.offset, length, HZ, "f32le").output()
+            && output.status.success()
+        {
+            for (i, pcm) in output.stdout.chunks_exact(4).enumerate() {
+                let time = pass.from + i as f32 / HZ as f32;
+                let bin = ((time / duration) * BINS as f32) as usize;
+                let amplitude = f32::from_le_bytes(pcm.try_into().expect("four bytes"));
+                if let Some(peak) = peaks.get_mut(bin) {
+                    *peak = peak.max(amplitude.abs().clamp(0.0, 1.0));
+                    any_audio = true;
+                }
+            }
+        }
+    }
+    if !any_audio {
+        peaks.clear();
+    }
+    peaks
+}
+
+pub(super) fn split_ranges([start, end]: [f32; 2], splits: &[f32]) -> Vec<[f32; 2]> {
+    let mut a = start;
+    let mut ranges = Vec::new();
+    for b in splits.iter().copied().filter(|&time| start < time && time < end).chain([end]) {
+        ranges.push([a, b]);
+        a = b;
+    }
+    ranges
 }
 
 pub(super) fn audio_beats(passes: &[AudioPass], duration: f32) -> Vec<f32> {
