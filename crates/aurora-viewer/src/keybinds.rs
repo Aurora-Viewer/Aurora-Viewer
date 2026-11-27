@@ -1023,6 +1023,15 @@ pub fn all_actions() -> impl Iterator<Item = Action> {
     sections().iter().flat_map(|(_, list)| list.iter().map(|(a, _)| *a))
 }
 
+/// The key that carries, on this PC's layout, the letter `us_key` has on
+/// US QWERTY. `KeyBindings::default` and `sanitized` follow the PC's
+/// layout: a test that reads their letter shortcuts names the keys
+/// through here (Ctrl+Q is KeyA on AZERTY, Ctrl+H is KeyJ on Dvorak).
+#[cfg(test)]
+pub(crate) fn letter(us_key: KeyCode) -> KeyCode {
+    layout::current().named_key(us_key)
+}
+
 /// Up to two bindings per action (primary, secondary), as in Firestorm.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -2246,14 +2255,6 @@ impl KeyBindings {
 mod tests {
     use super::*;
     use crate::build::ui::Shortcut;
-
-    /// The key that carries, on this PC's layout, the letter `us_key` has on
-    /// US QWERTY. `KeyBindings::default` and `sanitized` follow the PC's
-    /// layout: a test that reads their letter shortcuts names the keys
-    /// through here (Ctrl+Q is KeyA on AZERTY, Ctrl+H is KeyJ on Dvorak).
-    fn letter(us_key: KeyCode) -> KeyCode {
-        layout::current().named_key(us_key)
-    }
 
     #[test]
     fn standalone_alt_keys_use_platform_labels() {
