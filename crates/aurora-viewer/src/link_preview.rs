@@ -1241,7 +1241,10 @@ async fn text_head(client: &reqwest::Client, url: &str, accept: &str, end: &str)
 /// sites.
 pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool) -> Result<Content, Failure> {
     use services::Step;
-    let (service, step) = services::recognize(url).ok_or(Failure::NotPicture)?;
+    let (mut service, mut step) = services::recognize(url).ok_or(Failure::NotPicture)?;
+    if let Step::PublisherLink(url) = &step {
+        (service, step) = resolve_publisher_link(url, trusted_only).await.ok_or(Failure::Unavailable)?;
+    }
     let mut sensitive = false;
     let source = match step {
         Step::Direct(source) => Some(source),
@@ -1268,6 +1271,7 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
             }
             services::from_head(service, &html)
         }
+        Step::PublisherLink(_) => return Err(Failure::Unavailable),
         Step::Publisher(page) => {
             if let Some(endpoint) = services::dailymotion_oembed(&page)
                 && let Ok((body, _)) = download(client, endpoint.as_str(), "application/json", 64 * 1024).await
@@ -1369,6 +1373,19 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
         source,
         sensitive,
     })
+}
+
+async fn resolve_publisher_link(url: &str, trusted_only: bool) -> Option<(Service, services::Step)> {
+    let original = reqwest::Url::parse(url).ok()?;
+    let client =
+        aurora_proxy::http_client(|builder| configure_requests(trusted_only, true, builder).redirect(reqwest::redirect::Policy::none()))
+            .ok()?;
+    let answer = client.get(url).send().await.ok()?;
+    if !answer.status().is_redirection() {
+        return None;
+    }
+    let location = answer.headers().get(reqwest::header::LOCATION)?.to_str().ok()?;
+    services::publisher_short_destination(&original, original.join(location).ok()?)
 }
 
 async fn configured_direct_media(client: &reqwest::Client, page: &str) -> Option<Content> {

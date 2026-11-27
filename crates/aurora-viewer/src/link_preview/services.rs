@@ -94,6 +94,8 @@ pub(super) enum Step {
     Head(String),
     /// Public sharing metadata from a recognized video publisher.
     Publisher(String),
+    /// A publisher's mobile share URL with a public HTTP redirect.
+    PublisherLink(String),
     /// Reddit's Atom feed of a post.
     Feed { feed: String, page: String, share_image: String },
     /// A Bluesky or X post as JSON (`from_post`).
@@ -230,6 +232,9 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
     }
     let host = bare_host(&parsed)?;
     let segs = segments(&parsed);
+    if let Some(url) = publisher_short_link(parsed.clone()) {
+        return Some((Service::Site, Step::PublisherLink(url)));
+    }
     let with = |base: &str, pairs: &[(&str, &str)]| Url::parse_with_params(base, pairs).ok().map(String::from);
     match host.as_str() {
         "gyazo.com" => {
@@ -531,6 +536,63 @@ fn mainland_mobile_links_map_to_the_public_watch_page() {
     }
 }
 
+fn publisher_short_link(mut url: Url) -> Option<String> {
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+        return None;
+    }
+    let parts = segments(&url);
+    let token = match (url.host_str()?, parts.as_slice()) {
+        ("v.douyin.com" | "v.kuaishou.com", [token]) | ("xhslink.com", ["a" | "o" | "m", token]) => *token,
+        _ => return None,
+    };
+    if !alnum(token, 4, 48) {
+        return None;
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    Some(url.into())
+}
+
+/// Interpret only the Location header of a recognized publisher shortener.
+pub(super) fn publisher_short_destination(source: &Url, destination: Url) -> Option<(Service, Step)> {
+    if destination.scheme() != "https"
+        || !destination.username().is_empty()
+        || destination.password().is_some()
+        || destination.port().is_some()
+    {
+        return None;
+    }
+    let host = bare_host(&destination)?;
+    match source.host_str()? {
+        "v.douyin.com" if matches!(host.as_str(), "douyin.com" | "iesdouyin.com") => publisher_page(&destination),
+        "v.kuaishou.com" if host == "kuaishou.com" => publisher_page(&destination),
+        "v.kuaishou.com" if host.ends_with(".m.chenzhongtech.com") => {
+            let parts = segments(&destination);
+            let ["fw", "photo", id] = parts.as_slice() else {
+                return None;
+            };
+            if !alnum(id, 4, 32) {
+                return None;
+            }
+            publisher_page(&Url::parse(&format!("https://www.kuaishou.com/short-video/{id}")).ok()?)
+        }
+        "xhslink.com" if host == "xiaohongshu.com" => publisher_page(&destination),
+        _ => None,
+    }
+}
+
+#[test]
+fn publisher_short_links_only_resolve_to_their_own_video_pages() {
+    let source = "https://v.kuaishou.com/FvG1It";
+    assert!(matches!(recognize(source), Some((Service::Site, Step::PublisherLink(_)))));
+    let source = Url::parse(source).unwrap();
+    let resolve = |url| publisher_short_destination(&source, Url::parse(url).unwrap());
+    assert!(matches!(resolve("https://kph1tf76.m.chenzhongtech.com/fw/photo/3xkvz73v5ya5ayc"),
+        Some((Service::Site, Step::Publisher(page))) if page == "https://www.kuaishou.com/short-video/3xkvz73v5ya5ayc"));
+    assert!(resolve("https://www.kuaishou.com.example.org/short-video/3xkvz73v5ya5ayc").is_none());
+    assert!(resolve("https://www.kuaishou.com/").is_none());
+}
+
 fn naver_clip_page(url: &Url) -> Option<String> {
     if url.path() != "/contents" {
         return None;
@@ -658,6 +720,14 @@ fn publisher_page(url: &Url) -> Option<(Service, Step)> {
         && let Some(key) = viewkey
     {
         page.query_pairs_mut().append_pair("viewkey", &key);
+    }
+    if host == "xiaohongshu.com" {
+        for (key, value) in url
+            .query_pairs()
+            .filter(|(key, value)| matches!(key.as_ref(), "xsec_token" | "xsec_source") && slug(value))
+        {
+            page.query_pairs_mut().append_pair(&key, &value);
+        }
     }
     Some((Service::Site, Step::Publisher(page.into())))
 }
@@ -1561,7 +1631,7 @@ pub(super) fn demo_source(url: &str) -> Option<(String, bool)> {
             },
         )),
         Step::Head(_) => plain(from_head(service, IMGUR_ALBUM)),
-        Step::Publisher(_) => None,
+        Step::Publisher(_) | Step::PublisherLink(_) => None,
         Step::Feed { .. } => plain(from_feed(if url.contains("demo02") { REDDIT_TEXT } else { REDDIT_POST })),
         Step::Post(_) if service == Service::X => from_post(service, X_POST.as_bytes()),
         Step::Post(_) => from_post(
