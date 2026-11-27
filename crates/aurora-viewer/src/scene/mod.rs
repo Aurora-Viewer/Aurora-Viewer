@@ -24,6 +24,7 @@ pub mod drawn;
 pub mod face_pattern;
 pub mod fetch_priority;
 pub(crate) mod flexible;
+mod fog_ground;
 mod foot_scope;
 mod foot_support;
 pub mod geometry_need;
@@ -1059,6 +1060,8 @@ pub struct Scene {
     /// Rain prototype: the terrain's heights around the camera
     /// (`rain_ground.rs`).
     rain_ground: rain_ground::RainGroundCache,
+    /// Aurora Weather's fog: the ground it pools on (`fog_ground.rs`).
+    fog_ground: fog_ground::FogGroundCache,
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
@@ -1559,6 +1562,22 @@ fn shift_display_pose(local: Mat4, out: &mut [[[f32; 4]; 4]]) {
 }
 
 impl Scene {
+    /// At exit, as `ObjectStore::leak_at_exit`: lets go of what a long
+    /// session gathers without freeing it block by block on the main thread
+    /// (during the session these go to the trash thread, #3081). The
+    /// geometries (`GpuGeom`: arena offsets, bounds and the picking copies of
+    /// every resident mesh) and the per-object draw lists are plain memory,
+    /// and the mesh and texture streamers' byte caches too. What holds a GPU
+    /// staging chunk is left to drop normally (the geometries waiting for
+    /// their copy, the uploads, the staging pool): forgetting one would keep
+    /// the device alive while the process ends.
+    pub(crate) fn leak_at_exit(&mut self) {
+        std::mem::forget(std::mem::take(&mut self.geoms));
+        std::mem::forget(std::mem::take(&mut self.gpu));
+        self.meshes.leak_at_exit();
+        self.textures.leak_at_exit();
+    }
+
     /// LLViewHighlightTransparent / LLPipeline::rebuildDrawInfo: invisible
     /// faces need temporary records while the transparency overlay is on.
     /// See indra/newview/llviewermenu.cpp and pipeline.cpp (LGPL 2.1).
@@ -1834,6 +1853,7 @@ impl Scene {
             light_scratch: Default::default(),
             spot_shadows: Default::default(),
             rain_ground: Default::default(),
+            fog_ground: Default::default(),
             mirror_objects: Default::default(),
             shelter_holds: Default::default(),
             selection_wire: Default::default(),
@@ -7062,6 +7082,31 @@ mod layer_rank_tests {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    /// At exit the geometries are let go, not freed on the main thread (the
+    /// count would fall back to the test's own copy).
+    #[test]
+    fn the_scene_lets_go_of_its_geometries_at_exit() {
+        let mut scene = Scene::new(std::env::temp_dir(), Arc::new(AvatarLibrary::load()));
+        let geom = Arc::new(GpuGeom {
+            faces: vec![None],
+            min: Vec3::ZERO,
+            max: Vec3::ONE,
+            joint_bounds: Vec::new(),
+            pick_faces: Vec::new(),
+        });
+        scene.geom_insert(
+            GeomKey::Mesh {
+                id: Uuid::from_u128(0x2894),
+                lod: 0,
+            },
+            GeomState::Ready(geom.clone()),
+        );
+        assert_eq!(Arc::strong_count(&geom), 2);
+        scene.leak_at_exit();
+        drop(scene);
+        assert_eq!(Arc::strong_count(&geom), 2, "left behind, not freed");
+    }
 
     #[test]
     fn hud_damping_distance_does_not_use_the_world_camera() {

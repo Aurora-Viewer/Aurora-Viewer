@@ -222,8 +222,36 @@ impl<R: BufRead> Read for ChunkedReader<R> {
     }
 }
 
+/// Finishes the TLS handshake before anything is sent. The socket's read
+/// timeout is [`READ_POLL`], there for the stop request: a server that takes
+/// longer than that to answer the handshake is waited for, up to
+/// [`CONNECT_TIMEOUT`], instead of failing on the first poll (#3152).
+fn handshake(conn: &mut rustls::ClientConnection, tcp: &mut TcpStream, stop: &AtomicBool) -> Result<(), HttpError> {
+    let started = Instant::now();
+    while conn.is_handshaking() {
+        if stop.load(Ordering::Relaxed) {
+            return Err(HttpError::Stopped);
+        }
+        if started.elapsed() > CONNECT_TIMEOUT {
+            return Err(HttpError::Connect("the secure connection was not set up in time".into()));
+        }
+        match conn.complete_io(tcp) {
+            Ok(_) => {}
+            // one poll without an answer: Windows reports TimedOut, Unix WouldBlock
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
+                ) => {}
+            // a rustls error stays the cause, for `StreamError::Tls`
+            Err(e) => return Err(HttpError::Io(e)),
+        }
+    }
+    Ok(())
+}
+
 /// The connection, and for `https` the slot its certificate check fills.
-fn connect(url: &Url) -> Result<(Conn, Option<IssueSlot>), HttpError> {
+fn connect(url: &Url, stop: &AtomicBool) -> Result<(Conn, Option<IssueSlot>), HttpError> {
     let https = match url.scheme() {
         "http" | "icy" => false,
         "https" => true,
@@ -238,7 +266,7 @@ fn connect(url: &Url) -> Result<(Conn, Option<IssueSlot>), HttpError> {
     };
     // Direct, or through the proxy of Preferences › Network, which resolves
     // the name (aurora_proxy::connect). TLS below stays end to end.
-    let tcp = aurora_proxy::connect::tcp_connect(&host, port, CONNECT_TIMEOUT).map_err(|e| HttpError::Connect(e.to_string()))?;
+    let mut tcp = aurora_proxy::connect::tcp_connect(&host, port, CONNECT_TIMEOUT).map_err(|e| HttpError::Connect(e.to_string()))?;
     tcp.set_read_timeout(Some(READ_POLL))?;
     tcp.set_write_timeout(Some(CONNECT_TIMEOUT))?;
     let _ = tcp.set_nodelay(true);
@@ -253,7 +281,8 @@ fn connect(url: &Url) -> Result<(Conn, Option<IssueSlot>), HttpError> {
         .to_string();
     let name = rustls::pki_types::ServerName::try_from(host).map_err(|e| HttpError::Tls(e.to_string()))?;
     let (config, issue) = tls::client_config().map_err(HttpError::Tls)?;
-    let conn = rustls::ClientConnection::new(config, name).map_err(|e| HttpError::Tls(e.to_string()))?;
+    let mut conn = rustls::ClientConnection::new(config, name).map_err(|e| HttpError::Tls(e.to_string()))?;
+    handshake(&mut conn, &mut tcp, stop)?;
     Ok((Conn::Tls(Box::new(rustls::StreamOwned::new(conn, tcp))), Some(issue)))
 }
 
@@ -331,7 +360,7 @@ pub(crate) fn open_with_origin(url: &str, stop: &Arc<AtomicBool>, origin: Option
         }) {
             return Err(HttpError::PlaylistOrigin);
         }
-        let (mut conn, issue) = connect(&url)?;
+        let (mut conn, issue) = connect(&url, stop)?;
         let req = format!(
             "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {}\r\nAccept: */*\r\nIcy-MetaData: 1\r\nConnection: close\r\n\r\n",
             request_target(&url),
@@ -388,8 +417,9 @@ pub(crate) fn open_with_origin(url: &str, stop: &Arc<AtomicBool>, origin: Option
 mod tests {
     use super::*;
 
-    #[test]
-    fn https_plays_a_self_signed_station_and_says_so() {
+    /// A local `https` station with a self-signed certificate: it waits
+    /// `delay` before it answers the handshake, then serves five bytes.
+    fn self_signed_station(delay: Duration) -> (String, std::thread::JoinHandle<()>) {
         let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
         let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
         let config = rustls::ServerConfig::builder_with_provider(provider)
@@ -407,6 +437,7 @@ mod tests {
             let (sock, _) = listener.accept().unwrap();
             sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
             sock.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
+            std::thread::sleep(delay);
             let mut tls = rustls::StreamOwned::new(rustls::ServerConnection::new(Arc::new(config)).unwrap(), sock);
             let mut head = Vec::new();
             let mut byte = [0u8; 1];
@@ -420,6 +451,12 @@ mod tests {
             let mut rest = [0u8; 64];
             while tls.read(&mut rest).is_ok_and(|n| n > 0) {}
         });
+        (url, server)
+    }
+
+    #[test]
+    fn https_plays_a_self_signed_station_and_says_so() {
+        let (url, server) = self_signed_station(Duration::ZERO);
         let stop = Arc::new(AtomicBool::new(false));
         let response = open(&url, &stop).expect("a self-signed station plays");
         assert_eq!(response.certificate, Some(CertificateIssue::Untrusted));
@@ -429,6 +466,50 @@ mod tests {
         reader.read_exact(&mut body).unwrap();
         assert_eq!(&body, b"AUDIO");
         drop(reader);
+        server.join().unwrap();
+    }
+
+    /// A station whose handshake reply takes longer than one read poll still
+    /// plays: far servers and loaded ones answer after more than 250 ms
+    /// (#3152).
+    #[test]
+    fn https_waits_for_a_station_slow_to_answer_the_handshake() {
+        let (url, server) = self_signed_station(READ_POLL * 3);
+        let stop = Arc::new(AtomicBool::new(false));
+        let response = open(&url, &stop).expect("a slow handshake is waited for");
+        assert_eq!(response.certificate, Some(CertificateIssue::Untrusted));
+        let mut body = [0u8; 5];
+        let mut reader = response.body;
+        reader.read_exact(&mut body).unwrap();
+        assert_eq!(&body, b"AUDIO");
+        drop(reader);
+        server.join().unwrap();
+    }
+
+    /// The wait for the handshake stays within reach of a stop request.
+    #[test]
+    fn a_stop_ends_the_wait_for_a_handshake_that_gets_no_answer() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("https://{}/stream", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            sock.set_read_timeout(Some(CONNECT_TIMEOUT)).unwrap();
+            // takes the hello and never answers, until the client hangs up
+            let mut rest = [0u8; 1024];
+            while sock.read(&mut rest).is_ok_and(|n| n > 0) {}
+        });
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopper = {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(READ_POLL * 2);
+                stop.store(true, Ordering::Relaxed);
+            })
+        };
+        let started = Instant::now();
+        assert!(matches!(open(&url, &stop), Err(HttpError::Stopped)));
+        assert!(started.elapsed() < CONNECT_TIMEOUT / 2, "{:?}", started.elapsed());
+        stopper.join().unwrap();
         server.join().unwrap();
     }
 

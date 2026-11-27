@@ -362,7 +362,7 @@ pub struct Renderer {
     /// AURORA_DEMO_GPU_LOST: the frame the device is taken as lost at.
     demo_lost: Option<u64>,
     /// AURORA_DEMO_GPU_HANG: the frame a real GPU hang is submitted at, and
-    /// the queue it goes on.
+    /// the queue it goes on, let go once it is submitted.
     demo_hang: Option<(u64, wgpu::Queue)>,
 }
 
@@ -1635,10 +1635,13 @@ impl Renderer {
     ) -> RenderStats {
         let t0 = Instant::now();
         let mut ui = ui;
-        if let Some((frame, queue)) = &self.demo_hang
-            && *frame == self.frames
+        if self.demo_hang.as_ref().is_some_and(|(frame, _)| *frame == self.frames)
+            && let Some((_, queue)) = self.demo_hang.take()
         {
-            crate::device_lost::demo_hang(&self.device, queue);
+            crate::device_lost::demo_hang(&self.device, &queue);
+            // the clone goes now: kept for the renderer's life it dropped
+            // after `host`, so wgpu's last `Queue::drop` ran outside the
+            // lost backend's guarded drop (render_thread.rs, #3915)
         }
         if self.demo_lost == Some(self.frames) && !self.lost.get() {
             self.lost.set_by("demo");
@@ -1729,7 +1732,11 @@ impl Renderer {
             // a film's frame next, sent and not waited for (film_readback.rs)
             None => match self.film_request.take() {
                 Some(film) => {
-                    self.films_sent += 1;
+                    // (a sub-frame before a shutter's last is answered by
+                    // nothing: the last carries the frame)
+                    if film.shutter.is_none_or(|s| s.last()) {
+                        self.films_sent += 1;
+                    }
                     let spec = film.size.map(|(width, height)| crate::SnapshotSpec {
                         width,
                         height,
@@ -1738,7 +1745,7 @@ impl Renderer {
                         photo: (width, height),
                         cube: None,
                     });
-                    Some(crate::packet::Capture::Film(film.tag, spec))
+                    Some(crate::packet::Capture::Film(film.tag, spec, film.shutter))
                 }
                 None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
             },
@@ -2131,17 +2138,7 @@ impl Renderer {
     /// World ray under a pixel of the last frame: origin on the near plane,
     /// unit direction.
     pub fn cursor_ray(&self, x: f32, y: f32) -> Option<(Vec3, Vec3)> {
-        let (w, h) = (self.size.0 as f32, self.size.1 as f32);
-        let ndc = |z: f32| Vec4::new(x / w * 2.0 - 1.0, 1.0 - y / h * 2.0, z, 1.0);
-        let un = |v: Vec4| {
-            let p = self.last_inv_vp * v;
-            (p.w.abs() > 1e-9).then(|| p.truncate() / p.w).filter(|v| v.is_finite())
-        };
-        // reverse-Z: 1 is the near plane, small values far away
-        let near = un(ndc(1.0))?;
-        let far = un(ndc(0.001))?;
-        let dir = (far - near).try_normalize()?;
-        Some((near, dir))
+        crate::pick::pixel_ray(self.last_inv_vp, self.size, x, y)
     }
 
     /// Camera/axes of the submitted frame, matching particle_vs billboards.

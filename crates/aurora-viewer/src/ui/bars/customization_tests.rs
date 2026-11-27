@@ -16,6 +16,9 @@ fn menu_catalogue_collection_has_no_actions_and_contains_stable_distinct_command
     let entries = commands::catalogue(&ctx);
     let ids: std::collections::HashSet<_> = entries.entries.iter().map(|entry| &entry.button.command).collect();
     assert_eq!(ids.len(), entries.entries.len());
+    // the main menu is drawn from the entries: a row without a key of its
+    // own shared its menu's id and never showed (Aurora Weather… was one)
+    assert!(entries.unnamed.is_empty(), "menu rows without a command key: {:?}", entries.unnamed);
     assert!(
         entries
             .entries
@@ -27,6 +30,11 @@ fn menu_catalogue_collection_has_no_actions_and_contains_stable_distinct_command
     assert!(entries.find("menu:common-build/import-types").is_some());
     assert!(entries.find("menu:common-build/import-types/import-menu-textures").is_some());
     assert!(entries.find("menu:common-world/common-environment/time-of-day-2").is_some());
+    assert!(
+        entries
+            .find("menu:common-world/common-environment/ui-bars-aurora-weather")
+            .is_some()
+    );
     assert!(!panels.inventory && !panels.settings && !panels.appearance);
     assert_eq!(panels.time_of_day, 0);
     assert!(crate::ui::context::take_requests(&ctx).is_empty());

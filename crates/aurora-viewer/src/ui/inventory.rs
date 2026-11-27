@@ -2440,10 +2440,7 @@ fn request_search(inv: &mut Inventory, root: Uuid, st: &mut InventoryUi, prefs: 
             continue;
         }
         complete &= folder.state == FetchState::Fetched;
-        if !inv.too_big.contains(&id)
-            && matches!(folder.state, FetchState::Unknown | FetchState::Failed)
-            && inv.queue.len() + requests.len() < 16
-        {
+        if !inv.too_big.contains(&id) && folder.state == FetchState::Unknown && inv.queue.len() + requests.len() < 16 {
             requests.push(id);
         }
         todo.extend(folder.children.iter().copied());
@@ -3824,6 +3821,8 @@ mod delete_tests;
 #[cfg(test)]
 mod drag_tests;
 #[cfg(test)]
+mod outside_dialog_tests;
+#[cfg(test)]
 mod texture_tests;
 
 #[cfg(test)]
@@ -4801,6 +4800,87 @@ mod tests {
             }
             assert!(ctx.memory(|m| m.has_focus(search)), "expanding restores search focus");
             assert_eq!(other, "elsewhere");
+        }
+    }
+
+    #[test]
+    fn reopened_on_a_kept_search_inventory_selects_it_and_shown_again_leaves_the_keyboard() {
+        use crate::ui::widgets::elide_tests::Frames;
+        for classic in [false, true] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            crate::world::appearance::seed_demo(&mut world.inventory, crate::demo::DEMO_AGENT);
+            let mut st = InventoryUi::default();
+            let mut prefs = InventoryPreferences::default();
+            let images = Default::default();
+            let scripts = Default::default();
+            let other_id = egui::Id::unique("other_inventory_field");
+            let mut other = String::new();
+            let mut frame = |st: &mut InventoryUi, mut open, events| {
+                frames.run(events, |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut other).id(other_id));
+                    show(
+                        ui.ctx(),
+                        &p,
+                        &icons,
+                        &mut world,
+                        st,
+                        None,
+                        &mut prefs,
+                        &mut open,
+                        false,
+                        &images,
+                        &Default::default(),
+                        &Default::default(),
+                        &scripts,
+                        classic,
+                    );
+                });
+            };
+            let typed = |text: &str| vec![egui::Event::Text(text.into())];
+            for _ in 0..3 {
+                frame(&mut st, true, Vec::new());
+            }
+            frame(&mut st, true, typed("shirt"));
+            assert_eq!(st.search, "shirt", "classic={classic}");
+            let search = ctx.memory(|m| m.focused()).expect("search focused");
+            // closed, then opened again on the search it kept
+            frame(&mut st, false, Vec::new());
+            for _ in 0..3 {
+                frame(&mut st, true, Vec::new());
+            }
+            assert!(ctx.memory(|m| m.has_focus(search)), "classic={classic}");
+            frame(&mut st, true, typed("n"));
+            assert_eq!(
+                st.search, "n",
+                "the kept search was selected: the first character replaces it (classic={classic})"
+            );
+            // the keyboard goes elsewhere, then nowhere (a click on the world)
+            ctx.memory_mut(|m| m.request_focus(other_id));
+            frame(&mut st, true, Vec::new());
+            ctx.memory_mut(|m| m.surrender_focus(other_id));
+            frame(&mut st, true, Vec::new());
+            // mouselook, or Alt+Shift+U twice: the window was open all along
+            super::super::widgets::hide_windows(&ctx, true, super::super::widgets::HideKeep::None);
+            for _ in 0..3 {
+                frame(&mut st, true, Vec::new());
+            }
+            super::super::widgets::hide_windows(&ctx, false, super::super::widgets::HideKeep::None);
+            for _ in 0..3 {
+                frame(&mut st, true, Vec::new());
+            }
+            assert!(
+                !ctx.memory(|m| m.has_focus(search)),
+                "shown again, the search does not take the keyboard (classic={classic})"
+            );
+            frame(&mut st, true, typed("w"));
+            assert_eq!(st.search, "n", "a movement key does not type into the search (classic={classic})");
+            assert!(other.is_empty());
         }
     }
 

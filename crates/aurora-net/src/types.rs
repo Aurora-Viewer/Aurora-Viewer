@@ -1443,7 +1443,11 @@ pub enum NetEvent {
     InventoryItems(Vec<crate::inventory::InvItem>),
     /// Original records requested to recover simulator-arrived attachments.
     /// Keep the creation context even if the object detaches before readback.
-    AttachmentInventoryItems(Vec<crate::inventory::InvItem>),
+    AttachmentInventoryItems {
+        items: Vec<crate::inventory::InvItem>,
+        /// The same read also satisfied ordinary inventory demand.
+        coalesced: bool,
+    },
     InventoryOrphansFetched {
         request: u64,
         owner: Uuid,
@@ -1455,11 +1459,14 @@ pub enum NetEvent {
         items: Vec<Uuid>,
         /// Read for a worn attachment (`FetchAttachmentItems`).
         attachment: bool,
+        /// The same AIS read also satisfied the other delivery kind.
+        coalesced: bool,
     },
     /// Items the server answered do not exist: broken links' originals.
     InventoryItemsMissing {
         items: Vec<Uuid>,
         attachment: bool,
+        coalesced: bool,
     },
     /// Answer to `UploadBake`: the new texture.
     BakeUploaded {
@@ -2330,6 +2337,11 @@ pub enum NetCommand {
         folders: Vec<Uuid>,
         owner: Uuid,
         library: bool,
+    },
+    /// Internal acknowledgement after model validation of inventory records.
+    InventoryItemsKnown {
+        items: Vec<Uuid>,
+        owner: Uuid,
     },
     /// Fetch items by id (FetchInventory2).
     FetchItems {
