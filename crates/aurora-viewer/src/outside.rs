@@ -571,6 +571,7 @@ pub(crate) struct Outside {
 
 #[derive(Default)]
 struct Shared {
+    palette: Option<Palette>,
     windows: HashMap<egui::ViewportId, Native>,
     /// The texture changes of this frame's passes outside, older than the
     /// viewer's own pass's: they leave with its interface, before them.
@@ -594,6 +595,7 @@ struct Native {
     title: Option<String>,
     /// The window's events of the system, as egui reads them.
     input: egui_winit::State,
+    text_menu: crate::ui::text_menu::TextMenu,
     focused: bool,
     /// A field or a menu of the window read the keyboard at its last pass.
     reads_keys: bool,
@@ -747,6 +749,8 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
     // window, after the window's own pass, and reads its events
     let over = overlay_of(ctx, ids.this);
     let target = over.map_or(ids.this, egui::ViewportId);
+    let palette = shared.borrow().palette;
+    let mut text_menu = None;
     let input = shared.borrow_mut().windows.get_mut(&target).map(|native| {
         let raw = if over.is_some() {
             native.held.take().unwrap_or_else(|| native.input.take_egui_input(&native.window))
@@ -754,6 +758,11 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
             if builder.title.is_some() && builder.title != native.title {
                 native.window.set_title(builder.title.as_deref().unwrap_or_default());
                 native.title = builder.title;
+            }
+            if native.overlaid {
+                native.text_menu.dismiss();
+            } else {
+                text_menu = palette.map(|p| (std::mem::take(&mut native.text_menu), p));
             }
             let (raw, held) = under_dialog(native.input.take_egui_input(&native.window), native.overlaid);
             native.held = held;
@@ -782,7 +791,11 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
     ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::MIN);
     // (nothing of `shared` is borrowed while the window's code runs)
     let mut out = ctx.run_ui(input, |ui| {
-        viewport_ui_cb(ui);
+        if let Some((menu, palette)) = &mut text_menu {
+            menu.outside(ui, palette, &mut viewport_ui_cb);
+        } else {
+            viewport_ui_cb(ui);
+        }
         keys = reads_keys(ui.ctx());
     });
     ctx.options_mut(|o| o.max_passes = passes);
@@ -806,7 +819,10 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
         });
         return;
     }
-    native.reads_keys = keys;
+    if let Some((menu, _)) = text_menu {
+        native.text_menu = menu;
+    }
+    native.reads_keys = keys || native.text_menu.is_open();
     // (a dialog asked earlier in the viewer's pass ran its own before this
     // one: what it asks of the window, its cursor over the window's, stays)
     let mut output = out.platform_output;
@@ -1080,6 +1096,7 @@ impl Outside {
                 of_interface: false,
                 title: None,
                 input,
+                text_menu: Default::default(),
                 focused,
                 reads_keys: false,
                 pass: None,
@@ -1279,8 +1296,13 @@ impl Outside {
 
     /// What the last frame's passes outside read that the viewer follows in
     /// every window: an Escape, a paste.
-    pub fn take_heard(&mut self) -> Vec<egui::Event> {
-        std::mem::take(&mut self.shared.borrow_mut().heard)
+    pub fn begin_frame(&mut self, palette: Palette, mut clipboard: impl FnMut() -> Option<String>) -> Vec<egui::Event> {
+        let mut shared = self.shared.borrow_mut();
+        shared.palette = Some(palette);
+        for native in shared.windows.values_mut() {
+            native.text_menu.prepare_clipboard(&mut clipboard);
+        }
+        std::mem::take(&mut shared.heard)
     }
 
     /// What this frame's passes outside ask of the system besides their
