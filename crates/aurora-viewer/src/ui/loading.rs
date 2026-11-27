@@ -602,7 +602,7 @@ pub fn teleport_overlay(
     // that frame between the loading screen and its fade out.
     let painter = ctx.layer_painter(layer).with_clip_rect(rect);
     if !backdrop.is_some_and(|b| b.paint(&painter, p, rect, a)) {
-        super::aurora_bg::paint(&painter, p, rect, t, a);
+        super::aurora_bg::paint(&painter, p, rect, t, a, super::aurora_bg::snow::amount(ctx));
     }
     let corner = banner(ctx, &painter, p, rect, logo, title, dest, detail, fraction, place, t, a);
     ctx.request_repaint();

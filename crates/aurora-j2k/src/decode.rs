@@ -846,13 +846,15 @@ fn write_tile(
                 mct::write_packed_u8(&regions, tile.mct, p.w, p.h, &mut data[p.y * row + p.x * decoded..], row);
             }
             Samples::Planes(image) => {
-                let stride = out.comps[0].w as usize;
-                let mut dsts: Vec<&mut [i32]> = image
+                let mut dsts: Vec<(&mut [i32], usize)> = image
                     .iter_mut()
                     .take(decoded)
-                    .map(|pl| &mut pl.data[p.y * stride + p.x..])
+                    .map(|pl| {
+                        let stride = pl.width as usize;
+                        (&mut pl.data[p.y * stride + p.x..], stride)
+                    })
                     .collect();
-                mct::write_planes(&regions, tile.mct, p.w, p.h, &mut dsts, stride);
+                mct::write_planes(&regions, tile.mct, p.w, p.h, &mut dsts);
             }
         }
         for c in &mut out.comps[..decoded] {

@@ -502,7 +502,7 @@ pub fn sightings(world: &World) -> Vec<Sighting> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for (_, o) in world.objects.avatars() {
-        if o.full_id.is_nil() || o.full_id == world.agent_id || world.is_mirror(&o.full_id) || seen.contains(&o.full_id) {
+        if o.full_id.is_nil() || o.full_id == world.agent_id || world.is_local_copy(&o.full_id) || seen.contains(&o.full_id) {
             continue;
         }
         let Some(position) = native_position(world, o) else {

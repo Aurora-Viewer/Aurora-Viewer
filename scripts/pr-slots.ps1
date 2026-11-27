@@ -9,7 +9,8 @@
 .EXAMPLE
     ./scripts/pr-slots.ps1 -Sweep -DryRun
     What the sweep would do for every outside contributor: writes nothing
-    (GITHUB_REPOSITORY, or the origin remote).
+    (GITHUB_REPOSITORY, or the main repository's remote: origin, or upstream
+    in a clone of a personal fork).
 
 .EXAMPLE
     ./scripts/pr-slots.ps1 -Author someone -Pr 2900 -Preferred 2900
@@ -29,8 +30,14 @@ if (-not $Author -and -not $Sweep) { throw 'Give -Author (and -Pr), or -Sweep.' 
 
 $repo = $env:GITHUB_REPOSITORY
 if (-not $repo) {
-    $repo = (gh repo view (git -C $PSScriptRoot remote get-url origin).Trim() --json nameWithOwner --jq .nameWithOwner)
-    if (-not $repo) { throw 'GITHUB_REPOSITORY is not set and the origin remote is unknown.' }
+    # a local run (the workflow sets GITHUB_REPOSITORY): Get-MainRepo, from
+    # common.ps1, which sets the error preference back to Continue
+    . "$PSScriptRoot/common.ps1"
+    $main = Get-MainRepo $PSScriptRoot
+    $ErrorActionPreference = 'Stop'
+    if (-not $main) { throw 'GITHUB_REPOSITORY is not set and no remote names the main repository on GitHub.' }
+    $repo = (gh repo view $main --json nameWithOwner --jq .nameWithOwner)
+    if (-not $repo) { throw "Could not look up $main on GitHub." }
 }
 $owner, $name = $repo -split '/', 2
 function Invoke-Gh {

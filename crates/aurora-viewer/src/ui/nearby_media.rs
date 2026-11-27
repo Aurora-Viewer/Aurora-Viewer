@@ -99,11 +99,18 @@ pub fn show(
     if st.selected.is_some_and(|k| !rows.iter().any(|r| r.key == k)) {
         st.selected = None;
     }
-    let anchor = egui::pos2(button.right() + 4.0, button.bottom() + 6.0);
-    let area = egui::Area::new(egui::Id::unique("nearby_media_panel"))
+    let id = egui::Id::unique("nearby_media_panel");
+    let wanted = ctx.memory(|memory| memory.area_rect(id)).map_or(250.0, |rect| rect.height());
+    let (anchor_y, above, _) = widgets::popup_vertical(ctx.content_rect(), button, wanted, 6.0);
+    let anchor = egui::pos2(button.right() + 4.0, anchor_y);
+    let area = egui::Area::new(id)
         .fade_in(false)
         .order(egui::Order::Foreground)
-        .pivot(egui::Align2::RIGHT_TOP)
+        .pivot(if above {
+            egui::Align2::RIGHT_BOTTOM
+        } else {
+            egui::Align2::RIGHT_TOP
+        })
         .fixed_pos(anchor)
         .show(ctx, |ui| {
             widgets::overlay(ui, p, egui::Margin::symmetric(10, 8), |ui| {

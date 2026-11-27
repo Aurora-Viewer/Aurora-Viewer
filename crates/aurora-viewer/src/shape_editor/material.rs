@@ -9,10 +9,15 @@ use crate::{
 use aurora_render::preview::Material;
 use uuid::Uuid;
 
-pub(super) struct Face {
+pub(crate) struct Face {
     pub textures: [Uuid; 4],
     pub material: Material,
     pub alpha_explicit: bool,
+    /// How shiny a face without a PBR material is (0 to 1): its materials'
+    /// glossiness, or the shiny of its texture entry. Not for the hints.
+    pub gloss: Option<f32>,
+    /// Drawn at full brightness (without a PBR material).
+    pub fullbright: bool,
 }
 
 /// UV input here is SL bottom-left, while CPU images are top-left.
@@ -45,6 +50,8 @@ impl Face {
                 ..Default::default()
             },
             alpha_explicit: false,
+            gloss: Some(f32::from(te.bump_shiny_fullbright >> 6) * 0.25),
+            fullbright: te.bump_shiny_fullbright & 0x20 != 0,
         };
         if let Some(id) = object.visual_material(index) {
             let mut material = scene.materials.peek(&id).map(|m| (*m).clone()).unwrap_or_default();
@@ -88,8 +95,13 @@ impl Face {
                 ..Default::default()
             };
             out.alpha_explicit = true;
+            (out.gloss, out.fullbright) = (None, false);
         } else if let Some(material) = scene.legacy_mats.peek(&te.material_id) {
             out.textures[1] = material.normal_map;
+            if !material.specular_map.is_nil() {
+                let strong = f32::from(*material.specular_color[..3].iter().max().unwrap_or(&0)) / 255.0;
+                out.gloss = Some((f32::from(material.specular_exp) / 255.0 * strong).clamp(0.0, 1.0));
+            }
             out.material.uv[1] = uv(material.normal_st, material.normal_rot, false);
             out.material.alpha_cutoff = material.alpha_cutoff as f32 / 255.0;
             out.material.alpha_mode = match material.diffuse_alpha_mode {
@@ -97,6 +109,11 @@ impl Face {
                 crate::scene::legacy_mat::alpha_mode::MASK => 2,
                 _ => 0,
             };
+            // a face drawn see-through blends whatever its material says
+            // (the same rule as the world's `classify`)
+            if te.color[3] < 0.999 {
+                out.material.alpha_mode = 1;
+            }
             out.alpha_explicit = true;
         }
         if object.visual_material(index).is_none()
@@ -152,6 +169,44 @@ mod tests {
         assert!((out[0] - 0.6).abs() < 1e-6 && (out[1] - 0.3).abs() < 1e-6);
         let out = sample(uv([2.0, 3.0, 0.1, 0.2], 0.0, true), [0.5, 0.5]);
         assert!((out[0] - 1.1).abs() < 1e-6 && (out[1] - 1.7).abs() < 1e-6);
+    }
+    /// Lenses: a tint below full opacity blends, whatever the material's mode.
+    #[test]
+    fn a_see_through_tint_blends_whatever_its_material_says() {
+        use crate::scene::legacy_mat::{LegacyMaterial, alpha_mode};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let mut scene = Scene::new(
+            std::env::temp_dir().join(format!("aurora-lens-{}", Uuid::new_v4())),
+            world.avatar_lib.clone(),
+        );
+        for (mode, opaque) in [
+            (alpha_mode::NONE, 0),
+            (alpha_mode::BLEND, 1),
+            (alpha_mode::MASK, 2),
+            (alpha_mode::EMISSIVE, 0),
+        ] {
+            let id = Uuid::from_u128(0x1e45 + u128::from(mode));
+            scene.legacy_mats.insert(
+                id,
+                LegacyMaterial {
+                    diffuse_alpha_mode: mode,
+                    ..Default::default()
+                },
+            );
+            for (alpha, expected) in [(1.0, opaque), (0.2, 1)] {
+                let mut object = super::super::demo::object(&world).expect("head");
+                let mut te = (**object.texture_entry.as_ref().expect("faces")).clone();
+                te.faces[0].material_id = id;
+                te.faces[0].color[3] = alpha;
+                object.texture_entry = Some(te.into());
+                let index = world.objects.upsert(world.main_region.expect("region"), object);
+                let face = Face::capture(&world, &scene, world.objects.get(index).expect("object"), 0, usize::MAX);
+                assert_eq!(face.material.alpha_mode, expected, "mode {mode} at {alpha}");
+            }
+        }
     }
     #[test]
     fn pbr_face_uses_material_and_override_maps_including_bom_redirection() {

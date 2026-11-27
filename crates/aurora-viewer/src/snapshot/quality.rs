@@ -295,6 +295,9 @@ const MB: u64 = 1 << 20;
 /// `Renderer::make_targets`, with some room; also what a photo's pass
 /// counts (`app::snapshot`).
 pub const BYTES_PER_SAMPLE: u64 = 18;
+/// What the G-buffer takes more per sample in 16 bits per channel
+/// (Rgba16Unorm, 8: "Reflection precision", [`Screen::wide_normals`]).
+const WIDE_NORMALS_BYTES_PER_SAMPLE: u64 = 4;
 
 /// Bytes per square metre of ground a longer draw distance brings in
 /// (geometry, the textures' share the budget lets through), from a grid
@@ -317,6 +320,9 @@ pub struct Screen {
     /// (`RenderStats::target_bytes_per_pixel`): what a step that changes
     /// the MSAA replaces ([`made_bytes`]).
     pub target_bytes: u64,
+    /// The reflections, once on, keep their normals in 16 bits
+    /// (`Settings::normals_high`).
+    pub wide_normals: bool,
 }
 
 /// Estimated video memory the settings `v` hold that grows with the boost.
@@ -324,7 +330,12 @@ fn held_bytes(v: &Values, screen: Screen) -> u64 {
     let px = screen.pixels as f64;
     let n = samples(v.antialiasing).min(screen.max_samples.max(1));
     let msaa = if n > 1 {
-        u64::from(n) * BYTES_PER_SAMPLE * screen.pixels
+        let wide = if v.ssr && screen.wide_normals {
+            WIDE_NORMALS_BYTES_PER_SAMPLE
+        } else {
+            0
+        };
+        u64::from(n) * (BYTES_PER_SAMPLE + wide) * screen.pixels
     } else {
         0
     };
@@ -605,6 +616,7 @@ mod tests {
             pixels: w * h,
             max_samples: 8,
             target_bytes: 87,
+            wide_normals: false,
         }
     }
 
@@ -662,6 +674,19 @@ mod tests {
         assert_eq!(only_msaa(MSAA_8X), 8 * 18 * 3440 * 1369);
         assert_eq!(only_msaa(MSAA_4X), only_msaa(MSAA_8X) / 2);
         assert_eq!(only_msaa(user.antialiasing), 0);
+        // the reflections' normals in 16 bits: 4 bytes more per sample,
+        // with the screen-space reflections only
+        let wide = Screen { wide_normals: true, ..s };
+        let msaa_8x = |ssr| {
+            let user = Values { ssr, ..user };
+            let boosted = Values {
+                antialiasing: MSAA_8X,
+                ..user
+            };
+            extra_bytes(&user, &boosted, wide)
+        };
+        assert_eq!(msaa_8x(true), 8 * 22 * 3440 * 1369);
+        assert_eq!(msaa_8x(false), only_msaa(MSAA_8X));
         // a GPU with 4 samples at most
         let four = Screen { max_samples: 4, ..s };
         assert_eq!(

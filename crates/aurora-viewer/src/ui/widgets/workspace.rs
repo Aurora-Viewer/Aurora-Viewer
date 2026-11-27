@@ -538,6 +538,9 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         return "photo-filled";
     }
     // the tools of a script editor carry its egui id and their own suffix
+    if id == super::super::area_search::WINDOW {
+        return "radar-2";
+    }
     if id.ends_with("_search") {
         return "search-filled";
     }
@@ -594,6 +597,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
         "beacons" => "radar-filled",
+        "inspect" => "scan-eye",
         "environment_selector" | "personal_lighting" => "sun-filled",
         "perf" | "performance" => "gauge-filled",
         "photo" | "photo_classic" => "camera-filled",
@@ -841,7 +845,31 @@ impl Modal {
         self
     }
 
+    /// Asked from a window outside the viewer's (the focus there when it
+    /// opened), it is drawn over that window, in a pass of its own on
+    /// that window's events (`outside::modal_window`); otherwise where it
+    /// is asked. The prompts over the whole viewer (the login screen's,
+    /// and those over a blurred viewer: quit, update, media pack) stay in
+    /// the viewer's window, whose pass holds their backdrop and keys.
     pub fn show<T>(self, ctx: &egui::Context, body: impl FnOnce(&mut egui::Ui) -> T) -> egui::ModalResponse<T> {
+        let of_viewer = self.1.is_some() || self.0.backdrop_color == Color32::TRANSPARENT;
+        let window = if of_viewer {
+            None
+        } else {
+            crate::outside::modal_window(ctx, self.0.area.layer().id)
+        };
+        let Some(window) = window else {
+            return self.show_here(ctx, body);
+        };
+        let viewport = crate::outside::overlay(ctx, window);
+        let mut once = Some((self, body));
+        let shown = ctx.show_viewport_immediate(viewport, egui::ViewportBuilder::default(), |ui, _| {
+            once.take().map(|(modal, body)| modal.show_here(ui.ctx(), body))
+        });
+        shown.expect("an immediate viewport runs its pass once")
+    }
+
+    fn show_here<T>(self, ctx: &egui::Context, body: impl FnOnce(&mut egui::Ui) -> T) -> egui::ModalResponse<T> {
         // Theme supplies skin colors and radii; per-modal frames remain local.
         let mut frame = egui::Frame::popup(&ctx.global_style())
             .inner_margin(18)

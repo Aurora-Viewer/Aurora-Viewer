@@ -279,6 +279,9 @@ impl PerfData {
     }
 }
 
+/// The window's id, in both its views.
+pub(crate) const WINDOW: &str = "perf";
+
 pub struct PerfView<'a> {
     pub data: &'a PerfData,
     pub gpu: &'a GpuInfo,
@@ -465,7 +468,7 @@ pub fn show(
             vram_mb: v.gpu.vram_mb,
         };
         let mut floater = Floater::new(
-            "perf",
+            WINDOW,
             aurora_i18n::tr!("monitor-title"),
             work.center() - super::monitor::DEFAULT_SIZE / 2.0,
             super::monitor::DEFAULT_SIZE,
@@ -497,7 +500,7 @@ pub fn show(
     } else {
         let mut toggle = false;
         Floater::new(
-            "perf",
+            WINDOW,
             aurora_i18n::tr!("common-performance"),
             default_pos(work, COMPACT_W),
             vec2(COMPACT_W, 0.0),
