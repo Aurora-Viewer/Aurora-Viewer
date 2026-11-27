@@ -168,8 +168,8 @@ pub fn width(ctx: &egui::Context, command: &str) -> Option<f32> {
 pub fn height(ctx: &egui::Context, command: &str) -> f32 {
     if command == "bar_chat" {
         // the field, and the room of the recent emojis' row the island draws
-        // over it (under it with the Legacy chat style): without it the row
-        // took the field's, and what was typed went under the bar. A bar
+        // over it: without it the row took the field's, and what was typed
+        // went under the bar. A bar
         // that raises the block's island instead keeps its height
         // (`lift_chat`)
         let (recent, lift) = ctx

@@ -3286,7 +3286,6 @@ ui-options-show-chat-channel-hint = Kanal seçicisini (/0) yakındaki sohbet gir
 ui-options-show-recent-emojis = Son emojileri göster
 ui-options-show-recent-emojis-hint = Son kullandığınız emojiler, bir tane gönderdikten sonra sohbet alanlarının üstünde bir satır olarak görünür. Birini iletinize eklemek için tıklayın.
 ui-options-show-recent-emojis-legacy = Son emojileri göster (Legacy stili)
-ui-options-show-recent-emojis-legacy-hint = Legacy sohbet stiliyle: son kullandığınız emojiler sohbet alanlarının altında bir satır olarak. Legacy Viewer bu satırı kapalı tuttuğu için varsayılan olarak kapalıdır.
 ui-options-favorite-emojis = Sık kullanılan emojiler
 ui-options-favorite-emojis-hint = Saklamak için seçicide veya son kullanılanlar satırında bir emojiye sağ tıklayın: sık kullanılanlar o satırda başta gelir ve seçicide kendi sekmeleri vardır.
 ui-options-script-errors = Komut dosyası hataları

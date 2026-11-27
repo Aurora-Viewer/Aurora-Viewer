@@ -129,10 +129,12 @@ pub struct Recent {
     pub favorites_enabled: bool,
     /// `AURORA_DEMO_FAVORITE_EMOJIS`: on for the run, whatever the switch.
     demo_favorites: bool,
-    /// The row's place, given every frame by the app: above the chat
-    /// fields, nearer the lines read (the human's choice, 2026-11-09);
-    /// under them with the Legacy chat style, as FSFloaterNearbyChat's
-    /// `emoji_recent_layout_panel` follows its `chat_layout_panel`.
+    /// The row's place in Conversations, given every frame by the app:
+    /// above the chat field, nearer the lines read (the human's choice,
+    /// 2026-11-09); under it with the Legacy chat style, as
+    /// FSFloaterNearbyChat's `emoji_recent_layout_panel` follows its
+    /// `chat_layout_panel`. The chat bar keeps the row over its field with
+    /// every style (the human's choice, 2026-11-27: `dock::chat_island`).
     pub above: bool,
     /// The writes leave the frame, with the file each goes to; none in the
     /// demo.

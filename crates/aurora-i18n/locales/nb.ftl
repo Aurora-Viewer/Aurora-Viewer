@@ -3285,7 +3285,6 @@ ui-options-show-chat-channel-hint = Vis kanalvelgeren (/0) i inndatafeltene for 
 ui-options-show-recent-emojis = Vis nylige emojier
 ui-options-show-recent-emojis-hint = De sist brukte emojiene dine på en rad over chattefeltene, vist når du har sendt én. Klikk på en for å legge den til i meldingen.
 ui-options-show-recent-emojis-legacy = Vis nylige emojier (Legacy-stil)
-ui-options-show-recent-emojis-legacy-hint = Med Legacy-chattestilen: de sist brukte emojiene dine på en rad under chattefeltene. Av som standard, siden Legacy Viewer holder raden lukket.
 ui-options-favorite-emojis = Favorittemojier
 ui-options-favorite-emojis-hint = Høyreklikk på en emoji i velgeren eller på raden med nylige for å beholde den: favorittene kommer først på den raden og har sin egen fane i velgeren.
 ui-options-script-errors = Skriptfeil

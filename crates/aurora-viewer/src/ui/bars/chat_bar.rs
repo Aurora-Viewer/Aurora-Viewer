@@ -178,10 +178,10 @@ mod tests {
     }
 
     /// The recent emojis' row has its own room in the chat block: the field
-    /// keeps its height under it (over it with the Legacy chat style). The
-    /// block's height used to count the field alone, so the row took the
-    /// field's place, caught its clicks, and what was typed went under the
-    /// bar.
+    /// keeps its height under it, with the Legacy chat style too (the row is
+    /// under the field in Conversations alone). The block's height used to
+    /// count the field alone, so the row took the field's place, caught its
+    /// clicks, and what was typed went under the bar.
     #[test]
     fn the_recent_emojis_row_leaves_the_chat_field_its_room() {
         let ctx = egui::Context::default();
@@ -290,14 +290,10 @@ mod tests {
                 slot.expand(0.5).contains_rect(cell),
                 "above {above}: the row is in the bar: {cell:?} in {slot:?}"
             );
-            if above {
-                assert!(cell.bottom() <= typed.top() + 0.5, "the row is over the field: {cell:?}, {typed:?}");
-            } else {
-                assert!(
-                    cell.top() >= typed.bottom() - 0.5,
-                    "the row is under the field: {cell:?}, {typed:?}"
-                );
-            }
+            assert!(
+                cell.bottom() <= typed.top() + 0.5,
+                "above {above}: the row is over the field: {cell:?}, {typed:?}"
+            );
         }
 
         // autohidden and out of use, the block is its button alone again
@@ -469,21 +465,14 @@ mod tests {
             );
             let (typed, first) = (field(), cell());
             assert_eq!(typed.height(), plain.height(), "above {above}: the field keeps its height");
-            let over = if above {
-                assert_eq!(typed, plain, "the field stays where it is under the row");
-                assert!(
-                    first.bottom() <= typed.top() + 0.5,
-                    "the row is over the field: {first:?}, {typed:?}"
-                );
-                first
-            } else {
-                assert_eq!(typed.top(), plain.top() - row, "the field rises over the row");
-                assert!(
-                    first.top() >= typed.bottom() - 0.5,
-                    "the row is under the field: {first:?}, {typed:?}"
-                );
-                typed
-            };
+            // (the Legacy chat style's row is under the field in
+            // Conversations alone: over it in the bar, with every style)
+            assert_eq!(typed, plain, "above {above}: the field stays where it is under the row");
+            assert!(
+                first.bottom() <= typed.top() + 0.5,
+                "above {above}: the row is over the field: {first:?}, {typed:?}"
+            );
+            let over = first;
             assert!(
                 over.top() < bar.top(),
                 "above {above}: the island stands out over the dock: {over:?}, {bar:?}"
@@ -501,22 +490,26 @@ mod tests {
                 click(&mut frame, &mut chat, smile());
                 assert_eq!(chat.bar_emoji_open, open, "above {above}: the emoji button's click");
             }
-            if above {
-                chat.input.clear();
-                click(&mut frame, &mut chat, egui::pos2(first.center().x, out.y));
-                assert!(!chat.input.is_empty(), "a click on a recent emoji writes it");
-            } else {
-                chat.let_keyboard_go();
-                frame(vec![], &mut chat);
-                click(&mut frame, &mut chat, egui::pos2(typed.left() + 40.0, out.y));
-                assert!(chat.has_focus, "a click in the raised field gives it the keyboard");
-            }
+            chat.input.clear();
+            click(&mut frame, &mut chat, egui::pos2(first.center().x, out.y));
+            assert!(!chat.input.is_empty(), "above {above}: a click on a recent emoji writes it");
         }
 
-        // a paragraph raises the island the same way
+        // a paragraph raises the island the same way, and its field takes
+        // the clicks over the dock
         chat.recent_emojis.enabled = false;
         chat.input = "one\ntwo\nthree".into();
         let raised = settle(&mut frame, &mut chat);
+        let typed = field();
+        chat.let_keyboard_go();
+        frame(vec![], &mut chat);
+        click(
+            &mut frame,
+            &mut chat,
+            egui::pos2(typed.left() + 40.0, (typed.top() + bar.top()) / 2.0),
+        );
+        assert!(chat.has_focus, "a click in the raised field gives it the keyboard");
+        let raised = raised.min(settle(&mut frame, &mut chat));
         let typed = field();
         assert!(typed.height() > plain.height(), "the field holds the paragraph: {typed:?}");
         assert_eq!((dock(), button()), (bar, beside), "the dock keeps its height under a paragraph");
