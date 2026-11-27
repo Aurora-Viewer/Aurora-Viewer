@@ -30,7 +30,11 @@ fn menu_catalogue_collection_has_no_actions_and_contains_stable_distinct_command
     assert!(entries.find("menu:common-build/import-types").is_some());
     assert!(entries.find("menu:common-build/import-types/import-menu-textures").is_some());
     assert!(entries.find("menu:common-world/common-environment/time-of-day-2").is_some());
-    assert!(entries.find("menu:common-world/common-environment/ui-bars-aurora-weather").is_some());
+    assert!(
+        entries
+            .find("menu:common-world/common-environment/ui-bars-aurora-weather")
+            .is_some()
+    );
     assert!(!panels.inventory && !panels.settings && !panels.appearance);
     assert_eq!(panels.time_of_day, 0);
     assert!(crate::ui::context::take_requests(&ctx).is_empty());
