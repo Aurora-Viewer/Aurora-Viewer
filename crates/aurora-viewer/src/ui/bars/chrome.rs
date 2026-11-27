@@ -340,8 +340,9 @@ pub(super) fn side_room(ctx: &egui::Context, room: Rect) -> (Rect, Option<Rect>)
 /// row, by what the field takes beyond a line (the recent emojis' row, the
 /// paragraph typed), as the chat island did before the field became a
 /// block: the block keeps a line's height, and the bar's other blocks
-/// theirs. What the island is raised by: nothing for a field of one line,
-/// or for the block's button alone.
+/// theirs. The top bar hangs the island under its row the same way
+/// (`lifted`). What the island is raised by: nothing for a field of one
+/// line, or for the block's button alone.
 pub(super) fn lift_chat(ctx: &egui::Context) -> f32 {
     let editor = chat_editor(ctx);
     ctx.data_mut(|data| {
@@ -361,6 +362,18 @@ pub(super) fn lift_chat(ctx: &egui::Context) -> f32 {
 pub(super) fn chat_lift(ctx: &egui::Context) -> Option<f32> {
     ctx.data(|data| data.get_temp::<Metrics>(metrics_id()))
         .and_then(|metrics| metrics.chat_lift)
+}
+
+/// The chat block's rectangle with what its island stands out of its bar's
+/// row by: over the dock's, under the top bar's.
+fn lifted(rect: Rect, bar: Bar, lift: f32) -> Rect {
+    let mut rect = rect;
+    if bar == Bar::Top {
+        rect.max.y += lift;
+    } else {
+        rect.min.y -= lift;
+    }
+    rect
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -386,9 +399,12 @@ pub fn show_chat(
         .filter(|slot| slot.button.command == "bar_chat" && !slot.placeholder)
     {
         let _context = crate::ui::toolbar::native_context::Scope::new(ui.ctx(), "bar_chat");
-        let lift = if slot.bar == Bar::Bottom { chat_lift(ui.ctx()) } else { None };
-        let mut drawn = slot.rect;
-        drawn.min.y -= lift.unwrap_or(0.0);
+        let lift = if matches!(slot.bar, Bar::Bottom | Bar::Top) {
+            chat_lift(ui.ctx())
+        } else {
+            None
+        };
+        let drawn = lifted(slot.rect, slot.bar, lift.unwrap_or(0.0));
         let place = ChatPlace {
             rect: drawn,
             bar: slot.bar,
@@ -443,7 +459,8 @@ pub fn show_chat(
 }
 
 /// The chat block of the dock, its island raised by `lift` over the dock's
-/// row (`lift_chat`; the dock paints the raised surface).
+/// row (`lift_chat`; the dock paints the raised surface), or of the top
+/// bar, its island hung by `lift` under the bar's row.
 ///
 /// What stands out of the dock is an area of its own, kept right over the
 /// dock's: the pointer there is over the interface, not the world. The
@@ -467,12 +484,18 @@ fn show_lifted_chat(
     width: &mut f32,
     committed: &mut bool,
 ) -> Option<crate::ui::chat::OutgoingChat> {
-    let mut rect = slot.rect;
-    rect.min.y -= lift;
-    let over = Rect::from_min_max(
-        egui::pos2(rect.left() - islands::PAD, rect.top() - islands::PAD),
-        egui::pos2(rect.right() + islands::PAD, slot.rect.top() - islands::PAD),
-    );
+    let rect = lifted(slot.rect, slot.bar, lift);
+    let over = if slot.bar == Bar::Top {
+        Rect::from_min_max(
+            egui::pos2(rect.left() - islands::PAD, slot.rect.bottom() + islands::PAD),
+            egui::pos2(rect.right() + islands::PAD, rect.bottom() + islands::PAD),
+        )
+    } else {
+        Rect::from_min_max(
+            egui::pos2(rect.left() - islands::PAD, rect.top() - islands::PAD),
+            egui::pos2(rect.right() + islands::PAD, slot.rect.top() - islands::PAD),
+        )
+    };
     let row = super::Row {
         bar: slot.bar,
         style: slot.style,

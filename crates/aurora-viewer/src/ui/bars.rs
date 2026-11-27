@@ -4331,13 +4331,14 @@ pub(crate) fn toolbar_row(
             }
         }
     }
-    if let Some((painter, underlay)) = underlay {
+    if let Some((mut painter, underlay)) = underlay {
         let bounds = rects.iter().copied().filter(|rect| rect.is_positive()).reduce(egui::Rect::union);
         if let Some(bounds) = bounds {
             let outer = bounds.expand(islands::PAD).intersect(painter.clip_rect());
-            // the chat block's island, raised over the dock's row
-            // (`chrome::lift_chat`)
-            let lifted = (row.bar == super::toolbar::Bar::Bottom && !row.floating && !row.editing)
+            // the chat block's island, raised over the dock's row or hung
+            // under the top bar's (`chrome::lift_chat`)
+            let hangs = row.bar == super::toolbar::Bar::Top;
+            let lifted = ((hangs || row.bar == super::toolbar::Bar::Bottom) && !row.floating && !row.editing)
                 .then(|| chrome::chat_lift(ui.ctx()))
                 .flatten()
                 .filter(|lift| *lift > 0.0)
@@ -4351,14 +4352,25 @@ pub(crate) fn toolbar_row(
                     if let Some((chat, lift)) = lifted
                         && rect.contains(chat)
                     {
-                        // (the side bars keep their place beside it:
-                        // `chrome::side_room`)
-                        chrome::raise_chat(ui.ctx(), rect.x_range(), lift);
-                        rect.min.y -= lift;
+                        if hangs {
+                            rect.max.y += lift;
+                        } else {
+                            // (the side bars keep their place beside it:
+                            // `chrome::side_room`)
+                            chrome::raise_chat(ui.ctx(), rect.x_range(), lift);
+                            rect.min.y -= lift;
+                        }
                     }
                     super::widgets::island_shape(ui.ctx(), p, rect)
                 })
                 .collect();
+            if hangs && let Some((_, lift)) = lifted {
+                // (the top bar clips its buttons to its row: the island
+                // that hangs under it is drawn beyond)
+                let mut clip = painter.clip_rect();
+                clip.max.y += lift + islands::PAD;
+                painter.set_clip_rect(clip);
+            }
             painter.set(underlay, egui::Shape::Vec(shapes));
         }
     }

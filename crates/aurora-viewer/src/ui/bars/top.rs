@@ -305,15 +305,24 @@ fn composed(
     let display = crate::ui::toolbar::structure::Display::for_bar(ui.ctx(), Bar::Top, &settings.top, row.editing);
     let buttons = display.buttons();
     let mut action = BarAction::None;
+    let split = buttons
+        .iter()
+        .any(|button| crate::ui::toolbar::structure::is_separator(&button.command))
+        || sizing::has_alignment(ui.ctx(), buttons);
+    // The chat block's island alone hangs under the bar's row for the recent
+    // emojis' row and for a paragraph, as it rises over the dock's
+    // (`dock::bottom`): the bar and its other islands keep their height (the
+    // human's report, 2026-11-27: the whole line grew). A bar in one piece
+    // has no island of the chat's to lower, and is as high as its chat
+    // block; so is the Legacy Viewer's.
+    if !classic && split && !row.editing && !row.floating && buttons.iter().any(|button| button.command == "bar_chat") {
+        super::chrome::lift_chat(ui.ctx());
+    }
     let height = buttons
         .iter()
         .filter(|button| crate::ui::toolbar::structure::is_block(&button.command))
         .map(|button| super::chrome::height(ui.ctx(), &button.command))
         .fold(islands::HEIGHT, f32::max);
-    let split = buttons
-        .iter()
-        .any(|button| crate::ui::toolbar::structure::is_separator(&button.command))
-        || sizing::has_alignment(ui.ctx(), buttons);
     let mut body = |ui: &mut egui::Ui, rect: Rect| {
         crate::ui::toolbar::edit_mode::region(ui, p, Bar::Top, rect, buttons.is_empty());
         let target = ui.interact(rect, Id::unique("top_toolbar_background"), egui::Sense::click());
