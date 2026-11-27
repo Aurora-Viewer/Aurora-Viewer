@@ -353,7 +353,6 @@ const BEFORE: &[&str] = &[
     "flash_on_script_dialog",
     "system_notifications",
     "system_notifications_when_active",
-    "linux_taskbar_badge",
     "warn_external_links",
     "show_chat",
     "show_contacts_tab",
@@ -502,6 +501,13 @@ fn no_setting_of_the_former_pages_is_lost() {
     for before in BEFORE {
         assert!(covered(&paths, before), "`{before}` has no row any more");
     }
+}
+
+/// The launcher badge exists on Linux only, so it is not in `BEFORE`.
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_taskbar_badge_has_its_row_on_linux() {
+    assert!(covered(&collected(), "linux_taskbar_badge"), "`linux_taskbar_badge` has no row");
 }
 
 #[test]

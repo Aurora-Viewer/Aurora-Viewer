@@ -1338,6 +1338,37 @@ mod tests {
     }
 
     #[test]
+    fn launcher_badge_counts_unread_notices_but_not_messages() {
+        let mut n = Notifications::default();
+        // a conversation's message: counted with the conversations, not here
+        n.push_message(Uuid::from_u128(1), Uuid::from_u128(2), "Jane", "hello", true);
+        assert_eq!(n.unread(), 1);
+        assert_eq!(n.unread_notices(), 0);
+        // an unread offer-like entry and an unread group invitation count
+        n.push(Kind::Info, "Notice", "Body", Data::None);
+        n.push(
+            Kind::Group,
+            "Invitation",
+            "Join us",
+            Data::Group {
+                group: Uuid::from_u128(3),
+                tx: Uuid::nil(),
+                offline: false,
+                fee: 0,
+                confirming: false,
+            },
+        );
+        assert_eq!(n.unread_notices(), 2);
+        // a read entry is left out
+        let read = n.push(Kind::Info, "Old", "Seen", Data::None);
+        n.list.iter_mut().find(|e| e.id == read).expect("entry").read = true;
+        assert_eq!(n.unread_notices(), 2);
+        // a toast-only entry is left out
+        n.push_presence(Uuid::from_u128(4), "Friend is online", true);
+        assert_eq!(n.unread_notices(), 2);
+    }
+
+    #[test]
     fn dialog_button_reply_and_removal() {
         let mut n = Notifications::default();
         let obj = Uuid::new_v4();

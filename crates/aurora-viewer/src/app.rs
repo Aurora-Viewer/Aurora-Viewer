@@ -14580,9 +14580,10 @@ impl App {
                 crate::demo::attention::events(self.frame_count, agent)
             };
             if mode == "badge" {
-                // the count falls: a conversation read, then the rest
+                // the count falls: Tess's conversation (one unread message)
+                // read, 4 to 3 whatever the order of `ims`, then the rest
                 if self.frame_count == crate::demo::attention::BADGE_READ_FIRST
-                    && let Some(s) = self.world.social.ims.first_mut()
+                    && let Some(s) = self.world.social.ims.iter_mut().find(|s| s.other == crate::demo::DEMO_TESS)
                 {
                     s.unread = 0;
                 }

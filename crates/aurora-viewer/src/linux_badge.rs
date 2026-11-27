@@ -77,6 +77,9 @@ pub struct Badge {
     sent: usize,
     #[cfg(target_os = "linux")]
     worker: Option<std::sync::mpsc::Sender<Mail>>,
+    /// The "worker gone" line was written.
+    #[cfg(target_os = "linux")]
+    gone_logged: bool,
 }
 
 impl Badge {
@@ -88,10 +91,11 @@ impl Badge {
         }
         self.sent = count;
         #[cfg(target_os = "linux")]
-        self.worker
-            .get_or_insert_with(start_worker)
-            .send(Mail::Count(count))
-            .unwrap_or_else(|_| log::debug!("launcher badge: worker gone"));
+        if self.worker.get_or_insert_with(start_worker).send(Mail::Count(count)).is_err() && !std::mem::replace(&mut self.gone_logged, true)
+        {
+            // logged once, like the other errors of the badge
+            log::debug!("launcher badge: worker gone");
+        }
     }
 }
 
