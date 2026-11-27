@@ -16,8 +16,10 @@ const PACK: u32 = 4096;
 pub struct SnowDetail {
     slot: Option<u32>,
     tried: bool,
-    /// The slots made, packed or not, with their image.
-    made: Vec<(u32, &'static [u8], &'static str)>,
+    /// The slots made, packed or not, with their mip chain: sent again
+    /// as it is when the staging refuses it, not decoded again on the main
+    /// thread (two 512 by 512 images, 1.4 MB each with their mips).
+    made: Vec<(u32, Vec<image::RgbaImage>)>,
 }
 
 impl SnowDetail {
@@ -27,11 +29,10 @@ impl SnowDetail {
     pub fn slot(&mut self, renderer: &mut Renderer) -> Option<u32> {
         if !self.tried {
             self.tried = true;
-            let detail = upload(renderer, PNG, "snow detail texture");
-            let color = upload(renderer, COLOR_PNG, "snow colour texture");
-            self.made = (detail.map(|d| (d, PNG, "snow detail texture")).into_iter())
-                .chain(color.map(|c| (c, COLOR_PNG, "snow colour texture")))
-                .collect();
+            let detail_made = upload(renderer, PNG, "snow detail texture");
+            let color_made = upload(renderer, COLOR_PNG, "snow colour texture");
+            let (detail, color) = (detail_made.as_ref().map(|m| m.0), color_made.as_ref().map(|m| m.0));
+            self.made = detail_made.into_iter().chain(color_made).collect();
             self.slot = detail.map(|d| match color {
                 Some(c) if d < PACK && c < PACK => d + c * PACK,
                 _ => d,
@@ -50,8 +51,8 @@ impl SnowDetail {
             return;
         }
         let resent = (self.made.iter())
-            .filter(|(s, ..)| lost.contains(s))
-            .all(|&(s, png, what)| levels(png, what).is_some_and(|l| renderer.replace_texture(s, &mip_levels(&l))));
+            .filter(|(s, _)| lost.contains(s))
+            .all(|(s, levels)| renderer.replace_texture(*s, &mip_levels(levels)));
         lost.retain(|s| !self.made.iter().any(|(m, ..)| m == s));
         if resent {
             return;
@@ -98,13 +99,14 @@ fn mip_levels(levels: &[image::RgbaImage]) -> Vec<MipLevel<'_>> {
         .collect()
 }
 
-fn upload(renderer: &mut Renderer, png: &[u8], what: &str) -> Option<u32> {
+/// The image decoded and made a texture: its slot, and its mip chain.
+fn upload(renderer: &mut Renderer, png: &[u8], what: &str) -> Option<(u32, Vec<image::RgbaImage>)> {
     let levels = levels(png, what)?;
     let slot = renderer.create_texture(&mip_levels(&levels));
     if slot.is_none() {
         log::warn!("{what}: no slot");
     }
-    slot
+    Some((slot?, levels))
 }
 
 #[cfg(test)]

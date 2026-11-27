@@ -745,6 +745,7 @@ impl Renderer {
         let backend = Backend::new(BackendInit {
             vr: vr.clone(),
             gpu_frames: gpu_frames.clone(),
+            small_mappable: mappable_mb.is_some_and(|mb| mb < crate::vram::SMALL_MAPPABLE_MB),
             device: device.clone(),
             queue,
             surface: Arc::new(surface),
@@ -1493,11 +1494,7 @@ impl Renderer {
         }
         self.films_answered += r.films.len() as u64;
         self.films.append(&mut r.films);
-        for slot in r.lost_textures.drain(..) {
-            if !self.lost_textures.contains(&slot) {
-                self.lost_textures.push(slot);
-            }
-        }
+        crate::write_staging::merge_slots(&mut self.lost_textures, r.lost_textures.drain(..));
         self.last_stats = r.stats;
         self.rt_made = r.rt;
         self.fresh = true;

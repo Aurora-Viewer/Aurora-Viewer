@@ -44,7 +44,11 @@
 //! the log; the texture shows what its layer held until then. The buffers
 //! of their own are kept, up to [`SPARE_BYTES`] and [`MAX_SPARES`] of them,
 //! mapped again for the frames after: wgpu fills a new mapped buffer with
-//! zeros on the CPU, which the queue's own staging buffers skip.
+//! zeros on the CPU, which the queue's own staging buffers skip. These
+//! buffers live in the video memory the CPU can map: where it is small
+//! (no Resizable BAR, #2171), the texture writes grow a frame's staging
+//! buffer to [`SMALL_STAGED`] at most and fewer spares are kept
+//! ([`spare_limits`]).
 //!
 //! A few staging buffers take turns: a used one is mapped again
 //! (`map_async`) and comes back once the GPU has done its copies. When none
@@ -67,6 +71,7 @@
 
 use crate::gpu_alloc::{self, Backoff, LogThrottle};
 use crate::writes::{NO_SLOT, TexelDst, WriteSink};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
@@ -89,6 +94,14 @@ pub const SPARE_BYTES: u64 = 32 << 20;
 /// The staging buffers of texture writes kept, at most (a region's first
 /// frame makes hundreds of small ones).
 pub const MAX_SPARES: usize = 64;
+/// Where the CPU can map little video memory (`vram::SMALL_MAPPABLE_MB`,
+/// no Resizable BAR): the most a frame's texture writes grow a staging
+/// buffer to, and the spares kept. These buffers live in that memory, which
+/// the viewer filled before on such cards (#2171); the buffer writes alone
+/// still size a staging buffer up to [`MAX_STAGED`], as before.
+pub const SMALL_STAGED: u64 = 8 << 20;
+pub const SMALL_SPARE_BYTES: u64 = 8 << 20;
+pub const SMALL_MAX_SPARES: usize = 16;
 /// How long a refused size is remembered: the texture writes of the frames
 /// after are cut below it at once instead of being refused again.
 const CEILING_KEPT: Duration = Duration::from_secs(2);
@@ -310,6 +323,33 @@ pub fn slot_wanted(need: u64, want: u64, refused: Option<u64>, need_held: bool) 
     }
 }
 
+/// The bytes a frame's staging buffer is sized for, from its `bytes` of
+/// buffer writes and `textures` of texture writes: both up to
+/// [`MAX_STAGED`], or the texture writes only up to [`SMALL_STAGED`] where
+/// the CPU can map little video memory (`small`). Never less than the
+/// buffer writes.
+/// Adds the slots of `from` not in `into` yet, in order: the lost slots of
+/// a long refusal number in the thousands, so not one search of `into` each.
+pub fn merge_slots(into: &mut Vec<u32>, from: impl IntoIterator<Item = u32>) {
+    let mut seen: HashSet<u32> = into.iter().copied().collect();
+    into.extend(from.into_iter().filter(|&slot| seen.insert(slot)));
+}
+
+pub fn frame_want(bytes: u64, textures: u64, small: bool) -> u64 {
+    let cap = if small { SMALL_STAGED } else { MAX_STAGED };
+    bytes.saturating_add(textures).min(cap).max(bytes)
+}
+
+/// The spare staging buffers of texture writes kept at most: their bytes
+/// and their number, fewer where the CPU can map little video memory.
+pub fn spare_limits(small: bool) -> (u64, usize) {
+    if small {
+        (SMALL_SPARE_BYTES, SMALL_MAX_SPARES)
+    } else {
+        (SPARE_BYTES, MAX_SPARES)
+    }
+}
+
 /// Whether a texture write of `len` bytes fits in an open staging buffer of
 /// `size` bytes written up to `cursor`, beside the `buffer_left` bytes of
 /// buffer writes still to come.
@@ -355,7 +395,8 @@ pub struct Staged {
     /// Of those, the ones cut in pieces after a refusal.
     pub split: usize,
     /// Texture writes not made: no staging buffer could be made for them,
-    /// or for one before them.
+    /// or for one before them, or for a later level of their texture (the
+    /// levels staged before it are dropped).
     pub refused: usize,
     /// The texture table's slots of those writes, each once, in the order
     /// met (writes that named none left out): their textures are to be
@@ -390,6 +431,9 @@ pub struct WriteStaging {
     /// buffer asked for, and when that was.
     refuse_for: Option<Duration>,
     refusing_since: Option<Instant>,
+    /// The CPU can map little video memory: smaller staging buffers for
+    /// texture writes ([`SMALL_STAGED`]).
+    small_mappable: bool,
     log: LogThrottle,
 }
 
@@ -428,7 +472,22 @@ impl WriteStaging {
             refuse_at,
             refuse_for: None,
             refusing_since: None,
+            small_mappable: false,
             log: LogThrottle::new(Duration::from_secs(10)),
+        }
+    }
+
+    /// The CPU can map little video memory (`vram::SMALL_MAPPABLE_MB`): the
+    /// texture writes grow the staging buffers less, and fewer spares are
+    /// kept ([`SMALL_STAGED`]).
+    pub fn set_small_mappable(&mut self, small: bool) {
+        self.small_mappable = small;
+        if small {
+            log::info!(
+                "journal staging: texture writes grow a staging buffer to {} MB at most, {} MB of spares kept (little mappable video memory)",
+                SMALL_STAGED >> 20,
+                SMALL_SPARE_BYTES >> 20
+            );
         }
     }
 
@@ -569,7 +628,7 @@ impl WriteStaging {
         textures: u64,
     ) -> StagedSink<'a, S> {
         let on = staging_on();
-        let want = bytes.saturating_add(textures).min(MAX_STAGED).max(bytes);
+        let want = frame_want(bytes, textures, self.small_mappable);
         let open = if on && want > 0 && bytes <= MAX_STAGED {
             self.acquire(bytes, want).and_then(|slot| {
                 let s = &self.slots[slot];
@@ -596,6 +655,8 @@ impl WriteStaging {
             buffer_left: bytes,
             copies: Vec::new(),
             textures: Vec::new(),
+            staged_slots: HashSet::new(),
+            lost_slots: HashSet::new(),
             own: Vec::new(),
             refused: None,
             staged: Staged::default(),
@@ -623,11 +684,12 @@ impl WriteStaging {
     }
 
     /// Keeps a used staging buffer of a texture write for the frames after,
-    /// mapped again, while the spare ones hold less than [`SPARE_BYTES`].
+    /// mapped again, while the spare ones hold less than [`spare_limits`].
     fn keep_spare(&mut self, buffer: wgpu::Buffer) {
         self.spares.retain(|s| !has_failed(s));
         let kept: u64 = self.spares.iter().map(|s| s.buffer.size()).sum();
-        if kept + buffer.size() <= SPARE_BYTES && self.spares.len() < MAX_SPARES {
+        let (max_bytes, max_count) = spare_limits(self.small_mappable);
+        if kept + buffer.size() <= max_bytes && self.spares.len() < max_count {
             let slot = Slot::new(buffer, false);
             remap(&slot);
             self.spares.push(slot);
@@ -654,10 +716,25 @@ enum Src {
 struct TexCopy {
     /// The texture table's slot of the write ([`NO_SLOT`] if none).
     slot: u32,
+    /// What the write was counted as in [`Staged`] (on its first piece),
+    /// taken back if it is not made after all.
+    counted: Counted,
     src: Src,
     offset: u64,
     texture: wgpu::Texture,
     dst: TexelDst,
+}
+
+/// The count of [`Staged`] a staged texture copy added to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Counted {
+    /// `textures`: copied from the frame's staging buffer.
+    Slot,
+    /// `own`: the first piece of a write staged in buffers of its own,
+    /// `split` too if it was cut in pieces.
+    Own { split: bool },
+    /// A later piece of such a write: counted with the first.
+    Piece,
 }
 
 /// A journal replay that stages its writes (see the module).
@@ -673,6 +750,11 @@ pub struct StagedSink<'a, S> {
     buffer_left: u64,
     copies: Vec<CopyOp<wgpu::Buffer>>,
     textures: Vec<TexCopy>,
+    /// The slots of the texture copies not submitted yet: a write lost later
+    /// drops what was staged for its slot only when there is something.
+    staged_slots: HashSet<u32>,
+    /// The slots in `staged.lost`, so a long refusal stays linear.
+    lost_slots: HashSet<u32>,
     /// The staging buffers of their own of the texture copies, mapped until
     /// the copies are submitted.
     own: Vec<wgpu::Buffer>,
@@ -720,6 +802,7 @@ impl<S: WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder>> StagedSink
                 enc.copy_buffer_to_buffer(src, c.src_offset, &c.dst, c.dst_offset, c.size);
             }
         }
+        self.staged_slots.clear();
         for t in self.textures.drain(..) {
             let buffer = match t.src {
                 Src::Slot => slot.map(|i| &self.staging.slots[i].buffer),
@@ -790,9 +873,31 @@ impl<S: WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder>> StagedSink
     /// and the old at the others until it is sent again).
     fn lose(&mut self, slot: u32) {
         self.staged.refused += 1;
-        if slot != NO_SLOT && !self.staged.lost.contains(&slot) {
+        if slot != NO_SLOT && self.lost_slots.insert(slot) {
             self.staged.lost.push(slot);
-            self.textures.retain(|t| t.slot != slot);
+            if !self.staged_slots.remove(&slot) {
+                return;
+            }
+            // the writes dropped are counted as not made, no longer as staged
+            let staged = &mut self.staged;
+            self.textures.retain(|t| {
+                if t.slot != slot {
+                    return true;
+                }
+                match t.counted {
+                    Counted::Slot => {
+                        staged.textures -= 1;
+                        staged.refused += 1;
+                    }
+                    Counted::Own { split } => {
+                        staged.own -= 1;
+                        staged.split -= usize::from(split);
+                        staged.refused += 1;
+                    }
+                    Counted::Piece => {}
+                }
+                false
+            });
         }
     }
 
@@ -840,7 +945,8 @@ impl<S: WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder>> StagedSink
                 }
             }
         }
-        if pieces.len() > 1 {
+        let split = pieces.len() > 1;
+        if split {
             self.staged.split += 1;
         }
         let first = self.own.len();
@@ -848,8 +954,10 @@ impl<S: WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder>> StagedSink
             stage_rows(data, dst.width, p.row, p.rows, |at, rows| {
                 view.slice(at..at + rows.len()).copy_from_slice(rows);
             });
+            self.staged_slots.insert(slot);
             self.textures.push(TexCopy {
                 slot,
+                counted: if i == 0 { Counted::Own { split } } else { Counted::Piece },
                 src: Src::Own(first + i),
                 offset: 0,
                 texture: texture.clone(),
@@ -917,8 +1025,10 @@ impl<S: WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder>> WriteSink<
             stage_rows(data, dst.width, 0, dst.height, |at, rows| {
                 open.view.slice(base + at..base + at + rows.len()).copy_from_slice(rows);
             });
+            self.staged_slots.insert(slot);
             self.textures.push(TexCopy {
                 slot,
+                counted: Counted::Slot,
                 src: Src::Slot,
                 offset: open.cursor,
                 texture: texture.clone(),
@@ -1068,6 +1178,30 @@ mod tests {
         assert_eq!(slot_size(1), 1 << 20);
         assert_eq!(slot_size((1 << 20) + 4), 2 << 20);
         assert_eq!(slot_size(13 << 20), 16 << 20);
+    }
+
+    #[test]
+    fn texture_writes_grow_a_staging_buffer_less_where_little_memory_is_mappable() {
+        const MB: u64 = 1 << 20;
+        // the texture writes count up to 32 MB in all, or 8 MB in all where
+        // the CPU maps little video memory
+        assert_eq!(frame_want(2 * MB, 40 * MB, false), MAX_STAGED);
+        assert_eq!(frame_want(2 * MB, 40 * MB, true), SMALL_STAGED);
+        assert_eq!(frame_want(2 * MB, 3 * MB, true), 5 * MB);
+        // the buffer writes alone size it as before, whatever the memory
+        assert_eq!(frame_want(20 * MB, 40 * MB, true), 20 * MB);
+        assert_eq!(frame_want(20 * MB, 0, false), 20 * MB);
+        assert_eq!(frame_want(0, 0, true), 0);
+        assert_eq!(spare_limits(false), (SPARE_BYTES, MAX_SPARES));
+        assert_eq!(spare_limits(true), (SMALL_SPARE_BYTES, SMALL_MAX_SPARES));
+        const { assert!(SMALL_STAGED < MAX_STAGED && SMALL_SPARE_BYTES < SPARE_BYTES) };
+    }
+
+    #[test]
+    fn lost_slots_are_merged_once_each_in_order() {
+        let mut lost = vec![7, 3];
+        merge_slots(&mut lost, [3, 9, 7, 9, 1]);
+        assert_eq!(lost, [7, 3, 9, 1]);
     }
 
     #[test]
@@ -1492,7 +1626,9 @@ mod tests {
         staging.set_refusal(Some(0));
         staging.spares.clear();
         let s = frame(&mut staging, &[(0, &level(0, 3)), (1, &level(1, 4))]);
-        assert_eq!((s.refused, s.lost.clone()), (1, vec![20]));
+        // mip 1 refused, and mip 0 (staged first) not made either: both
+        // counted as not made, none as staged
+        assert_eq!((s.refused, s.textures, s.own, s.lost.clone()), (2, 0, 0, vec![20]));
         assert!(read(0) == level(0, 1), "mip 0 not made without mip 1");
         assert!(read(1) == level(1, 2), "mip 1 keeps its texels");
         // memory again: the texture sent again lands whole

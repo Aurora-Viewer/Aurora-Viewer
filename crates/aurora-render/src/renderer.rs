@@ -2484,6 +2484,9 @@ pub(crate) struct BackendInit {
     pub lost: crate::device_lost::DeviceLost,
     /// Each frame's submission, for the frame pacing (pacing.rs).
     pub gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
+    /// The CPU can map little video memory (`vram::SMALL_MAPPABLE_MB`):
+    /// the journal's staging buffers stay small (write_staging.rs).
+    pub small_mappable: bool,
 }
 
 fn skin_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -4282,6 +4285,7 @@ impl Backend {
             anim_clock,
             lost,
             gpu_frames,
+            small_mappable,
         } = init;
         let caps = surface.get_capabilities(&adapter);
         let format = output_format
@@ -5213,7 +5217,11 @@ impl Backend {
             msaa_supported,
             lost,
             gpu_frames,
-            write_staging: Default::default(),
+            write_staging: {
+                let mut staging = crate::write_staging::WriteStaging::default();
+                staging.set_small_mappable(small_mappable);
+                staging
+            },
             lost_textures: Vec::new(),
             outside: Default::default(),
         };
@@ -9709,11 +9717,7 @@ impl Backend {
         );
         writes.replay(&mut sink);
         let mut staged = sink.finish_staged();
-        for slot in std::mem::take(&mut staged.lost) {
-            if !self.lost_textures.contains(&slot) {
-                self.lost_textures.push(slot);
-            }
-        }
+        crate::write_staging::merge_slots(&mut self.lost_textures, std::mem::take(&mut staged.lost));
         let replay_ms = t_writes.elapsed().as_secs_f32() * 1000.0;
         let upload_cmds = frame_uploads.take_commands();
         let writes_ms = t_writes.elapsed().as_secs_f32() * 1000.0;

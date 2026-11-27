@@ -2084,9 +2084,9 @@ impl TextureStreamer {
     /// The entries part of `send_again`: those holding one of `slots` are
     /// loaded again into it. Returns the slots none holds.
     fn send_again_entries(&mut self, slots: &[u32]) -> Vec<u32> {
-        let mut left: Vec<u32> = slots.iter().copied().filter(|&s| s != aurora_render::writes::NO_SLOT).collect();
+        let mut left: HashSet<u32> = slots.iter().copied().filter(|&s| s != aurora_render::writes::NO_SLOT).collect();
         if left.is_empty() {
-            return left;
+            return Vec::new();
         }
         for (&id, e) in self.entries.iter_mut() {
             // a texture without a slot draws the white one, which is the
@@ -2094,10 +2094,9 @@ impl TextureStreamer {
             if e.slot == NO_SLOT {
                 continue;
             }
-            let Some(at) = left.iter().position(|&s| s == e.slot) else {
+            if !left.remove(&e.slot) {
                 continue;
-            };
-            left.swap_remove(at);
+            }
             // its staged upload, if any, is the newer one: it lands as usual
             e.decoded = None;
             if self.legacy_bump_entries.contains_key(&id) {
@@ -2110,7 +2109,7 @@ impl TextureStreamer {
                 break;
             }
         }
-        left
+        left.into_iter().collect()
     }
 
     /// The slot of a texture met for the first time. With the table full,

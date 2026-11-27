@@ -4658,7 +4658,11 @@ What passes from one thread to the other:
   the viewer (`FrameResult::lost_textures`, `Renderer::take_lost_textures`),
   whose owners send those textures again (`app/lost_textures.rs`). Nothing
   waits in the renderer: what is sent again is the owner's current texture,
-  at its current place.
+  at its current place. Where little video memory is mappable (under 1 GB,
+  a card without Resizable BAR: the staging buffers sit in that window,
+  `vram::mappable_mb`), a frame's texture writes grow a staging buffer to
+  8 MB at most and 8 MB of spare buffers are kept, against 32 MB of each
+  elsewhere.
 - **Frame packet** (`packet.rs`), one per frame, self-contained: the log,
   the encoder of the staging copies and the chunks of staging memory to
   remap after submission, the handles of the scene's buffers as they are

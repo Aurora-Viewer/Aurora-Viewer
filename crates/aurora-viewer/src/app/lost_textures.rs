@@ -44,11 +44,7 @@ impl LostTextures {
             self.wait = FIRST_WAIT;
         }
         self.last_lost = Some(now);
-        for slot in lost {
-            if !self.slots.contains(&slot) {
-                self.slots.push(slot);
-            }
-        }
+        aurora_render::write_staging::merge_slots(&mut self.slots, lost);
         if self.due.is_none() {
             self.due = Some(now + self.wait);
             self.wait = (self.wait * 2).min(LONGEST_WAIT);

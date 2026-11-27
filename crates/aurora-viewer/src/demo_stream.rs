@@ -326,12 +326,12 @@ pub struct StreamDemo {
 /// tenths (`net=`).
 const SHOWN_STEPS: [u32; 3] = [5, 9, 10];
 
-/// Texture `i` is used and shows nothing yet (after `,leave`, the textures
-/// nothing uses any more are not brought back).
 /// What brought textures back to decode, for the log.
 const GPU_RECOVERY: &str = "GPU recovery";
 const STAGING_REFUSED: &str = "staging refusal";
 
+/// Texture `i` is used and shows nothing yet (after `,leave`, the textures
+/// nothing uses any more are not brought back).
 fn lost_on_the_gpu(textures: &TextureStreamer, i: u32) -> bool {
     textures.is_wanted(&texture(i)) && textures.decoded_level(&texture(i)).is_none()
 }
