@@ -286,7 +286,8 @@ impl Scene {
     }
 
     /// The posed object the cursor is on at the pixel of an answer, and how
-    /// far along `ray`, the ray asked: what [`Self::drawn_hover_between`]
+    /// far along `ray`, the pointer's ray through the camera that drew the
+    /// answer (hover_pick.rs `answered`): what [`Self::drawn_hover_between`]
     /// takes to be under the pointer still once it has moved. The nearest
     /// opaque face's, or the blended face's in front of it when the answer
     /// gives that one the click: a layer of a mesh body a few millimetres
@@ -670,6 +671,7 @@ mod tests {
                     binormal: Vec3::Z,
                 }),
                 blend: None,
+                ray: None,
             };
             let depth = scene.touch_depth(&world, &drawn, Some(ray), Some(point), 100.0);
             let hit = scene.drawn_action_point(&world, ray, depth, 100.0);
@@ -685,16 +687,19 @@ mod tests {
     /// depth.
     #[test]
     fn press_on_an_avatar_face_drawn_far_along_the_ray_ends() {
-        let (world, mut scene, front, _) = super::super::picking::tests::indexed_scene_with_two_objects();
-        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
-        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
-        scene.gpu.resize_with(scene.gpu.len().max(own + 1), Default::default);
-        scene.gpu[own].is_avatar = true;
-        let body_draw = FaceDraw {
-            record: 2,
-            ..scene.gpu[front].faces[0]
+        let with_own_body = || {
+            let (world, mut scene, front, _) = super::super::picking::tests::indexed_scene_with_two_objects();
+            let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+            scene.gpu.resize_with(scene.gpu.len().max(own + 1), Default::default);
+            scene.gpu[own].is_avatar = true;
+            let body_draw = FaceDraw {
+                record: 2,
+                ..scene.gpu[front].faces[0]
+            };
+            scene.gpu[own].faces.push(body_draw);
+            (world, scene)
         };
-        scene.gpu[own].faces.push(body_draw);
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
         for distance in [16_777_216.0_f32, 1.0e9] {
             let point = ray.0 + ray.1 * distance;
             let drawn = Drawn {
@@ -706,8 +711,12 @@ mod tests {
                     binormal: Vec3::Z,
                 }),
                 blend: None,
+                ray: None,
             };
-            assert_eq!(scene.touch_depth(&world, &drawn, Some(ray), Some(point), 100.0), Some(point));
+            let depth = super::super::picking::tests::walk_ends(with_own_body, move |(world, scene)| {
+                scene.touch_depth(world, &drawn, Some(ray), Some(point), 100.0)
+            });
+            assert_eq!(depth, Some(point), "body drawn {distance} m along the ray");
         }
     }
 
@@ -736,6 +745,7 @@ mod tests {
         let drawn = Drawn {
             opaque: Some(body),
             blend: None,
+            ray: None,
         };
         let pick = |scene: &Scene, drawn: &Drawn, point| scene.own_avatar_surface(&world, drawn, ray, point);
         assert_eq!(pick(&scene, &drawn, Some(body_point)), Some(body_point));
@@ -746,6 +756,7 @@ mod tests {
             let gap = Drawn {
                 opaque: Some(face(1, point)),
                 blend: None,
+                ray: None,
             };
             assert_eq!(pick(&scene, &gap, Some(point)), None);
         }
@@ -768,6 +779,7 @@ mod tests {
         let mesh = Drawn {
             opaque: Some(face(0, body_point)),
             blend: None,
+            ray: None,
         };
         assert_eq!(pick(&scene, &mesh, Some(body_point)), Some(body_point));
         assert_eq!(pick(&scene, &covered, Some(body_point)), Some(body_point - Vec3::X));
@@ -792,6 +804,7 @@ mod tests {
                 binormal: Vec3::Z,
             }),
             blend: None,
+            ray: None,
         };
         let o = world.objects.get_mut(front).unwrap();
         o.click_action = crate::interaction::code::NONE;
@@ -815,6 +828,7 @@ mod tests {
                 point: point + Vec3::X,
                 ..face
             }),
+            ray: None,
         };
         assert_eq!(
             scene.own_avatar_surface(&world, &through, ray, Some(point + Vec3::X)),
@@ -1336,6 +1350,7 @@ mod tests {
         let layered = Drawn {
             blend: face(0, 2.5),
             opaque: face(1, 2.504),
+            ray: None,
         };
         // the click passes through both: the skin, for the search under it
         assert_eq!(scene.drawn_hover_under(&world, &layered, ray), Some((skin, 2.504)));

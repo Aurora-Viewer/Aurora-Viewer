@@ -55,6 +55,7 @@ fn volume_emphasis_reaches_conversations_toasts_links_emoji_and_search() {
                             toasts(
                                 ui.ctx(),
                                 &p,
+                                &mut emoji,
                                 &world,
                                 &pics,
                                 &mut names,

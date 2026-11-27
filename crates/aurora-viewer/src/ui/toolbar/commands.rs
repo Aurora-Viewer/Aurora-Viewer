@@ -28,6 +28,12 @@ pub struct Entry {
 #[derive(Clone, Debug, Default)]
 pub struct Catalogue {
     pub entries: Vec<Entry>,
+    /// The labels of the rows the scan met under an id another row already
+    /// holds: a row drawn without a key of its own (`menu::command`,
+    /// `menu::identified`) takes the id of the menu it sits in. The main
+    /// menu is drawn from the entries, so such a row never shows there.
+    /// Empty when every row is named (the bars' tests check it).
+    pub unnamed: Vec<String>,
 }
 
 impl Catalogue {
@@ -128,12 +134,19 @@ pub fn row(ui: &Ui, icon: &str, label: &str, enabled: bool, group: bool, checked
         let parent = session.path[..session.path.len().saturating_sub(1)].join("/");
         let parent = if parent.is_empty() { parent } else { format!("{PREFIX}{parent}") };
         let enabled = enabled && session.disabled == 0;
-        if !session.path.is_empty() && !session.catalogue.entries.iter().any(|entry| entry.button.command == id) {
+        let tooltip = aurora_i18n::key_of(label).map_or_else(|| label.to_owned(), |key| format!("@{key}"));
+        let held = session.catalogue.entries.iter().find(|entry| entry.button.command == id);
+        if let Some(held) = held {
+            // (the same row met again keeps its entry; another row is lost)
+            if held.button.tooltip != tooltip && !session.catalogue.unnamed.contains(&tooltip) {
+                session.catalogue.unnamed.push(tooltip);
+            }
+        } else if !session.path.is_empty() {
             session.catalogue.entries.push(Entry {
                 button: ToolButton {
                     command: id.clone(),
                     icon: icon.to_owned(),
-                    tooltip: aurora_i18n::key_of(label).map_or_else(|| label.to_owned(), |key| format!("@{key}")),
+                    tooltip,
                 },
                 parent,
                 group,

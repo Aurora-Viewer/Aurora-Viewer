@@ -1512,13 +1512,15 @@ pub fn bubbles_events() -> Vec<NetEvent> {
     ev
 }
 
-/// `AURORA_DEMO_CHAT_LINES=1|legacy|volumes`: nearby chat said at the arrival, to
-/// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
-/// one resident, an emote, an object's line, a long line with a link, a
-/// shout. `legacy` shows them as the Legacy Viewer's lines for the session
-/// (nothing is saved). An optional `:0` through `:50` overrides the maximum
-/// wrapped text lines for this demo. Some(true) for `legacy`. `stagger` and
-/// `legacy:stagger` say them one at a time (`chat_lines_due`).
+/// `AURORA_DEMO_CHAT_LINES=1|legacy|volumes|emoji`: nearby chat said at the
+/// arrival, to see the lines above the chat bar (`ui/chat/console.rs`): two
+/// lines of one resident, an emote, an object's line, a long line with a
+/// link, a shout. `legacy` shows them as the Legacy Viewer's lines for the
+/// session (nothing is saved). `emoji` shows a line and its sender's name
+/// with colour emoji, the same in both styles. An optional `:0` through `:50`
+/// overrides the maximum wrapped text lines for this demo. Some(true) for
+/// `legacy`. `stagger` and `legacy:stagger` say them one at a time
+/// (`chat_lines_due`).
 pub fn chat_lines_scenario() -> Option<bool> {
     let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
     match mode.split(':').next()? {
@@ -1532,6 +1534,12 @@ pub fn chat_lines_scenario() -> Option<bool> {
 /// at a time instead of at the arrival.
 fn chat_lines_stagger() -> bool {
     std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.ends_with("stagger"))
+}
+
+/// `AURORA_DEMO_CHAT_LINES=emoji|legacy:emoji`: the line of the scenario
+/// holds colour emoji, in its text and in its sender's name (#5097).
+fn chat_lines_emoji() -> bool {
+    std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.split(':').any(|part| part == "emoji"))
 }
 
 /// `AURORA_DEMO_CHAT_LINES=stagger`: the scenario's next line now due, once:
@@ -1616,6 +1624,10 @@ fn chat_lines_said() -> Vec<NetEvent> {
             ]
         })
         .collect();
+    }
+    if chat_lines_emoji() {
+        let name = format!("{nova} 🫶");
+        return vec![say(DEMO_NOVA, &name, "Colour emoji: 🫶 ❤️ 😀 👍", false, normal)];
     }
     vec![
         say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-1"), false, normal),

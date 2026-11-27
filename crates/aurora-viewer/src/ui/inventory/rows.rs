@@ -561,9 +561,7 @@ pub(super) fn scroll(
     let navigated = keyboard::navigate(ui, inv, st, false);
     let now = std::time::Instant::now();
     for id in &st.plain.listed_open {
-        if inv.shown_needs_fetch(*id, now) {
-            inv.request(*id);
-        }
+        inv.request_shown(*id, now);
     }
     let height_of_row = row_height(ui, p, st);
     let pitch = height_of_row + ui.spacing().item_spacing.y;
@@ -669,6 +667,9 @@ fn rows(
                 Kind::Folder { open, branches } => {
                     let mut now = open;
                     folder_row(ui, p, icons, inv, row.id, &mut now, branches, st, prefs, facts, actions);
+                    if now && !open {
+                        inv.open_folder(row.id);
+                    }
                     if now != open && st.aurora.is_none() && st.lists_flat() {
                         // the Legacy-style single folder window goes in
                         // (Aurora's explorer goes in from its own row),

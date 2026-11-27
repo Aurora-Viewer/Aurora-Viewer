@@ -7554,9 +7554,22 @@ impl App {
     fn pump_network_events(&mut self, t_ev: Instant) {
         let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
         while let Ok((sent, ev)) = self.net.events.try_recv() {
+            let folder_reply = matches!(
+                &ev,
+                NetEvent::InventoryContents(_) | NetEvent::InventoryTreeFetched { result: Ok(_), .. }
+            );
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
             self.receive_event(ev, self.director_render_stamp(sent));
+            if folder_reply {
+                let items = self.world.inventory.take_accepted_snapshot_items();
+                if !items.is_empty() {
+                    self.net.send(NetCommand::InventoryItemsKnown {
+                        items,
+                        owner: self.world.agent_id,
+                    });
+                }
+            }
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
             // (more per frame in gaming mode's slow loop, app/gaming_mode.rs;
@@ -7703,6 +7716,15 @@ impl App {
 
     pub fn requested_vr_restart(&self) -> Option<crate::camera::VrView> {
         self.restart_into_vr.then_some(self.vr_requested_mode)
+    }
+
+    /// Just before the app is dropped at exit: leaves the world's objects,
+    /// the scene's meshes and egui's texture copies to the system instead of
+    /// freeing them one by one on the main thread (`ObjectStore::leak_at_exit`).
+    pub fn leak_session_at_exit(&mut self) {
+        self.world.leak_at_exit();
+        self.scene.leak_at_exit();
+        self.egui_shadow.leak_at_exit();
     }
 
     fn record_inventory_logout(&mut self) {
@@ -17653,7 +17675,11 @@ impl App {
 
     /// Places › Favorites, the first tab.
     fn open_places_favorites(&mut self) {
-        self.places_ui.tab = 0;
+        // open_tab, not the field alone: Aurora's look follows its own
+        // source, which stayed on the last list shown (#4771); a place
+        // profile left open would hide the list
+        self.world.place_details.close_panel();
+        self.places_ui.open_tab(ui::places::TAB_FAVORITES);
         ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
     }
 
@@ -20462,6 +20488,7 @@ impl App {
                     ui::chat::toasts(
                         &ctx,
                         &p,
+                        &mut self.emoji,
                         &self.world,
                         &self.avatar_pics,
                         &mut self.chat_ui.wanted_names,

@@ -1710,8 +1710,20 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
             } else {
                 aurora_i18n::tr!("ui-profile-add-friend")
             };
-            ui.add_enabled(false, egui::Button::new(friend_label).min_size(size))
-                .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
+            // LLPanelProfileSecondLife::onCommitMenu, "add_friend" and
+            // "remove_friend" (indra/newview/llpanelprofile.cpp): both open
+            // their confirmation (LLAvatarActions::requestFriendshipDialog,
+            // removeFriendDialog); updateButtons shows one or the other and
+            // never disables it
+            if ui.add(egui::Button::new(friend_label).min_size(size)).clicked() {
+                use super::context::CtxAction;
+                let action = if is_friend {
+                    CtxAction::RemoveFriend(id)
+                } else {
+                    CtxAction::AddFriend(id)
+                };
+                super::context::request(ui.ctx(), action);
+            }
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let bw = Vec2::new(col_w - 34.0, 20.0);
@@ -3089,6 +3101,54 @@ mod tests {
                 "restricted {restricted}: {} request(s)",
                 requests.len()
             );
+            assert!(actions.is_empty());
+        }
+    }
+
+    /// LLPanelProfileSecondLife::onCommitMenu (indra/newview/llpanelprofile.cpp):
+    /// the button asks for the friendship of a stranger and for the removal
+    /// of a friend; both go through the shared actions, which confirm first.
+    #[test]
+    fn classic_profile_friend_button_adds_a_stranger_and_removes_a_friend() {
+        use crate::ui::context::{CtxAction, take_requests};
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = Uuid::from_u128(7);
+        let p = crate::theme::Theme::default().palette();
+        let w = Window::new(id);
+        let mut actions = Vec::new();
+        let mut frames = Frames::new();
+        for is_friend in [false, true] {
+            let label = if is_friend {
+                aurora_i18n::tr!("ui-profile-remove-friend")
+            } else {
+                aurora_i18n::tr!("ui-profile-add-friend")
+            };
+            let mut point = egui::Pos2::ZERO;
+            for _ in 0..2 {
+                let texts = frames.run(Vec::new(), |ui| action_buttons(ui, &p, &world, &w, is_friend, &mut actions));
+                point = painted(&texts, label).rect.center();
+            }
+            for pressed in [true, false] {
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    |ui| action_buttons(ui, &p, &world, &w, is_friend, &mut actions),
+                );
+            }
+            let requests = take_requests(&frames.ctx);
+            match requests.as_slice() {
+                [CtxAction::RemoveFriend(target)] if is_friend => assert_eq!(*target, id),
+                [CtxAction::AddFriend(target)] if !is_friend => assert_eq!(*target, id),
+                other => panic!("friend {is_friend}: {} request(s)", other.len()),
+            }
             assert!(actions.is_empty());
         }
     }

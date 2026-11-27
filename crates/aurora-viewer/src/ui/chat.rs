@@ -4379,7 +4379,11 @@ pub fn show(
         .attention(conversations_waiting(world))
         .attention_flash(st.button_flash.bar(ctx.input(|i| i.time)))
         .steady_size();
-    if st.contacts {
+    if minimized {
+        // Not on the minimized bar: nothing shows to detach, and the
+        // window's name keeps room (the human's report of 2026-11-23 on
+        // #4756: "Convers…").
+    } else if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
     } else {
@@ -5227,6 +5231,7 @@ impl Held {
 pub fn toasts(
     ctx: &egui::Context,
     p: &Palette,
+    emoji: &mut super::emoji::Emoji,
     world: &World,
     pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
     want_names: &mut HashSet<uuid::Uuid>,
@@ -5244,6 +5249,7 @@ pub fn toasts(
         console::cards(
             ctx,
             p,
+            emoji,
             world,
             pics,
             want_names,
@@ -5348,7 +5354,7 @@ pub fn toasts(
                         let galley = visual.galley.clone();
                         let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
                         let painter = ui.painter();
-                        painter.galley(rect.min, galley.clone(), p.ink);
+                        emoji.paint_galley(painter, rect.min, galley.clone(), size, p.ink, shown);
                         // the sender's picture (or the object cube) in the room
                         // left before its name
                         if let Some((at, who)) = sender {
@@ -7223,7 +7229,8 @@ mod tests {
         crate::theme::Theme::default().apply(&ctx, 1.0);
         let p = crate::theme::Theme::default().palette();
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1536.0, 864.0));
-        let frame = |events: Vec<egui::Event>| {
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut frame = |events: Vec<egui::Event>| {
             let mut out = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(screen),
@@ -7234,6 +7241,7 @@ mod tests {
                     toasts(
                         ui.ctx(),
                         &p,
+                        &mut emoji,
                         &world,
                         &HashMap::new(),
                         &mut HashSet::new(),

@@ -1342,9 +1342,18 @@ mod tests {
         );
         // everything selected, as Ctrl+A
         h.st.selection = h.st.flat.order.iter().copied().collect();
-        h.run(vec![egui::Event::Text("demo OBJ".into())]);
+        // "demo OBJ" in English: the demo object's first word and the start
+        // of its last, any case, as this PC's catalogue names it (the demo
+        // names go through `tr!`: "Objet de démonstration" in French)
+        let object = aurora_i18n::tr!("common-demo-object").to_lowercase();
+        let typed = match object.split_whitespace().collect::<Vec<_>>().as_slice() {
+            [first, .., last] => format!("{first} {}", last.chars().take(3).collect::<String>().to_uppercase()),
+            _ => object.clone(),
+        };
+        let words: Vec<String> = typed.to_lowercase().split_whitespace().map(str::to_owned).collect();
+        h.run(vec![egui::Event::Text(typed.clone())]);
         h.frames(3);
-        assert_eq!(h.st.folder_filter.as_deref(), Some("demo OBJ"), "the field has the keyboard");
+        assert_eq!(h.st.folder_filter.as_deref(), Some(typed.as_str()), "the field has the keyboard");
         assert!(
             !h.st.selection.is_empty() && h.st.selection.iter().all(|id| h.st.flat.order.contains(id)),
             "what the filter hides leaves the selection"
@@ -1363,7 +1372,7 @@ mod tests {
                 .collect();
         assert!(!names.is_empty() && names.len() < all, "{names:?}");
         assert!(
-            names.iter().all(|n| n.contains("demo") && n.contains("obj")),
+            names.iter().all(|n| words.iter().all(|w| n.contains(w.as_str()))),
             "every word, any case: {names:?}"
         );
         // a folder with nothing that matches says so; the filter stays open
@@ -1579,7 +1588,24 @@ mod tests {
         // Recent, Worn, Favorites and a search list results, not a folder
         let mut h = Harness::new(WIDE_SIZE);
         h.frames(3);
-        h.st.search = "Demo".into();
+        // the word the demo items' names share in this PC's catalogue
+        // ("Demo", "démonstration"; "デモ", their common start, in Japanese):
+        // the names go through `tr!`
+        let object = aurora_i18n::tr!("common-demo-object");
+        let script = aurora_i18n::tr!("common-demo-script").to_lowercase();
+        h.st.search = object
+            .split_whitespace()
+            .find(|w| w.chars().count() > 2 && script.contains(&w.to_lowercase()))
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                object
+                    .chars()
+                    .zip(script.chars())
+                    .take_while(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
+                    .map(|(a, _)| a)
+                    .collect()
+            });
+        assert!(!h.st.search.is_empty());
         h.frames(6);
         let drawn: Vec<Rect> = (8000..8300u128)
             .filter_map(|n| rows::tests::drawn(&h.ctx, Uuid::from_u128(n)))

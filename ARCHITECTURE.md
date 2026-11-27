@@ -239,6 +239,41 @@ scales tighten the bound, and 16-bit upload quantization has its own allowance.
 `imports::mesh` uses Lowest first for automatic collision;
 explicit collision sources and convex decomposition retain their existing path.
 
+`Inventory::retrying_folders` owns background cooldowns. The walker checks each
+target before retrying it. Open views retry after ten seconds through
+`Inventory::request_shown`, honoring cooldown ownership and folder limits.
+An explicit folder open can issue an interactive read during cooldown;
+the walker reconciles that result before resuming. Bulk demand requests only
+unknown folders. The watchdog and subtree splitting from #4094 still handle
+unanswered or incomplete reads, while cooldown-owned folders stay with
+their pending retry.
+
+`session/inventory_reads.rs` coalesces ordinary and attachment AIS reads by
+owner and item within a session and admits up to 16 at once, separately
+from background folder reads. An attachment consumer promotes a queued
+ordinary read. Each single-item HTTP attempt has a 180-second deadline.
+The queue handles retry pacing with per-key 2/10/60-second cooldowns.
+On 429 or 503 the item's capability also pauses new single-item starts
+for the server's Retry-After (up to 60 seconds, at least 2 seconds).
+Only newly discovered records in a version-checked folder snapshot acknowledge
+redundant ordinary reads. A background reply that arrives after its read has
+been retired cannot apply snapshots or cancel item reads. Shared successes
+use attachment parent repair once and release both claims. Pending AIS reads pause during seed changes
+and resume on the new capability; stale replies cannot classify originals.
+`CheckInventoryOffer` uses a separate fresh server read and private reply.
+
+Outfit restoration keeps still-linked originals pending past the initial
+metadata grace period. Accepted late metadata resumes attachment restoration.
+Explicit detaches, confirmed absence and authoritative outfit changes cancel
+pending intent. Late attachments have independent retry windows; after the
+initial restore, passive pending checks run at most once per second. A
+deliberate wear may omit an exhausted original when the background walk is
+idle. #4094's bounded ten-minute reread rounds still run; exhausted reads
+never mark an original as missing or unlink it from the saved outfit.
+The restorer requests due rereads for still-linked originals even when
+Appearance is closed. An entirely unreadable outfit cannot replace the
+worn outfit through the partial-wear fallback.
+
 `ui/chat/select/document.rs` scopes the transcript's rich-text selection to
 group notice bodies, in group profiles and notification cards. It retains
 selection for the Copy menu without replacing clickable links or emoji.
@@ -3432,6 +3467,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `aurora-net/src/inventory/operations.rs`, `aurora-net/src/inventory/thumbnail.rs`, `aurora-net/src/session/inventory_upload.rs` | AIS mutations with read-back, remapping of the UUIDs assigned by the server, UDP creations / copies and acknowledgements with expiry, saving of the documents through capabilities; AssetUpload / Xfer upload of clothing before the item is created; free thumbnails through InventoryThumbnailUpload, JPEG2000 POST then AIS and read-back |
 | `aurora-assets/src/j2k/encode.rs` | Memory-bounded OpenJPEG encoder, square RGB / RGBA thumbnails of 64 to 256 pixels and alpha preserved |
 | `logging.rs`, `cache.rs`, `cache_key.rs`, `credentials.rs` | Logs (written by the `aurora-log-write` thread from a bounded queue, so a stalled disk never holds a thread that logs, and flushed to the disk once per second, so a frozen and reset PC keeps them; the capture of the lines one thread logs, and in memory the last warnings and the recent output of the diagnostics, for the Dev Toolbox), disk cache (`cache/store`; `cache_key.rs` keeps its key in the OS vault), remembered password (OS vault) |
+| `open_files.rs` | The open-file limit on Linux and macOS (#2970): at startup the soft limit is raised to the hard one (macOS: at most `OPEN_MAX`, 10240), and both are logged (`open files:`). A desktop session's 1024 ran out in a busy region, and the drivers' refused descriptors came back as a GPU device loss |
 | `open_path.rs` | Files and folders handed to the system's file manager or viewer (`xdg-open`, `open`, `explorer`), the launcher waited for on a short thread so that none stays a zombie process |
 | `dev_toolbox/`, `ui/dev_toolbox.rs` | The Dev Toolbox (Advanced › Dev Toolbox, Ctrl+Alt+D; the former Preferences › Debug page): every tool with its stable identifier (J2, L1, R3…), kind, icon and group, the layout the user arranges and its saved form (new tools join their group, removed ones stay out), the anonymisation of what is copied ("Avatar 1", "Me") and the header of a copy (`dev_toolbox/`); the window: target bar, groups dragged in Customize, "Send a diagnostic", the last warnings (`ui/dev_toolbox.rs`). The agents' guide is docs/DEV_TOOLBOX.md; `AURORA_DEMO_TOOLBOX` |
 | `world/rlva_selftest.rs`, `world/rlva_selftest/`, `app/rlva_selftest.rs`, `ui/rlva_selftest.rs` | The RLVa self-test (Dev Toolbox T1, development builds only): the runner and its step types, the inventory and relay factory, the guard of what a case may send, the phase 1 and phase 2 cases, the cleanup, the report and the offline simulator (`world/`); the tool, the frame step and the hand-over to the send and receive paths (`app/rlva_selftest.rs`); the confirmation dialog and the report window (`ui/rlva_selftest.rs`). `AURORA_DEMO_RLVA=selftest` |

@@ -7024,6 +7024,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
 | `AURORA_DEMO_GPU_RESTART_FAIL=1` | After a GPU loss, the first start of the new renderer fails as on a card lost again while it starts |
+| `AURORA_DEMO_GPU_DROP_FAIL=1` | After a GPU loss, dropping the lost renderer meets wgpu's queue panic on its last wait |
 | `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
 | `AURORA_GPU_RECOVERY=1` / `=0` | Recover from a GPU device loss on a new window and device, or close, whatever Preferences › Graphics says (on by default) |
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
@@ -7066,7 +7067,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
-| `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes[:lines]\|stagger\|legacy:stagger` | Nearby chat above the chat bar, optionally limited to 0–50 wrapped text lines; `stagger` says the lines one at a time |
+| `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes\|emoji[:lines]\|stagger\|legacy:stagger` | Nearby chat above the chat bar, optionally limited to 0–50 wrapped text lines; `emoji` shows colour emoji in a sender's name and line; `stagger` says the lines one at a time |
 | `AURORA_DEMO_MUTED_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:hidden\|collapsed\|greyed]` | A blocked resident talking in nearby chat: the history hides, folds or greys the lines |
 | `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines][:inspect][:unnamed\|spoof]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact; `unnamed` an object without a name imitating a resident, `spoof` the same marked "(no name)" |
 | `AURORA_DEMO_CHAT_RANGE=aurora\|compact\|bubbles\|legacy\|lines` | Residents and objects talking from near and from beyond the say range, the far lines dimmed |
@@ -9799,6 +9800,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1)`, the viewer waits 2 s, starts the renderer again, and the session
   goes on with the "The graphics card was reset" notice. No crash report and no
   "Rust panic". Without it, that panic ended the process.
+- **`AURORA_DEMO_GPU_DROP_FAIL=1`**, with `AURORA_DEMO=1` and
+  `AURORA_DEMO_GPU_LOST` (#3915): when the recovery drops the lost
+  renderer, its drop panics as wgpu's queue does when its last wait fails
+  with another error than "lost" ("Unexpected error while waiting for queue
+  idle on drop"). The guarded drop takes it: the log says
+  `GPU recovery: wgpu failed dropping the lost renderer, taken` (once,
+  with where it panicked), then `GPU recovery: new window and renderer`,
+  and the session goes on with the "The graphics card was reset" notice.
+  No crash report and no "Rust panic". Without it, that panic ended the
+  process. With `AURORA_DEMO_GPU_STALL=<frame>:<seconds>` just before the
+  loss (`AURORA_DEMO_GPU_STALL=400:10 AURORA_DEMO_GPU_LOST=401`), the
+  render thread is still held when the recovery drops the renderer: the
+  log says `render thread still in the GPU after 3s: left behind`, the new
+  renderer comes, and when the hold ends `render thread back from the GPU
+  after it was left behind: its backend drops now` and the same guarded
+  line follow; the session goes on, no crash report, no abort.
 - **`AURORA_DEMO_GPU_LOST=<frame>`**, with `AURORA_DEMO=1`: the GPU device is
   taken as lost at that frame, as the device-lost callback does after a
   driver reset (the log says `GPU device lost (Unknown): AURORA_DEMO_GPU_LOST
@@ -9954,10 +9971,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   links the release page, and nothing is downloaded or replaced.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CHAT_LINES=1|legacy|volumes[:lines]`**: nearby chat said at the arrival,
+- **`AURORA_DEMO_CHAT_LINES=1|legacy|volumes|emoji[:lines]`**: nearby chat said at the arrival,
   shown above the chat bar with the Conversations window closed: two lines
   of one resident, an emote, an object's line, a long line with a link, a
-  shout. Preferences › Chat sets the maximum wrapped text lines (40 by
+  shout. `emoji` instead says one line whose sender's name and text hold
+  colour emoji (🫶 ❤️ 😀 👍), to check that they are pictures and not
+  egui's "no glyph" square in both styles (`legacy:emoji` for the Legacy
+  one-line look). Preferences › Chat sets the
+  maximum wrapped text lines (40 by
   default, 0–50; 0 hides them), keeping the newest whole messages. Card
   headers do not count toward the text limit. Append `:3` to any mode to
   test three lines, or `:0` to hide them, without saving the override.
