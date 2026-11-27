@@ -825,7 +825,9 @@ queue keeps them off each other's PRs.
   "I will review it once CI is green": release the claim instead.
 - **Approved PRs**: the queue leaves out a PR you approved, so nobody else
   merges it. `-ToMerge` lists yours that nobody queued: offer their merge
-  with the next reviews.
+  with the next reviews. A review names the head it read (``Reviewed head:
+  `<sha>` ``): an approval counts for the merge of that head only, and a
+  head pushed since (a merge of main included) is re-reviewed first.
 - On Linux the agents run it with `pwsh ./scripts/review-queue.ps1`. The
   Claude Code routine `.claude/skills/review-next` follows these steps.
 

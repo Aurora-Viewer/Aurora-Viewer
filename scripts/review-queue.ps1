@@ -32,8 +32,9 @@
 
 .EXAMPLE
     ./scripts/review-queue.ps1 -ToMerge -Json
-    The PRs you approved (✅) that nobody queued yet, with their CI state:
-    the queue leaves them out, so the reviewer offers the merge.
+    The PRs you approved (✅) that nobody queued yet, with their CI state and
+    whether your approval names their head commit: the queue leaves them
+    out, so the reviewer offers the merge (of a reviewed head only).
 #>
 param(
     [int]$Top = 20,
@@ -66,7 +67,7 @@ $me = if ($As) { $As } else { [string](Invoke-Gh api user --jq .login) }
 # double quote in the queries: PowerShell 5.1 drops the inner quotes of a
 # native argument.
 $prFields = @'
-        number title url body state isDraft createdAt mergeable
+        number title url body state isDraft createdAt mergeable headRefOid
         author { __typename login }
         labels(first: 20) { nodes { name } }
         mergeQueueEntry { id }
@@ -77,7 +78,7 @@ $prFields = @'
         commits(last: 1) { nodes { commit { statusCheckRollup { state } checkSuites(first: 20) { nodes { conclusion } } } } }
         authored: commits(last: 30) { nodes { commit { committedDate parents { totalCount } } } }
         comments(last: 60) { nodes { author { login } authorAssociation createdAt body } }
-        reviews(last: 30) { nodes { author { login } authorAssociation state submittedAt } }
+        reviews(last: 30) { nodes { author { login } authorAssociation state submittedAt commit { oid } } }
 '@
 
 # One PR, through the same fields, or $null when there is no such PR. A
@@ -183,13 +184,17 @@ $entries = @(Get-ReviewQueue $items $me (Get-Date).ToUniversalTime())
 $queue = @(Get-OrderedReviewQueue $entries)
 $approvedList = @(Get-ApprovedToMerge $entries $me)
 $ciText = @{ Fail = 'CI red'; Approval = 'CI waits for Approve and run'; Run = 'CI running'; Ok = 'CI green'; None = 'no CI yet' }
-function Format-MergeState($Entry) { $ciText[[string]$Entry.Ci] + $(if ($Entry.Conflict) { ' · conflict with main' } else { '' }) }
+function Format-MergeState($Entry) {
+    $ciText[[string]$Entry.Ci] + $(if ($Entry.Conflict) { ' · conflict with main' } else { '' }) +
+        $(if (-not $Entry.OnHead) { ' · head not named in the review: re-review it first' } else { '' })
+}
 
 if ($ToMerge) {
     if ($Json) {
         $list = @($approvedList | ForEach-Object {
             [pscustomobject]@{ number = $_.Number; title = $_.Title; author = $_.Author; url = $_.Url
-                approved_at = $_.Since.ToString('o'); ci = [string]$_.Ci; conflict = [bool]$_.Conflict }
+                approved_at = $_.Since.ToString('o'); head = [string]$_.Head; head_reviewed = [bool]$_.OnHead
+                ci = [string]$_.Ci; conflict = [bool]$_.Conflict }
         })
         ConvertTo-Json -InputObject $list -Depth 3
         exit 0
@@ -232,7 +237,7 @@ if ($queue.Count) {
 $out = @($entries | Where-Object { $_.Tier -eq 0 })
 if ($approvedList.Count) {
     Write-Host ''
-    Write-Host "Approved by you, to merge ($($approvedList.Count)): ./scripts/merge-pr.ps1 -Pr <n> once CI is green" -ForegroundColor Green
+    Write-Host "Approved by $me, to merge ($($approvedList.Count)): ./scripts/merge-pr.ps1 -Pr <n> once CI is green" -ForegroundColor Green
     foreach ($e in $approvedList) { Write-Host (' {0,-6} {1}  ({2})' -f "#$($e.Number)", (Format-Cut $e.Title 60), (Format-MergeState $e)) }
 }
 $theirs = @($out | Where-Object { $_.SkipKind -in 'Claimed', 'StaleClaim', 'Held' })

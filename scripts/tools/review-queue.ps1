@@ -53,6 +53,19 @@ function Get-ReviewCommentKind([string]$Body) {
     'Decision'
 }
 
+# Whether a review comment names the head commit $Head (its first 7 to 40
+# characters, as the review routine writes "Reviewed head: `<sha>`"): an
+# approval counts for the merge only on the head it read. A commit date is
+# set by its author's git and a merge of main is no answer, so the date
+# alone cannot tell (a commit made before the approval, pushed after it).
+function Test-HeadNamed([string]$Body, [string]$Head) {
+    if (-not $Head) { return $false }
+    foreach ($m in [regex]::Matches($Body, '\b[0-9a-f]{7,40}\b')) {
+        if ($Head.StartsWith($m.Value)) { return $true }
+    }
+    $false
+}
+
 # A crash in a title: the word, not "crashpad", nor the crash window, its
 # reports and their triage, nor a "panic button".
 function Test-CrashTitle([string]$Title) {
@@ -108,7 +121,10 @@ function ConvertTo-ReviewItem($Node, $Issues) {
             $events += [pscustomobject]@{ Kind = 'Answer'; By = $by; At = (ConvertTo-UtcTime $c.createdAt) }
         } elseif ($by -and $by -ne 'github-actions' -and (Test-PrSlotTeam ([string]$c.authorAssociation))) {
             $kind = Get-ReviewCommentKind ([string]$c.body)
-            if ($kind) { $events += [pscustomobject]@{ Kind = $kind; By = $by; At = (ConvertTo-UtcTime $c.createdAt) } }
+            if ($kind) {
+                $events += [pscustomobject]@{ Kind = $kind; By = $by; At = (ConvertTo-UtcTime $c.createdAt)
+                    OnHead = (Test-HeadNamed ([string]$c.body) ([string]$Node.headRefOid)) }
+            }
         }
     }
     foreach ($r in $Node.reviews.nodes) {
@@ -119,7 +135,10 @@ function ConvertTo-ReviewItem($Node, $Issues) {
             $events += [pscustomobject]@{ Kind = 'Answer'; By = $by; At = (ConvertTo-UtcTime $r.submittedAt) }
         } elseif ($by -and (Test-PrSlotTeam ([string]$r.authorAssociation))) {
             $kind = switch ([string]$r.state) { 'APPROVED' { 'Approved' } 'CHANGES_REQUESTED' { 'Changes' } default { $null } }
-            if ($kind) { $events += [pscustomobject]@{ Kind = $kind; By = $by; At = (ConvertTo-UtcTime $r.submittedAt) } }
+            if ($kind) {
+                $events += [pscustomobject]@{ Kind = $kind; By = $by; At = (ConvertTo-UtcTime $r.submittedAt)
+                    OnHead = ($r.commit -and [string]$r.commit.oid -eq [string]$Node.headRefOid) }
+            }
         }
     }
     foreach ($c in $Node.authored.nodes) {
@@ -160,6 +179,7 @@ function ConvertTo-ReviewItem($Node, $Issues) {
     }
     [pscustomobject]@{
         Number = [int]$Node.number; Title = [string]$Node.title; Url = [string]$Node.url
+        Head = [string]$Node.headRefOid
         Author = $author; Bot = ([string]$Node.author.__typename -eq 'Bot') -or $author.EndsWith('[bot]') -or $author.StartsWith('app/')
         Draft = [bool]$Node.isDraft; Labels = $labels
         Queued = [bool]$Node.mergeQueueEntry -or [bool]$Node.autoMergeRequest
@@ -181,7 +201,7 @@ function ConvertTo-ReviewItem($Node, $Issues) {
 #   WaitAuthor  changes asked, no answer yet
 #   Decision    reviewed, waiting on the team (hand test, product choice)
 #   Approved    approved, nothing new since: to merge, not to review
-# Reviewer: who wrote the last review.
+# Reviewer: who wrote the last review; OnHead: it names the PR's head commit.
 function Get-ReviewState($Item) {
     $reviews = @($Item.Events | Where-Object { $_.Kind -in 'Approved', 'Changes', 'Decision' })
     if (-not $reviews.Count) { return [pscustomobject]@{ State = 'Unreviewed'; Reviewer = $null; Since = $Item.Created } }
@@ -190,9 +210,9 @@ function Get-ReviewState($Item) {
     $answers = @($Item.Events | Where-Object {
         $_.At -gt $last.At -and ($_.Kind -eq 'Commit' -or ($_.Kind -eq 'Answer' -and $last.Kind -ne 'Approved'))
     })
-    if ($answers.Count) { return [pscustomobject]@{ State = 'ReReview'; Reviewer = $last.By; Since = $answers[0].At } }
+    if ($answers.Count) { return [pscustomobject]@{ State = 'ReReview'; Reviewer = $last.By; Since = $answers[0].At; OnHead = $false } }
     $state = switch ($last.Kind) { 'Approved' { 'Approved' } 'Changes' { 'WaitAuthor' } default { 'Decision' } }
-    [pscustomobject]@{ State = $state; Reviewer = $last.By; Since = $last.At }
+    [pscustomobject]@{ State = $state; Reviewer = $last.By; Since = $last.At; OnHead = [bool]$last.OnHead }
 }
 
 # The claims that hold, oldest first: a claim holds until its maintainer
@@ -261,7 +281,7 @@ function Get-ReviewQueue($Items, [string]$Me, [datetime]$Now) {
             Rank = $(if ($item.Crash) { 0 } elseif ($item.Fix) { 1 } else { 2 })
             Since = $review.Since; State = $review.State; Reviewer = $review.Reviewer
             Mine = $mine; Owner = $owner; Skip = $skip; SkipKind = $kind; Notes = $notes
-            Ci = $item.Ci; Conflict = $item.Conflict
+            Ci = $item.Ci; Conflict = $item.Conflict; Head = $item.Head; OnHead = [bool]$review.OnHead
         }
     }
 }
@@ -290,7 +310,8 @@ function Get-EarlierClaim($Item, [string]$Me) {
 # The PRs $Me approved (their last review is a ✅ verdict or a GitHub
 # approval, nothing new since) and nobody queued yet: the queue leaves them
 # out, and the reviewer offers their human the merge (AGENTS.md section 11,
-# the review-next routine). Oldest approval first.
+# the review-next routine), but only of the head the approval names
+# (OnHead); another head is re-reviewed first. Oldest approval first.
 function Get-ApprovedToMerge($Entries, [string]$Me) {
     @($Entries | Where-Object { $_.SkipKind -eq 'Approved' -and $_.Reviewer -eq $Me } | Sort-Object Since, Number)
 }

@@ -18,10 +18,11 @@ function New-Node([int]$Number, [string]$Title = 'feat(ui): something', [string]
     [string[]]$Labels = @(), [object[]]$Comments = @(), [object[]]$Reviews = @(), [object[]]$Commits = @(, @(200, 1)),
     [string]$Rollup = 'SUCCESS', [string[]]$Suites = @('SUCCESS'), [string]$Body = 'No issue',
     [object[]]$Closing = @(), [string[]]$Assignees = @(), [object[]]$Assigned = @(),
-    [switch]$Draft, [switch]$Queued, [switch]$Bot, [double]$CreatedHoursAgo = 300) {
+    [switch]$Draft, [switch]$Queued, [switch]$Bot, [double]$CreatedHoursAgo = 300,
+    [string]$Head = 'abc1234def5678901234567890abcdef12345678') {
     [pscustomobject]@{
         number = $Number; title = $Title; url = "https://example.invalid/pull/$Number"; body = $Body
-        isDraft = [bool]$Draft; createdAt = (At $CreatedHoursAgo); mergeable = 'MERGEABLE'
+        isDraft = [bool]$Draft; createdAt = (At $CreatedHoursAgo); mergeable = 'MERGEABLE'; headRefOid = $Head
         author = [pscustomobject]@{ __typename = $(if ($Bot) { 'Bot' } else { 'User' }); login = $Author }
         labels = [pscustomobject]@{ nodes = @($Labels | ForEach-Object { [pscustomobject]@{ name = $_ } }) }
         mergeQueueEntry = $(if ($Queued) { [pscustomobject]@{ id = 'q' } } else { $null }); autoMergeRequest = $null
@@ -34,7 +35,8 @@ function New-Node([int]$Number, [string]$Title = 'feat(ui): something', [string]
             checkSuites = [pscustomobject]@{ nodes = @($Suites | ForEach-Object { [pscustomobject]@{ conclusion = $_ } }) } } }) }
         authored = [pscustomobject]@{ nodes = @($Commits | ForEach-Object { [pscustomobject]@{ commit = [pscustomobject]@{ committedDate = (At $_[0]); parents = [pscustomobject]@{ totalCount = $_[1] } } } }) }
         comments = [pscustomobject]@{ nodes = @($Comments | ForEach-Object { [pscustomobject]@{ author = [pscustomobject]@{ login = $_[0] }; authorAssociation = $_[1]; createdAt = (At $_[2]); body = $_[3] } }) }
-        reviews = [pscustomobject]@{ nodes = @($Reviews | ForEach-Object { [pscustomobject]@{ author = [pscustomobject]@{ login = $_[0] }; authorAssociation = $_[1]; submittedAt = (At $_[2]); state = $_[3] } }) }
+        reviews = [pscustomobject]@{ nodes = @($Reviews | ForEach-Object { [pscustomobject]@{ author = [pscustomobject]@{ login = $_[0] }; authorAssociation = $_[1]; submittedAt = (At $_[2]); state = $_[3]
+            commit = [pscustomobject]@{ oid = $(if ($_.Count -gt 4) { $_[4] } else { '0000000000000000000000000000000000000000' }) } } }) }
     }
 }
 function Get-Entry($Node, [string]$Me = 'maya', $Issues = @{}) {
@@ -180,19 +182,33 @@ $order = (Get-OrderedReviewQueue (Get-ReviewQueue $items 'maya' $now) | ForEach-
 Assert-Queue ($order -eq '56,54,55,53,52,57,51,50') "order: claimed, re-reviews (fix first, then longest waiting), crash, fix (oldest first), new; got $order"
 
 # --- approved, to merge ----------------------------------------------------
+$onHead = "## Review`n`n**Verdict: ✅ ready to merge**`n`nReviewed head: ``abc1234de``"
 $nodes = @(
-    (New-Node 60 -Comments @(, @('maya', 'MEMBER', 100, $approved)))                       # maya's ✅
-    (New-Node 61 -Comments @(, @('maya', 'MEMBER', 120, $approved)) -Rollup 'PENDING' -Suites 'ACTION_REQUIRED')  # maya's ✅, CI to approve
-    (New-Node 62 -Comments @(, @('olga', 'MEMBER', 100, $approved)))                       # another maintainer's ✅
-    (New-Node 63 -Comments @(, @('maya', 'MEMBER', 100, $approved)) -Queued)               # already in the merge queue
-    (New-Node 64 -Comments @(, @('maya', 'MEMBER', 100, $approved)) -Commits @(@(200, 1), @(5, 1)))  # a commit since: re-review
-    (New-Node 65 -Reviews @(, @('maya', 'MEMBER', 100, 'APPROVED')))                      # a GitHub approval
+    (New-Node 60 -Comments @(, @('maya', 'MEMBER', 100, $onHead)))                         # maya's ✅ on the head
+    (New-Node 61 -Comments @(, @('maya', 'MEMBER', 120, $onHead)) -Rollup 'PENDING' -Suites 'ACTION_REQUIRED')  # CI to approve
+    (New-Node 62 -Comments @(, @('olga', 'MEMBER', 100, $onHead)))                         # another maintainer's ✅
+    (New-Node 63 -Comments @(, @('maya', 'MEMBER', 100, $onHead)) -Queued)                 # already in the merge queue
+    (New-Node 64 -Comments @(, @('maya', 'MEMBER', 100, $onHead)) -Commits @(@(200, 1), @(5, 1)))  # a commit since: re-review
+    (New-Node 65 -Reviews @(, @('maya', 'MEMBER', 100, 'APPROVED', 'abc1234def5678901234567890abcdef12345678')))  # GitHub approval of the head
+    (New-Node 66 -Comments @(, @('maya', 'MEMBER', 90, $approved)))                        # ✅ naming no head
+    (New-Node 67 -Comments @(, @('maya', 'MEMBER', 90, $onHead)) -Head 'fff0000aaaa1111bbbb2222cccc3333dddd4444')  # pushed after: another head
+    (New-Node 68 -Reviews @(, @('maya', 'MEMBER', 90, 'APPROVED', 'fff0000aaaa1111bbbb2222cccc3333dddd4444')))  # GitHub approval of an older commit
+    (New-Node 69 -Comments @(, @('maya', 'MEMBER', 100, $onHead)) -Labels 'on-hold')       # on hold
+    (New-Node 70 -Comments @(, @('maya', 'MEMBER', 100, $onHead)) -Draft)                  # back to draft
+    (New-Node 71 -Comments @(@('maya', 'MEMBER', 100, $onHead), @('olga', 'MEMBER', 50, $changes)))  # another maintainer asked changes since
+    (New-Node 72 -Comments @(, @('maya', 'MEMBER', 100, $onHead)) -Commits @(@(200, 1), @(5, 2)) -Head '9990000aaaa1111bbbb2222cccc3333dddd4444')  # a merge of main since: a new head
 )
 $items = @($nodes | ForEach-Object { ConvertTo-ReviewItem $_ @{} })
 $merge = @(Get-ApprovedToMerge (Get-ReviewQueue $items 'maya' $now) 'maya')
 $list = ($merge | ForEach-Object { $_.Number }) -join ','
-Assert-Queue ($list -eq '61,60,65') "to merge: your approvals only, oldest first, not queued, not answered since; got $list"
+Assert-Queue ($list -eq '61,60,65,72,66,67,68') "to merge: your approvals only, oldest first, not queued, held, draft nor answered; got $list"
+$reviewed = ($merge | Where-Object { $_.OnHead } | ForEach-Object { $_.Number }) -join ','
+Assert-Queue ($reviewed -eq '61,60,65') "only an approval naming the head counts for the merge (no head named, a later push, a merge of main: re-review); got $reviewed"
 Assert-Queue (($merge | Where-Object { $_.Number -eq 61 }).Ci -eq 'Approval') 'an approved PR keeps its CI state (runs to approve before the merge)'
+Assert-Queue (Test-HeadNamed 'Re-review of head `abc1234`.' 'abc1234def') 'a short sha names the head'
+Assert-Queue (-not (Test-HeadNamed 'Re-review of head `abc123`.' 'abc1234def')) 'six characters name no head'
+Assert-Queue (-not (Test-HeadNamed 'see 1234567 tests' 'abc1234def')) 'another number is not the head'
+Assert-Queue (-not (Test-HeadNamed 'abc1234' '')) 'no head known: not reviewed'
 
 # --- helpers ---------------------------------------------------------------
 $n = (Get-BodyIssueNumbers "Closes #12`nRefs #34`nrefs: #56`nFixes #12`nSee #78") -join ','

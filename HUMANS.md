@@ -130,7 +130,9 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
   queue. A claim with no word from its maintainer for 3 days shows in
   yellow: ask them rather than taking it. The PRs you approved leave the
   queue but nobody else merges them: they are listed under "Approved by
-  you, to merge" (`-ToMerge` alone), and your agents offer you their merge.
+  you, to merge" (`-ToMerge` alone), and your agents offer you their merge
+  if the head is still the one the review names ("Reviewed head:"); after a
+  push, a merge of main included, they review it again first.
   An agent that reviews from the queue approves the outside CI itself
   (unless the PR changes `.github/`, scripts or build files: then it asks
   you), waits for it, posts its review and asks you before any merge.
