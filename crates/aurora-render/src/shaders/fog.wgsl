@@ -298,6 +298,32 @@ fn fog_local_light(p: vec3<f32>, dir: vec3<f32>, frag: vec2<f32>, g: f32) -> vec
     return sum * FOG_LIGHT_GAIN;
 }
 
+// How far a sunlit point of the rays' air looks for a shadow beside it (m,
+// across the light; at least the froxel's size there).
+const RAYS_EDGE_REACH: f32 = 2.0;
+
+// The rays' air glows only where a shadow lies beside it, across the light:
+// 1 beside a full shadow, 0 in the open sunlight. A sunlit air everywhere is
+// a veil (on the demo's plaza, 2026-11-27); the shafts are the light between
+// shadows: through leaves, a window, between buildings, past a shadow's
+// edge. Four taps of the sun's shadow around `p`, across the light's way,
+// turned each frame (the history averages the turns into a ring).
+fn rays_edge(p: vec3<f32>, dist: f32, footprint: f32) -> f32 {
+    let s = frame.sun_dir.xyz;
+    let side = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(s.z) > 0.9);
+    let a0 = normalize(cross(s, side));
+    let b0 = cross(s, a0);
+    let turn = fp.forward.w * 1.5707964;
+    let a = a0 * cos(turn) + b0 * sin(turn);
+    let b = b0 * cos(turn) - a0 * sin(turn);
+    let r = max(RAYS_EDGE_REACH, footprint);
+    var low = fog_sun_shadow(p + a * r, dist);
+    low = min(low, fog_sun_shadow(p - a * r, dist));
+    low = min(low, fog_sun_shadow(p + b * r, dist));
+    low = min(low, fog_sun_shadow(p - b * r, dist));
+    return 1.0 - low;
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn inject(@builtin(global_invocation_id) id: vec3<u32>) {
     if (any(id >= fp.grid.xyz)) { return; }
@@ -336,15 +362,19 @@ fn inject(@builtin(global_invocation_id) id: vec3<u32>) {
     let at = vec3<f32>(p.xy, max(p.z, ground + 0.25));
     // the rays' air: everywhere, rooms included (the sun's shafts through a
     // window), even (no height, no noise: fog.rs `frame_terms`), lit by the
-    // sun or the moon alone through its shadows, scattering more than it
-    // takes (no veil over the scene)
+    // sun or the moon alone, and only beside a shadow (`rays_edge`): the
+    // shafts, not a veil over the sunlit open
     let rays = fp.look.w > 0.0;
     let open = select(fog_open(at), 1.0, rays);
     let sigma = fog_density(at, open, footprint);
     var scatter = vec3<f32>(0.0);
     if (rays) {
-        let g = frame.fog_look[1].w;
-        scatter = fp.look.w * fog_sun(p - cam) * fog_phase(dot(dir, frame.sun_dir.xyz), g) * fog_sun_shadow(p, dist);
+        let lit = fog_sun_shadow(p, dist);
+        if (lit > 0.01) {
+            let g = frame.fog_look[1].w;
+            let edge = rays_edge(p, dist, footprint);
+            scatter = fp.look.w * fog_sun(p - cam) * fog_phase(dot(dir, frame.sun_dir.xyz), g) * lit * edge;
+        }
     } else if (sigma > 1e-7) {
         let g = frame.fog_look[1].w;
         let sky = fog_sky_light() * mix(FOG_SHELTERED_SKY, 1.0, open);

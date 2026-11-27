@@ -5030,7 +5030,7 @@ both open states and the selection count. Capture at frame 620.
 - **Sun and moon rays (`AURORA_SUN_RAYS`)**: Preferences › Graphics ›
   "Sun and moon rays" for this launch only: `<0..1>` their strength
   (0.05 at least), `off` (or `0`) none. They are the fog's volume with a
-  clear air: the sun's light (the moon's at night) through its shadows,
+  clear air: the sun's light (the moon's at night) through its shadows, glowing only beside a shadow,
   no mist, no wisps, no sky light, rooms included, nothing past the
   volume's 128 m nor in the reflections. The weather's fog, when on, takes
   their place: compare with `AURORA_DEMO_FOG=sunset AURORA_FOG=off
