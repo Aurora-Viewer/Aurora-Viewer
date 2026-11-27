@@ -1208,6 +1208,7 @@ mod tests {
             glow_pool: false,
             rez_glow: false,
             system: None,
+            layer: None,
             first_person_hidden: false,
         }
     }

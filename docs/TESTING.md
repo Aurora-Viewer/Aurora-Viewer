@@ -5775,7 +5775,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PANEL_ALPHA=<0..1>` | The face alpha of the plaza's alpha-mode test panels (0.98: 2 % transparency); a transparent emissive mask blends (#4517) |
 | `AURORA_DEMO_MASK_255=<alpha>` | A texture of flat alpha 250-254 on two panels; the one with a Mask of cutoff 255 is hidden; 255: no alpha channel, shown whole (#2276) |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
-| `AURORA_DEMO_COPLANAR_LAYERS=1` | A worn dark layer lying exactly on a worn skin, in eight strips beside our avatar |
+| `AURORA_DEMO_COPLANAR_LAYERS=1` | A worn dark layer lying exactly on a worn skin, in eight strips behind our avatar; `aux`: a blended bake over an add-on's own opaque face |
 | `AURORA_DEMO_VEILS=<n>[,<strings>[,<gap cm>]]` | A hall hung with `n` lace curtains, some crossing the others, and glowing strings among them: order and cost of many blended layers |
 | `AURORA_DEMO_COPLANAR_DECAL=1`, `mask`, `blend` or `layers` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059); `layers`: three blended faces on it and on one another |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
@@ -6046,7 +6046,8 @@ both open states and the selection count. Capture at frame 620.
   floating above the cube, is its bind shape applied without a skeleton.
   The same mesh worn by our avatar hangs down its back.
 - **`AURORA_DEMO_COPLANAR_LAYERS=1`**: one rigged mesh, a 0.5 x 0.8 m
-  plate of eight horizontal strips beside our avatar, worn sixteen times at
+  plate of eight horizontal strips behind our avatar, facing the start
+  camera, worn sixteen times at
   frame 120 (`demo_coplanar_layers.rs`): for each strip a skin copy (the
   upper-body bake) and a dark layer copy showing that strip alone, the
   other faces at texture-entry alpha 0. Both copies of a strip have the
@@ -6055,6 +6056,14 @@ both open states and the selection count. Capture at frame 620.
   (`DrawRecord::set_layer_rank`) puts a worn layer over the skin it lies
   on. Skin-coloured bands, one strip in two, mean the winner follows the
   order of the draw records again. Capture with `AURORA_AA=6` and `3`.
+  `AURORA_DEMO_COPLANAR_LAYERS=aux` shows the add-on of #3461 instead:
+  four strips, each one worn object of two faces with the same triangles,
+  its own dark opaque face and the upper-body bake at 85 % alpha (drawn
+  blended, as an add-on shows an aux channel), the dark face first on even
+  strips. Every strip must be skin-coloured with the dark face faintly
+  through it: a blended face, bake or not, lies over the opaque and masked
+  faces under it (`rigged_layer_rank`). A dark strip means the blended
+  bake ranks under the face it lies on again.
 - **`AURORA_DEMO_COPLANAR_DECAL=1`**: one static mesh, a 3 x 2.4 m panel
   9 m along the start view (`demo_coplanar_decal.rs`), made of two faces
   with the very same triangles, as a road section is a grass base with a
