@@ -496,6 +496,27 @@ fn english_regional_locales_preserve_technical_terms() {
 }
 
 #[test]
+fn persisted_labels_follow_the_selected_catalog_and_its_fallbacks() {
+    use aurora_i18n::{key_of, lookup, select, text};
+
+    const WEARABLE_FAVORITES: &str = "toolbar-command-wearable-favorites";
+    for (locale, label) in [
+        ("en-AU", "Favourite wearables"),
+        ("en", "Favorite wearables"),
+        ("en-GB", "Favourite wearables"),
+        ("en-AU", "Favourite wearables"),
+    ] {
+        select(locale, None);
+        assert_eq!(text(WEARABLE_FAVORITES), label, "{locale}");
+        assert_eq!(lookup(WEARABLE_FAVORITES), Some(label), "{locale}");
+        assert_eq!(key_of(text(WEARABLE_FAVORITES)), Some(WEARABLE_FAVORITES), "{locale}");
+        assert_eq!(lookup("common-apply"), Some("Apply"), "{locale}");
+        assert_eq!(key_of(text("common-apply")), Some("common-apply"), "{locale}");
+        assert_eq!(lookup("unknown-toolbar-label"), None, "{locale}");
+    }
+}
+
+#[test]
 fn english_regional_catalogs_inherit_messages() {
     for (locale, name) in [("en", "English (US)"), ("en-GB", "English (UK)"), ("en-AU", "English (AU)")] {
         assert_eq!(aurora_i18n::text_in(locale, "language-name"), name);
