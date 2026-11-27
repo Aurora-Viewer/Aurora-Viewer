@@ -93,6 +93,7 @@ pub mod spirv_fix;
 pub mod stars;
 pub mod start_progress;
 pub mod stereo_view;
+mod sun_shafts;
 #[cfg(test)]
 mod terrain_tests;
 #[cfg(test)]

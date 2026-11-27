@@ -1808,10 +1808,10 @@ pub struct Settings {
     /// default until tried on modest GPUs, and left alone by the two buttons
     /// of Preferences › Aurora, as the water effects once were.
     pub volumetric_clouds: bool,
-    /// The sun's and the moon's rays through the air (aurora-render fog.rs,
-    /// `FogLook::rays`): their shafts through the shadows, with no visible
-    /// mist. An Aurora feature (the Legacy Viewer has none), off by default;
-    /// Aurora Weather's fog, when on, takes their place (it has its own).
+    /// The sun's and the moon's shafts (aurora-render sun_shafts.rs): the
+    /// sky's light around them streaked across the image, cut by what stands
+    /// in front, with no visible mist. An Aurora feature (the Legacy Viewer
+    /// has none), off by default.
     pub sun_rays: bool,
     /// Their strength, 0.05..1.
     pub sun_rays_strength: f32,

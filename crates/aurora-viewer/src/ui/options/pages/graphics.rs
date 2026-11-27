@@ -84,9 +84,8 @@ fn environment(cx: &mut Cx) {
             tr!("ui-options-colored-sky-ambient-help"),
             &field!(colored_sky_ambient),
         );
-        // an Aurora difference: the sun's and the moon's rays through the
-        // air (aurora-render fog.rs, `FogLook::rays`); the weather's fog,
-        // when on, takes their place
+        // an Aurora difference: the sun's and the moon's shafts
+        // (aurora-render sun_shafts.rs)
         cx.experimental()
             .toggle(tr!("ui-options-sun-rays"), tr!("ui-options-sun-rays-help"), &field!(sun_rays));
         let no_rays = !cx.s.sun_rays;

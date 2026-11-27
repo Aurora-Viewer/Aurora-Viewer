@@ -1856,20 +1856,6 @@ pub struct FogLook {
     /// The south-west corner of the camera's region on the grid (m): the
     /// noise is anchored to the grid, the same wisps at the same place.
     pub region_origin: [f64; 2],
-    /// 0: the fog. Above 0: the sun's and the moon's rays alone, at this
-    /// strength (0..1, Preferences' "Sun and moon rays"): a clear air of
-    /// even density everywhere, rooms included, lit by that light alone
-    /// through its shadows; no sky light, no noise, no height fog past the
-    /// volume nor in the other views. Its tier is a volume's (fog.rs
-    /// `frame_terms`, fog.wgsl `inject`).
-    pub rays: f32,
-}
-
-impl FogLook {
-    /// The sun's and the moon's rays alone (`rays`).
-    pub fn is_rays(&self) -> bool {
-        self.rays > 0.0
-    }
 }
 
 /// Aurora Weather's fog: the ground it pools on, in a square around the
@@ -1996,6 +1982,9 @@ pub struct FrameParams {
     /// Aurora's bloom (bloom.rs): the share of the light over the
     /// threshold spread around the bright parts, 0 = off.
     pub bloom: f32,
+    /// Aurora's sun and moon shafts (sun_shafts.rs): their strength, 0 =
+    /// off (`AURORA_SUN_RAYS` overrides it).
+    pub sun_rays: f32,
     pub water_height: f32,
     pub shadows: bool,
     /// Distance covered by the shadow cascades.

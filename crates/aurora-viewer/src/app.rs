@@ -13438,6 +13438,14 @@ impl App {
             sharpen: self.settings.sharpen,
             glow: self.settings.glow,
             bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
+            sun_rays: if self.settings.sun_rays {
+                self.settings.sun_rays_strength.clamp(
+                    *crate::settings::SUN_RAYS_STRENGTH.start(),
+                    *crate::settings::SUN_RAYS_STRENGTH.end(),
+                )
+            } else {
+                0.0
+            },
             water_height: self.world.main_water_height(),
             shadows: self.photo_shadow_quality() > 0 && matches!(self.screen, Screen::World),
             shadow_distance: Settings::shadow_params_of(self.photo_shadow_quality()).1,
@@ -13510,19 +13518,14 @@ impl App {
             curvature: self.settings.planet_radius(),
             look: None,
             look_thumbs: None,
-            // the weather's fog, else the sun's and the moon's rays alone
-            // (the fog has its own: never both)
-            fog: self
-                .weather_now
-                .fog_look(
-                    self.fog_drift.at,
-                    crate::weather::fog::utc_clock(),
-                    self.world
-                        .main_region
-                        .map_or([0.0; 2], |h| [(h >> 32) as f64, (h & 0xffff_ffff) as f64]),
-                    self.weather_now.quality_index(),
-                )
-                .or_else(|| crate::weather::fog::sun_rays_look(self.settings.sun_rays, self.settings.sun_rays_strength)),
+            fog: self.weather_now.fog_look(
+                self.fog_drift.at,
+                crate::weather::fog::utc_clock(),
+                self.world
+                    .main_region
+                    .map_or([0.0; 2], |h| [(h >> 32) as f64, (h & 0xffff_ffff) as f64]),
+                self.weather_now.quality_index(),
+            ),
             clouds: crate::world::env::clouds_frame(
                 self.settings.volumetric_clouds,
                 self.world.main_region,

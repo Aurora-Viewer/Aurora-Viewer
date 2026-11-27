@@ -1438,9 +1438,6 @@ const FOG_MODE_VOLUME: u32 = 2u;
 // fog_look[2].w bit: the weather's shelter map is drawn and this view's
 // height fog reads it (the main view; the others' shadow atlas may lack it).
 const FOG_MODE_SHELTER: u32 = 4u;
-// fog_look[2].w bit, with FOG_MODE_VOLUME: the volume holds the sun's and
-// the moon's rays alone (fog.rs `MODE_RAYS`), and nothing lies past it.
-const FOG_MODE_RAYS: u32 = 8u;
 // What the fog keeps of its density under cover, and of the sky's light.
 // None of its density: a share of it showed in closed rooms under a thick
 // fog (8 % of a fog thick enough outside veiled a theater 10 m deep, on the
@@ -1454,10 +1451,6 @@ fn fog_mode() -> u32 {
 
 fn fog_shelter_on() -> bool {
     return (u32(frame.fog_look[2].w) & FOG_MODE_SHELTER) != 0u;
-}
-
-fn fog_rays() -> bool {
-    return (u32(frame.fog_look[2].w) & FOG_MODE_RAYS) != 0u;
 }
 
 // How much a point is under cover (1 under a roof, 0 in the open), from the
@@ -1686,9 +1679,6 @@ fn weather_fog(col_in: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
         let air = max(max(fog_air(cam), fog_air(mix(cam, world_pos, 0.5))), fog_air(world_pos));
         return mix(col, col * v.a + v.rgb, smoothstep(0.0, 0.3, air));
     }
-    // the rays' air ends with the volume: past it, no shadows to cut its
-    // shafts, only a veil
-    if (fog_rays()) { return col * v.a + v.rgb; }
     // past its far end: the height fog from there on, behind the volume
     let rel = world_pos - cam;
     let depth = dot(rel, frame.fog_look[3].yzw);

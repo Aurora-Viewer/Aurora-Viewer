@@ -109,59 +109,8 @@ impl WeatherSettings {
             drift: drift.to_array(),
             clock,
             region_origin,
-            rays: 0.0,
         })
     }
-}
-
-/// The volume's quality of the sun's and the moon's rays (aurora-render
-/// fog.rs `grid`: 128 x 72 x 64 froxels to 128 m): theirs, not the
-/// weather window's, which a user of the rays alone never sees.
-const SUN_RAYS_QUALITY: u32 = 1;
-
-/// The sun's and the moon's rays alone (Preferences' "Sun and moon rays",
-/// `strength` 0..1; `AURORA_SUN_RAYS` overrides it), drawn when the
-/// weather's fog is not: the fog has its own (`fog_look` first, so the
-/// light is never scattered twice). None when off.
-pub fn sun_rays_look(on: bool, strength: f32) -> Option<aurora_render::FogLook> {
-    let strength = match env_sun_rays() {
-        Some(env) => env?,
-        None => on.then_some(strength)?,
-    };
-    let s = strength.clamp(
-        *crate::settings::SUN_RAYS_STRENGTH.start(),
-        *crate::settings::SUN_RAYS_STRENGTH.end(),
-    );
-    Some(aurora_render::FogLook {
-        // (a volume's tier: the rays are its shadows; no local lights)
-        tier: aurora_render::FogTier::Volumetric,
-        quality: SUN_RAYS_QUALITY,
-        density: 0.0,
-        from_sky: false,
-        height: *FOG_HEIGHT.end(),
-        color: None,
-        anisotropy: 0.0,
-        drift: [0.0; 2],
-        clock: 0.0,
-        region_origin: [0.0; 2],
-        rays: s,
-    })
-}
-
-/// `AURORA_SUN_RAYS=<0..1>|off`: the sun's and the moon's rays at this
-/// strength, or none, whatever Preferences say (demo captures,
-/// measurements): `Some(Some(s))`, `Some(None)` off, None unset.
-fn env_sun_rays() -> Option<Option<f32>> {
-    static RAYS: std::sync::OnceLock<Option<Option<f32>>> = std::sync::OnceLock::new();
-    *RAYS.get_or_init(|| parse_sun_rays(&std::env::var("AURORA_SUN_RAYS").ok()?))
-}
-
-fn parse_sun_rays(v: &str) -> Option<Option<f32>> {
-    if v.trim().eq_ignore_ascii_case("off") {
-        return Some(None);
-    }
-    let s = v.trim().parse::<f32>().ok().filter(|s| s.is_finite())?;
-    Some((s > 0.0).then_some(s.min(1.0)))
 }
 
 fn srgb_to_linear(c: f32) -> f32 {
@@ -322,35 +271,6 @@ mod tests {
         assert_eq!(parse_colour("1, 0.5, 2"), Some(Some([1.0, 0.5, 1.0])));
         assert_eq!(parse_colour("red"), None);
         assert_eq!(parse_colour("0.1,0.2"), None);
-    }
-
-    #[test]
-    fn the_sun_rays_are_off_by_default_and_a_clear_volume_when_on() {
-        assert!(!crate::settings::Settings::default().sun_rays);
-        // (AURORA_SUN_RAYS unset in the tests)
-        if env_sun_rays().is_none() {
-            assert!(sun_rays_look(false, 0.5).is_none());
-            let look = sun_rays_look(true, 0.5).expect("on");
-            assert!(look.is_rays() && look.tier == aurora_render::FogTier::Volumetric);
-            assert_eq!(look.rays, 0.5);
-            // clamped to the slider's range
-            assert_eq!(
-                sun_rays_look(true, 0.0).expect("on").rays,
-                *crate::settings::SUN_RAYS_STRENGTH.start()
-            );
-            assert_eq!(sun_rays_look(true, 9.0).expect("on").rays, 1.0);
-        }
-        // the weather's fog is never the rays
-        assert!(!on().fog_look(Vec2::ZERO, 0.0, [0.0; 2], 2).expect("on").is_rays());
-    }
-
-    #[test]
-    fn the_sun_rays_variable_reads_a_strength_or_off() {
-        assert_eq!(parse_sun_rays(" off "), Some(None));
-        assert_eq!(parse_sun_rays("0.7"), Some(Some(0.7)));
-        assert_eq!(parse_sun_rays("3"), Some(Some(1.0)));
-        assert_eq!(parse_sun_rays("0"), Some(None));
-        assert_eq!(parse_sun_rays("bright"), None);
     }
 
     #[test]
