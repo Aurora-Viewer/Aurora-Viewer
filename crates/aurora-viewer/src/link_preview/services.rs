@@ -73,7 +73,7 @@ fn on_site(host: &str) -> bool {
 
 /// A page of one of the user's picture sites: https, not the site's root,
 /// read for its `og:image`.
-fn site_page(parsed: &Url) -> Option<(Service, Step)> {
+pub(super) fn site_page(parsed: &Url) -> Option<(Service, Step)> {
     let host = parsed.host_str()?.trim_end_matches('.').to_lowercase();
     if parsed.scheme() != "https" || !parsed.username().is_empty() || segments(parsed).is_empty() || !on_site(&host) {
         return None;

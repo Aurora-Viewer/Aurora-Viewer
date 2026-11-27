@@ -271,6 +271,16 @@ impl Clip {
         (crate::link_trust::classify(&file) == Trust::Trusted).then_some(Self(ClipSource::File(file)))
     }
 
+    /// The media response of a configured site can supply the file type.
+    fn configured_file(url: &str) -> Option<Self> {
+        let parsed = reqwest::Url::parse(url).ok()?;
+        let (_, services::Step::Head(source)) = services::site_page(&parsed)? else {
+            return None;
+        };
+        (parsed.password().is_none() && !waits_for_click(&source) && crate::link_trust::classify(&source) == Trust::Trusted)
+            .then_some(Self(ClipSource::File(source)))
+    }
+
     fn source(&self) -> std::borrow::Cow<'_, str> {
         match &self.0 {
             ClipSource::File(file) => std::borrow::Cow::Borrowed(file),
@@ -445,7 +455,9 @@ fn clip_answer(request: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(&format!("http://127.0.0.1{path}")).ok()?;
     let param = |name: &str| parsed.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned());
     let src = param("src")?;
-    let clip = Clip::of(&src).filter(|c| !c.native_video() && c.source() == src.as_str())?;
+    let clip = Clip::of(&src)
+        .or_else(|| Clip::configured_file(&src))
+        .filter(|c| !c.native_video() && c.source() == src.as_str())?;
     let key = param("k").and_then(|v| v.parse::<u64>().ok())?;
     let volume = param("vol").and_then(|v| v.parse::<u8>().ok()).unwrap_or(100);
     Some(clip_page(&clip, volume, key))
@@ -1003,7 +1015,9 @@ fn configure_requests(trusted_only: bool, https_only: bool, builder: reqwest::Cl
 pub async fn save_video(url: &str, path: &std::path::Path) -> anyhow::Result<()> {
     use std::io::Write;
     const LIMIT: u64 = 512 * 1024 * 1024;
-    let clip = Clip::of(url).ok_or_else(|| anyhow::anyhow!("unrecognized video link"))?;
+    let clip = Clip::of(url)
+        .or_else(|| Clip::configured_file(url))
+        .ok_or_else(|| anyhow::anyhow!("unrecognized video link"))?;
     let direct = clip.download_url().ok_or_else(|| anyhow::anyhow!("not a direct video file"))?;
     let client = aurora_proxy::http_client(|builder| configure_requests(true, true, builder))?;
     let mut response = client
@@ -1227,6 +1241,11 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
             body.and_then(|body| services::from_oembed(service, &body))
         }
         Step::Head(page) => {
+            if service == Service::Site
+                && let Some(media) = configured_direct_media(client, &page).await
+            {
+                return Ok(media);
+            }
             let html = text_head(client, &page, "text/html", "</head>").await.0?;
             if let Some(found) = services::clip_from_head(service, &page, &html) {
                 return Ok(Content::Clip(fetch_found_clip(client, found).await));
@@ -1331,6 +1350,30 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
         source,
         sensitive,
     })
+}
+
+async fn configured_direct_media(client: &reqwest::Client, page: &str) -> Option<Content> {
+    let original = reqwest::Url::parse(page).ok()?;
+    let answer = client.head(page).send().await.ok()?.error_for_status().ok()?;
+    if answer.url().origin() != original.origin() {
+        return None;
+    }
+    let kind = answer.headers().get(reqwest::header::CONTENT_TYPE)?.to_str().ok()?;
+    match kind.split(';').next()?.trim().to_ascii_lowercase().as_str() {
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" => {
+            let picture = fetch_picture(client, page).await.ok()?;
+            Some(Content::Page {
+                picture,
+                source: page.to_owned(),
+                sensitive: false,
+            })
+        }
+        "video/mp4" | "video/webm" => {
+            let clip = Clip::configured_file(page)?;
+            Some(Content::Clip(fetch_clip(client, &clip).await))
+        }
+        _ => None,
+    }
 }
 
 async fn reddit_embed_preview(client: &reqwest::Client, page: &str) -> Option<Content> {
