@@ -51,7 +51,8 @@ decisions of step 6.
      that names the conflicting files (`git merge-tree --write-tree
      --name-only origin/main <head>`) and asks them to say so in a comment
      once it is pushed (a merge of main alone is no answer to the queue).
-     Their answer brings it back as a re-review of the merge.
+     Their answer brings it back as a re-review of the merge. Already asked
+     since your ✅ (a comment of yours after it says so): nothing to post.
    - `ci`: `Approval`, it joins the approval question of step 3, then the
      wait of step 4; `Run` or `None`, wait (step 4); `Fail`, read the failing job (step 4) and ask the author
      to fix it.
@@ -157,8 +158,10 @@ decisions of step 6.
    gh pr comment <n> --repo Aurora-Viewer/Aurora-Viewer --body-file .scratch/review-<n>.md
    ```
 
-   `## Changes requested` when the author has work to do, `## Review` with
-   its verdict line otherwise. Every review names the head it read, on its
+   `## Changes requested` when the author has work to do, a merge of
+   `main` included (a conflict found while reviewing: never a ✅ that asks
+   for it, which would leave the PR approved with nothing to merge);
+   `## Review` with its verdict line otherwise. Every review names the head it read, on its
    own line: ``Reviewed head: `<first 9 characters of the head>` ``; the
    queue offers the merge of that head only. Posting the review ends the
    claim: nothing to release. A point only the human can decide (a product
