@@ -832,52 +832,6 @@ mod tests {
         }
     }
 
-    /// The pictures `paint_galley` draws for a text laid out by egui, and the
-    /// characters of its galley (which must stay the text's).
-    fn painted_galley(text: &str) -> (usize, String) {
-        let mut frames = Frames::new();
-        let mut emoji = Emoji::load();
-        let mut shown = String::new();
-        let draw = |frames: &mut Frames, emoji: &mut Emoji, shown: &mut String| {
-            frames.shapes(Vec::new(), |ui| {
-                let galley = crate::ui::bidi::no_wrap(ui.ctx(), text.to_owned(), egui::FontId::proportional(13.0), egui::Color32::WHITE);
-                shown.clear();
-                shown.push_str(galley.text());
-                emoji.paint_galley(ui.painter(), egui::Pos2::ZERO, galley, 13.0, egui::Color32::WHITE, 1.0);
-            })
-        };
-        // two passes: a picture's texture is only ready for the second one
-        draw(&mut frames, &mut emoji, &mut shown);
-        let shapes = draw(&mut frames, &mut emoji, &mut shown);
-        let textured = |shape: &egui::Shape| match shape {
-            egui::epaint::Shape::Mesh(m) => m.texture_id != egui::TextureId::default(),
-            egui::epaint::Shape::Rect(r) => r.brush.as_ref().is_some_and(|b| b.fill_texture_id != egui::TextureId::default()),
-            _ => false,
-        };
-        (shapes.iter().filter(|s| textured(s)).count(), shown.clone())
-    }
-
-    /// A text egui laid out (a nearby-chat toast, #5097) shows its emoji as
-    /// pictures, and keeps the characters of its galley for the link and
-    /// sender boxes its callers take from it.
-    #[test]
-    fn a_laid_out_line_draws_its_emoji_as_pictures() {
-        let loaded = Emoji::load();
-        assert!(loaded.available(), "the emoji font is loaded");
-        assert!(loaded.has('🫶'), "the font draws the heart hands");
-        assert_eq!(painted_galley("Anya : 🫶").0, 1, "the heart hands is a picture");
-        assert_eq!(painted_galley("🫶").0, 1, "an emoji alone too");
-        assert_eq!(painted_galley("plain words").0, 0, "no emoji, no picture");
-        assert_eq!(painted_galley("❤️").0, 1, "the variation selector is not a second picture");
-        assert_eq!(painted_galley("😀 a 😀").0, 2, "one picture per emoji");
-        let (pictures, shown) = painted_galley("مرحبا 😀");
-        assert_eq!(pictures, 1, "an emoji in a right-to-left line");
-        assert!(
-            shown.contains("مرحبا") && shown.contains('😀'),
-            "the laid-out characters stay the text's: {shown:?}"
-        );
-    }
-
     /// Opened, the picker's search has the keyboard and what is typed
     /// filters; Escape is the picker's alone (nothing drawn after it sees
     /// the key) and the search keeps its text; opened again, the search takes
@@ -925,5 +879,51 @@ mod tests {
         frame(&mut frames, &mut emoji, true, vec![]);
         frame(&mut frames, &mut emoji, true, vec![]);
         assert!(frames.ctx.memory(|m| m.has_focus(egui::Id::unique(SEARCH_ID))));
+    }
+
+    /// The pictures `paint_galley` draws for a text laid out by egui, and the
+    /// characters of its galley (which must stay the text's).
+    fn painted_galley(text: &str) -> (usize, String) {
+        let mut frames = Frames::new();
+        let mut emoji = Emoji::load();
+        let mut shown = String::new();
+        let draw = |frames: &mut Frames, emoji: &mut Emoji, shown: &mut String| {
+            frames.shapes(Vec::new(), |ui| {
+                let galley = crate::ui::bidi::no_wrap(ui.ctx(), text.to_owned(), egui::FontId::proportional(13.0), egui::Color32::WHITE);
+                shown.clear();
+                shown.push_str(galley.text());
+                emoji.paint_galley(ui.painter(), egui::Pos2::ZERO, galley, 13.0, egui::Color32::WHITE, 1.0);
+            })
+        };
+        // two passes: a picture's texture is only ready for the second one
+        draw(&mut frames, &mut emoji, &mut shown);
+        let shapes = draw(&mut frames, &mut emoji, &mut shown);
+        let textured = |shape: &egui::Shape| match shape {
+            egui::epaint::Shape::Mesh(m) => m.texture_id != egui::TextureId::default(),
+            egui::epaint::Shape::Rect(r) => r.brush.as_ref().is_some_and(|b| b.fill_texture_id != egui::TextureId::default()),
+            _ => false,
+        };
+        (shapes.iter().filter(|s| textured(s)).count(), shown.clone())
+    }
+
+    /// A text egui laid out (a nearby-chat toast, #5097) shows its emoji as
+    /// pictures, and keeps the characters of its galley for the link and
+    /// sender boxes its callers take from it.
+    #[test]
+    fn a_laid_out_line_draws_its_emoji_as_pictures() {
+        let loaded = Emoji::load();
+        assert!(loaded.available(), "the emoji font is loaded");
+        assert!(loaded.has('🫶'), "the font draws the heart hands");
+        assert_eq!(painted_galley("Anya : 🫶").0, 1, "the heart hands is a picture");
+        assert_eq!(painted_galley("🫶").0, 1, "an emoji alone too");
+        assert_eq!(painted_galley("plain words").0, 0, "no emoji, no picture");
+        assert_eq!(painted_galley("❤️").0, 1, "the variation selector is not a second picture");
+        assert_eq!(painted_galley("😀 a 😀").0, 2, "one picture per emoji");
+        let (pictures, shown) = painted_galley("مرحبا 😀");
+        assert_eq!(pictures, 1, "an emoji in a right-to-left line");
+        assert!(
+            shown.contains("مرحبا") && shown.contains('😀'),
+            "the laid-out characters stay the text's: {shown:?}"
+        );
     }
 }
