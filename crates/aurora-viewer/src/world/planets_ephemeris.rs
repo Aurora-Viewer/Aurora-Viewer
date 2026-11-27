@@ -12,21 +12,34 @@
 //! the one observer-dependent step, left to [`topocentric`], which works in
 //! the region's frame after that rotation.
 //!
-//! Methods, all published as numbers and formulas only:
+//! Methods, all published as numbers and formulas only (credited in
+//! NOTICE.md, "Bundled assets"):
 //!
-//! - Planets: a published table of approximate Keplerian elements of the
-//!   major planets (public domain; the table valid 1800 AD to 2050 AD,
-//!   elements and rates on the mean ecliptic and equinox of J2000). The
-//!   Earth is the Earth-Moon barycentre of the same table, moved by the
-//!   Moon's share; one light-time step is applied.
-//! - Planet magnitudes: a 2018 planetary magnitude model, its Eqs. 2 to 14
-//!   (the Mars rotation and season terms, at most a few hundredths of a
-//!   magnitude, are left out).
-//! - Moon: a low-precision almanac formula for the Moon's ecliptic
-//!   longitude, latitude and parallax, precessed from the ecliptic of date
-//!   to J2000.
+//! - Planets: the approximate Keplerian elements of the major planets of
+//!   E. M. Standish and J. G. Williams, Table 1, as NASA/JPL Solar System
+//!   Dynamics publishes them (<https://ssd.jpl.nasa.gov/planets/approx_pos.html>;
+//!   public domain; valid 1800 AD to 2050 AD, elements and rates on the
+//!   mean ecliptic and equinox of J2000). The Earth is the Earth-Moon
+//!   barycentre of the same table, moved by the Moon's share; one
+//!   light-time step is applied.
+//! - Planet magnitudes: A. Mallama and J. L. Hilton, "Computing Apparent
+//!   Planetary Magnitudes for The Astronomical Almanac", Astronomy and
+//!   Computing 25 (2018) (<https://arxiv.org/abs/1808.01973>), its Eqs. 2
+//!   to 14 (the Mars rotation and season terms, at most a few hundredths of
+//!   a magnitude, are left out).
+//! - Moon: the Astronomical Almanac's low-precision formulae for the Moon's
+//!   ecliptic longitude, latitude and parallax, as D. G. Simpson (NASA
+//!   Goddard Space Flight Center, 1998) reviews them, Eqs. 1 to 13
+//!   (<https://ntrs.nasa.gov/api/citations/19990040527>), precessed from the
+//!   ecliptic of date to J2000.
 //! - Saturn's and Uranus' poles of rotation (for the rings' tilt and the
-//!   sub-latitudes the magnitudes need): published planetary fact sheets.
+//!   sub-latitudes the magnitudes need) and Uranus' flattening: the NSSDCA
+//!   planetary fact sheets of NASA Goddard Space Flight Center
+//!   (<https://nssdc.gsfc.nasa.gov/planetary/factsheet/saturnfact.html>,
+//!   `uranusfact.html`).
+//!
+//! The tests compare with reference values of NASA/JPL's Horizons system
+//! (ephemeris DE441, `planets_reference.rs`).
 //!
 //! No allocation, no panic: any input is either computed or refused with
 //! `None` (outside 1800 to 2050, or not a number), which the caller treats
