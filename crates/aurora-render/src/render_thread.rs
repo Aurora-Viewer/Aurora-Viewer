@@ -268,11 +268,12 @@ pub(crate) enum Done {
 pub(crate) type KeepAlive = Arc<dyn std::any::Any + Send + Sync>;
 
 /// Where the backend runs. The backend drops before its keep-alive
-/// (field order).
+/// (`Host`'s drop, then field order).
 pub(crate) enum Host {
-    /// On the calling thread (AURORA_RENDER_THREAD=0).
+    /// On the calling thread (AURORA_RENDER_THREAD=0). Dropped by `Host`'s
+    /// drop, through [`drop_backend`].
     Inline(
-        Box<Backend>,
+        std::mem::ManuallyDrop<Box<Backend>>,
         // only held, to drop after the backend
         #[allow(dead_code)] KeepAlive,
     ),
@@ -292,7 +293,7 @@ pub(crate) fn thread_wanted(var: Option<&str>) -> bool {
 impl Host {
     pub fn new(backend: Backend, keep: KeepAlive, threaded: bool) -> Host {
         if !threaded {
-            return Host::Inline(Box::new(backend), keep);
+            return Host::Inline(std::mem::ManuallyDrop::new(Box::new(backend)), keep);
         }
         let (owner, worker) = handoff();
         // the backend goes to the thread; it comes back only if the thread
@@ -311,7 +312,7 @@ impl Host {
             Err(e) => {
                 log::warn!("render thread not started ({e}): rendering on the main thread");
                 match slot.lock().take() {
-                    Some((backend, keep)) => Host::Inline(Box::new(backend), keep),
+                    Some((backend, keep)) => Host::Inline(std::mem::ManuallyDrop::new(Box::new(backend)), keep),
                     // the closure never ran, so the backend is still there;
                     // were it not, every hand-over would report the worker gone
                     None => Host::Thread { owner, thread: None },
@@ -330,11 +331,34 @@ impl Host {
 /// closes without it (the process ends it) instead of hanging at exit.
 const LEAVE_WAIT: Duration = Duration::from_secs(3);
 
+/// Drops the backend; a lost device's through `drop_guarded`, where wgpu's
+/// queue may panic on its last wait (#3915, device_lost.rs).
+/// AURORA_DEMO_GPU_DROP_FAIL=1 (with AURORA_DEMO and AURORA_DEMO_GPU_LOST):
+/// that panic, as wgpu gives it, for the lost backend the recovery drops.
+fn drop_backend(backend: Backend) {
+    let lost = backend.device_lost();
+    let demo_fail = lost && std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_GPU_DROP_FAIL").is_some();
+    crate::device_lost::drop_guarded(lost, move || {
+        if demo_fail {
+            // the backend drops while this unwinds, inside the guard
+            panic!("Unexpected error while waiting for queue idle on drop: Unexpected (AURORA_DEMO_GPU_DROP_FAIL)");
+        }
+        drop(backend);
+    });
+}
+
 impl Drop for Host {
     /// The render thread finishes the frame in its hands, then leaves and
     /// gives the backend back: the surface and the swapchain are destroyed
     /// by the thread that created them, as without a render thread.
     fn drop(&mut self) {
+        if let Host::Inline(backend, _) = self {
+            // SAFETY: taken once, here, and never used again: the host is
+            // being dropped, and its keep-alive drops after this.
+            let backend = unsafe { std::mem::ManuallyDrop::take(backend) };
+            drop_backend(*backend);
+            return;
+        }
         if let Host::Thread { owner, thread } = self {
             owner.close();
             if let Some(t) = thread.take() {
@@ -349,7 +373,7 @@ impl Drop for Host {
                 }
                 match t.join() {
                     Ok(Some((backend, keep))) => {
-                        drop(backend);
+                        drop_backend(backend);
                         drop(keep);
                     }
                     Ok(None) => {}

@@ -7024,6 +7024,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
 | `AURORA_DEMO_GPU_RESTART_FAIL=1` | After a GPU loss, the first start of the new renderer fails as on a card lost again while it starts |
+| `AURORA_DEMO_GPU_DROP_FAIL=1` | After a GPU loss, dropping the lost renderer meets wgpu's queue panic on its last wait |
 | `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
 | `AURORA_GPU_RECOVERY=1` / `=0` | Recover from a GPU device loss on a new window and device, or close, whatever Preferences › Graphics says (on by default) |
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
@@ -9799,6 +9800,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1)`, the viewer waits 2 s, starts the renderer again, and the session
   goes on with the "The graphics card was reset" notice. No crash report and no
   "Rust panic". Without it, that panic ended the process.
+- **`AURORA_DEMO_GPU_DROP_FAIL=1`**, with `AURORA_DEMO=1` and
+  `AURORA_DEMO_GPU_LOST` (#3915): when the recovery drops the lost
+  renderer, its drop panics as wgpu's queue does when its last wait fails
+  with another error than "lost" ("Unexpected error while waiting for queue
+  idle on drop"). The guarded drop takes it: the log says
+  `GPU recovery: wgpu failed dropping the lost renderer` and
+  `GPU device lost: wgpu failed while the lost renderer was dropped, left
+  to the process`, then `GPU recovery: new window and renderer`, and the
+  session goes on with the "The graphics card was reset" notice. No crash
+  report and no "Rust panic". Without it, that panic ended the process.
 - **`AURORA_DEMO_GPU_LOST=<frame>`**, with `AURORA_DEMO=1`: the GPU device is
   taken as lost at that frame, as the device-lost callback does after a
   driver reset (the log says `GPU device lost (Unknown): AURORA_DEMO_GPU_LOST
