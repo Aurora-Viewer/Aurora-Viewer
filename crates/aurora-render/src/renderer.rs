@@ -13763,7 +13763,7 @@ impl Backend {
             let ready = shafts_targets(&mut self.oom, &mut self.sun_shafts, &self.device, &post, post_size, self.lost.get());
             let forward = crate::light_tiles::view_forward(f.view);
             if ready
-                && let Some(sun) = crate::sun_shafts::sun_on_image(unjittered_vp, forward, f.sun_dir)
+                && let Some(sun) = crate::sun_shafts::sun_on_image(unjittered_vp, forward, f.sun_dir, f.sun_visible)
                 && let Some(s) = &self.sun_shafts
                 && let Some(bg) = s.encode(&self.device, &self.queue, &mut encoder, post_bg, post_depth, sun, shafts * sun.fade)
             {

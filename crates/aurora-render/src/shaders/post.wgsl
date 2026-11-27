@@ -363,13 +363,15 @@ fn fs_post(in: Out) -> @location(0) vec4<f32> {
 // light, blurred toward it across the image (Mitchell, GPU Gems 3 ch. 13).
 struct ShaftsParams {
     // xy the light's place on the image (uv, may lie off it), z the gain of
-    // the composite, w this blur pass's reach (share of the way to it)
+    // the composite, w this blur pass's span of the logarithm of the
+    // offset's scale
     sun: vec4<f32>,
     // x width / height, y the sky's radius around the light that feeds the
     // shafts (in heights of the image), z the brightest a sky pixel counts
     // (exposed), w the sky's light under which it feeds none (exposed)
     shape: vec4<f32>,
-    // x how far the shafts reach from the light (in heights of the image)
+    // x how far the shafts reach from the light (in heights of the image),
+    // y the share laid over an object in front of the sky
     reach: vec4<f32>,
 };
 @group(2) @binding(0) var shafts_depth: texture_depth_2d;
@@ -407,14 +409,16 @@ fn fs_shafts_mask(in: Out) -> @location(0) vec4<f32> {
     return vec4<f32>(max(c, vec3<f32>(0.0)) * near * near, 1.0);
 }
 
-// The mean of SHAFT_TAPS taps from the pixel toward the light, over this
-// pass's reach of the way; nothing off the image (its edge would streak).
+// The mean of SHAFT_TAPS taps from the pixel toward the light, its offset
+// from the light scaled evenly in its logarithm over this pass's span (the
+// passes together: 512 even steps, no ghost of a bright gap between the
+// first pass's taps); nothing off the image (its edge would streak).
 @fragment
 fn fs_shafts_blur(in: Out) -> @location(0) vec4<f32> {
-    let step = (shafts.sun.xy - in.uv) * (shafts.sun.w / f32(SHAFT_TAPS));
+    let offset = in.uv - shafts.sun.xy;
     var sum = vec3<f32>(0.0);
     for (var i = 0u; i < SHAFT_TAPS; i++) {
-        let uv = in.uv + step * f32(i);
+        let uv = shafts.sun.xy + offset * exp(-shafts.sun.w * f32(i) / f32(SHAFT_TAPS));
         let inside = all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0));
         let s = textureSampleLevel(shafts_src, hdr_sampler, uv, 0.0).rgb;
         sum += select(vec3<f32>(0.0), s, inside);
@@ -431,5 +435,9 @@ fn fs_shafts_composite(in: Out) -> @location(0) vec4<f32> {
     // fading away from the light: no veil over the far side of the image
     let off = (in.uv - shafts.sun.xy) * vec2<f32>(shafts.shape.x, 1.0);
     let near = clamp(1.0 - length(off) / shafts.reach.x, 0.0, 1.0);
-    return vec4<f32>(px.rgb + s * (shafts.sun.z * near * near / max(exposure(), 1e-6)), px.a);
+    // fainter over what stands in front of the sky (the spill over its edge)
+    let dims = vec2<f32>(textureDimensions(shafts_depth));
+    let q = clamp(vec2<i32>(in.uv * dims), vec2<i32>(0), vec2<i32>(dims) - 1);
+    let over = select(1.0, shafts.reach.y, textureLoad(shafts_depth, q, 0) > 0.0);
+    return vec4<f32>(px.rgb + s * (shafts.sun.z * near * near * over / max(exposure(), 1e-6)), px.a);
 }

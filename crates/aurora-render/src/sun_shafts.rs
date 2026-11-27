@@ -4,10 +4,14 @@
 //! (Mitchell, "Volumetric Light Scattering as a Post-Process", GPU Gems 3,
 //! chapter 13). The sky's pixels near the light are kept at half resolution
 //! (post.wgsl `fs_shafts_mask`, the depth's empty pixels), blurred toward
-//! the light's place on the image in [`PASSES`] passes of [`TAPS`] taps,
-//! each a [`TAPS`]th the reach of the one before (`fs_shafts_blur`: 512
-//! taps' worth for 24), and added to the image before the bloom and the
-//! tone mapping (`fs_shafts_composite`; their GPU time is the bloom's). No medium in the air: the
+//! the light's place on the image in [`PASSES`] passes of [`TAPS`] taps
+//! (`fs_shafts_blur`), and added to the image before the bloom and the tone
+//! mapping (`fs_shafts_composite`; their GPU time is the bloom's). The taps
+//! scale the pixel's offset from the light: evenly in its logarithm, each
+//! pass's steps a [`TAPS`]th of the one before, so that 24 taps give 512
+//! even steps. Even steps along the way instead left a ghost of each bright
+//! gap at every tap of the first pass, further apart away from the light
+//! (seen in the demo's forest, 2026-11-27). No medium in the air: the
 //! shafts show where the image shows the light, without the veil a fog
 //! thick enough for its own rays would lay over the scene (the volumetric
 //! rays tried first, through the fog's froxels, made a veil or blots
@@ -23,8 +27,17 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub(crate) const PASSES: usize = 3;
 pub(crate) const TAPS: u32 = 8;
 /// How far from the light the sky's pixels feed the shafts (in heights of
-/// the image): the sky around the sun, not the whole of it.
-const MASK_RADIUS: f32 = 0.45;
+/// the image): the glow around the sun, not the whole of it (at 0.45, the
+/// bright sky above and below the sun laid a band of light down a pillar
+/// beside it, which read as a vertical ray: human report, 2026-11-27).
+const MASK_RADIUS: f32 = 0.25;
+/// The share of the shafts laid over an object in front of the sky: the
+/// light that spills over its edge (the mean along the way to the light)
+/// stays a faint glare instead of a bright band down it. Shortening the
+/// shafts for it instead (a decay along the way) kept the shape of every
+/// gap between the trunks of a forest, streaks running straight up the
+/// image (demo forest at sunrise, 2026-11-27).
+const ON_OBJECTS: f32 = 0.4;
 /// The brightest a sky pixel counts, exposed (1 = white): the sun's disc,
 /// far brighter, would otherwise turn every shaft into its own colour.
 const MASK_CLAMP: f32 = 4.0;
@@ -32,6 +45,10 @@ const MASK_CLAMP: f32 = 4.0;
 /// around the light does, not the whole sunset sky (which laid an orange
 /// veil over the scene in front, in the demo's sunset).
 const MASK_THRESHOLD: f32 = 0.6;
+/// The same by night, when the light is the moon's: its disc and its glow
+/// are far dimmer than the sun's, and under the day's threshold they fed
+/// no shaft (human report, 2026-11-27).
+const MOON_THRESHOLD: f32 = 0.08;
 /// How far from the light the shafts reach on the image (in heights of
 /// the image), fading on the way.
 const REACH: f32 = 1.1;
@@ -43,13 +60,13 @@ const GAIN: f32 = 1.0;
 #[derive(Clone, Copy, Pod, Zeroable, Debug, PartialEq)]
 struct ShaftsU {
     /// xy the light's place on the image (uv, may lie off it), z the gain
-    /// of the composite (strength x fade), w this blur pass's reach (the
-    /// share of the way to the light).
+    /// of the composite (strength x fade), w this blur pass's span of the
+    /// logarithm of the offset's scale (0 outside the blur).
     sun: [f32; 4],
-    /// x width / height, y [`MASK_RADIUS`], z [`MASK_CLAMP`], w
-    /// [`MASK_THRESHOLD`].
+    /// x width / height, y [`MASK_RADIUS`], z [`MASK_CLAMP`], w the
+    /// threshold ([`mask_threshold`]).
     shape: [f32; 4],
-    /// x [`REACH`], yzw unused.
+    /// x [`REACH`], y [`ON_OBJECTS`], zw unused.
     reach: [f32; 4],
 }
 
@@ -60,11 +77,14 @@ struct ShaftsU {
 pub(crate) struct SunOnImage {
     pub uv: [f32; 2],
     pub fade: f32,
+    /// The sky's threshold for its light ([`mask_threshold`]).
+    pub threshold: f32,
 }
 
-/// The light (`sun_dir`, toward it: the moon's by night) through the camera
-/// (`view_proj`, its axis `forward`), None when it shows no shafts.
-pub(crate) fn sun_on_image(view_proj: Mat4, forward: Vec3, sun_dir: Vec3) -> Option<SunOnImage> {
+/// The light (`sun_dir`, toward it: the moon's by night, `day` 0) through
+/// the camera (`view_proj`, its axis `forward`), None when it shows no
+/// shafts.
+pub(crate) fn sun_on_image(view_proj: Mat4, forward: Vec3, sun_dir: Vec3, day: f32) -> Option<SunOnImage> {
     let dir = sun_dir.normalize_or_zero();
     let facing = forward.normalize_or_zero().dot(dir);
     // up to 60 degrees off the axis at full strength, none past 84
@@ -77,6 +97,7 @@ pub(crate) fn sun_on_image(view_proj: Mat4, forward: Vec3, sun_dir: Vec3) -> Opt
     Some(SunOnImage {
         uv: [ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5],
         fade,
+        threshold: mask_threshold(day),
     })
 }
 
@@ -85,11 +106,23 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// The reach of each blur pass: the whole way to the light, then each a
-/// [`TAPS`]th of the one before, so that the last fills the gaps between
-/// the first's taps.
+/// The sky's threshold for the light of `sun_dir` (`day`: `sun_visible`,
+/// 1 the sun's by day, 0 the moon's by night, between them at dusk).
+pub(crate) fn mask_threshold(day: f32) -> f32 {
+    MOON_THRESHOLD + (MASK_THRESHOLD - MOON_THRESHOLD) * day.clamp(0.0, 1.0)
+}
+
+/// The nearest the taps come to the light: this share of the pixel's
+/// offset from it (1/16; a pixel 16 times further than the sky's glow
+/// still reaches it).
+const NEAREST: f32 = 1.0 / 16.0;
+
+/// The span of each blur pass in the logarithm of the offset's scale: the
+/// whole of it (down to [`NEAREST`]), then each a [`TAPS`]th of the one
+/// before, so that the last fills the gaps between the first's taps.
 pub(crate) fn reaches() -> [f32; PASSES] {
-    std::array::from_fn(|i| (TAPS as f32).powi(-(i as i32)))
+    let whole = -NEAREST.ln();
+    std::array::from_fn(|i| whole * (TAPS as f32).powi(-(i as i32)))
 }
 
 /// The strength this frame from Preferences' (`setting`, 0 = off) and
@@ -294,11 +327,11 @@ impl SunShafts {
         gain: f32,
     ) -> Option<&wgpu::BindGroup> {
         let t = self.targets.as_ref()?;
-        let shape = [t.size.0 as f32 / t.size.1.max(1) as f32, MASK_RADIUS, MASK_CLAMP, MASK_THRESHOLD];
+        let shape = [t.size.0 as f32 / t.size.1.max(1) as f32, MASK_RADIUS, MASK_CLAMP, sun.threshold];
         let u = |reach: f32| ShaftsU {
             sun: [sun.uv[0], sun.uv[1], gain * GAIN, reach],
             shape,
-            reach: [REACH, 0.0, 0.0, 0.0],
+            reach: [REACH, ON_OBJECTS, 0.0, 0.0],
         };
         // the mask, the blur passes, the composite: each its own buffer (the
         // writes all land before the encoder runs)
@@ -386,29 +419,44 @@ mod tests {
         // infinite reverse depth: clip = (-y, z, 0.1, x)
         let vp = Mat4::from_cols(Vec4::W, -Vec4::X, Vec4::Y, Vec4::Z * 0.1);
         // straight ahead, a little up: at the centre, above it
-        let ahead = sun_on_image(vp, Vec3::X, Vec3::new(1.0, 0.0, 0.2)).expect("ahead");
+        let ahead = sun_on_image(vp, Vec3::X, Vec3::new(1.0, 0.0, 0.2), 1.0).expect("ahead");
         assert!((ahead.uv[0] - 0.5).abs() < 1e-4 && ahead.uv[1] < 0.5);
         assert!(ahead.fade > 0.9);
         // to the left: left of the centre
-        let left = sun_on_image(vp, Vec3::X, Vec3::new(1.0, 0.3, 0.2)).expect("left");
+        let left = sun_on_image(vp, Vec3::X, Vec3::new(1.0, 0.3, 0.2), 1.0).expect("left");
         assert!(left.uv[0] < 0.5);
         // behind, or set: none
-        assert_eq!(sun_on_image(vp, Vec3::X, Vec3::new(-1.0, 0.0, 0.2)), None);
-        assert_eq!(sun_on_image(vp, Vec3::X, Vec3::new(1.0, 0.0, -0.1)), None);
+        assert_eq!(sun_on_image(vp, Vec3::X, Vec3::new(-1.0, 0.0, 0.2), 1.0), None);
+        assert_eq!(sun_on_image(vp, Vec3::X, Vec3::new(1.0, 0.0, -0.1), 1.0), None);
         // at the side, nearly none
-        let side = sun_on_image(vp, Vec3::X, Vec3::new(0.15, 1.0, 0.1)).map_or(0.0, |s| s.fade);
+        let side = sun_on_image(vp, Vec3::X, Vec3::new(0.15, 1.0, 0.1), 1.0).map_or(0.0, |s| s.fade);
         assert!(side < 0.05);
     }
 
     #[test]
-    fn each_pass_reaches_a_tap_of_the_one_before() {
+    fn the_moon_feeds_shafts_from_a_dimmer_sky() {
+        assert_eq!(mask_threshold(1.0), MASK_THRESHOLD);
+        assert_eq!(mask_threshold(0.0), MOON_THRESHOLD);
+        let dusk = mask_threshold(0.5);
+        assert!(dusk > MOON_THRESHOLD && dusk < MASK_THRESHOLD);
+        // out of range: clamped
+        assert_eq!(mask_threshold(-1.0), MOON_THRESHOLD);
+        assert_eq!(mask_threshold(3.0), MASK_THRESHOLD);
+    }
+
+    #[test]
+    fn each_pass_spans_a_tap_of_the_one_before() {
         let r = reaches();
-        assert_eq!(r[0], 1.0);
+        // the first pass's last tap is a step short of the nearest
+        let last = (-r[0] * (TAPS - 1) as f32 / TAPS as f32).exp();
+        assert!(last > NEAREST && last < NEAREST * 1.5);
         for i in 1..PASSES {
-            assert!((r[i] * TAPS as f32 - r[i - 1]).abs() < 1e-6);
+            assert!((r[i] * TAPS as f32 - r[i - 1]).abs() < 1e-5);
         }
-        // the last pass's taps fill the first's gap: 512 steps along the way
+        // the last pass's taps fill the first's gaps: 512 even steps
         assert_eq!((TAPS as usize).pow(PASSES as u32), 512);
+        // each under 1 % of the offset: no ghost of a bright gap shows
+        assert!(1.0 - (-r[0] / 512.0).exp() < 0.01);
     }
 
     #[test]
