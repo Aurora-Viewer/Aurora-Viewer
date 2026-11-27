@@ -1837,7 +1837,7 @@ mod tests {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(2006.0, 1106.0));
         let mut output = None;
         for _ in 0..3 {
-            output = Some(ctx.run_ui(
+            output = Some(test_output(ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(screen),
                     ..Default::default()
@@ -1845,7 +1845,7 @@ mod tests {
                 |ui| {
                     show(ui, &p, &icons, None, &mut settings, &mut form, &info, None);
                 },
-            ));
+            )));
         }
         let output = output.expect("three frames");
         // the lights: wider than the sidebar, reaching above its top
