@@ -31,6 +31,7 @@ impl<K: AsRef<str>> Named<'_, K> {
         item_detail(icon: &str, label: &str, detail: &str);
         check(icon: &str, label: &str, checked: bool, enabled: bool);
         check_keys(icon: &str, label: &str, checked: bool, enabled: bool, keys: &str);
+        toggle(icon: &str, label: &str, on: &mut bool);
         toolbar_command(id: &'static str);
         toolbar_command_keys(id: &'static str, keys: &str);
         toolbar_command_keys_if(id: &'static str, label: &str, enabled: bool, keys: &str);

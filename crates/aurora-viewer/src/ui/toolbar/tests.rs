@@ -663,6 +663,7 @@ fn drawer_contents_participate_in_live_menu_refresh_and_bug_visibility() {
                 enabled: true,
                 checked: None,
             }],
+            ..Default::default()
         },
     );
     assert!(!ToolbarUi::default().needs_commands(&ctx, Some(&ToolbarSettings::default())));
