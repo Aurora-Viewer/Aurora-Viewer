@@ -73,6 +73,35 @@ pub fn terrain_blend_weights(c: f32, noise: f32) -> [f32; 4] {
     w.map(|v| v / sum)
 }
 const RESERVED: u32 = 7;
+
+/// The texels of a reserved slot, level 0 first.
+fn reserved_levels(slot: u32) -> Option<Vec<(u32, u32, Vec<u8>)>> {
+    let one = |rgba: [u8; 4]| Some(vec![(1, 1, rgba.to_vec())]);
+    match slot {
+        WHITE => one([255, 255, 255, 255]),
+        FLAT_NORMAL => one([128, 128, 255, 255]),
+        BLACK => one([0, 0, 0, 255]),
+        TRANSPARENT => one([0, 0, 0, 0]),
+        PLACEHOLDER => one([148, 148, 156, 255]),
+        MISSING => one([127, 127, 127, 255]),
+        TERRAIN_RAMP => {
+            let ramp: Vec<u8> = TERRAIN_RAMP_PIXELS.iter().flat_map(|&v| [v, v, v, 255]).collect();
+            Some(build_mips(256, 256, ramp, u32::MAX))
+        }
+        _ => None,
+    }
+}
+
+fn mip_levels(levels: &[(u32, u32, Vec<u8>)]) -> Vec<MipLevel<'_>> {
+    levels
+        .iter()
+        .map(|(width, height, data)| MipLevel {
+            width: *width,
+            height: *height,
+            data,
+        })
+        .collect()
+}
 /// The white texture is the first one created: page 0, layer 0. Freed slots
 /// point there, so a stale draw record samples white, never a dropped page.
 const WHITE_LOC: u32 = 0;
@@ -935,7 +964,7 @@ impl PageStore {
         }
     }
 
-    fn upload(&self, writes: &mut GpuWrites, page: u32, layer: u32, mips: &[MipLevel], count: u32) {
+    fn upload(&self, writes: &mut GpuWrites, slot: u32, page: u32, layer: u32, mips: &[MipLevel], count: u32) {
         let Some(p) = self.page(page) else {
             return;
         };
@@ -949,7 +978,7 @@ impl PageStore {
                 width: m.width,
                 height: m.height,
             };
-            writes.write_texture(&p.texture, dst, m.data);
+            writes.write_slot_texture(&p.texture, dst, m.data, slot);
         }
     }
 
@@ -969,7 +998,7 @@ impl PageStore {
             self.free_slots.push(Reverse(slot));
             return None;
         };
-        self.upload(writes, page, layer, mips, key.mips);
+        self.upload(writes, slot, page, layer, mips, key.mips);
         self.slots[slot as usize] = Some(Slot {
             key,
             page,
@@ -1061,7 +1090,7 @@ impl PageStore {
         let Some((page, layer)) = self.target(device, slot, key) else {
             return false;
         };
-        self.upload(writes, page, layer, mips, key.mips);
+        self.upload(writes, slot, page, layer, mips, key.mips);
         self.touch(slot);
         true
     }
@@ -1397,37 +1426,13 @@ impl TextureTable {
         });
         let mut store = PageStore::new_with_integrated(capacity, page_capacity, max_layers, limits.max_texture_dimension_2d, integrated);
         store.bc7 = device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
-        for (slot, rgba) in [
-            (WHITE, [255u8, 255, 255, 255]),
-            (FLAT_NORMAL, [128, 128, 255, 255]),
-            (BLACK, [0, 0, 0, 255]),
-            (TRANSPARENT, [0, 0, 0, 0]),
-            (PLACEHOLDER, [148, 148, 156, 255]),
-            (MISSING, [127, 127, 127, 255]),
-        ] {
-            let created = store.create(
-                device,
-                writes,
-                &[MipLevel {
-                    width: 1,
-                    height: 1,
-                    data: &rgba,
-                }],
-            );
+        for slot in 0..RESERVED {
+            let Some(levels) = reserved_levels(slot) else {
+                continue;
+            };
+            let created = store.create(device, writes, &mip_levels(&levels));
             debug_assert_eq!(created, Some(slot));
         }
-        let ramp: Vec<u8> = TERRAIN_RAMP_PIXELS.iter().flat_map(|&v| [v, v, v, 255]).collect();
-        let ramp_mips = build_mips(256, 256, ramp, u32::MAX);
-        let levels: Vec<_> = ramp_mips
-            .iter()
-            .map(|(w, h, data)| MipLevel {
-                width: *w,
-                height: *h,
-                data,
-            })
-            .collect();
-        let created = store.create(device, writes, &levels);
-        debug_assert_eq!(created, Some(TERRAIN_RAMP));
         debug_assert_eq!(store.loc[WHITE as usize], WHITE_LOC);
         // the reserved slots are not counted in the statistics
         store.live = 0;
@@ -1688,6 +1693,22 @@ impl TextureTable {
         self.store.show_missing(slot)
     }
 
+    /// A reserved slot's texels (white, the flat normal, the terrain ramp…)
+    /// written again where they are, after their staging buffer was refused
+    /// at start-up (`Renderer::take_lost_textures`). False for any other slot.
+    pub fn send_reserved_again(&mut self, writes: &mut GpuWrites, slot: u32) -> bool {
+        let Some(levels) = reserved_levels(slot) else {
+            return false;
+        };
+        let Some(Some(s)) = self.store.slots.get(slot as usize) else {
+            return false;
+        };
+        let (page, layer, count) = (s.page, s.layer, s.key.mips);
+        self.store.upload(writes, slot, page, layer, &mip_levels(&levels), count);
+        self.store.touch(slot);
+        true
+    }
+
     /// Replace the contents of an existing slot (e.g. higher resolution).
     pub fn replace(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, slot: u32, mips: &[MipLevel]) -> bool {
         self.store.replace(device, writes, slot, mips)
@@ -1772,7 +1793,7 @@ impl TextureTable {
             width: w,
             height: h,
         };
-        writes.write_texture(&page.texture, dst, &data[..need]);
+        writes.write_slot_texture(&page.texture, dst, &data[..need], slot);
         self.store.touch(slot);
         true
     }

@@ -2383,6 +2383,9 @@ pub(crate) struct Backend {
     gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
     /// Where the replay of the journal stages its buffer writes.
     write_staging: crate::write_staging::WriteStaging,
+    /// The texture table's slots whose texture writes could not be made
+    /// since the last result (write_staging.rs `Staged::lost`).
+    lost_textures: Vec<u32>,
     /// The surfaces of the interface's windows outside the viewer's
     /// (outside.rs); the window's renderer alone has any.
     outside: crate::outside::Surfaces,
@@ -5211,6 +5214,7 @@ impl Backend {
             lost,
             gpu_frames,
             write_staging: Default::default(),
+            lost_textures: Vec::new(),
             outside: Default::default(),
         };
         r.rebuild_bind_groups();
@@ -8878,6 +8882,7 @@ impl Backend {
             outside: Vec::new(),
             films,
             rt: self.rt.as_ref().map_or(0, |rt| rt.made),
+            lost_textures: std::mem::take(&mut self.lost_textures),
             spent,
         }
     }
@@ -9703,7 +9708,12 @@ impl Backend {
             writes.texture_staged_bytes(),
         );
         writes.replay(&mut sink);
-        let staged = sink.finish_staged();
+        let mut staged = sink.finish_staged();
+        for slot in std::mem::take(&mut staged.lost) {
+            if !self.lost_textures.contains(&slot) {
+                self.lost_textures.push(slot);
+            }
+        }
         let replay_ms = t_writes.elapsed().as_secs_f32() * 1000.0;
         let upload_cmds = frame_uploads.take_commands();
         let writes_ms = t_writes.elapsed().as_secs_f32() * 1000.0;
@@ -9714,14 +9724,13 @@ impl Backend {
             log::info!(
                 "frame writes took {writes_ms:.1} ms: {} KB in {buffers} buffer ({} through the journal staging) and \
                  {textures} texture writes ({} through the journal staging, {} through staging buffers of their own, \
-                 {} of them cut in pieces, {} waiting for the next frame, {} dropped), {submits} submits ({replay_ms:.1} ms), staged copies finished in {:.1} ms",
+                 {} of them cut in pieces, {} not made and sent again), {submits} submits ({replay_ms:.1} ms), staged copies finished in {:.1} ms",
                 recorded >> 10,
                 staged.buffers,
                 staged.textures,
                 staged.own,
                 staged.split,
-                staged.deferred,
-                staged.dropped,
+                staged.refused,
                 writes_ms - replay_ms
             );
         }

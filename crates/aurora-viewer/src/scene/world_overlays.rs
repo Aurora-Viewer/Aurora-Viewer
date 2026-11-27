@@ -53,6 +53,16 @@ impl LandOverlays {
         self.enabled = [false; 2];
     }
 
+    /// The renderer could not stage this slot's texels: the region's
+    /// overlay is made again at the next update (its records are kept).
+    pub fn texture_lost(&mut self, slot: u32) -> bool {
+        let Some(t) = self.textures.values_mut().find(|t| t.slot == slot) else {
+            return false;
+        };
+        t.data.clear();
+        true
+    }
+
     pub fn records(&self, region: u64) -> impl Iterator<Item = u32> + '_ {
         self.textures
             .get(&region)

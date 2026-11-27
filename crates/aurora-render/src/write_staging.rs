@@ -32,14 +32,17 @@
 //! buffer copies there, in the journal's order among themselves (a texture
 //! copy and a buffer copy never touch the same memory). A buffer of its own
 //! that the driver refuses is asked for again for half the write's rows,
-//! then half of that, down to [`MIN_PIECE`] bytes; refused at that size,
-//! the write is kept for the next frame, with every texture write of the
-//! frame after it (their order kept), sent again before that frame's own
-//! writes, and said in the log; the texture keeps the texels it had until
-//! then. Past [`DEFER_BYTES`] waiting, the next ones are dropped. The
-//! buffers of their own are kept, up to [`SPARE_BYTES`] and [`MAX_SPARES`]
-//! of them, mapped again for the frames after: wgpu fills a new mapped
-//! buffer with zeros on the CPU, which the queue's own staging buffers skip.
+//! then half of that, down to [`MIN_PIECE`] bytes; refused at that size
+//! (or come back but not writable), the write is not made, nor any texture
+//! write of the frame after it, and the texture table's slots of those
+//! writes are handed back ([`Staged::lost`]): the main thread has their
+//! owners send them again later, at the slot's place and size then (a
+//! write kept for a later frame would land behind the frame's page moves
+//! and newer uploads of the slot, recorded in the upload encoder). Said in
+//! the log; the texture shows what its layer held until then. The buffers
+//! of their own are kept, up to [`SPARE_BYTES`] and [`MAX_SPARES`] of them,
+//! mapped again for the frames after: wgpu fills a new mapped buffer with
+//! zeros on the CPU, which the queue's own staging buffers skip.
 //!
 //! A few staging buffers take turns: a used one is mapped again
 //! (`map_async`) and comes back once the GPU has done its copies. When none
@@ -53,10 +56,12 @@
 //! `AURORA_WRITE_STAGING=0` keeps the queue writes, buffers and textures,
 //! `alt` alternates. `AURORA_STAGING_OOM=<KB>` refuses every staging buffer
 //! of this module of at least that size, as a full card would (testing; 0
-//! refuses them all).
+//! refuses them all), and `AURORA_STAGING_OOM_SECONDS=<s>` ends the refusal
+//! that long after the first staging buffer asked for (memory that comes
+//! back).
 
 use crate::gpu_alloc::{self, Backoff, LogThrottle};
-use crate::writes::{TexelDst, WriteSink};
+use crate::writes::{NO_SLOT, TexelDst, WriteSink};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
@@ -79,9 +84,6 @@ pub const SPARE_BYTES: u64 = 32 << 20;
 /// The staging buffers of texture writes kept, at most (a region's first
 /// frame makes hundreds of small ones).
 pub const MAX_SPARES: usize = 64;
-/// Texture writes waiting for a staging buffer, at most (bytes); past it,
-/// the next ones are dropped.
-pub const DEFER_BYTES: u64 = 64 << 20;
 /// How long a refused size is remembered: the texture writes of the frames
 /// after are cut below it at once instead of being refused again.
 const CEILING_KEPT: Duration = Duration::from_secs(2);
@@ -127,6 +129,16 @@ fn staging_on() -> bool {
 /// `AURORA_STAGING_OOM=<KB>`, in bytes.
 fn parse_refusal(value: Option<&str>) -> Option<u64> {
     value?.trim().parse::<u64>().ok().map(|kb| kb << 10)
+}
+
+/// `AURORA_STAGING_OOM_SECONDS=<s>`.
+fn parse_refusal_time(value: Option<&str>) -> Option<Duration> {
+    value?
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|s| s.is_finite() && *s >= 0.0)
+        .map(Duration::from_secs_f64)
 }
 
 /// A staging buffer, or why it could not be made: refused at or above
@@ -281,7 +293,7 @@ fn is_ready(s: &Slot) -> bool {
 }
 
 /// What a frame's replay staged (diagnostics).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Staged {
     /// Buffer writes copied from the frame's staging buffer.
     pub buffers: usize,
@@ -291,18 +303,13 @@ pub struct Staged {
     pub own: usize,
     /// Of those, the ones cut in pieces after a refusal.
     pub split: usize,
-    /// Texture writes kept for the next frame: no staging buffer could be
-    /// made for them, or for one before them.
-    pub deferred: usize,
-    /// Texture writes dropped: kept for the next frame past [`DEFER_BYTES`].
-    pub dropped: usize,
-}
-
-/// A texture write kept for the next frame.
-struct Deferred {
-    texture: wgpu::Texture,
-    dst: TexelDst,
-    data: Vec<u8>,
+    /// Texture writes not made: no staging buffer could be made for them,
+    /// or for one before them.
+    pub refused: usize,
+    /// The texture table's slots of those writes, each once, in the order
+    /// met (writes that named none left out): their textures are to be
+    /// sent again.
+    pub lost: Vec<u32>,
 }
 
 /// The staging buffers of the render thread.
@@ -322,17 +329,20 @@ pub struct WriteStaging {
     /// The smallest staging buffer of a texture write refused lately, and
     /// when.
     ceiling: Option<(u64, Instant)>,
-    /// Texture writes kept for the next frame, in order, and their bytes.
-    deferred: Vec<Deferred>,
-    deferred_bytes: u64,
     /// `AURORA_STAGING_OOM`: staging buffers of at least this size refused.
     refuse_at: Option<u64>,
+    /// `AURORA_STAGING_OOM_SECONDS`: how long, from the first staging
+    /// buffer asked for, and when that was.
+    refuse_for: Option<Duration>,
+    refusing_since: Option<Instant>,
     log: LogThrottle,
 }
 
 impl Default for WriteStaging {
     fn default() -> Self {
-        Self::with_refusal(parse_refusal(std::env::var("AURORA_STAGING_OOM").ok().as_deref()))
+        let mut staging = Self::with_refusal(parse_refusal(std::env::var("AURORA_STAGING_OOM").ok().as_deref()));
+        staging.refuse_for = parse_refusal_time(std::env::var("AURORA_STAGING_OOM_SECONDS").ok().as_deref());
+        staging
     }
 }
 
@@ -354,9 +364,9 @@ impl WriteStaging {
             backoff: Backoff::default(),
             spares: Vec::new(),
             ceiling: None,
-            deferred: Vec::new(),
-            deferred_bytes: 0,
             refuse_at,
+            refuse_for: None,
+            refusing_since: None,
             log: LogThrottle::new(Duration::from_secs(10)),
         }
     }
@@ -366,6 +376,21 @@ impl WriteStaging {
     pub fn set_refusal(&mut self, refuse_at: Option<u64>) {
         self.refuse_at = refuse_at;
         self.ceiling = None;
+    }
+
+    /// The size from which staging buffers are refused now
+    /// (`AURORA_STAGING_OOM`), until `AURORA_STAGING_OOM_SECONDS` is over.
+    fn refusal(&mut self) -> Option<u64> {
+        let (Some(_), Some(over)) = (self.refuse_at, self.refuse_for) else {
+            return self.refuse_at;
+        };
+        let now = Instant::now();
+        let since = *self.refusing_since.get_or_insert(now);
+        if now.saturating_duration_since(since) >= over {
+            self.refuse_at = None;
+            log::info!("journal staging: AURORA_STAGING_OOM over, staging buffers are made again");
+        }
+        self.refuse_at
     }
 
     fn warn(&mut self, message: &str) {
@@ -385,7 +410,7 @@ impl WriteStaging {
         };
         let (tx, rx) = mpsc::channel();
         let device = device.clone();
-        let refuse_at = self.refuse_at;
+        let refuse_at = self.refusal();
         let spawned = std::thread::Builder::new().name("journal staging".into()).spawn(move || {
             let _ = tx.send(try_staging(&device, "journal staging", size, refuse_at));
         });
@@ -479,8 +504,7 @@ impl WriteStaging {
         textures: u64,
     ) -> StagedSink<'a, S> {
         let on = staging_on();
-        let carried: u64 = self.deferred.iter().map(|d| staged_len(d.dst.width, d.dst.height)).sum();
-        let want = bytes.saturating_add(textures).saturating_add(carried).min(MAX_STAGED).max(bytes);
+        let want = bytes.saturating_add(textures).min(MAX_STAGED).max(bytes);
         let open = if on && want > 0 && bytes <= MAX_STAGED {
             self.acquire(bytes, want).and_then(|slot| {
                 let s = &self.slots[slot];
@@ -498,7 +522,7 @@ impl WriteStaging {
         {
             self.ceiling = None;
         }
-        let mut sink = StagedSink {
+        StagedSink {
             staging: self,
             device,
             inner,
@@ -510,9 +534,7 @@ impl WriteStaging {
             own: Vec::new(),
             refused: None,
             staged: Staged::default(),
-        };
-        sink.resend();
-        sink
+        }
     }
 
     /// A staging buffer of at least `bytes` for a texture write: a spare
@@ -527,7 +549,7 @@ impl WriteStaging {
             return Ok(self.spares.swap_remove(i).buffer);
         }
         let size = bytes.next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT);
-        let made = try_staging(device, "texture write staging", size, self.refuse_at);
+        let made = try_staging(device, "texture write staging", size, self.refusal());
         if made.is_err() {
             self.spares.clear();
         }
@@ -588,10 +610,10 @@ pub struct StagedSink<'a, S> {
     /// The staging buffers of their own of the texture copies, mapped until
     /// the copies are submitted.
     own: Vec<wgpu::Buffer>,
-    /// Why a staging buffer of the smallest size was refused this frame:
-    /// the frame's next texture writes are kept for the next frame without
+    /// The size of the staging buffer refused at the smallest piece this
+    /// frame, and why: the frame's next texture writes are not made, without
     /// asking.
-    refused: Option<String>,
+    refused: Option<(u64, String)>,
     staged: Staged,
 }
 
@@ -686,46 +708,23 @@ impl<S: WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder>> StagedSink
     pub fn finish_staged(mut self) -> Staged {
         self.close(Vec::new());
         self.staging.make_wanted(self.device);
-        if let Some(e) = self.refused.take() {
+        if let Some((len, e)) = self.refused.take() {
+            // (the throttle keys on the text: the size takes a few values,
+            // the frame's counts stay out of it)
             self.staging.warn(&format!(
-                "journal staging: texture writes wait for the next frame, a staging buffer of {} KB was refused ({e})",
-                MIN_PIECE >> 10
-            ));
-        }
-        if self.staged.dropped > 0 {
-            self.staging.warn(&format!(
-                "journal staging: texture writes dropped, more than {} MB waiting for a staging buffer",
-                DEFER_BYTES >> 20
+                "journal staging: texture writes not made, a staging buffer of {} KB was refused ({e}): their textures are sent again",
+                len.div_ceil(1 << 10)
             ));
         }
         self.staged
     }
 
-    /// Sends again the texture writes kept by the frame before, ahead of
-    /// this frame's.
-    fn resend(&mut self) {
-        let carried = std::mem::take(&mut self.staging.deferred);
-        self.staging.deferred_bytes = 0;
-        for d in carried {
-            if self.on && self.refused.is_some() {
-                self.keep(d);
-            } else {
-                self.write_texture(&d.texture, d.dst, &d.data);
-            }
+    /// A texture write not made: its slot handed back.
+    fn lose(&mut self, slot: u32) {
+        self.staged.refused += 1;
+        if slot != NO_SLOT && !self.staged.lost.contains(&slot) {
+            self.staged.lost.push(slot);
         }
-    }
-
-    /// Keeps a texture write for the next frame, or drops it past
-    /// [`DEFER_BYTES`].
-    fn keep(&mut self, d: Deferred) {
-        let len = d.data.len() as u64;
-        if self.staging.deferred_bytes + len > DEFER_BYTES {
-            self.staged.dropped += 1;
-            return;
-        }
-        self.staging.deferred_bytes += len;
-        self.staging.deferred.push(d);
-        self.staged.deferred += 1;
     }
 
     /// Stages a texture write in buffers of its own, cut in pieces if the
@@ -738,7 +737,7 @@ impl<S: WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder>> StagedSink
         let pieces = split_rows(dst.width, dst.height, &mut ceiling, |len| match staging.own_buffer(device, len) {
             Ok(b) => Some(b),
             Err(e) => {
-                last_error = Some(e);
+                last_error = Some((len, e));
                 None
             }
         });
@@ -755,21 +754,33 @@ impl<S: WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder>> StagedSink
                 return false;
             }
         };
+        // a buffer that came back but cannot be written (made invalid by a
+        // full card without an error the scope sees, gpu_alloc.rs) is a
+        // refusal too: nothing of the write is recorded, rather than a
+        // texture with rows missing
+        let mut views = Vec::with_capacity(pieces.len());
+        for p in &pieces {
+            match p.buffer.get_mapped_range_mut(..) {
+                Ok(view) => views.push(view),
+                Err(_) => {
+                    let len = p.buffer.size();
+                    drop(views);
+                    drop(pieces);
+                    self.refused = Some((len, "a staging buffer came back that cannot be written".to_owned()));
+                    return false;
+                }
+            }
+        }
         if pieces.len() > 1 {
             self.staged.split += 1;
         }
-        for p in pieces {
-            let Ok(mut view) = p.buffer.get_mapped_range_mut(..) else {
-                // (a buffer that came back but cannot be written: the rows
-                // it should hold are lost with it)
-                continue;
-            };
+        let first = self.own.len();
+        for (i, (p, mut view)) in pieces.iter().zip(views).enumerate() {
             stage_rows(data, dst.width, p.row, p.rows, |at, rows| {
                 view.slice(at..at + rows.len()).copy_from_slice(rows);
             });
-            drop(view);
             self.textures.push(TexCopy {
-                src: Src::Own(self.own.len()),
+                src: Src::Own(first + i),
                 offset: 0,
                 texture: texture.clone(),
                 dst: TexelDst {
@@ -778,8 +789,8 @@ impl<S: WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder>> StagedSink
                     ..dst
                 },
             });
-            self.own.push(p.buffer);
         }
+        self.own.extend(pieces.into_iter().map(|p| p.buffer));
         true
     }
 }
@@ -812,20 +823,20 @@ impl<S: WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder>> WriteSink<
     }
 
     fn write_texture(&mut self, texture: &wgpu::Texture, dst: TexelDst, data: &[u8]) {
+        self.write_slot_texture(texture, dst, data, NO_SLOT);
+    }
+
+    fn write_slot_texture(&mut self, texture: &wgpu::Texture, dst: TexelDst, data: &[u8], slot: u32) {
         if !self.on {
-            self.inner.write_texture(texture, dst, data);
+            self.inner.write_slot_texture(texture, dst, data, slot);
             return;
         }
         if dst.width == 0 || dst.height == 0 || data.len() < dst.bytes() {
             return;
         }
         if self.refused.is_some() {
-            // (one before it waits: this one waits behind it)
-            self.keep(Deferred {
-                texture: texture.clone(),
-                dst,
-                data: data[..dst.bytes()].to_vec(),
-            });
+            // (the memory is short: not asked again this frame)
+            self.lose(slot);
             return;
         }
         let len = staged_len(dst.width, dst.height);
@@ -850,11 +861,7 @@ impl<S: WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder>> WriteSink<
         if self.stage_own(texture, dst, data) {
             self.staged.own += 1;
         } else {
-            self.keep(Deferred {
-                texture: texture.clone(),
-                dst,
-                data: data[..dst.bytes()].to_vec(),
-            });
+            self.lose(slot);
         }
     }
 
@@ -1118,9 +1125,10 @@ mod tests {
     /// GPU round trip of texture writes: through buffers of their own while
     /// no staging buffer is ready, then through the frame's staging buffer,
     /// two writes of one frame landing in order; cut in pieces when staging
-    /// buffers are refused from 100 KB; kept for the next frames while they
-    /// are all refused, the texture keeping its texels and the device still
-    /// working, then sent once one can be made. Needs a
+    /// buffers are refused from 100 KB; not made while they are all
+    /// refused, their slots handed back each once, the texture keeping its
+    /// texels, nothing carried to the next frame and the device still
+    /// working. Needs a
     /// GPU, so not run by check.ps1:
     /// `cargo test --workspace staged_texture -- --ignored`.
     #[test]
@@ -1158,10 +1166,11 @@ mod tests {
             height: h,
         };
         let pattern = |seed: u32| -> Vec<u8> { (0..w * h * 4).map(|i| (i.wrapping_mul(7) ^ seed) as u8).collect() };
+        // each write names the texture table's slot 10 + its index
         let frame = |staging: &mut WriteStaging, writes: &[&[u8]]| -> Staged {
             let mut j = crate::writes::GpuWrites::default();
-            for data in writes {
-                j.write_texture(&texture, whole, data);
+            for (i, data) in writes.iter().enumerate() {
+                j.write_slot_texture(&texture, whole, data, 10 + i as u32);
             }
             let mut q = crate::writes::QueueSink(&queue);
             let mut sink = staging.sink_with_textures(&device, &mut q, j.buffer_bytes() as u64, j.texture_staged_bytes());
@@ -1206,7 +1215,7 @@ mod tests {
         // no staging buffer yet: one of its own, and one wanted
         let mut staging = WriteStaging::with_refusal(None);
         let s = frame(&mut staging, &[&pattern(1)]);
-        assert_eq!((s.textures, s.own, s.dropped), (0, 1, 0));
+        assert_eq!((s.textures, s.own, s.refused), (0, 1, 0));
         assert!(read() == pattern(1), "staged in a buffer of its own");
         // the frame's staging buffer, once made; two writes, the last wins
         let mut n = 0;
@@ -1224,25 +1233,37 @@ mod tests {
         // staging buffers refused from 100 KB: cut in two, every texel there
         let mut refused = WriteStaging::with_refusal(Some(100 << 10));
         let s = frame(&mut refused, &[&pattern(4)]);
-        assert_eq!((s.own, s.split, s.dropped), (1, 1, 0));
+        assert_eq!((s.own, s.split, s.refused), (1, 1, 0));
         assert!(read() == pattern(4), "staged in pieces");
 
-        // all refused: kept for the next frame, the ones before first, and
-        // the texture keeps what it had meanwhile
+        // all refused: not made, the slots handed back, and the texture
+        // keeps what it had
         let mut full = WriteStaging::with_refusal(Some(0));
-        let s = frame(&mut full, &[&pattern(5)]);
-        assert_eq!((s.own, s.deferred, s.dropped), (0, 1, 0));
-        let s = frame(&mut full, &[&pattern(7)]);
-        assert_eq!((s.own, s.deferred, s.dropped), (0, 2, 0));
-        assert!(read() == pattern(4), "a waiting write leaves the texels");
-        // memory again: both sent, in order, before the frame's own writes
-        full.set_refusal(None);
+        let s = frame(&mut full, &[&pattern(5), &pattern(7)]);
+        assert_eq!((s.own, s.refused, s.lost.clone()), (0, 2, vec![10, 11]));
+        assert!(read() == pattern(4), "a refused write leaves the texels");
+        // a slot written twice is handed back once; a write that names no
+        // slot is counted and not handed back
+        let mut j = crate::writes::GpuWrites::default();
+        j.write_slot_texture(&texture, whole, &pattern(8), 12);
+        j.write_slot_texture(&texture, whole, &pattern(9), 12);
+        j.write_texture(&texture, whole, &pattern(9));
+        let mut q = crate::writes::QueueSink(&queue);
+        let mut sink = full.sink_with_textures(&device, &mut q, 0, j.texture_staged_bytes());
+        j.replay(&mut sink);
+        let s = sink.finish_staged();
+        assert_eq!((s.refused, s.lost), (3, vec![12]));
+        // nothing is carried to the next frame
         let s = frame(&mut full, &[]);
-        assert_eq!((s.own, s.deferred, s.dropped), (2, 0, 0));
-        assert!(read() == pattern(7), "the waiting writes land in order");
+        assert_eq!((s.own, s.refused, s.lost.len()), (0, 0, 0));
+        // memory again: the slot's texture sent again lands
+        full.set_refusal(None);
+        let s = frame(&mut full, &[&pattern(7)]);
+        assert_eq!((s.own, s.refused), (1, 0));
+        assert!(read() == pattern(7), "sent again once memory is back");
         // and the device still takes writes
         let s = frame(&mut staging, &[&pattern(6)]);
-        assert_eq!(s.dropped, 0);
+        assert_eq!(s.refused, 0);
         assert!(read() == pattern(6), "the device still works");
     }
 
@@ -1441,8 +1462,29 @@ mod tests {
         let mut refused = WriteStaging::with_refusal(Some(200 << 10));
         let data = pattern(tall, 99);
         let s = frame(&mut refused, &[(tall, data.clone())]);
-        assert_eq!((s.own, s.split, s.deferred), (1, 1, 0));
+        assert_eq!((s.own, s.split, s.refused), (1, 1, 0));
         apply(&mut want, tall, &data);
         check(&want, "cut in pieces below the first row");
+    }
+
+    #[test]
+    fn the_test_refusal_ends_after_its_seconds() {
+        assert_eq!(parse_refusal_time(Some(" 20 ")), Some(Duration::from_secs(20)));
+        assert_eq!(parse_refusal_time(Some("0.5")), Some(Duration::from_millis(500)));
+        assert_eq!(parse_refusal_time(Some("-1")), None);
+        assert_eq!(parse_refusal_time(Some("soon")), None);
+        assert_eq!(parse_refusal_time(None), None);
+        // without a time: refused for good
+        let mut forever = WriteStaging::with_refusal(Some(0));
+        assert_eq!(forever.refusal(), Some(0));
+        assert_eq!(forever.refusal(), Some(0));
+        // a time not over yet, then one over
+        let mut later = WriteStaging::with_refusal(Some(64 << 10));
+        later.refuse_for = Some(Duration::from_secs(3600));
+        assert_eq!(later.refusal(), Some(64 << 10));
+        let mut over = WriteStaging::with_refusal(Some(0));
+        over.refuse_for = Some(Duration::ZERO);
+        assert_eq!(over.refusal(), None);
+        assert_eq!(over.refusal(), None);
     }
 }

@@ -241,6 +241,21 @@ impl SpinningCat {
         self.cmds.clear();
     }
 
+    /// The renderer could not stage the texels of these slots: when one is
+    /// the cat's, it is loaded again at the next update, and both of its
+    /// slots leave `lost`.
+    pub fn texture_lost(&mut self, lost: &mut Vec<u32>, renderer: &mut Renderer) {
+        let State::Ready(gpu) = &self.state else {
+            return;
+        };
+        let mine = [gpu.fur, gpu.ink];
+        if !mine.iter().any(|s| lost.contains(s)) {
+            return;
+        }
+        lost.retain(|s| !mine.contains(s));
+        self.clear(renderer);
+    }
+
     /// The draws of this frame; `None` ends the show and frees it.
     pub fn update(&mut self, renderer: &mut Renderer, stage: Option<&Stage>) {
         self.cats.clear();

@@ -16,6 +16,8 @@ const PACK: u32 = 4096;
 pub struct SnowDetail {
     slot: Option<u32>,
     tried: bool,
+    /// The slots made, packed or not.
+    made: Vec<u32>,
 }
 
 impl SnowDetail {
@@ -27,12 +29,28 @@ impl SnowDetail {
             self.tried = true;
             let detail = upload(renderer, PNG, "snow detail texture");
             let color = upload(renderer, COLOR_PNG, "snow colour texture");
+            self.made = detail.into_iter().chain(color).collect();
             self.slot = detail.map(|d| match color {
                 Some(c) if d < PACK && c < PACK => d + c * PACK,
                 _ => d,
             });
         }
         self.slot
+    }
+
+    /// The renderer could not stage the texels of these slots: when one is
+    /// either texture, both are made again at the next use, and both leave
+    /// `lost`.
+    pub fn texture_lost(&mut self, lost: &mut Vec<u32>, renderer: &mut Renderer) {
+        if !self.made.iter().any(|s| lost.contains(s)) {
+            return;
+        }
+        lost.retain(|s| !self.made.contains(s));
+        for s in self.made.drain(..) {
+            renderer.free_texture(s);
+        }
+        self.slot = None;
+        self.tried = false;
     }
 }
 

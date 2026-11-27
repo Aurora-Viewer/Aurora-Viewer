@@ -732,6 +732,17 @@ impl MediaManager {
         self.pending_free.clear();
     }
 
+    /// The renderer could not stage this slot's texels: the media holding
+    /// it fills it again from its next frame, whole (`upload_textures`: a
+    /// texture of another size is fresh).
+    pub fn texture_lost(&mut self, slot: u32) -> bool {
+        let Some(m) = self.impls.iter_mut().find(|m| slot != 0 && m.texture.slot == slot) else {
+            return false;
+        };
+        m.texture.size = (0, 0);
+        true
+    }
+
     /// SLPlugin / llplugin (searched once per configured folder and per state
     /// of Aurora's pack).
     pub fn plugins(&mut self, settings: &MediaSettings) -> Option<&PluginPaths> {

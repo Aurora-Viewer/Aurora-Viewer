@@ -2034,6 +2034,85 @@ impl TextureStreamer {
         }
     }
 
+    /// The renderer could not stage the texels of these slots
+    /// (`Renderer::take_lost_textures`, video memory full): they still show
+    /// their old texels, or none. The textures holding them keep their slot
+    /// and are uploaded again as after a GPU recovery (`gpu_reset_into`):
+    /// decoded again from the data in memory, or read again from the cache.
+    /// The demo's procedural textures are made again. Returns the slots no
+    /// texture of the streamer holds, for the other producers.
+    pub fn send_again(&mut self, slots: &[u32], renderer: &mut Renderer) -> Vec<u32> {
+        let mut left = self.send_again_entries(slots);
+        // AURORA_DEMO_TEXTURES: the stress textures have no data to load
+        // again from; their texels come again, as a download would bring
+        // them (as `refeed_demo_stress`)
+        if crate::demo::texture_stress_count().is_some() {
+            let stress: Vec<u32> = self
+                .entries
+                .iter()
+                .filter(|(_, e)| e.slot != NO_SLOT && slots.contains(&e.slot))
+                .filter_map(|(id, _)| crate::demo::stress_index(id))
+                .collect();
+            for i in stress {
+                self.feed_demo_stress(i);
+            }
+        }
+        left.retain(|&slot| {
+            let Some((&id, _)) = self.local_slots.iter().find(|(_, s)| **s == slot) else {
+                return true;
+            };
+            // (a local file or a media texture is its owner's to send again)
+            let Some((px, w, h)) = crate::demo::local_texture(&id) else {
+                return true;
+            };
+            let alpha = super::jobs::classify_alpha(&px);
+            let levels = mips_for(w, h, px, if crate::demo::local_texture_mips(&id) { 16 } else { 1 }, alpha);
+            let mips: Vec<MipLevel> = levels
+                .iter()
+                .map(|(width, height, data)| MipLevel {
+                    width: *width,
+                    height: *height,
+                    data,
+                })
+                .collect();
+            renderer.replace_texture(slot, &mips);
+            false
+        });
+        left
+    }
+
+    /// The entries part of `send_again`: those holding one of `slots` are
+    /// loaded again into it. Returns the slots none holds.
+    fn send_again_entries(&mut self, slots: &[u32]) -> Vec<u32> {
+        let mut left: Vec<u32> = slots.iter().copied().filter(|&s| s != aurora_render::writes::NO_SLOT).collect();
+        if left.is_empty() {
+            return left;
+        }
+        for (&id, e) in self.entries.iter_mut() {
+            // a texture without a slot draws the white one, which is the
+            // renderer's to send again
+            if e.slot == NO_SLOT {
+                continue;
+            }
+            let Some(at) = left.iter().position(|&s| s == e.slot) else {
+                continue;
+            };
+            left.swap_remove(at);
+            // its staged upload, if any, is the newer one: it lands as usual
+            e.decoded = None;
+            if self.legacy_bump_entries.contains_key(&id) {
+                e.cache_state = 2;
+            } else if !e.busy() {
+                e.cache_state = if e.cache_state == 3 || e.data.is_empty() { 0 } else { 2 };
+            }
+            Self::settle(&mut self.todo, &mut self.counts, id, e);
+            if left.is_empty() {
+                break;
+            }
+        }
+        left
+    }
+
     /// The slot of a texture met for the first time. With the table full,
     /// the textures nothing uses any more give theirs back at once, oldest
     /// release first, instead of after `evict_after`: on arrival in a region
@@ -5782,6 +5861,39 @@ mod tests {
         assert_eq!(s.entries[&id(1)].slot, 30);
         assert_eq!(s.alpha_by_slot[transparent], AlphaKind::Mask);
         assert_eq!(s.alpha_by_slot[30], AlphaKind::Opaque);
+    }
+
+    #[test]
+    fn a_texture_the_renderer_could_not_stage_is_loaded_again_in_its_slot() {
+        let mut s = TextureStreamer::new(PathBuf::new());
+        // one decoded from data in memory, one shown from the transcoded cache
+        let mut e = entry(Some(0), 100.0);
+        e.slot = 20;
+        e.cache_state = 2;
+        e.data = Arc::new(vec![1, 2, 3]);
+        s.entries.insert(id(1), e);
+        let mut e = entry(Some(0), 100.0);
+        e.slot = 21;
+        e.cache_state = 3;
+        s.entries.insert(id(2), e);
+        let mut e = entry(Some(0), 100.0);
+        e.slot = 22;
+        s.entries.insert(id(3), e);
+        let mut e = entry(Some(0), 100.0);
+        e.slot = NO_SLOT;
+        s.entries.insert(id(4), e);
+        let mut left = s.send_again_entries(&[20, 21, 40, aurora_render::writes::NO_SLOT, NO_SLOT]);
+        // the slots nobody here holds are left for the other producers: the
+        // white one is the renderer's, even with a slotless texture drawing it
+        left.sort_unstable();
+        assert_eq!(left, [NO_SLOT, 40]);
+        assert_eq!(s.entries[&id(4)].decoded, Some(0));
+        for (n, slot, cache_state) in [(1, 20, 2), (2, 21, 0)] {
+            let e = &s.entries[&id(n)];
+            assert_eq!((e.slot, e.decoded, e.cache_state), (slot, None, cache_state));
+            assert!(e.queued, "texture {n} has work again");
+        }
+        assert_eq!(s.entries[&id(3)].decoded, Some(0));
     }
 
     /// A failed download of texture `n` (in slot `10 + n`, never loaded).

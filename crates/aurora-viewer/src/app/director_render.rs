@@ -524,6 +524,22 @@ impl App {
         }
     }
 
+    /// The renderer could not stage this slot's texels: the title card
+    /// holding it is drawn again (`director_cards`).
+    pub(super) fn director_card_lost(&mut self, slot: u32) -> bool {
+        let Some(card) = self
+            .director
+            .films
+            .cards
+            .iter_mut()
+            .find(|c| c.texture.is_some_and(|t| t.0 == slot))
+        else {
+            return false;
+        };
+        card.key = None;
+        true
+    }
+
     /// The fades and titles of this frame, drawn into the picture by the
     /// renderer (after the world's labels, before the HUDs): while the
     /// track plays, is scrubbed, filmed or rendered, not while it is edited.

@@ -354,6 +354,9 @@ pub struct Renderer {
     pub thumbnail_request: Option<u64>,
     /// The small pictures made, until the caller takes them.
     pub thumbnails: Vec<crate::Thumbnail>,
+    /// Slots whose texture writes the render thread could not make, until
+    /// the caller takes them (`take_lost_textures`).
+    lost_textures: Vec<u32>,
     /// The second camera's view to draw after the next frame
     /// (second_view.rs); asked again every frame the window is open.
     pub second_view: Option<crate::second_view::SecondViewJob>,
@@ -875,6 +878,7 @@ impl Renderer {
             histogram: None,
             thumbnail_request: None,
             thumbnails: Vec::new(),
+            lost_textures: Vec::new(),
             second_view: None,
             lost,
             // one of the list for each renderer of the run (a recovery's
@@ -1414,6 +1418,24 @@ impl Renderer {
         self.textures.write_region(&mut self.writes, slot, x, y, w, h, rgba)
     }
 
+    /// The texture slots whose texels were not written: video memory had
+    /// no staging buffer for a texture write (write_staging.rs). The texture
+    /// shows what its layer held before; its owner sends it again, through
+    /// `replace_texture` or as when it was made, after a wait (memory is
+    /// short). A slot freed or given to another texture since may be in the
+    /// list: sending that one again costs an upload, nothing more.
+    pub fn take_lost_textures(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.lost_textures)
+    }
+
+    /// A lost slot of the renderer's own (`take_lost_textures`): white, the
+    /// flat normal, the placeholders, the terrain ramp. They are written at
+    /// start-up, before anything else is on the GPU, and sent again here.
+    /// False for a slot of the viewer's.
+    pub fn send_texture_again(&mut self, slot: u32) -> bool {
+        self.textures.send_reserved_again(&mut self.writes, slot)
+    }
+
     pub fn free_texture(&mut self, slot: u32) {
         self.textures.free(slot);
     }
@@ -1471,6 +1493,11 @@ impl Renderer {
         }
         self.films_answered += r.films.len() as u64;
         self.films.append(&mut r.films);
+        for slot in r.lost_textures.drain(..) {
+            if !self.lost_textures.contains(&slot) {
+                self.lost_textures.push(slot);
+            }
+        }
         self.last_stats = r.stats;
         self.rt_made = r.rt;
         self.fresh = true;

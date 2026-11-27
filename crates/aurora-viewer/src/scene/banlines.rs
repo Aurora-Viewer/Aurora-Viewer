@@ -79,6 +79,20 @@ impl BanLines {
         }
     }
 
+    /// The renderer could not stage the texels of these slots: when one is
+    /// a stripe texture, both are made again at the next update, and both
+    /// leave `lost`.
+    pub fn texture_lost(&mut self, lost: &mut Vec<u32>, renderer: &mut Renderer) {
+        let Some(t) = self.tex.filter(|t| t.iter().any(|s| lost.contains(s))) else {
+            return;
+        };
+        self.tex = None;
+        lost.retain(|s| !t.contains(s));
+        for s in t {
+            renderer.free_texture(s);
+        }
+    }
+
     /// Rebuild the wall draws for this frame (`mode`: ShowBanLines).
     pub fn update(&mut self, renderer: &mut Renderer, world: &World, mode: u8, eye: Vec3) {
         self.cmds.clear();

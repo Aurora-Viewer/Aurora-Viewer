@@ -5792,6 +5792,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails, for the whole run or that long, from the start or `after` seconds |
 | `AURORA_GPU_OOM_TARGETS=<seconds>` | Video memory full for the render targets, that long after the start |
 | `AURORA_STAGING_OOM=<KB>` | Video memory full for the staging buffers of the journal's writes of at least that size (`0`: all of them) |
+| `AURORA_STAGING_OOM_SECONDS=<s>` | With `AURORA_STAGING_OOM`: the refusals end that many seconds after the first staging buffer asked for |
 | `AURORA_GPU_OOM_START=<seconds>` | Video memory full while the renderer is made, that long after the start |
 | `AURORA_GPU_OOM_UI=1` | Video memory too full even for the interface's buffers at the start |
 | `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, photo look, RLVa, TAA history), that long |
@@ -6302,15 +6303,25 @@ both open states and the selection count. Capture at frame 620.
   and the size refused is not asked for again for 2 s: with `256` and
   `AURORA_DEMO_TEXTURES=3000`, the textures still load, slow frames'
   `frame writes took` lines count writes `cut in pieces`, and the captures
-  match a run without the variable. Refused at 64 KB, a texture write
-  waits for the next frame with every texture write after it, in order,
-  and is sent again before that frame's writes (`journal staging: texture
-  writes wait for the next frame`, at most once every 10 s); the texture
-  keeps what it showed meanwhile. With `0` nothing is ever sent: past
-  64 MB waiting the next writes are dropped (`journal staging: texture
-  writes dropped`), the world's textures stay black (the demo's sky and
-  ground too), the device is not lost and the interface keeps drawing. Before, wgpu made the staging buffer of every
+  match a run without the variable. Refused at 64 KB (or at its own size,
+  for a smaller one), a texture write is not made, nor any texture write
+  after it in that frame (`journal staging: texture writes not made, a
+  staging buffer of … KB was refused …: their textures are sent again`, at
+  most once every 10 s for each size); the texture keeps what it showed, and its owner
+  sends it again after 2 s, then up to 30 s apart while the refusals go on
+  (`textures: … sent again after video memory refused their staging
+  buffer`). With `0` nothing is ever made: the world's textures stay black
+  (the demo's sky and ground too), the device is not lost and the
+  interface keeps drawing. Before, wgpu made the staging buffer of every
   texture write itself, and a refusal of it lost the device.
+- **`AURORA_STAGING_OOM_SECONDS=<s>`**: with `AURORA_STAGING_OOM`, the
+  refusals end that many seconds after the first staging buffer asked for
+  (`journal staging: AURORA_STAGING_OOM over, staging buffers are made
+  again`): with `0`, `20` and `AURORA_DEMO_TEXTURES=3000`, the stress
+  cubes are back after the first 2 s wait (their texels come through the
+  staging pool), the demo's own textures (sky, ground, plaza) stay black
+  for about 20 s, then every texture is back in its place within the next
+  30 s (`… 0 no longer held`), with no `wgpu error` in the log.
 - **`AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]`**:
   once the loading screen is gone, our avatar and the camera behind it
   turn at that rate (180 if the value is not a number) for the first

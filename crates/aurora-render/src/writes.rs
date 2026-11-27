@@ -54,6 +54,9 @@ enum Op<B, T, E> {
         texture: T,
         dst: TexelDst,
         data: Range<usize>,
+        /// The texture table's slot whose texels these are ([`NO_SLOT`]
+        /// when none is named).
+        slot: u32,
     },
     /// Copies submitted before the end of the frame (an arena growth, with
     /// the staged copies recorded before it): they must see the writes
@@ -61,10 +64,19 @@ enum Op<B, T, E> {
     Submit(Vec<E>),
 }
 
+/// A texture write that names no slot of the texture table.
+pub const NO_SLOT: u32 = u32::MAX;
+
 /// What replays a journal: the queue, or a recorder in the tests.
 pub trait WriteSink<B, T, E> {
     fn write_buffer(&mut self, buffer: &B, offset: u64, data: &[u8]);
     fn write_texture(&mut self, texture: &T, dst: TexelDst, data: &[u8]);
+    /// A texture write and the texture table's slot its texels belong to
+    /// ([`NO_SLOT`] for none): a sink that cannot make the write reports
+    /// the slot, for the texture to be sent again (write_staging.rs).
+    fn write_slot_texture(&mut self, texture: &T, dst: TexelDst, data: &[u8], _slot: u32) {
+        self.write_texture(texture, dst, data);
+    }
     fn submit(&mut self, encoders: Vec<E>);
 }
 
@@ -108,6 +120,12 @@ impl<B: Clone, T: Clone, E> Journal<B, T, E> {
     /// As `Queue::write_texture` for RGBA8 rows of `dst.width` pixels;
     /// `data` must hold the whole rectangle (longer data is cut).
     pub fn write_texture(&mut self, texture: &T, dst: TexelDst, data: &[u8]) {
+        self.write_slot_texture(texture, dst, data, NO_SLOT);
+    }
+
+    /// [`Self::write_texture`] of the texels of the texture table's `slot`,
+    /// which the replay reports if the write cannot be made.
+    pub fn write_slot_texture(&mut self, texture: &T, dst: TexelDst, data: &[u8], slot: u32) {
         let Some(data) = data.get(..dst.bytes()).filter(|d| !d.is_empty()) else {
             return;
         };
@@ -116,6 +134,7 @@ impl<B: Clone, T: Clone, E> Journal<B, T, E> {
             texture: texture.clone(),
             dst,
             data,
+            slot,
         });
     }
 
@@ -186,7 +205,7 @@ impl<B: Clone, T: Clone, E> Journal<B, T, E> {
         for op in self.ops.drain(..) {
             match op {
                 Op::Buffer { buffer, offset, data } => sink.write_buffer(&buffer, offset, &self.data[data]),
-                Op::Texture { texture, dst, data } => sink.write_texture(&texture, dst, &self.data[data]),
+                Op::Texture { texture, dst, data, slot } => sink.write_slot_texture(&texture, dst, &self.data[data], slot),
                 Op::Submit(encoders) => sink.submit(encoders),
             }
         }
@@ -403,5 +422,32 @@ mod tests {
         j.write_texture(&7, wide, &[1; 64 * 3 * 4]);
         assert_eq!(j.texture_staged_bytes(), 260 + 768);
         assert_eq!(j.buffer_bytes(), 12);
+    }
+
+    #[test]
+    fn texture_writes_carry_their_slot_to_the_sink() {
+        #[derive(Default)]
+        struct Slots(Vec<u32>);
+        impl WriteSink<u32, u32, &'static str> for Slots {
+            fn write_buffer(&mut self, _: &u32, _: u64, _: &[u8]) {}
+            fn write_texture(&mut self, _: &u32, _: TexelDst, _: &[u8]) {
+                unreachable!("the slot is passed along");
+            }
+            fn write_slot_texture(&mut self, _: &u32, _: TexelDst, _: &[u8], slot: u32) {
+                self.0.push(slot);
+            }
+            fn submit(&mut self, _: Vec<&'static str>) {}
+        }
+        let mut j: Journal<u32, u32, &'static str> = Journal::default();
+        j.write_slot_texture(&7, texel(0), &[1; 8], 42);
+        j.write_texture(&7, texel(1), &[2; 8]);
+        let mut s = Slots::default();
+        j.replay(&mut s);
+        assert_eq!(s.0, vec![42, NO_SLOT]);
+        // a sink that names no slot gets the plain write
+        j.write_slot_texture(&7, texel(0), &[3; 8], 5);
+        let mut r = Recorder::default();
+        j.replay(&mut r);
+        assert_eq!(r.0, vec![Call::Texture(7, texel(0), vec![3; 8])]);
     }
 }
