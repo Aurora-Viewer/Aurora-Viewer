@@ -836,12 +836,16 @@ follows the steps below; on Linux the scripts run as `pwsh
 4. **CI**, then the wait for it in the same turn, without handing back
    (below for an outside contributor's "Approve and run"). Never end a
    turn on "I will review it once CI is green": release the claim instead.
-5. **`check.ps1` in the review worktree** (approved runs test the merge
-   with `main` as it was when they started), then **a demo or a grid
-   test** whenever the change can be seen in the viewer, your human
-   choosing which: never skipped (section 4 for the demo, section 1 for the
-   grid). A grid test they cannot run yet leaves a ⚠️ verdict until it is
-   done.
+5. **Tested as your own task is**, in the review worktree: `check.ps1`
+   (approved runs test the merge with `main` as it was when they
+   started); the demo scenarios the PR touches and those of the
+   neighbouring features, before and after on screenshots (section 4, and
+   step 3 of the list above); and whenever the change can be seen in the
+   viewer, your human's validation (section 8, step 5: the viewer launched
+   for them in demo or normal mode, what to test, where and what they
+   should see, their answer awaited; on the grid, they log in). Never
+   skipped: a validation they cannot do yet leaves a ⚠️ verdict until it
+   is done.
 6. **Whatever the author has to change** (a conflict, a test broken on the
    merge with `main`, a finding, a failing test): ask your human whether
    you fix it yourself on the author's branch (when you may push to it: a

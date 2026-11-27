@@ -17,6 +17,7 @@ scripts, as they are:
 | `review-queue.ps1` | `-Pending` (step 1), the queue and `-Claim` (steps 1 and 2), `-Release` (step 9) |
 | `new-task.ps1` | the review worktree (step 3) |
 | `check.ps1` | in the review worktree, on the PR merged with the latest `main` (step 5), and after a maintainer's fix (step 6) |
+| `automation-window-border.ps1` | the demo you drive alone, on Windows (step 5) |
 | `pr-captures.ps1` | the demo captures in the review (step 5) |
 | `end-task.ps1` | the review worktree, once the review is posted (steps 7 and 9) |
 | `merge-pr.ps1` | the merge, on your human's yes (step 8) |
@@ -83,8 +84,8 @@ The PRs whose last review is your human's, which every queue leaves out:
     is your human's, in the dialog below.
   - Before any merge, it is tested again on today's `main`, as a review is
     (an approval says nothing of what `main` became since): claim it, then
-    steps 3 to 7 (the worktree, `check.ps1`, the demo or grid test, the
-    review naming the head), and only then its merge (step 8), asked in a
+    steps 3 to 7 (the worktree, `check.ps1`, the demo and your human's
+    validation, the review naming the head), and only then its merge (step 8), asked in a
     dialog of its own since step 1 ends before step 2.
 - `kind: decision`, their ⚠️ left a decision open: read what (a hand or grid
   test, a product choice) and put it in the dialog. With `head_reviewed:
@@ -208,9 +209,12 @@ Approved runs test the merge with `main` as it was when they started: a PR
 far behind can be green and still break on today's `main`. Step 5 is what
 catches it.
 
-## 5. check.ps1, then a demo or a grid test
+## 5. check.ps1, the demo, the human's validation
 
-In the review worktree, on the PR merged with the latest `main`:
+As for your own task (AGENTS.md sections 4, 8 step 5 and 11 step 3), on
+the PR merged with the latest `main`, in the review worktree.
+
+**check.ps1**:
 
 ```
 pwsh -NoProfile -WorkingDirectory <W> -File ./scripts/check.ps1
@@ -222,45 +226,61 @@ review's `check.ps1` at a time, never more than two heavy builds on the PC.
 Run it in the background if your tool would cut it short, and read its
 result before going on. A failure is a finding of step 6.
 
-Then **test it in a demo or on the grid**, never skipped, before any
-verdict, whenever the change can be seen or felt in the viewer: a window, a
-rendering, a behaviour, a demo scenario it adds or touches
-(`AURORA_DEMO_*`), or what only the grid shows (network, teleports, voice,
-other residents, permissions on real assets). Offer the demo only once you
-know a scenario reaches the change with `AURORA_*` variables alone (read
-the scenario's code and docs/TESTING.md): a setting it needs is never
-changed for a test (AGENTS.md section 4), so a change behind a setting no
-variable sets is a grid test, or a demo viewer your human drives and sets
-back. Ask which in a dialog, one question per PR, with what you would run
-and what to look at, your pick first (both when the demo shows part of it
-and the grid the rest):
+**The demo, yours** (AGENTS.md section 4, and the non-regression of section
+11 step 3): the demo scenarios the PR touches **and** those of the
+neighbouring features, before and after, compared on screenshots.
 
-- **Demo** (AGENTS.md section 4): the scenarios it touches, from the review
-  worktree, before (`git -C <W> checkout --detach origin/main`) then after
+```
+AURORA_DEMO=1 AURORA_DEMO_<NAME>=<mode> AURORA_CAPTURE=<W>/.scratch/<name>.png AURORA_CAPTURE_EXIT=1 AURORA_CAPTURE_FRAMES=620 pwsh -NoProfile -WorkingDirectory <W> -Command "cargo run -p aurora-viewer -- --title 'Test review-<n> [AUTOMATION - DO NOT TOUCH]'"
+```
+
+(Windows: `$env:AURORA_DEMO = "1"` and the others, then `Push-Location <W>;
+cargo run -p aurora-viewer -- --title "Test review-<n> [AUTOMATION - DO NOT
+TOUCH]"`, and `scripts/automation-window-border.ps1` with the viewer's PID,
+docs/TESTING.md "Automated test windows on Windows".)
+
+- Before first (`git -C <W> checkout --detach origin/main`), then after
   (`git -C <W> checkout -` back to the merge): one `target/` builds both,
-  and the last build is the PR's, ready for a grid test. A scenario the PR
-  adds has no before on `main`: compare with the author's before capture. Title `"Test review-<n> [AUTOMATION - DO NOT
-  TOUCH]"` while you drive it alone (and its border on Windows, section
-  4). Capture late enough that the world has loaded
-  (`AURORA_CAPTURE_FRAMES=1500` on a slow PC; a capture of the loading
-  screen is taken again). Look at every capture, then publish each:
+  and the last build is the PR's, ready for your human. A scenario the PR
+  adds has no before on `main`: compare with the author's before capture.
+- Capture after the world has loaded (`AURORA_CAPTURE_FRAMES` higher on a
+  slow PC; a capture of the loading screen is taken again). Look at every
+  capture: it is your visual check.
+- **Never change a setting for a test.** What the test needs goes through
+  an `AURORA_*` variable or a command-line argument (docs/TESTING.md, the
+  README); a change no scenario reaches that way is shown to your human
+  below. Check that the scenario really reaches the change (its code,
+  docs/TESTING.md) before counting on it.
+- Publish the captures, one file per call:
   `pwsh ./scripts/pr-captures.ps1 -Pr <n> -Files <W>/.scratch/<name>.png`
-  (one file per call: on Linux and macOS this form passes no list).
-- **Grid test**: you launch the review worktree's viewer for your human
-  with `--title "Test review-<n>"`; they log in and test (AGENTS.md
-  section 1, rule 1), and you say precisely what to do and what they
-  should see. Their result goes in the review. They cannot now: the review
-  is posted with the ⚠️ verdict "waiting for the maintainer's grid test"
-  and what to test; the queue holds it for you, step 1 brings it back.
+  (on Linux and macOS this form passes no list).
 
-Only a PR with nothing to see in the viewer (docs, tests, tooling) gets no
-test, and its review says why.
+**Your human's validation** (AGENTS.md section 8, step 5), whenever the
+change can be seen or felt in the viewer; never skipped. Only a PR with no
+effect on the viewer (docs, tests, tooling) has none, and its review says
+so.
+
+- Launch the review worktree's viewer for your human, in demo or normal
+  mode depending on what has to be tested: `pwsh -NoProfile
+  -WorkingDirectory <W> -Command "cargo run -p aurora-viewer -- --title
+  'Test review-<n>'"`, with `AURORA_DEMO=1` and the scenario for a demo.
+  Wait for its window before you ask.
+- Tell them precisely what to test, where (demo, or the grid when only the
+  grid shows it: network, teleports, voice, other residents, real assets)
+  and what they should see. On the grid, they log in (AGENTS.md section 1,
+  rule 1). Tell them that what they change in Preferences stays for every
+  viewer of the PC.
+- Wait for their answer, in a dialog that keeps the turn going. A problem
+  they report is a finding of step 6. Their result goes in the review.
+- They cannot test now: the review is posted with the ⚠️ verdict "waiting
+  for the maintainer's validation" and what to test; the queue holds it
+  for you, step 1 brings it back.
 
 ## 6. Fix it or ask the author
 
 Anything the author has to change (a conflict, a test or `check.ps1` broken
-on the merge with `main`, a finding of the diff, a failing demo or grid
-test) goes to your human in a dialog, before anything is posted:
+on the merge with `main`, a finding of the diff, a demo or a validation
+that fails) goes to your human in a dialog, before anything is posted:
 
 - **Fix it yourself**, offered only when you may push to the PR's branch
   (`gh pr view <n> --json isCrossRepository,maintainerCanModify,headRefName,headRepositoryOwner,headRepository`:
@@ -298,7 +318,8 @@ gh pr comment <n> --repo Aurora-Viewer/Aurora-Viewer --body-file <W>/.scratch/re
   never the worktree's local merge: the queue offers the merge of that
   head only.
 - The check table of AGENTS.md section 11, filled from what you ran: the
-  conflict check, CI, `check.ps1`, the demo or grid test with its captures.
+  conflict check, CI, `check.ps1`, the demo with its captures, your
+  human's validation (date, demo or grid, what they saw).
 - Posting it ends the claim: nothing to release.
 
 Then end the review worktree. `end-task.ps1` looks for a merged PR of the

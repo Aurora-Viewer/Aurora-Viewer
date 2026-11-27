@@ -141,9 +141,11 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
     and claims only what you pick. For each PR it makes a review worktree
     with `new-task.ps1` (the PR's head with the latest main merged in),
     reads the diff and checks the conflicts before asking you to approve
-    the outside CI, waits for that CI, runs `check.ps1` there, and tests
-    every change that can be seen in the viewer in a demo or on the grid
-    (it asks you which; a grid test is yours to run). Whatever the author
+    the outside CI, waits for that CI, runs `check.ps1` there, runs the
+    demo scenarios the PR touches before and after, and, as for its own
+    tasks, launches the viewer for you to validate every change that can
+    be seen (in demo, or on the grid where you log in), telling you what to
+    test and what you should see. Whatever the author
     has to change, it asks you whether to fix it itself on their branch or
     to post a "Changes requested". It posts its review, ends the worktree
     with `end-task.ps1`, and asks you before any merge (`merge-pr.ps1`).
