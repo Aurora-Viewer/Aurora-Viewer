@@ -332,7 +332,7 @@ pub fn known_bases() -> Vec<(&'static str, PathBuf)> {
 /// Where the viewer keeps its files, from the path helpers the viewer
 /// itself uses (the demo's subfolders are inside them). `chosen_cache` and
 /// `transcripts`: the folders the user chose in the preferences.
-pub fn folder_candidates(chosen_cache: &[PathBuf], transcripts: Option<PathBuf>, blender: &[AddonRemoval]) -> Vec<(Kind, PathBuf)> {
+pub fn folder_candidates(chosen_cache: &[PathBuf], transcripts: &[PathBuf], blender: &[AddonRemoval]) -> Vec<(Kind, PathBuf)> {
     let mut out = vec![
         (Kind::Settings, crate::settings::default_config_root()),
         (Kind::Cache, crate::settings::default_cache_root()),
@@ -340,7 +340,7 @@ pub fn folder_candidates(chosen_cache: &[PathBuf], transcripts: Option<PathBuf>,
     out.extend(chosen_cache.iter().map(|dir| (Kind::ChosenCache, dir.clone())));
     out.push((Kind::Logs, crate::logging::logs_dir()));
     out.push((Kind::MediaPlugins, crate::settings::media_plugins_dir()));
-    out.extend(transcripts.map(|dir| (Kind::Transcripts, dir)));
+    out.extend(transcripts.iter().cloned().map(|dir| (Kind::Transcripts, dir)));
     out.extend(
         blender
             .iter()
@@ -459,9 +459,9 @@ pub fn command_line() -> i32 {
     let plan = plan(system.as_ref(), &logins);
     let (steps, blender) = run(&plan, system.as_mut());
     let chosen_cache: Vec<PathBuf> = crate::cache_location::root_for(&settings.cache_location).into_iter().collect();
-    let transcripts = Some(PathBuf::from(settings.chat_log_location.trim())).filter(|p| !p.as_os_str().is_empty());
+    let transcripts = settings.chat_log_locations();
     let report = Report {
-        remaining: remaining(folder_candidates(&chosen_cache, transcripts, &blender), Path::exists),
+        remaining: remaining(folder_candidates(&chosen_cache, &transcripts, &blender), Path::exists),
         steps,
         blender,
         dry_run: system.dry_run(),

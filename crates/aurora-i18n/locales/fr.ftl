@@ -11461,16 +11461,26 @@ ui-options-open-on-offline = Ouvrir les conversations à l’arrivée de message
 ui-options-open-on-offline-help = Ouvre la fenêtre des conversations quand des messages privés ou des invitations envoyés pendant votre absence arrivent à la connexion.
 ui-options-chat-logs-dated = Fichiers datés
 ui-options-chat-logs-dated-help = Un fichier par mois pour chaque conversation (nom-2026-10) et un par jour pour le chat local (chat-2026-10-12), au lieu d'un seul fichier qui grandit.
+ui-options-chat-logs-dated-shared = Pendant le partage, Aurora ajoute aux fichiers que lit le Legacy Viewer, datés ou non. « Fichiers datés » ne s'applique qu'au dossier propre à Aurora.
 ui-options-chat-logs-note = Ces fichiers sont du texte lisible par toute personne qui a accès à cet ordinateur. Ils restent sur cette machine, séparés pour chaque compte et chaque grille, et ne sont jamais joints à un rapport de bug.
 ui-options-chat-logs-open = Ouvrir le dossier
 ui-options-chat-logs-folder-help = Les fichiers de ce compte sont déplacés dans le nouveau dossier.
-ui-options-chat-logs-legacy-layout = Partager le dossier du Legacy Viewer
-ui-options-chat-logs-legacy-layout-help = Écrit les fichiers de ce compte comme le Legacy Viewer les range, dans le dossier choisi (prénom_nom), pour que les deux viewers lisent et complètent le même historique. Choisissez plus haut le dossier des historiques du Legacy Viewer. Aurora n'y fait qu'ajouter des lignes : rien n'est déplacé, importé ni effacé, et les fichiers d'Aurora reviennent quand l'option est désactivée. Gardez le même réglage « Fichiers datés » dans les deux viewers. Second Life uniquement. Désactivé par défaut.
+ui-options-chat-logs-legacy-sharing = Partage de { $folder } avec le Legacy Viewer
+ui-options-chat-logs-legacy-append-only = Les formats First Last.txt et first_last.txt sont tous deux reconnus. Aurora ajoute les nouvelles lignes aux fichiers existants et ne les réécrit ni ne les renomme jamais.
+ui-options-chat-logs-legacy-found = { $count ->
+    [one] Historique existant détecté dans { $folder } ({ $count } fichier) — le partager avec le Legacy Viewer ?
+   *[other] Historique existant détecté dans { $folder } ({ $count } fichiers) — le partager avec le Legacy Viewer ?
+    }
+ui-options-chat-logs-legacy-folder-found = Dossier d'historique du Legacy Viewer détecté ({ $folder }) — le partager avec le Legacy Viewer ?
+ui-options-chat-logs-other-account = Ce dossier appartient à un autre compte ({ $folder }). Le dossier actuel est conservé.
+ui-options-chat-logs-main-grid-folder = Ce dossier ({ $folder }) contient vos historiques de la grille principale, et non ceux de Second Life Beta (Aditi). Le dossier actuel est conservé.
+ui-options-chat-logs-switch-to = Passer à { $folder }
 ui-options-chat-logs-moved = { $count ->
     [one] { $count } fichier déplacé.
    *[other] { $count } fichiers déplacés.
     }
 ui-options-chat-logs-move-failed = Impossible de déplacer les fichiers : l'ancien dossier est conservé.
+ui-options-chat-logs-change-failed = Impossible de changer de dossier : l'ancien dossier est conservé.
 ui-options-chat-logs-erase = Effacer les historiques de ce compte…
 ui-options-chat-logs-erase-title = Effacer les historiques de ce compte ?
 ui-options-chat-logs-erase-text = Tous les fichiers de conversations de ce compte sur cette grille sont supprimés du disque : messages privés, groupes, conférences et chat local. Cette action est définitive. Les autres comptes ne sont pas touchés. La copie des conversations privées conservée par la grille n'est pas effacée : Aurora n'en affiche plus les messages antérieurs à cet effacement.

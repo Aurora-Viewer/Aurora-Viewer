@@ -11459,16 +11459,26 @@ ui-options-open-on-offline = Open conversations when offline messages arrive
 ui-options-open-on-offline-help = Opens the conversations window when private messages or invitations sent while you were away arrive at login.
 ui-options-chat-logs-dated = Dated files
 ui-options-chat-logs-dated-help = One file per month for each conversation (name-2026-10) and one per day for the nearby chat (chat-2026-10-12), instead of a single growing file.
+ui-options-chat-logs-dated-shared = While sharing, Aurora adds to the files the Legacy Viewer reads, dated or not. Dated files applies to Aurora's own folder only.
 ui-options-chat-logs-note = These files are plain text, readable by anyone who can use this computer. They stay on this machine, apart for each account and each grid, and are never attached to a bug report.
 ui-options-chat-logs-open = Open folder
 ui-options-chat-logs-folder-help = This account's files are moved to the new folder.
-ui-options-chat-logs-legacy-layout = Share the Legacy Viewer's folder
-ui-options-chat-logs-legacy-layout-help = Writes this account's files in the Legacy Viewer's own layout under the chosen folder (first_last), so that both viewers read and add to the same history. Choose the Legacy Viewer's chat log folder above. Aurora only adds lines there: nothing is moved, imported or erased, and Aurora's own files come back when this is off. Keep the same Dated files setting in both viewers. Second Life only. Off by default.
+ui-options-chat-logs-legacy-sharing = Sharing { $folder } with the Legacy Viewer
+ui-options-chat-logs-legacy-append-only = Both First Last.txt and first_last.txt are recognized. Aurora adds new lines to the existing files and never rewrites or renames them.
+ui-options-chat-logs-legacy-found = { $count ->
+    [one] Existing chat log found in { $folder } ({ $count } file) — share it with the Legacy Viewer?
+   *[other] Existing chat log found in { $folder } ({ $count } files) — share it with the Legacy Viewer?
+    }
+ui-options-chat-logs-legacy-folder-found = Legacy Viewer chat log folder found ({ $folder }) — share it with the Legacy Viewer?
+ui-options-chat-logs-other-account = This folder belongs to another account ({ $folder }). Keeping the current folder.
+ui-options-chat-logs-main-grid-folder = This folder ({ $folder }) holds your main-grid logs, not your Second Life Beta (Aditi) logs. Keeping the current folder.
+ui-options-chat-logs-switch-to = Switch to { $folder }
 ui-options-chat-logs-moved = { $count ->
     [one] { $count } file moved.
    *[other] { $count } files moved.
     }
 ui-options-chat-logs-move-failed = Unable to move the files: the previous folder is kept.
+ui-options-chat-logs-change-failed = Unable to change the folder: the previous folder is kept.
 ui-options-chat-logs-erase = Erase this account's history…
 ui-options-chat-logs-erase-title = Erase this account's history?
 ui-options-chat-logs-erase-text = Every conversation file of this account on this grid is removed from the disk: instant messages, groups, conferences and nearby chat. This cannot be undone. Other accounts are not touched. The copy of the private conversations kept by the grid is not deleted: Aurora stops showing its messages older than this erase.
