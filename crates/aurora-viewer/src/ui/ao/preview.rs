@@ -6,8 +6,17 @@
 //! played from its own bar.
 use super::*;
 
-/// Height of the caption under the stage.
-const CAPTION: f32 = 136.0;
+/// The room the stage keeps at its bottom for its own bar of buttons
+/// (`ui::object_stage`), under the caption laid over it.
+const STAGE_BAR: f32 = 44.0;
+/// The caption's lines: the slot, the entry's name, each layer, the
+/// segments.
+const EYEBROW: f32 = 15.0;
+const HERO: f32 = 24.0;
+const LAYER: f32 = 16.0;
+const SEGMENTS: f32 = 12.0;
+/// How far above the caption the fade to the stage's ground starts.
+const FADE: f32 = 36.0;
 
 /// Which entry of the open slot the preview shows.
 #[derive(Default)]
@@ -67,53 +76,59 @@ fn entry_names(set: &Set, state: State) -> Vec<String> {
 }
 
 pub(super) fn show(ui: &mut egui::Ui, p: &Palette, set: Option<&Set>, runtime: &Runtime, state: &mut AoUi) {
+    // the stage fills the column edge to edge; the title and the caption lie
+    // over it, the caption on a fade to its ground
     let rect = ui.max_rect();
     let names = set.map_or_else(Vec::new, |s| entry_names(s, state.state));
     if !names.is_empty() {
         state.preview.index = state.preview.index.min(names.len() - 1);
     }
-    let header = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), 40.0));
-    widgets::paint_glyph(
-        ui.painter(),
-        "eye-filled",
-        egui::pos2(header.left() + 22.0, header.center().y),
-        15.0,
-        p.muted,
-    );
+    state.preview.shown = true;
+    let ground = state.stage.ground(p);
+    let (ink, muted) = (state.stage.ink(p), state.stage.muted(p));
+    ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, ground);
+    let title_room = 40.0;
+    let spoken = aurora_i18n::tr!("ao-preview");
+    let _ = state.stage.show(ui, p, rect, title_room, Default::default(), spoken, &|_| None);
+    let y = rect.top() + title_room / 2.0;
+    widgets::paint_glyph(ui.painter(), "eye-filled", egui::pos2(rect.left() + 22.0, y), 15.0, muted);
     widgets::paint_elided(
         ui,
         aurora_i18n::tr!("ao-preview"),
-        egui::pos2(header.left() + 36.0, header.center().y),
-        header.width() - 50.0,
+        egui::pos2(rect.left() + 36.0, y),
+        rect.width() - 50.0,
         egui::FontId::new(13.0, super::super::fonts::semibold(ui.ctx())),
-        p.ink,
+        ink,
     );
-    let caption = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - CAPTION), rect.max);
-    let stage = egui::Rect::from_min_max(egui::pos2(rect.left(), header.bottom()), egui::pos2(rect.right(), caption.top()));
-    let frame = stage.shrink2(Vec2::new(12.0, 0.0));
-    state.preview.shown = true;
-    let radius = ui.visuals().window_corner_radius;
-    ui.painter().rect(
-        frame,
-        radius,
-        state.stage.ground(p),
-        widgets::border_stroke(p, egui::Stroke::NONE),
-        egui::StrokeKind::Inside,
+    let layers = set.and_then(|s| s.states.get(&state.state)).map_or(0, |c| c.tracks.len().min(2));
+    let segments = if names.len() > 1 { SEGMENTS + 6.0 } else { 0.0 };
+    let height = EYEBROW + HERO + layers as f32 * LAYER + segments;
+    let bottom = rect.bottom() - STAGE_BAR;
+    let caption = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 18.0, bottom - height),
+        egui::pos2(rect.right() - 18.0, bottom),
     );
-    let spoken = aurora_i18n::tr!("ao-preview");
-    let _ = state.stage.show(ui, p, frame, 0.0, Default::default(), spoken, &|_| None);
+    fade(
+        ui,
+        egui::Rect::from_min_max(
+            egui::pos2(rect.left(), caption.top() - FADE),
+            egui::pos2(rect.right(), bottom + 6.0),
+        ),
+        ground,
+    );
     if names.len() > 1 {
+        let middle = (rect.top() + title_room + caption.top()) / 2.0;
         for (forward, icon, x) in [
-            (false, "caret-left-filled", stage.left() + 24.0),
-            (true, "caret-right-filled", stage.right() - 24.0),
+            (false, "caret-left-filled", rect.left() + 20.0),
+            (true, "caret-right-filled", rect.right() - 20.0),
         ] {
-            let edge = egui::Rect::from_center_size(egui::pos2(x, stage.center().y), Vec2::new(36.0, 64.0));
+            let edge = egui::Rect::from_center_size(egui::pos2(x, middle), Vec2::new(36.0, 64.0));
             let tip = aurora_i18n::text(if forward { "ao-preview-next" } else { "ao-preview-previous" });
             let response = ui
                 .interact(edge, ui.scope_id().with(("ao_preview_edge", forward)), egui::Sense::click())
                 .on_hover_text(tip);
-            let ink = if response.hovered() { p.ink } else { p.muted.gamma_multiply(0.6) };
-            widgets::paint_glyph(ui.painter(), icon, edge.center(), 22.0, ink);
+            let tint = if response.hovered() { ink } else { muted.gamma_multiply(0.7) };
+            widgets::paint_glyph(ui.painter(), icon, edge.center(), 22.0, tint);
             if response.clicked() {
                 let n = names.len();
                 state.preview.index = if forward {
@@ -124,11 +139,32 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, set: Option<&Set>, runtime: &
             }
         }
     }
-    caption_text(ui, p, set, runtime, state, &names, caption.shrink2(Vec2::new(20.0, 16.0)));
+    caption_text(ui, p, set, runtime, state, &names, caption, (ink, muted));
+}
+
+/// A fade from nothing at the top of `rect` to the stage's ground at its
+/// bottom, under the caption.
+fn fade(ui: &egui::Ui, rect: egui::Rect, ground: egui::Color32) {
+    let mut mesh = egui::Mesh::default();
+    let clear = ground.gamma_multiply(0.0);
+    let solid = ground.gamma_multiply(0.92);
+    let base = mesh.vertices.len() as u32;
+    for (pos, color) in [
+        (rect.left_top(), clear),
+        (rect.right_top(), clear),
+        (rect.right_bottom(), solid),
+        (rect.left_bottom(), solid),
+    ] {
+        mesh.colored_vertex(pos, color);
+    }
+    mesh.add_triangle(base, base + 1, base + 2);
+    mesh.add_triangle(base, base + 2, base + 3);
+    ui.painter().add(egui::Shape::mesh(mesh));
 }
 
 /// The slot in small capitals with the entry's place, the entry's name in
-/// large type with its play button, the layers on top, and the segments.
+/// large type, the layers on top, and the segments, close together.
+#[allow(clippy::too_many_arguments)]
 fn caption_text(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -137,8 +173,9 @@ fn caption_text(
     state: &mut AoUi,
     names: &[String],
     area: egui::Rect,
+    (ink, muted): (egui::Color32, egui::Color32),
 ) {
-    let mut y = area.top() + 8.0;
+    let mut y = area.top() + EYEBROW / 2.0;
     let eyebrow = egui::FontId::new(11.0, super::super::fonts::semibold(ui.ctx()));
     let slot = ui
         .painter()
@@ -156,9 +193,9 @@ fn caption_text(
         egui::pos2(area.left() + slot_w + 10.0, y),
         area.width() - slot_w - 10.0,
         egui::FontId::proportional(11.0),
-        p.muted,
+        muted,
     );
-    y += 26.0;
+    y += (EYEBROW + HERO) / 2.0;
     let hero = names
         .get(state.preview.index)
         .cloned()
@@ -169,9 +206,9 @@ fn caption_text(
         egui::pos2(area.left(), y),
         area.width(),
         egui::FontId::new(20.0, super::super::fonts::semibold(ui.ctx())),
-        p.ink,
+        ink,
     );
-    y += 22.0;
+    y += (HERO + LAYER) / 2.0;
     if let Some(config) = set.and_then(|s| s.states.get(&state.state)) {
         for track in config.tracks.iter().take(2) {
             let index = runtime.index(state.state, track.id).min(track.members.len().saturating_sub(1));
@@ -183,18 +220,18 @@ fn caption_text(
                 egui::pos2(area.left(), y),
                 area.width(),
                 egui::FontId::proportional(12.0),
-                p.muted,
+                muted,
             );
-            y += 18.0;
+            y += LAYER;
         }
     }
     if names.len() > 1 {
         let n = names.len() as f32;
         let gap = 4.0;
         let width = (area.width() - gap * (n - 1.0)) / n;
-        let top = area.bottom() - 14.0;
+        let top = area.bottom() - SEGMENTS;
         for (i, name) in names.iter().enumerate() {
-            let hit = egui::Rect::from_min_size(egui::pos2(area.left() + i as f32 * (width + gap), top), Vec2::new(width, 14.0));
+            let hit = egui::Rect::from_min_size(egui::pos2(area.left() + i as f32 * (width + gap), top), Vec2::new(width, SEGMENTS));
             let response = ui
                 .interact(hit, ui.scope_id().with(("ao_preview_segment", i)), egui::Sense::click())
                 .on_hover_text(name);
@@ -203,7 +240,7 @@ fn caption_text(
             let fill = match i.cmp(&state.preview.index) {
                 std::cmp::Ordering::Equal => p.violet_pale,
                 std::cmp::Ordering::Less => p.violet_pale.gamma_multiply(0.42),
-                std::cmp::Ordering::Greater => p.ink.gamma_multiply(0.14),
+                std::cmp::Ordering::Greater => ink.gamma_multiply(0.18),
             };
             ui.painter().rect_filled(bar, ui.visuals().widgets.inactive.corner_radius, fill);
             if response.clicked() {

@@ -97,18 +97,20 @@ impl World {
         Some(id)
     }
 
-    /// Make a client-only copy of our avatar and, when `worn`, of what it
-    /// wears (not the HUDs), as avatar `id` with local ids from
-    /// `first_local`, its root at `position` turned by `rotation`. Shared by
-    /// the mirror and the AO window's preview skeleton (ao_preview.rs). None
-    /// while our avatar is not in the world.
+    /// Make a client-only copy of our avatar and of what it wears (not the
+    /// HUDs), as avatar `id` with local ids from `first_local`, its root at
+    /// `position` turned by `rotation`; without their lights, projectors and
+    /// reflection probes unless `lights`. Shared by the mirror and the AO
+    /// window's preview skeleton (ao_preview.rs), whose worn copies give it
+    /// our rigged meshes' joint positions. None while our avatar is not in
+    /// the world.
     pub(super) fn copy_own_avatar(
         &mut self,
         id: Uuid,
         first_local: u32,
         position: Vec3,
         rotation: glam::Quat,
-        worn: bool,
+        lights: bool,
     ) -> Option<ObjKey> {
         let own = self.objects.index_of_uuid(&self.agent_id)?;
         let avatar = self.objects.get(own)?;
@@ -122,7 +124,7 @@ impl World {
         let mut next = first_local + 1;
         // what we wear, parents before their children; not the HUDs, which
         // would show twice on the screen
-        for idx in self.objects.subtree(own).into_iter().skip(1).filter(|_| worn) {
+        for idx in self.objects.subtree(own).into_iter().skip(1) {
             // (nor the copies drawn from the cache, which go when the
             // region's objects come: the copy would keep them)
             let Some(object) = self.objects.get(idx).filter(|o| !super::avatar_cache::is_copy(o.key)) else {
@@ -135,12 +137,18 @@ impl World {
                 continue;
             }
             let full_id = Uuid::from_u128(id.as_u128() ^ object.full_id.as_u128().rotate_left(1));
+            let mut copy = copy_of(object, full_id, next, parent);
+            if !lights {
+                copy.extra.light = None;
+                copy.extra.light_image = None;
+                copy.extra.reflection_probe = None;
+            }
             copies.push((
                 Some(ObjKey {
                     region: PREVIEW_REGION,
                     local_id: parent,
                 }),
-                copy_of(object, full_id, next, parent),
+                copy,
             ));
             locals.insert(object.key, next);
             next += 1;

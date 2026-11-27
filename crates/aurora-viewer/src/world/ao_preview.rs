@@ -1,9 +1,11 @@
-//! The AO window's preview: a client-only copy of our avatar's skeleton
-//! (the avatar alone, made as the animation editor's mirror is, mirror.rs)
-//! that plays the animation the window previews. It is drawn nowhere (the
-//! scene leaves it out of every view, `Scene::sync_photo_isolation`); its
-//! joints pose our outfit on the preview's stage, the 3D view of Inspect
-//! (`object_stage`, app/ao_preview.rs).
+//! The AO window's preview: a client-only copy of our avatar and of what it
+//! wears (made as the animation editor's mirror is, mirror.rs; its worn
+//! copies give its skeleton our rigged meshes' joint positions, without
+//! their lights) that plays the animation the window previews. It is drawn
+//! nowhere (the scene leaves it out of every view,
+//! `Scene::sync_photo_isolation`); its joints pose our outfit on the
+//! preview's stage, the 3D view of Inspect (`object_stage`,
+//! app/ao_preview.rs).
 //!
 //! Nothing about it is sent to the region, and no one else sees it. The
 //! Legacy Viewer has no such preview: it plays an animation on the avatar
@@ -24,6 +26,9 @@ pub struct AoPreview {
     root: ObjKey,
     /// Where it was put, to follow us.
     at: Vec3,
+    /// What we wore when it was made: an outfit change makes it again, so
+    /// that its joints stay those of what we wear.
+    worn: Vec<Uuid>,
     /// The animations it plays: the previewed entry's assets.
     assets: Vec<Uuid>,
     animations: Vec<PlayingAnimation>,
@@ -69,15 +74,24 @@ impl World {
             .ao_preview
             .as_ref()
             .is_some_and(|p| self.objects.index_of_uuid(&p.id).is_some());
+        let worn = self.own_worn();
         let moved = self.ao_preview.as_ref().is_none_or(|p| p.at.distance(here) > FOLLOW);
-        if !alive || moved {
-            // (made again in place: `upsert_preview` keeps the objects there)
+        let dressed = self.ao_preview.as_ref().is_some_and(|p| p.worn != worn);
+        if dressed {
+            // (what we took off would stay on it: made again from nothing)
+            if let Some(old) = &self.ao_preview {
+                self.kill_objects(old.root.region, &[old.root.local_id]);
+            }
+        }
+        if !alive || moved || dressed {
+            // (moved in place: `upsert_preview` keeps the objects there)
             let root = self.copy_own_avatar(id, FIRST_LOCAL, here, rotation, false)?;
             let old = self.ao_preview.take();
             self.ao_preview = Some(AoPreview {
                 id,
                 root,
                 at: here,
+                worn,
                 assets: old.as_ref().map_or_else(Vec::new, |p| p.assets.clone()),
                 animations: old.map_or_else(Vec::new, |p| p.animations),
             });
@@ -95,6 +109,23 @@ impl World {
                 .collect();
         }
         Some(id)
+    }
+
+    /// What our avatar wears, by id (the copy's signature).
+    fn own_worn(&self) -> Vec<Uuid> {
+        let Some(avatar) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
+            return Vec::new();
+        };
+        let mut worn: Vec<Uuid> = self
+            .objects
+            .children_of(&avatar.key)
+            .iter()
+            .filter_map(|&i| self.objects.get(i))
+            .filter(|o| !o.is_avatar() && !o.is_client_preview())
+            .map(|o| o.full_id)
+            .collect();
+        worn.sort_unstable();
+        worn
     }
 
     /// Take the copy away, with what it wears.
