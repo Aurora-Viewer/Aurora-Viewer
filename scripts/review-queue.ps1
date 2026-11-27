@@ -29,6 +29,11 @@
 .EXAMPLE
     ./scripts/review-queue.ps1 -Json -Top 5
     The first five, for an agent: number, kind, notes, URL.
+
+.EXAMPLE
+    ./scripts/review-queue.ps1 -ToMerge -Json
+    The PRs you approved (✅) that nobody queued yet, with their CI state:
+    the queue leaves them out, so the reviewer offers the merge.
 #>
 param(
     [int]$Top = 20,
@@ -36,6 +41,8 @@ param(
     [switch]$Json,
     [int]$Claim,
     [int]$Release,
+    # only the PRs you approved that wait for their merge
+    [switch]$ToMerge,
     # see the queue as another maintainer sees it (their login)
     [string]$As
 )
@@ -161,19 +168,6 @@ for ($i = 0; $i -lt $wanted.Count; $i += 50) {
     }
 }
 
-$items = @($nodes | ForEach-Object { ConvertTo-ReviewItem $_ $issues })
-$entries = @(Get-ReviewQueue $items $me (Get-Date).ToUniversalTime())
-$queue = @(Get-OrderedReviewQueue $entries)
-
-if ($Json) {
-    $list = @($queue | Select-Object -First $Top | ForEach-Object {
-        [pscustomobject]@{ number = $_.Number; kind = $_.Kind; title = $_.Title; author = $_.Author; url = $_.Url
-            claimed_by_you = $_.Mine; last_reviewer = $_.Reviewer; waiting_since = $_.Since.ToString('o'); notes = @($_.Notes) }
-    })
-    ConvertTo-Json -InputObject $list -Depth 4
-    exit 0
-}
-
 # Days and hours a PR has waited, short.
 function Format-Wait([datetime]$Since) {
     $t = (Get-Date).ToUniversalTime() - $Since.ToUniversalTime()
@@ -182,6 +176,37 @@ function Format-Wait([datetime]$Since) {
 function Format-Cut([string]$Text, [int]$Width) {
     if ($Text.Length -gt $Width) { $Text = $Text.Substring(0, $Width - 1) + '…' }
     $Text.PadRight($Width)
+}
+
+$items = @($nodes | ForEach-Object { ConvertTo-ReviewItem $_ $issues })
+$entries = @(Get-ReviewQueue $items $me (Get-Date).ToUniversalTime())
+$queue = @(Get-OrderedReviewQueue $entries)
+$approvedList = @(Get-ApprovedToMerge $entries $me)
+$ciText = @{ Fail = 'CI red'; Approval = 'CI waits for Approve and run'; Run = 'CI running'; Ok = 'CI green'; None = 'no CI yet' }
+function Format-MergeState($Entry) { $ciText[[string]$Entry.Ci] + $(if ($Entry.Conflict) { ' · conflict with main' } else { '' }) }
+
+if ($ToMerge) {
+    if ($Json) {
+        $list = @($approvedList | ForEach-Object {
+            [pscustomobject]@{ number = $_.Number; title = $_.Title; author = $_.Author; url = $_.Url
+                approved_at = $_.Since.ToString('o'); ci = [string]$_.Ci; conflict = [bool]$_.Conflict }
+        })
+        ConvertTo-Json -InputObject $list -Depth 3
+        exit 0
+    }
+    Write-Host "Approved by $me, to merge ($($approvedList.Count)):" -ForegroundColor Cyan
+    foreach ($e in $approvedList) { Write-Host (' {0,-6} {1}  ({2})' -f "#$($e.Number)", (Format-Cut $e.Title 60), (Format-MergeState $e)) }
+    if (-not $approvedList.Count) { Write-Host ' Nothing.' }
+    exit 0
+}
+
+if ($Json) {
+    $list = @($queue | Select-Object -First $Top | ForEach-Object {
+        [pscustomobject]@{ number = $_.Number; kind = $_.Kind; title = $_.Title; author = $_.Author; url = $_.Url
+            claimed_by_you = $_.Mine; last_reviewer = $_.Reviewer; waiting_since = $_.Since.ToString('o'); notes = @($_.Notes) }
+    })
+    ConvertTo-Json -InputObject $list -Depth 4
+    exit 0
 }
 
 Write-Host "Review queue of $me, ${repo}: $($queue.Count) to review out of $($entries.Count) open PRs." -ForegroundColor Cyan
@@ -205,6 +230,11 @@ if ($queue.Count) {
 # What is left out: the other maintainers' PRs by name (the overlap), the
 # rest as counts.
 $out = @($entries | Where-Object { $_.Tier -eq 0 })
+if ($approvedList.Count) {
+    Write-Host ''
+    Write-Host "Approved by you, to merge ($($approvedList.Count)): ./scripts/merge-pr.ps1 -Pr <n> once CI is green" -ForegroundColor Green
+    foreach ($e in $approvedList) { Write-Host (' {0,-6} {1}  ({2})' -f "#$($e.Number)", (Format-Cut $e.Title 60), (Format-MergeState $e)) }
+}
 $theirs = @($out | Where-Object { $_.SkipKind -in 'Claimed', 'StaleClaim', 'Held' })
 if ($theirs.Count) {
     Write-Host ''

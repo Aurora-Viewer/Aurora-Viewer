@@ -179,6 +179,21 @@ $items = @($nodes | ForEach-Object { ConvertTo-ReviewItem $_ @{} })
 $order = (Get-OrderedReviewQueue (Get-ReviewQueue $items 'maya' $now) | ForEach-Object { $_.Number }) -join ','
 Assert-Queue ($order -eq '56,54,55,53,52,57,51,50') "order: claimed, re-reviews (fix first, then longest waiting), crash, fix (oldest first), new; got $order"
 
+# --- approved, to merge ----------------------------------------------------
+$nodes = @(
+    (New-Node 60 -Comments @(, @('maya', 'MEMBER', 100, $approved)))                       # maya's ✅
+    (New-Node 61 -Comments @(, @('maya', 'MEMBER', 120, $approved)) -Rollup 'PENDING' -Suites 'ACTION_REQUIRED')  # maya's ✅, CI to approve
+    (New-Node 62 -Comments @(, @('olga', 'MEMBER', 100, $approved)))                       # another maintainer's ✅
+    (New-Node 63 -Comments @(, @('maya', 'MEMBER', 100, $approved)) -Queued)               # already in the merge queue
+    (New-Node 64 -Comments @(, @('maya', 'MEMBER', 100, $approved)) -Commits @(@(200, 1), @(5, 1)))  # a commit since: re-review
+    (New-Node 65 -Reviews @(, @('maya', 'MEMBER', 100, 'APPROVED')))                      # a GitHub approval
+)
+$items = @($nodes | ForEach-Object { ConvertTo-ReviewItem $_ @{} })
+$merge = @(Get-ApprovedToMerge (Get-ReviewQueue $items 'maya' $now) 'maya')
+$list = ($merge | ForEach-Object { $_.Number }) -join ','
+Assert-Queue ($list -eq '61,60,65') "to merge: your approvals only, oldest first, not queued, not answered since; got $list"
+Assert-Queue (($merge | Where-Object { $_.Number -eq 61 }).Ci -eq 'Approval') 'an approved PR keeps its CI state (runs to approve before the merge)'
+
 # --- helpers ---------------------------------------------------------------
 $n = (Get-BodyIssueNumbers "Closes #12`nRefs #34`nrefs: #56`nFixes #12`nSee #78") -join ','
 Assert-Queue ($n -eq '12,34,56') "issue lines of a body; got $n"

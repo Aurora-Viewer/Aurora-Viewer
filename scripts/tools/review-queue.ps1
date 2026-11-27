@@ -261,6 +261,7 @@ function Get-ReviewQueue($Items, [string]$Me, [datetime]$Now) {
             Rank = $(if ($item.Crash) { 0 } elseif ($item.Fix) { 1 } else { 2 })
             Since = $review.Since; State = $review.State; Reviewer = $review.Reviewer
             Mine = $mine; Owner = $owner; Skip = $skip; SkipKind = $kind; Notes = $notes
+            Ci = $item.Ci; Conflict = $item.Conflict
         }
     }
 }
@@ -284,6 +285,14 @@ function Get-EarlierClaim($Item, [string]$Me) {
         return $c.Login
     }
     $null
+}
+
+# The PRs $Me approved (their last review is a ✅ verdict or a GitHub
+# approval, nothing new since) and nobody queued yet: the queue leaves them
+# out, and the reviewer offers their human the merge (AGENTS.md section 11,
+# the review-next routine). Oldest approval first.
+function Get-ApprovedToMerge($Entries, [string]$Me) {
+    @($Entries | Where-Object { $_.SkipKind -eq 'Approved' -and $_.Reviewer -eq $Me } | Sort-Object Since, Number)
 }
 
 # The queue in order: the PRs already claimed by $Me first (finish what you
