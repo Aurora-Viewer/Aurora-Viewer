@@ -23,8 +23,9 @@
 //! has the focus (`App::in_front`).
 //!
 //! A window of the interface goes outside when its title bar's button asks
-//! for it (`widgets::Floater::goes_outside`: every window whose title bar
-//! the window outside draws, but the Dev Toolbox; none goes by itself).
+//! for it, or its title-bar move drag crosses the viewer's edge
+//! (`widgets::Floater::goes_outside`: every eligible window, but the Dev
+//! Toolbox; none goes by itself).
 //! The wish is kept with the interface's layout
 //! ([`wanted`]); the window draws its body in its window outside once
 //! there is one ([`native`]), asks for it otherwise ([`ask`]), and says at
@@ -55,6 +56,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::theme::Palette;
 use aurora_render::{EguiHandOver, OutsideEvent, OutsideFrame, Renderer};
@@ -94,7 +96,11 @@ pub(crate) fn in_front(own_window: bool, window_outside: bool) -> bool {
 pub(crate) struct Ask {
     /// The window's id in the interface.
     pub window: egui::Id,
+    /// Stable Floater id for this PC's saved placement.
+    pub placement_key: String,
     pub title: String,
+    /// Continue the title-bar drag that tore this floater out of the viewer.
+    pub start_drag: bool,
     /// Where it is in the viewer's window, in points: its window outside
     /// opens there, where the system lets a program place its windows.
     pub rect: egui::Rect,
@@ -224,7 +230,29 @@ pub(crate) fn wanted(ctx: &egui::Context, window: egui::Id) -> bool {
 }
 
 pub(crate) fn want(ctx: &egui::Context, window: egui::Id, outside: bool) {
-    ctx.data_mut(|d| d.insert_persisted(window.with("outside"), outside));
+    ctx.data_mut(|d| {
+        d.insert_persisted(window.with("outside"), outside);
+        if !outside {
+            d.remove_temp::<bool>(drag_start_id(window));
+        }
+    });
+}
+
+fn drag_start_id(window: egui::Id) -> egui::Id {
+    window.with("outside drag start")
+}
+
+/// Carry the active in-viewer title-bar drag across the detach transition.
+pub(crate) fn start_drag(ctx: &egui::Context, window: egui::Id) {
+    ctx.data_mut(|d| d.insert_temp(drag_start_id(window), true));
+}
+
+pub(crate) fn take_start_drag(ctx: &egui::Context, window: egui::Id) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(drag_start_id(window))).unwrap_or(false)
+}
+
+pub(crate) fn clear_start_drag(ctx: &egui::Context, window: egui::Id) {
+    ctx.data_mut(|d| d.remove_temp::<bool>(drag_start_id(window)));
 }
 
 /// The window `window` has its window outside: it draws there.
@@ -275,6 +303,7 @@ type Resize = (egui::Id, egui::Vec2, bool);
 /// most: the system's bars take the rest, and no system tells their size
 /// through winit.
 const SCREEN_SHARE: f32 = 0.9;
+const DRAG_START_TIMEOUT: Duration = Duration::from_millis(750);
 
 /// `size` brought down to the screen the window is on, `room` in the
 /// interface's points: its content scrolls in what is left.
@@ -567,6 +596,9 @@ pub(crate) struct Outside {
     /// Windows of the interface closed by their cross while left as they
     /// are: gone at once, their close waits for their own code.
     closed: Vec<egui::Id>,
+    /// Last sampled display topology, used only while an interface window is outside.
+    displays: Option<Vec<crate::window_display::Display>>,
+    display_check: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -592,6 +624,10 @@ struct Native {
     of_interface: bool,
     /// The title the system shows.
     title: Option<String>,
+    /// Stable settings key for this interface floater.
+    placement_key: Option<String>,
+    /// Continue a tear-off drag when the pointer enters this native window.
+    drag_start_until: Option<Instant>,
     /// The window's events of the system, as egui reads them.
     input: egui_winit::State,
     focused: bool,
@@ -840,11 +876,145 @@ impl Outside {
             keys: 0,
             kept: false,
             closed: Vec::new(),
+            displays: None,
+            display_check: None,
         }
     }
 
     pub fn is_open(&self, id: egui::ViewportId) -> bool {
         self.shared.borrow().windows.contains_key(&id)
+    }
+
+    fn remember_viewport_placement(
+        &self,
+        placements: &mut std::collections::HashMap<String, crate::window_display::SavedWindowPlacement>,
+        id: egui::ViewportId,
+    ) {
+        let entry = self
+            .shared
+            .borrow()
+            .windows
+            .get(&id)
+            .filter(|native| native.of_interface)
+            .and_then(|native| native.placement_key.clone().map(|key| (key, Arc::clone(&native.window))));
+        if let Some((key, window)) = entry
+            && let Some(mut placement) = crate::window_display::SavedWindowPlacement::from_window(&window)
+        {
+            if placement.display.is_none() {
+                placement.display = placements.get(&key).and_then(|old| old.display.clone());
+            }
+            placements.insert(key, placement);
+        }
+    }
+
+    /// Saves a detached interface window's latest physical position and screen.
+    pub fn remember_window_placement(
+        &self,
+        placements: &mut std::collections::HashMap<String, crate::window_display::SavedWindowPlacement>,
+        id: WindowId,
+    ) {
+        let viewport = self
+            .shared
+            .borrow()
+            .windows
+            .iter()
+            .find(|(_, native)| native.of_interface && native.window.id() == id)
+            .map(|(viewport, _)| *viewport);
+        if let Some(viewport) = viewport {
+            self.remember_viewport_placement(placements, viewport);
+        }
+    }
+
+    /// Reconcile native windows when the connected display topology changes.
+    fn recover_display_changes(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        own: &Window,
+        placements: &mut std::collections::HashMap<String, crate::window_display::SavedWindowPlacement>,
+    ) {
+        const DISPLAY_CHECK_INTERVAL: Duration = Duration::from_millis(750);
+        let has_interface_window = self.shared.borrow().windows.values().any(|native| native.of_interface);
+        if !has_interface_window {
+            self.displays = None;
+            self.display_check = None;
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .display_check
+            .is_some_and(|last| now.duration_since(last) < DISPLAY_CHECK_INTERVAL)
+        {
+            return;
+        }
+        self.display_check = Some(now);
+
+        let mut displays: Vec<_> = event_loop
+            .available_monitors()
+            .map(|monitor| crate::window_display::Display::from(&monitor))
+            .collect();
+        displays.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then(a.x.cmp(&b.x))
+                .then(a.y.cmp(&b.y))
+                .then(a.width.cmp(&b.width))
+                .then(a.height.cmp(&b.height))
+                .then(a.scale_milli.cmp(&b.scale_milli))
+        });
+        let changed = self.displays.as_ref().is_none_or(|previous| previous != &displays);
+        self.displays = Some(displays.clone());
+        if !changed || displays.is_empty() {
+            return;
+        }
+        let home_monitor = own.current_monitor().or_else(|| event_loop.primary_monitor());
+        let home = crate::window_display::monitor_index(home_monitor.as_ref(), &displays).unwrap_or(0);
+        let windows: Vec<_> = self
+            .shared
+            .borrow()
+            .windows
+            .values()
+            .filter_map(|native| {
+                if !native.of_interface {
+                    return None;
+                }
+                native.placement_key.clone().map(|key| (key, Arc::clone(&native.window)))
+            })
+            .collect();
+        for (key, window) in windows {
+            let Ok(current) = window.outer_position() else {
+                continue;
+            };
+            let saved = placements.get(&key).cloned();
+            let size = window.inner_size();
+            let scale = window.scale_factor().max(0.01);
+            let logical_size = (
+                (f64::from(size.width) / scale).round() as u32,
+                (f64::from(size.height) / scale).round() as u32,
+            );
+            let placement = crate::window_display::restore_placement(
+                saved.as_ref().and_then(|saved| saved.display.as_ref()),
+                saved.as_ref().and_then(|saved| saved.position),
+                Some((current.x, current.y)),
+                logical_size,
+                &displays,
+                home,
+            );
+            let Some(placement) = placement else {
+                continue;
+            };
+            if placement.position != current {
+                window.set_outer_position(placement.position);
+            }
+            if let Some(display) = displays.get(placement.monitor_index) {
+                placements.insert(
+                    key,
+                    crate::window_display::SavedWindowPlacement {
+                        position: Some((placement.position.x, placement.position.y)),
+                        display: Some(display.saved()),
+                    },
+                );
+            }
+        }
     }
 
     /// The renderer was replaced (a GPU recovery, the VR runtime closed):
@@ -853,12 +1023,24 @@ impl Outside {
     /// window is replaced too. The windows outside go; those of the
     /// interface ask for new ones at their next pass, opened where these
     /// were (`reconcile`), and a scenario opens its own again.
-    pub fn renderer_replaced(&mut self, ctx: &egui::Context) {
+    pub fn renderer_replaced(
+        &mut self,
+        ctx: &egui::Context,
+        placements: &mut std::collections::HashMap<String, crate::window_display::SavedWindowPlacement>,
+    ) {
         self.closing.clear();
         let windows = std::mem::take(&mut self.shared.borrow_mut().windows);
         for (id, native) in windows {
             set_native(ctx, id.0, false);
             if native.of_interface {
+                if let Some(key) = native.placement_key.clone()
+                    && let Some(mut placement) = crate::window_display::SavedWindowPlacement::from_window(&native.window)
+                {
+                    if placement.display.is_none() {
+                        placement.display = placements.get(&key).and_then(|old| old.display.clone());
+                    }
+                    placements.insert(key, placement);
+                }
                 self.replaced.insert(
                     id,
                     (
@@ -883,7 +1065,9 @@ impl Outside {
         own: &Window,
         renderer: &mut Renderer,
         ctx: &egui::Context,
-        attributes: impl Fn(&Ask, Option<Was>) -> WindowAttributes,
+        display_recovery: bool,
+        placements: &mut std::collections::HashMap<String, crate::window_display::SavedWindowPlacement>,
+        attributes: impl Fn(&Ask, Option<Was>, Option<crate::window_display::SavedWindowPlacement>) -> WindowAttributes,
     ) {
         let (asks, seen, raises, sizes, kept) = ctx.data_mut(|d| {
             (
@@ -894,6 +1078,12 @@ impl Outside {
                 d.remove_temp::<bool>(kept_id()).unwrap_or(false),
             )
         });
+        if display_recovery {
+            self.recover_display_changes(event_loop, own, placements);
+        } else {
+            self.displays = None;
+            self.display_check = None;
+        }
         let zoom = ctx.zoom_factor();
         for (window, size, held) in sizes {
             if let Some(native) = self.shared.borrow().windows.get(&viewport(window)) {
@@ -1017,12 +1207,17 @@ impl Outside {
                 continue;
             }
             let was = self.replaced.remove(&id).map(|(was, _)| was);
-            match self.open(event_loop, renderer, ctx, id, attributes(&ask, was), false) {
+            let saved = placements.get(&ask.placement_key).cloned();
+            let placement_key = ask.placement_key.clone();
+            match self.open(event_loop, renderer, ctx, id, attributes(&ask, was, saved), false) {
                 Ok(()) => {
                     if let Some(native) = self.shared.borrow_mut().windows.get_mut(&id) {
                         native.of_interface = true;
-                        native.title = Some(ask.title);
+                        native.title = Some(ask.title.clone());
+                        native.placement_key = Some(placement_key);
+                        native.drag_start_until = ask.start_drag.then(|| Instant::now() + DRAG_START_TIMEOUT);
                     }
+                    self.remember_viewport_placement(placements, id);
                     set_native(ctx, ask.window, true);
                 }
                 // the window stays inside the viewer's
@@ -1079,6 +1274,8 @@ impl Outside {
                 window,
                 of_interface: false,
                 title: None,
+                placement_key: None,
+                drag_start_until: None,
                 input,
                 focused,
                 reads_keys: false,
@@ -1224,6 +1421,13 @@ impl Outside {
         self.shared.borrow().windows.values().any(|native| native.focused)
     }
 
+    /// Cancel a pending tear-off handoff if the root pointer is released first.
+    pub fn cancel_drag_start(&mut self) {
+        for native in self.shared.borrow_mut().windows.values_mut() {
+            native.drag_start_until = None;
+        }
+    }
+
     /// An event of the system: `None` when `id` is not a window outside
     /// (the viewer's own), else what the window asks. The window's pass
     /// reads the event at the next frame.
@@ -1236,6 +1440,24 @@ impl Outside {
         // (what egui answers is about the viewer's own window between two
         // frames: `reads_keys`, from the window's last pass, is its own)
         let _ = native.input.on_window_event(&native.window, event);
+        if let Some(until) = native.drag_start_until {
+            let released = matches!(
+                event,
+                WindowEvent::MouseInput {
+                    state: winit::event::ElementState::Released,
+                    button: winit::event::MouseButton::Left,
+                    ..
+                }
+            );
+            if released || Instant::now() > until {
+                native.drag_start_until = None;
+            } else if matches!(event, WindowEvent::CursorMoved { .. }) && native.window.has_focus() {
+                native.drag_start_until = None;
+                if let Err(error) = native.window.drag_window() {
+                    log::debug!("window outside: continuing the tear-off drag failed: {error}");
+                }
+            }
+        }
         if matches!(event, WindowEvent::RedrawRequested) {
             native.asked_for = true;
         }
@@ -1638,6 +1860,19 @@ mod tests {
         assert!(!native(&ctx, window));
         want(&ctx, window, false);
         assert!(!wanted(&ctx, window));
+    }
+
+    #[test]
+    fn tear_off_drag_request_is_one_shot_and_cleared_when_returning_inside() {
+        let ctx = egui::Context::default();
+        let window = egui::Id::unique("tear-off");
+        assert!(!take_start_drag(&ctx, window));
+        start_drag(&ctx, window);
+        assert!(take_start_drag(&ctx, window));
+        assert!(!take_start_drag(&ctx, window));
+        start_drag(&ctx, window);
+        want(&ctx, window, false);
+        assert!(!take_start_drag(&ctx, window));
     }
 
     #[test]

@@ -996,6 +996,12 @@ pub struct Settings {
     pub window_x: Option<i32>,
     pub window_y: Option<i32>,
     pub window_maximized: bool,
+    /// Last monitor identity/geometry for restoring this PC's main window.
+    pub window_display: Option<crate::window_display::SavedDisplay>,
+    /// Last monitor/position for each detached interface window on this PC.
+    pub outside_window_placements: std::collections::HashMap<String, crate::window_display::SavedWindowPlacement>,
+    /// Recover the viewer and detached-window placements when displays change.
+    pub window_display_recovery: bool,
     /// Start in a borderless window covering the current monitor.
     pub window_fullscreen: bool,
     /// Legacy single-account authorization, read once for migration only.
@@ -2665,6 +2671,9 @@ impl Default for Settings {
             window_x: None,
             window_y: None,
             window_maximized: false,
+            window_display: None,
+            outside_window_placements: Default::default(),
+            window_display_recovery: true,
             window_fullscreen: false,
             mfa_hash: String::new(),
             font: crate::ui::fonts::DEFAULT.into(),

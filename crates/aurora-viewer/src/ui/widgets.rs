@@ -940,13 +940,36 @@ impl<'a> Floater<'a> {
 
     /// The user may send this window to a window of the system, outside
     /// the viewer's, and bring it back (outside.rs): its title bar has the
-    /// button for it. Not in the Legacy Viewer. Every window may, but those
+    /// button for it, and dragging its title bar beyond the viewer's edge
+    /// tears it off. Not in the Legacy Viewer. Every window may, but those
     /// of `STAYS_INSIDE` and one whose sizing the window outside does not
     /// follow (`show_outside`): a height the user sets at a held width. A
     /// window drawn over an overlay of the viewer's (`order`) is a window
     /// of its own outside, over nothing.
     fn goes_outside(&self) -> bool {
         !STAYS_INSIDE.contains(&self.id) && !self.height_only && !self.width_only
+    }
+
+    /// Whether the floater's move drag has crossed the viewer viewport edge.
+    /// The move ID is egui::Window's title-bar drag, not a content or item drag.
+    fn dragged_outside_viewport(
+        can_go_outside: bool,
+        dragged: Option<egui::Id>,
+        window: egui::Id,
+        pointer: Option<egui::Pos2>,
+        viewport: egui::Rect,
+    ) -> bool {
+        can_go_outside && dragged == Some(window.with("move")) && pointer.is_some_and(|position| !viewport.contains(position))
+    }
+
+    /// Position a newly detached window so the held pointer is over it and
+    /// the native window can continue the operating-system move drag.
+    fn tearoff_position(min: egui::Pos2, size: Vec2, pointer: egui::Pos2) -> egui::Pos2 {
+        let offset = |delta: f32, span: f32| {
+            let inset = (span * 0.05).clamp(0.0, 8.0);
+            delta.clamp(inset, (span - inset).max(inset))
+        };
+        pointer - Vec2::new(offset(pointer.x - min.x, size.x), offset(pointer.y - min.y, size.y))
     }
 
     pub fn framed_header(mut self, icon: &'a str) -> Self {
@@ -1079,6 +1102,7 @@ impl<'a> Floater<'a> {
             return None;
         }
         if !*open {
+            crate::outside::clear_start_drag(ctx, egui::Id::unique(self.id));
             if self.cascade.is_some() {
                 cascade::hidden(ctx, egui::Id::unique(self.id));
             }
@@ -1178,6 +1202,7 @@ impl<'a> Floater<'a> {
         }
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
         let mut go_outside = false;
+        let mut drag_outside = false;
         let mut reset_one = false;
         let mut out = None;
         let window_id = egui::Id::unique(self.id);
@@ -1641,6 +1666,11 @@ impl<'a> Floater<'a> {
         });
         if let Some(response) = response {
             window_click_tolerance(&response.response);
+            let (pointer, viewport) = ctx.input(|input| (input.pointer.interact_pos(), input.viewport_rect()));
+            if Self::dragged_outside_viewport(self.goes_outside(), ctx.dragged_id(), window_id, pointer, viewport) {
+                go_outside = true;
+                drag_outside = true;
+            }
             if content_sized {
                 let too_tall = if scrolls {
                     still_too_tall
@@ -1723,6 +1753,9 @@ impl<'a> Floater<'a> {
                 unminimize_quietly(ctx, self.id);
             }
             crate::outside::want(ctx, window_id, true);
+            if drag_outside {
+                crate::outside::start_drag(ctx, window_id);
+            }
         } else if reset_one {
             // taken at the next frame (`layout::take_reset`), as after
             // Preferences' "Reset windows…"
@@ -1780,12 +1813,18 @@ impl<'a> Floater<'a> {
                 .data_mut(|d| d.get_persisted::<Vec2>(window_id.with(OUTSIDE_SIZE)))
                 .or_else(|| inside.and_then(|s| s.size))
                 .unwrap_or(self.default_size);
-            let min = inside.map_or(self.default_pos, |s| s.left_top_pos());
+            let mut min = inside.map_or(self.default_pos, |s| s.left_top_pos());
+            let start_drag = crate::outside::take_start_drag(ctx, window_id) && ctx.input(|input| input.pointer.primary_down());
+            if start_drag && let Some(pointer) = ctx.input(|input| input.pointer.interact_pos()) {
+                min = Self::tearoff_position(min, size, pointer);
+            }
             crate::outside::ask(
                 ctx,
                 crate::outside::Ask {
                     window: window_id,
+                    placement_key: self.id.to_owned(),
                     title: self.title.clone(),
+                    start_drag,
                     rect: egui::Rect::from_min_size(min, size),
                     min_size: self.min_size,
                     content_sized: !self.resizable,

@@ -41,6 +41,8 @@ const THIS_PC: &[&str] = &[
     "window_height",
     "window_x",
     "window_y",
+    "window_display",
+    "outside_window_placements",
     "window_maximized",
     "cache_location",
     "chat_log_location",
@@ -291,6 +293,8 @@ impl Settings {
         self.window_height = current.window_height;
         self.window_x = current.window_x;
         self.window_y = current.window_y;
+        self.window_display = current.window_display.clone();
+        self.outside_window_placements = current.outside_window_placements.clone();
         self.window_maximized = current.window_maximized;
         self.cache_location = current.cache_location.clone();
         self.chat_log_location = current.chat_log_location.clone();
@@ -340,6 +344,28 @@ mod tests {
             chat_log_location: "D:\\logs".into(),
             ..Settings::default()
         };
+        s.window_display = Some(crate::window_display::SavedDisplay {
+            name: Some("monitor-of-this-pc".into()),
+            x: -1920,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            scale_milli: 1000,
+        });
+        s.outside_window_placements.insert(
+            "conversations".into(),
+            crate::window_display::SavedWindowPlacement {
+                position: Some((-1820, 80)),
+                display: Some(crate::window_display::SavedDisplay {
+                    name: Some("detached-monitor-of-this-pc".into()),
+                    x: -1920,
+                    y: 0,
+                    width: 1920,
+                    height: 1080,
+                    scale_milli: 1000,
+                }),
+            },
+        );
         s.audio.output_device = "Speakers".into();
         s.audio.voice_output_device = "Headset".into();
         s.audio.input_device = "Microphone".into();
@@ -357,6 +383,8 @@ mod tests {
             "someone",
             "grid.test",
             "Somewhere",
+            "monitor-of-this-pc",
+            "detached-monitor-of-this-pc",
             "D:\\\\cache",
             "D:\\\\logs",
             "Speakers",

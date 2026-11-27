@@ -40,6 +40,41 @@ fn a_window_whose_sizing_is_not_followed_outside_stays_inside() {
     assert!(over.goes_outside());
 }
 
+#[test]
+fn only_an_eligible_title_bar_drag_past_the_viewer_edge_tears_off() {
+    let window = egui::Id::unique("tear-off");
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 600.0));
+    let move_drag = Some(window.with("move"));
+    let outside = Some(egui::pos2(801.0, 300.0));
+    let inside = Some(egui::pos2(799.0, 300.0));
+
+    assert!(Floater::<'static>::dragged_outside_viewport(
+        true, move_drag, window, outside, viewport
+    ));
+    assert!(!Floater::<'static>::dragged_outside_viewport(
+        true, move_drag, window, inside, viewport
+    ));
+    assert!(!Floater::<'static>::dragged_outside_viewport(
+        true,
+        Some(window.with("content")),
+        window,
+        outside,
+        viewport
+    ));
+    assert!(!Floater::<'static>::dragged_outside_viewport(
+        false, move_drag, window, outside, viewport
+    ));
+    assert!(!Floater::<'static>::dragged_outside_viewport(
+        true, move_drag, window, None, viewport
+    ));
+
+    let size = Vec2::new(100.0, 80.0);
+    let pointer = egui::pos2(120.0, 50.0);
+    let min = Floater::<'static>::tearoff_position(egui::pos2(10.0, 20.0), size, pointer);
+    assert_eq!(min, egui::pos2(25.0, 20.0));
+    assert!(egui::Rect::from_min_size(min, size).contains(pointer));
+}
+
 /// A window with a compact view keeps it when it goes outside, and has
 /// the button that changes the view there: its body draws from the state.
 #[test]
