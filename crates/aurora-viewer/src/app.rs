@@ -11777,6 +11777,10 @@ impl App {
         {
             gfx.renderer.apply_settings(self.photo_render_settings());
         }
+        // the water demo's reef, a mesh whose box is nothing like it
+        if self.demo && matches!(self.screen, Screen::World) && crate::demo::water::reef_to_install() {
+            self.scene.install_demo_reef(&mut gfx.renderer);
+        }
         // the order of the blended faces: the user's, the exact one only
         // where the renderer draws it (not under MSAA, scene/blend_order.rs)
         let msaa = match self.settings.antialiasing {
@@ -12871,6 +12875,8 @@ impl App {
                 self.settings.water_effects.render(),
                 wind,
                 tune,
+                // the sea grid's shore maps made since (water_shore.rs)
+                std::mem::take(&mut gfx.renderer.shore_maps),
             );
             // the avatars get wet in it (scene/avatar_wet.rs, run as the
             // anchors are written)

@@ -10,11 +10,15 @@
 //! which the crests are kept. The Legacy Viewer's water has no waves to
 //! shelter.
 //!
-//! Prims are boxes here (their scale and rotation): a mesh shelters its
-//! bounding box. What moves or is physical is left to the caller to leave
-//! out: a boat must not calm the water it rides.
+//! Prims are boxes here (their scale and rotation). A mesh's box is no
+//! stand-in for its shape: the meshes are drawn into the shore map
+//! (aurora_render::water_shore, seen from below the water) and read by
+//! their real shape once it comes back; until then a mesh shelters round
+//! the core of its box. What moves or is physical is left to the caller to
+//! leave out: a boat must not calm the water it rides.
 
 use aurora_render::water_effects::{OPEN_CLEARANCE, OPEN_DEPTH};
+use aurora_render::water_shore::{NONE, ShoreCell};
 use glam::{Quat, Vec2, Vec3};
 
 use aurora_render::water_effects::{LAND_DEPTH, SEA_GRID};
@@ -25,8 +29,9 @@ use aurora_render::water_effects::{LAND_DEPTH, SEA_GRID};
 const MARGIN: usize = 24;
 /// How much of a mesh's box (across) calms the water round it.
 const MESH_CORE: f32 = 0.6;
-/// How far under the still water a prim must reach to cross it (m).
-const PIERCE: f32 = 0.3;
+/// How far under the still water a prim must reach to cross it (m): the
+/// shore map's view begins this far under the lowest water.
+pub(super) const PIERCE: f32 = 0.3;
 /// Undersides higher than this above the water leave the waves alone (m).
 const OVERHEAD: f32 = OPEN_CLEARANCE;
 /// How much sea is left right at what crosses the water.
@@ -89,12 +94,30 @@ impl ShelterBox {
     }
 }
 
+/// How much of a cell an underside of the shore map must cover to hold the
+/// cell's crests under it (a deck's edge over a corner of a cell does not;
+/// `lowest` then spreads what holds to the cells around).
+const UNDER_SHARE: f32 = 0.25;
+
 /// The grid over `origin`..`origin + extent` (cells as the water ground's,
 /// `levels` its water height per cell), for `boxes` and a wind blowing
-/// toward `wind` (zero: no lee). Per cell: [calm, clearance].
-pub fn bake(origin: Vec2, extent: f32, size: usize, levels: &[f32], boxes: &[ShelterBox], wind: Vec2) -> Vec<[f32; 2]> {
+/// toward `wind` (zero: no lee). Per cell: [calm, clearance]. With `shore`
+/// (aurora_render::water_shore: the meshes seen from below, per cell), the
+/// meshes stand in the water by their real shape and their boxes are left
+/// out; the prims keep their boxes, near enough their shape (a piling
+/// thinner than the map's texels is still seen).
+pub fn bake(
+    origin: Vec2,
+    extent: f32,
+    size: usize,
+    levels: &[f32],
+    boxes: &[ShelterBox],
+    wind: Vec2,
+    shore: Option<&[ShoreCell]>,
+) -> Vec<[f32; 2]> {
     let mut grid = vec![[1.0, OPEN_CLEARANCE]; size * size];
-    if levels.len() != size * size || !extent.is_finite() || extent <= 0.0 || boxes.is_empty() {
+    let shore = shore.filter(|s| s.len() == size * size);
+    if levels.len() != size * size || !extent.is_finite() || extent <= 0.0 || (boxes.is_empty() && shore.is_none()) {
         return grid;
     }
     let cell = extent / size as f32;
@@ -104,8 +127,37 @@ pub fn bake(origin: Vec2, extent: f32, size: usize, levels: &[f32], boxes: &[She
         (c.x >= 0.0 && c.y >= 0.0 && c.x < size as f32 && c.y < size as f32).then(|| c.y as usize * size + c.x as usize)
     };
     let mut crossed = vec![false; size * size];
+    if let Some(cells) = shore {
+        for (i, c) in cells.iter().enumerate() {
+            let water = levels[i];
+            // seen from inside a solid cut just under the water: it crosses
+            // it, and holds the sea under its top (a floor laid at the
+            // water); unless the cut was under a lower region's water and
+            // all of it lies under this one's
+            if c.inside > 0.0 && c.top < NONE && c.top >= water - PIERCE {
+                crossed[i] = true;
+                grid[i][1] = grid[i][1].min((c.top - water).max(0.0));
+            }
+            // an underside over most of the cell: under the water, it
+            // reaches into it from above (a hull, a floor's foot); over it,
+            // the crests stay under it
+            if c.under >= UNDER_SHARE && c.underside < NONE {
+                let h = c.underside - water;
+                if (-PIERCE..=0.0).contains(&h) {
+                    crossed[i] = true;
+                    grid[i][1] = 0.0;
+                } else if h > 0.0 && h < OVERHEAD {
+                    grid[i][1] = grid[i][1].min(h);
+                }
+            }
+        }
+    }
     for b in boxes {
         if !(b.center.is_finite() && b.rotation.is_finite() && b.half.is_finite()) {
+            continue;
+        }
+        // a mesh is on the shore map, by its shape
+        if b.mesh && shore.is_some() {
             continue;
         }
         // a mesh shelters round the core of its box only
@@ -214,7 +266,15 @@ pub fn sea_grid(
     wind: Vec2,
     swell: Swell,
 ) -> Vec<[f32; 6]> {
-    bake_grid(origin, extent, &sample_ground(origin, extent, ground_water), boxes, wind, swell)
+    bake_grid(
+        origin,
+        extent,
+        &sample_ground(origin, extent, ground_water),
+        boxes,
+        wind,
+        swell,
+        None,
+    )
 }
 
 /// The ground and the water heights `sea_grid` bakes from, its margin
@@ -242,7 +302,15 @@ pub fn sample_ground(origin: Vec2, extent: f32, ground_water: impl Fn(Vec2) -> [
 
 /// `sea_grid` from `sample_ground`'s heights (the slow part: the
 /// refraction's marching, the shadow and the shelter; on a worker).
-pub fn bake_grid(origin: Vec2, extent: f32, heights: &[[f32; 2]], boxes: &[ShelterBox], wind: Vec2, swell: Swell) -> Vec<[f32; 6]> {
+pub fn bake_grid(
+    origin: Vec2,
+    extent: f32,
+    heights: &[[f32; 2]],
+    boxes: &[ShelterBox],
+    wind: Vec2,
+    swell: Swell,
+    shore: Option<&[ShoreCell]>,
+) -> Vec<[f32; 6]> {
     let n = SEA_GRID + 2 * MARGIN;
     if heights.len() != n * n {
         return Vec::new();
@@ -263,7 +331,7 @@ pub fn bake_grid(origin: Vec2, extent: f32, heights: &[[f32; 2]], boxes: &[Shelt
     let (reach, chop) = (smooth(&smooth(&reach, n, 2), n, 2), smooth(&smooth(&chop, n, 2), n, 2));
     let inner = |i: usize| (i / SEA_GRID + MARGIN) * n + i % SEA_GRID + MARGIN;
     let levels: Vec<f32> = (0..SEA_GRID * SEA_GRID).map(|i| heights[inner(i)][1]).collect();
-    let shelter = bake(origin, extent, SEA_GRID, &levels, boxes, wind);
+    let shelter = bake(origin, extent, SEA_GRID, &levels, boxes, wind, shore);
     let calm: Vec<f32> = shelter.iter().map(|c| c[0]).collect();
     let clearance: Vec<f32> = shelter.iter().map(|c| c[1]).collect();
     // (the clearance spreads a cell before it is smoothed: averaged with
@@ -540,7 +608,7 @@ mod tests {
     const SWELL: Swell = Swell { toward: Vec2::X, k: 0.1 };
     fn bake_one(b: ShelterBox, wind: Vec2) -> Vec<[f32; 2]> {
         // 128 m from the origin: 2 m cells, still water at 20 m
-        bake(Vec2::ZERO, 128.0, SIZE, &[20.0; SIZE * SIZE], &[b], wind)
+        bake(Vec2::ZERO, 128.0, SIZE, &[20.0; SIZE * SIZE], &[b], wind, None)
     }
     fn at(grid: &[[f32; 2]], x: f32, y: f32) -> [f32; 2] {
         grid[(y / 2.0) as usize * SIZE + (x / 2.0) as usize]
@@ -557,8 +625,8 @@ mod tests {
         };
         let levels = vec![20.0; 128 * 128];
         let at = |grid: &[[f32; 2]], x: f32| grid[64 * 128 + x as usize];
-        let as_box = bake(Vec2::ZERO, 128.0, 128, &levels, &[rock(false)], Vec2::ZERO);
-        let as_mesh = bake(Vec2::ZERO, 128.0, 128, &levels, &[rock(true)], Vec2::ZERO);
+        let as_box = bake(Vec2::ZERO, 128.0, 128, &levels, &[rock(false)], Vec2::ZERO, None);
+        let as_mesh = bake(Vec2::ZERO, 128.0, 128, &levels, &[rock(true)], Vec2::ZERO, None);
         // a box prim crossing the water caps it under its top (a floor at
         // the water); a mesh's box does not
         assert!(at(&as_box, 58.0)[1] < 0.5);
@@ -566,6 +634,111 @@ mod tests {
         // near the edge of its box (8 m off its centre) the mesh's water is
         // calmer than open water no more than it is round its core
         assert!(at(&as_mesh, 56.0)[0] > at(&as_box, 56.0)[0]);
+    }
+
+    /// A shore map (SIZE² cells of 2 m) with `f` per cell's centre.
+    fn shore_map(f: impl Fn(f32, f32) -> ShoreCell) -> Vec<ShoreCell> {
+        (0..SIZE * SIZE)
+            .map(|i| f((i % SIZE) as f32 * 2.0 + 1.0, (i / SIZE) as f32 * 2.0 + 1.0))
+            .collect()
+    }
+    const OPEN: ShoreCell = ShoreCell {
+        inside: 0.0,
+        top: NONE,
+        under: 0.0,
+        underside: NONE,
+    };
+
+    #[test]
+    fn a_mesh_on_the_shore_map_shelters_where_it_really_stands() {
+        // the rock's box is 20 m across, the rock itself 4 m round its
+        // centre: seen from inside the cut under the water, its top 0.3 m up
+        let rock = ShelterBox {
+            center: Vec3::new(64.0, 64.0, 19.0),
+            rotation: Quat::IDENTITY,
+            half: Vec3::new(10.0, 10.0, 1.3),
+            mesh: true,
+        };
+        let map = shore_map(|x, y| {
+            if Vec2::new(x - 64.0, y - 64.0).length() < 2.0 {
+                ShoreCell {
+                    inside: 1.0,
+                    top: 20.3,
+                    ..OPEN
+                }
+            } else {
+                OPEN
+            }
+        });
+        let grid = bake(Vec2::ZERO, 128.0, SIZE, &[20.0; SIZE * SIZE], &[rock], Vec2::ZERO, Some(&map));
+        // at the rock: the calmest, the sea held under its top
+        let [calm, clearance] = at(&grid, 65.0, 65.0);
+        assert!(
+            (calm - CALMEST).abs() < 1e-5 && (clearance - 0.3).abs() < 1e-4,
+            "{calm} {clearance}"
+        );
+        // 8 m off, inside its box but past the calm's reach: open water
+        // (by its box's core the mesh calmed it)
+        assert_eq!(at(&grid, 73.0, 65.0), [1.0, OPEN_CLEARANCE]);
+        let by_box = bake_one(rock, Vec2::ZERO);
+        assert!(at(&by_box, 69.0, 65.0)[0] < at(&grid, 69.0, 65.0)[0]);
+    }
+
+    #[test]
+    fn a_mesh_deck_on_the_shore_map_caps_the_waves_and_a_hull_crosses_the_water() {
+        let map = shore_map(|x, y| match (x, y) {
+            // a deck 0.8 m over the water, over all of its cells
+            (x, y) if (10.0..20.0).contains(&x) && (10.0..20.0).contains(&y) => ShoreCell {
+                under: 1.0,
+                underside: 20.8,
+                ..OPEN
+            },
+            // a deck's edge over a corner of a cell only
+            (x, y) if (30.0..32.0).contains(&x) && (30.0..32.0).contains(&y) => ShoreCell {
+                under: 0.1,
+                underside: 20.8,
+                ..OPEN
+            },
+            // a hull's bottom 0.2 m under the water
+            (x, y) if (40.0..42.0).contains(&x) && (40.0..42.0).contains(&y) => ShoreCell {
+                under: 1.0,
+                underside: 19.8,
+                ..OPEN
+            },
+            // a mesh's top 0.5 m under the water, all of it under it: this
+            // cell's water is higher than the lowest the map was cut under
+            (x, y) if (50.0..52.0).contains(&x) && (50.0..52.0).contains(&y) => ShoreCell {
+                inside: 1.0,
+                top: 19.5,
+                ..OPEN
+            },
+            _ => OPEN,
+        });
+        let grid = bake(Vec2::ZERO, 128.0, SIZE, &[20.0; SIZE * SIZE], &[], Vec2::ZERO, Some(&map));
+        let [calm, clearance] = at(&grid, 15.0, 15.0);
+        assert_eq!(calm, 1.0, "a deck does not calm the sea");
+        assert!((clearance - 0.8).abs() < 1e-4, "{clearance}");
+        assert_eq!(at(&grid, 31.0, 31.0), [1.0, OPEN_CLEARANCE], "a corner of underside holds nothing");
+        assert_eq!(at(&grid, 41.0, 41.0), [CALMEST, 0.0], "a hull crosses the water");
+        assert_eq!(at(&grid, 51.0, 51.0), [1.0, OPEN_CLEARANCE], "all under the water");
+    }
+
+    #[test]
+    fn without_a_shore_map_the_boxes_stand_for_the_meshes() {
+        let rock = ShelterBox {
+            center: Vec3::new(64.0, 64.0, 19.0),
+            rotation: Quat::IDENTITY,
+            half: Vec3::new(10.0, 10.0, 1.3),
+            mesh: true,
+        };
+        // a map of the wrong size is no map
+        let short = vec![OPEN; 3];
+        let levels = [20.0; SIZE * SIZE];
+        assert_eq!(
+            bake(Vec2::ZERO, 128.0, SIZE, &levels, &[rock], Vec2::ZERO, Some(&short)),
+            bake(Vec2::ZERO, 128.0, SIZE, &levels, &[rock], Vec2::ZERO, None)
+        );
+        assert!(at(&bake_one(rock, Vec2::ZERO), 65.0, 65.0)[0] < 0.5, "its box's core calms the sea");
     }
 
     #[test]

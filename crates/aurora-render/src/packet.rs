@@ -193,6 +193,9 @@ pub(crate) struct FrameResult {
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
     /// The small pictures made since the last result (`FramePacket::thumbnail`).
     pub thumbnails: Vec<crate::Thumbnail>,
+    /// The sea grid's shore maps made since the last result
+    /// (`DrawLists::water_shore`).
+    pub shore_maps: Vec<crate::water_shore::ShoreMap>,
     /// What became of the windows outside since the last result.
     pub outside: Vec<crate::OutsideEvent>,
     /// The film frames read back since the last result, in their order.

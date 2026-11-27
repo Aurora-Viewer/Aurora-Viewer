@@ -688,6 +688,10 @@ pub struct DrawLists {
     /// The wind's sea this frame (water_sea.rs): the swell every water
     /// sampler shares.
     pub water_sea: crate::water_sea::Sea,
+    /// The sea grid's shore map asked for this frame (water_shore.rs), with
+    /// the meshes drawn into it; its cells come back a few frames later in
+    /// `Renderer::shore_maps`.
+    pub water_shore: Option<crate::water_shore::ShoreRequest>,
     /// The Sea panel's Spray (1: as a real sea throws; 0: none): how much
     /// fuzz the breaking crests carry (water_effects.rs `crest_mist`).
     pub water_spray: f32,
@@ -919,6 +923,7 @@ impl DrawLists {
         self.water_contacts.clone_from(&src.water_contacts);
         self.water_ground.clone_from(&src.water_ground);
         self.water_sea = src.water_sea;
+        self.water_shore.clone_from(&src.water_shore);
         self.water_spray = src.water_spray;
         self.rain_ground.clone_from(&src.rain_ground);
         self.glow.clone_from(&src.glow);
@@ -980,6 +985,7 @@ impl DrawLists {
         self.water_events.clear();
         self.water_contacts.clear();
         self.water_ground = Default::default();
+        self.water_shore = None;
         self.rain_ground = Default::default();
         self.glow.clear();
         self.blend_glow.clear();

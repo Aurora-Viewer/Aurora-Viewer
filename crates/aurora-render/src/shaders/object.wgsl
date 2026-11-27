@@ -4058,7 +4058,8 @@ struct ShadowOut {
 struct ShadowParams {
     vp: mat4x4<f32>,
     anim_clock: vec4<u32>,  // the animation clocks, as Frame's
-    // x: 1 for the rain prototype's shelter map
+    // x: 1 for the rain prototype's shelter map; y: the shore map's lowest
+    // height (f32 bits, fs_shore)
     kind: vec4<u32>,
 };
 
@@ -4125,6 +4126,31 @@ fn fs_shadow(in: ShadowOut, @builtin(front_facing) front: bool) {
             if (alpha < cutoff && (u32(in.clip.x) % 2u) == 0u) { discard; }
         }
     }
+}
+
+// ------------------------------------------------------------- shore map
+// The sea grid's shore map (water_shore.rs): the meshes standing in the
+// water seen from straight below, through vs_shadow with the map's view.
+// The view's near plane lies just under the water, so a solid that crosses
+// the water is seen from inside: its first face is its top, turned up.
+// Anything else is first seen by its underside, turned down. On the map's
+// xy (+Y up, as the rain's shelter map) a face turned up keeps its
+// winding: `front`. x the face's height over the map's lowest
+// (`shadow_params.kind.y`, as bits), y 1 turned up (inside), 0 down.
+// (Both faces drawn: a single-sided deck modelled facing up reads as
+// inside a solid there, which holds the sea and calms it all the same.)
+@fragment
+fn fs_shore(in: ShadowOut, @builtin(front_facing) front: bool) -> @location(0) vec2<f32> {
+    let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
+    // what is not there stands for nothing: a masked texel under its cutoff,
+    // a blended one nearly clear (glass stands in the water as any wall)
+    if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
+        let alpha = sample_tex_unbiased(rec.tex.x, in.uv).a * rec.base_color.a;
+        let cutoff = select(0.02, rec.params.w, (rec.flags.x & FLAG_ALPHA_BLEND) == 0u);
+        if (alpha < cutoff) { discard; }
+    }
+    return vec2<f32>(in.world_pos.z - bitcast<f32>(shadow_params.kind.y), select(0.0, 1.0, front));
 }
 
 // --------------------------------------------------------------- particles

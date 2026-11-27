@@ -38,6 +38,14 @@ pub struct Effects {
     sea: aurora_render::water_sea::SeaDriver,
     /// A sea grid baking on a worker.
     sea_baking: Option<SeaBaking>,
+    /// A sea grid waiting for its shore map (aurora_render::water_shore:
+    /// its meshes by their real shape), until it comes or `deadline`.
+    sea_waiting: Option<SeaInputs>,
+    /// The shore maps: the last tag asked, the request sent with this
+    /// frame, and the last map that came (its tag and cells).
+    shore_tag: u64,
+    shore_request: Option<aurora_render::water_shore::ShoreRequest>,
+    shore_map: Option<(u64, std::sync::Arc<[aurora_render::water_shore::ShoreCell]>)>,
     /// The last sea grid baked: where, when it was last checked, what it
     /// was made of, and the grid.
     sea_grid: Option<SeaGrid>,
@@ -94,6 +102,26 @@ struct SeaBaking {
     signature: u64,
     result: std::thread::JoinHandle<Vec<[f32; 6]>>,
 }
+
+/// What a sea grid is baked from, kept while it waits for its shore map:
+/// the shore map's tag, and how long it waits for it (then the meshes
+/// stand as their boxes). `baked`: the grid was baked already with the
+/// boxes (the first grid, at once: the sea never starts out flat).
+struct SeaInputs {
+    origin: Vec2,
+    signature: u64,
+    heights: Vec<[f32; 2]>,
+    boxes: Vec<super::water_shelter::ShelterBox>,
+    toward: Vec2,
+    swell: super::water_shelter::Swell,
+    tag: u64,
+    deadline: f32,
+    baked: bool,
+}
+
+/// How long a sea grid waits for its shore map (s): it comes a few frames
+/// after it is asked for; the grid before it shows meanwhile.
+const SHORE_WAIT: f32 = 1.0;
 
 /// How long a new sea grid takes to replace the previous one (s).
 const SEA_FADE: f32 = 6.0;
@@ -261,6 +289,110 @@ fn ground_grid(origin: Vec2, extent: f32, sample: impl Fn(Vec2) -> [f32; 2] + Sy
 }
 
 impl Effects {
+    /// Bakes the sea grid of `inputs` on a worker (the marching takes a few
+    /// milliseconds; the old grid shows meanwhile), with the meshes by
+    /// their shape when `shore` is the map of its meshes.
+    fn bake_on_worker(&mut self, inputs: SeaInputs, shore: Option<std::sync::Arc<[aurora_render::water_shore::ShoreCell]>>) {
+        let (origin, signature) = (inputs.origin, inputs.signature);
+        let result = std::thread::spawn(move || {
+            let SeaInputs {
+                heights,
+                boxes,
+                toward,
+                swell,
+                ..
+            } = inputs;
+            super::water_shelter::bake_grid(origin, SEA_EXTENT, &heights, &boxes, toward, swell, shore.as_deref())
+        });
+        self.sea_baking = Some(SeaBaking { origin, signature, result });
+    }
+
+    /// Asks for the shore map of the sea grid at `origin` (`heights`: its
+    /// ground and water heights) with the meshes of its shelter (the last
+    /// `crash_boxes` gathered): drawn with this frame, it comes back a few
+    /// frames later (`take_shore_maps`). Its tag, or None without a mesh.
+    fn ask_shore(&mut self, scene: &Scene, origin: Vec2, heights: &[[f32; 2]]) -> Option<u64> {
+        // AURORA_WATER_SHORE_MAP=0: the meshes as their boxes (to compare)
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *OFF.get_or_init(|| std::env::var("AURORA_WATER_SHORE_MAP").is_ok_and(|v| v.trim() == "0")) {
+            return None;
+        }
+        let draws: Vec<aurora_render::DrawCmd> = self
+            .crash_objects
+            .iter()
+            .zip(&self.crash_boxes)
+            .filter(|(_, b)| b.mesh)
+            .filter_map(|(&i, _)| scene.gpu.get(i))
+            .flat_map(|g| g.faces.iter().filter(|f| f.pass != super::Pass::Hidden).map(|f| f.cmd))
+            .collect();
+        if draws.is_empty() {
+            return None;
+        }
+        // from just under the lowest water to the highest underside that
+        // holds the sea over the highest
+        let (low, high) = heights
+            .iter()
+            .map(|h| h[1])
+            .filter(|w| w.is_finite())
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), w| (lo.min(w), hi.max(w)));
+        if !(low.is_finite() && high.is_finite()) {
+            return None;
+        }
+        self.shore_tag += 1;
+        log::debug!("water sea grid: shore map {} asked, {} faces", self.shore_tag, draws.len());
+        self.shore_request = Some(aurora_render::water_shore::ShoreRequest {
+            tag: self.shore_tag,
+            origin: origin.to_array(),
+            extent: SEA_EXTENT,
+            low: low - super::water_shelter::PIERCE,
+            high: high + aurora_render::water_effects::OPEN_CLEARANCE + 0.5,
+            draws,
+        });
+        Some(self.shore_tag)
+    }
+
+    /// The shore maps the renderer made: the one the sea grid waits for is
+    /// kept (the others were asked for grids since replaced).
+    fn take_shore_maps(&mut self, maps: Vec<aurora_render::water_shore::ShoreMap>) {
+        for map in maps {
+            if let Some(w) = self.sea_waiting.as_ref().filter(|w| w.tag == map.tag) {
+                // where its meshes cross the water and stand over it, for
+                // grid reports
+                let cell = SEA_EXTENT / aurora_render::water_effects::SEA_GRID as f32;
+                let n = aurora_render::water_effects::SEA_GRID;
+                let crossed: Vec<Vec2> = (0..map.cells.len())
+                    .filter(|&i| map.cells[i].inside > 0.0)
+                    .map(|i| w.origin + (Vec2::new((i % n) as f32, (i / n) as f32) + Vec2::splat(0.5)) * cell)
+                    .collect();
+                let under = map.cells.iter().filter(|c| c.under >= 0.25).count();
+                let (lo, hi) = crossed
+                    .iter()
+                    .fold((Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)), |(lo, hi), p| {
+                        (lo.min(*p), hi.max(*p))
+                    });
+                // (which way they run: x and y together, or against)
+                let mean = crossed.iter().copied().sum::<Vec2>() / crossed.len().max(1) as f32;
+                let along: f32 = crossed.iter().map(|p| (p.x - mean.x) * (p.y - mean.y)).sum();
+                log::info!(
+                    "water shore map {}: {} cells crossed from ({:.0}, {:.0}) to ({:.0}, {:.0}) ({}), {} under a deck",
+                    map.tag,
+                    crossed.len(),
+                    lo.x,
+                    lo.y,
+                    hi.x,
+                    hi.y,
+                    if along > 0.0 {
+                        "south-west to north-east"
+                    } else {
+                        "north-west to south-east"
+                    },
+                    under
+                );
+                self.shore_map = Some((map.tag, map.cells));
+            }
+        }
+    }
+
     /// Show `grid`, baked for `origin` from what `signature` sums up,
     /// fading in from what the grid before it shows now.
     fn install_sea_grid(&mut self, origin: Vec2, signature: u64, grid: Vec<[f32; 6]>, time: f32) {
@@ -623,7 +755,11 @@ impl Effects {
                     let pending = self
                         .sea_baking
                         .as_ref()
-                        .is_some_and(|b| b.origin == sea_origin && b.signature == signature);
+                        .is_some_and(|b| b.origin == sea_origin && b.signature == signature)
+                        || self
+                            .sea_waiting
+                            .as_ref()
+                            .is_some_and(|w| w.origin == sea_origin && w.signature == signature);
                     if same {
                         if let Some(g) = &mut self.sea_grid {
                             g.checked_at = time;
@@ -636,24 +772,63 @@ impl Effects {
                         }
                         self.sea_parts = parts;
                         let heights = super::water_shelter::sample_ground(sea_origin, SEA_EXTENT, ground_water);
-                        if self.sea_grid.is_none() {
+                        // the meshes standing in it are drawn into a shore map
+                        // (by their shape: their boxes are no stand-in), which
+                        // comes back a few frames later; a newer grid's
+                        // request replaces an older one's
+                        let tag = self.ask_shore(scene, sea_origin, &heights);
+                        self.sea_waiting = None;
+                        let first = self.sea_grid.is_none();
+                        if first {
                             // the first grid at once: the sea never starts out
-                            // flat and deep while it bakes
-                            let grid = super::water_shelter::bake_grid(sea_origin, SEA_EXTENT, &heights, &boxes, toward, swell);
+                            // flat and deep while it bakes (its meshes as their
+                            // boxes; baked again when the map comes)
+                            let grid = super::water_shelter::bake_grid(sea_origin, SEA_EXTENT, &heights, &boxes, toward, swell, None);
                             self.install_sea_grid(sea_origin, signature, grid, time);
-                        } else {
-                            // the next ones on a worker: the marching takes a
-                            // few milliseconds; the old grid shows meanwhile
-                            let result = std::thread::spawn(move || {
-                                super::water_shelter::bake_grid(sea_origin, SEA_EXTENT, &heights, &boxes, toward, swell)
-                            });
-                            self.sea_baking = Some(SeaBaking {
-                                origin: sea_origin,
-                                signature,
-                                result,
-                            });
+                        }
+                        let inputs = SeaInputs {
+                            origin: sea_origin,
+                            signature,
+                            heights,
+                            boxes,
+                            toward,
+                            swell,
+                            tag: tag.unwrap_or(0),
+                            deadline: time + SHORE_WAIT,
+                            baked: first,
+                        };
+                        if tag.is_some() {
+                            // waits for its map, the grid before it showing
+                            self.sea_waiting = Some(inputs);
+                        } else if !first {
+                            self.bake_on_worker(inputs, None);
                         }
                         log::debug!("water sea grid: sampled in {:.1} ms", started.elapsed().as_secs_f32() * 1000.0);
+                    }
+                }
+                // a grid waiting for its shore map: baked with it once it
+                // came, with the meshes' boxes if it is late (a first grid,
+                // baked with them already, stays as it is)
+                if self.sea_baking.is_none()
+                    && let Some(w) = self.sea_waiting.take()
+                {
+                    let map = self
+                        .shore_map
+                        .as_ref()
+                        .filter(|(tag, _)| *tag == w.tag)
+                        .map(|(_, cells)| cells.clone());
+                    if w.origin != sea_origin {
+                        // (the grid moved on: a newer one will be asked for)
+                    } else if map.is_some() {
+                        log::info!("water sea grid: baking with the shore map");
+                        self.bake_on_worker(w, map);
+                    } else if time > w.deadline {
+                        log::info!("water sea grid: the shore map is late, the meshes stand as their boxes");
+                        if !w.baked {
+                            self.bake_on_worker(w, None);
+                        }
+                    } else {
+                        self.sea_waiting = Some(w);
                     }
                 }
                 // a grid baked on the worker, taken once ready (one baked for
@@ -873,6 +1048,38 @@ impl Scene {
 
     /// `wind`: the wind over the water (m/s, blowing toward), which raises
     /// the sea (`App::sea_wind`); `tune`: how the Sea panel shapes it.
+    /// The water demo's reef (`demo::water::SEA_REEF_MESH`): a unit cube
+    /// made a thin wall and turned 45°, so that it runs from corner to
+    /// corner across its box and its box is nothing like its shape (the
+    /// shore map's test, `AURORA_DEMO_WATER=medium:sea-reef`).
+    pub fn install_demo_reef(&mut self, renderer: &mut aurora_render::Renderer) {
+        let cube = aurora_prim::generate_volume(&aurora_prim::VolumeParams::default(), 1.0);
+        let turn = glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_4);
+        // (1.3 long: turned, it stays inside the unit box a mesh fills)
+        let shape = Vec3::new(1.3, 0.07, 1.0);
+        for lod in 0..4 {
+            let (mut faces, _, _) = super::jobs::volume_to_faces(&cube);
+            let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+            for face in faces.iter_mut().flatten() {
+                for v in &mut face.vertices {
+                    let p = turn * (Vec3::from(v.pos) * shape);
+                    (min, max) = (min.min(p), max.max(p));
+                    v.pos = p.to_array();
+                    let n = turn * Vec3::new(f32::from(v.normal[0]), f32::from(v.normal[1]), f32::from(v.normal[2]));
+                    v.normal = [n.x.round() as i8, n.y.round() as i8, n.z.round() as i8, v.normal[3]];
+                }
+            }
+            self.upload_geom(
+                renderer,
+                super::GeomKey::Mesh {
+                    id: crate::demo::water::SEA_REEF_MESH,
+                    lod,
+                },
+                super::jobs::PreparedGeom::new(faces, min, max, true, None),
+            );
+        }
+    }
+
     pub fn update_water_effects(
         &mut self,
         world: &World,
@@ -881,6 +1088,7 @@ impl Scene {
         settings: WaterEffects,
         wind: glam::Vec2,
         tune: aurora_render::water_sea::SeaTune,
+        shore_maps: Vec<aurora_render::water_shore::ShoreMap>,
     ) {
         let mut effects = std::mem::take(&mut self.water_effects);
         // the wind sea as a spectrum (aurora_render::water_fft) while the
@@ -1021,7 +1229,10 @@ impl Scene {
             }
             log::info!("water sea toward the shore:{row}");
         }
+        effects.take_shore_maps(shore_maps);
         let (events, contacts, ground) = effects.update(self, world, eye, time, settings);
+        // the shore map asked for this frame, drawn with it
+        self.lists.water_shore = effects.shore_request.take();
         self.water_effects = effects;
         self.lists.water_events = events;
         self.lists.water_contacts = contacts;

@@ -359,6 +359,9 @@ pub struct Renderer {
     pub thumbnail_request: Option<u64>,
     /// The small pictures made, until the caller takes them.
     pub thumbnails: Vec<crate::Thumbnail>,
+    /// The sea grid's shore maps made (`DrawLists::water_shore`), until the
+    /// caller takes them.
+    pub shore_maps: Vec<crate::water_shore::ShoreMap>,
     /// The second camera's view to draw after the next frame
     /// (second_view.rs); asked again every frame the window is open.
     pub second_view: Option<crate::second_view::SecondViewJob>,
@@ -888,6 +891,7 @@ impl Renderer {
             histogram: None,
             thumbnail_request: None,
             thumbnails: Vec::new(),
+            shore_maps: Vec::new(),
             second_view: None,
             lost,
             // one of the list for each renderer of the run (a recovery's
@@ -1480,6 +1484,10 @@ impl Renderer {
         self.thumbnails.append(&mut r.thumbnails);
         if self.thumbnails.len() > KEPT {
             self.thumbnails.drain(..self.thumbnails.len() - KEPT);
+        }
+        self.shore_maps.append(&mut r.shore_maps);
+        if self.shore_maps.len() > KEPT {
+            self.shore_maps.drain(..self.shore_maps.len() - KEPT);
         }
         if let Some(e) = r.equirect.take() {
             self.equirect = Some(e);

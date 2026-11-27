@@ -12,6 +12,17 @@ use std::sync::{
 use uuid::Uuid;
 
 pub const CONTACT_ANIM: Uuid = Uuid::from_u128(0x9950_2aa0_0000_0000_0000_0000_0000_0001);
+/// The `sea` modes' reef: a mesh whose shape is a thin wall running corner
+/// to corner across its box (scene/water_effects.rs `install_demo_reef`),
+/// nothing like its box: the sea grid's shore map shelters along the wall
+/// only (aurora_render::water_shore).
+pub const SEA_REEF_MESH: Uuid = Uuid::from_u128(0x9950_2aa0_0000_0000_0000_0000_0000_0002);
+
+/// Once, in a `sea` mode: whether the reef's geometry is to be installed now.
+pub fn reef_to_install() -> bool {
+    static DONE: AtomicBool = AtomicBool::new(false);
+    mode().is_some_and(|m| m.contains("sea")) && !DONE.swap(true, Ordering::Relaxed)
+}
 
 pub fn mode() -> Option<&'static str> {
     static MODE: OnceLock<Option<String>> = OnceLock::new();
@@ -337,6 +348,9 @@ pub fn update(
         } else if mode.contains("sea-boat") {
             // beside the boat and a buoy, the dock behind
             (Vec3::new(35.0, 121.0, 22.2), Vec3::new(42.0, 131.0, 20.0))
+        } else if mode.contains("sea-reef") {
+            // down onto the reef: calm along its wall, not over its box
+            (Vec3::new(4.0, 115.0, 31.0), Vec3::new(4.0, 134.0, 19.8))
         } else if mode.contains("sea-roof") {
             // off the four walls of `sea-roof`, from the open sea
             (Vec3::new(1.0, 112.0, 24.5), Vec3::new(16.0, 112.0, 20.6))
@@ -509,6 +523,28 @@ pub fn update(
                 "",
             ));
         }
+        // the reef: a mesh, a thin wall across its 14 m box from corner to
+        // corner, through the water (`sea-reef` looks down onto it)
+        let reef = aurora_prim::params::SculptParams {
+            texture: SEA_REEF_MESH,
+            sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+        };
+        objects.push(super::prim(
+            99630,
+            Vec3::new(4.0, 134.0, 19.5),
+            Quat::IDENTITY,
+            Vec3::new(14.0, 14.0, 3.0),
+            aurora_prim::VolumeParams {
+                sculpt: Some(reef),
+                ..Default::default()
+            },
+            super::te([0.42, 0.4, 0.36, 1.0], 0, false, 0.0),
+            aurora_prim::ExtraParams {
+                sculpt: Some(reef),
+                ..Default::default()
+            },
+            "",
+        ));
         // floating, physical: they ride the waves (scene/water_ride.rs) -
         // a boat with a cabin linked to its hull, and three buoys
         let physical = |mut o: aurora_net::objects::ObjectUpdate| {
