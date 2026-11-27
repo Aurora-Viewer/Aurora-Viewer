@@ -362,7 +362,7 @@ pub struct Renderer {
     /// AURORA_DEMO_GPU_LOST: the frame the device is taken as lost at.
     demo_lost: Option<u64>,
     /// AURORA_DEMO_GPU_HANG: the frame a real GPU hang is submitted at, and
-    /// the queue it goes on.
+    /// the queue it goes on, let go once it is submitted.
     demo_hang: Option<(u64, wgpu::Queue)>,
 }
 
@@ -1635,10 +1635,13 @@ impl Renderer {
     ) -> RenderStats {
         let t0 = Instant::now();
         let mut ui = ui;
-        if let Some((frame, queue)) = &self.demo_hang
-            && *frame == self.frames
+        if self.demo_hang.as_ref().is_some_and(|(frame, _)| *frame == self.frames)
+            && let Some((_, queue)) = self.demo_hang.take()
         {
-            crate::device_lost::demo_hang(&self.device, queue);
+            crate::device_lost::demo_hang(&self.device, &queue);
+            // the clone goes now: kept for the renderer's life it dropped
+            // after `host`, so wgpu's last `Queue::drop` ran outside the
+            // lost backend's guarded drop (render_thread.rs, #3915)
         }
         if self.demo_lost == Some(self.frames) && !self.lost.get() {
             self.lost.set_by("demo");

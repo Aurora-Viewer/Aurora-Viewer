@@ -268,11 +268,12 @@ pub(crate) enum Done {
 pub(crate) type KeepAlive = Arc<dyn std::any::Any + Send + Sync>;
 
 /// Where the backend runs. The backend drops before its keep-alive
-/// (field order).
+/// (`Host`'s drop, then field order).
 pub(crate) enum Host {
-    /// On the calling thread (AURORA_RENDER_THREAD=0).
+    /// On the calling thread (AURORA_RENDER_THREAD=0). Dropped by `Host`'s
+    /// drop, through [`drop_backend`].
     Inline(
-        Box<Backend>,
+        std::mem::ManuallyDrop<Box<Backend>>,
         // only held, to drop after the backend
         #[allow(dead_code)] KeepAlive,
     ),
@@ -280,7 +281,55 @@ pub(crate) enum Host {
         owner: Owner<Job, Done>,
         /// Gives the backend and its keep-alive back when it ends.
         thread: Option<std::thread::JoinHandle<Option<(Backend, KeepAlive)>>>,
+        /// Whether `Host`'s drop left the thread behind, which then drops
+        /// the backend itself.
+        leave: Leave,
     },
+}
+
+/// Who drops the backend of a render thread `Host`'s drop stopped waiting
+/// for (`LEAVE_WAIT`): the thread, once the driver lets it go, or `Host`,
+/// when the thread gave it back just as the wait ended. Exactly one of them:
+/// whichever comes second sees what the first one decided. A backend given
+/// back to a `JoinHandle` that is gone would drop in std's thread result,
+/// outside `drop_guarded`, where a panic aborts the process ("thread result
+/// panicked on drop").
+#[derive(Clone, Default)]
+pub(crate) struct Leave(Arc<Mutex<LeaveState>>);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum LeaveState {
+    #[default]
+    Running,
+    /// The thread gave the backend back: `Host` joins it.
+    Returned,
+    /// `Host` stopped waiting: the thread drops the backend itself.
+    LeftBehind,
+}
+
+impl Leave {
+    /// The thread, its loop over: true when it gives the backend back to
+    /// `Host`, false when `Host` left it behind and it drops it itself.
+    fn thread_returns(&self) -> bool {
+        let mut state = self.0.lock();
+        if *state == LeaveState::LeftBehind {
+            return false;
+        }
+        *state = LeaveState::Returned;
+        true
+    }
+
+    /// `Host`, its wait over with the thread still running: true when it
+    /// leaves the thread behind, false when the thread has just given the
+    /// backend back (it is then joined at once).
+    fn host_leaves(&self) -> bool {
+        let mut state = self.0.lock();
+        if *state == LeaveState::Returned {
+            return false;
+        }
+        *state = LeaveState::LeftBehind;
+        true
+    }
 }
 
 /// AURORA_RENDER_THREAD=0 turns the render thread off (comparison,
@@ -292,29 +341,45 @@ pub(crate) fn thread_wanted(var: Option<&str>) -> bool {
 impl Host {
     pub fn new(backend: Backend, keep: KeepAlive, threaded: bool) -> Host {
         if !threaded {
-            return Host::Inline(Box::new(backend), keep);
+            return Host::Inline(std::mem::ManuallyDrop::new(Box::new(backend)), keep);
         }
         let (owner, worker) = handoff();
         // the backend goes to the thread; it comes back only if the thread
         // cannot be started
         let slot = Arc::new(Mutex::new(Some((backend, keep))));
         let for_thread = slot.clone();
+        let leave = Leave::default();
+        let for_leave = leave.clone();
         let spawned = std::thread::Builder::new().name("aurora-render".into()).spawn(move || {
-            let taken = for_thread.lock().take();
-            taken.map(|(backend, keep)| (run(backend, worker), keep))
+            let (backend, keep) = for_thread.lock().take()?;
+            let backend = run(backend, worker);
+            if for_leave.thread_returns() {
+                return Some((backend, keep));
+            }
+            // left behind by `Host`'s drop while in the driver: the backend
+            // drops here, guarded as `Host` would have, then its keep-alive
+            log::warn!("render thread back from the GPU after it was left behind: its backend drops now");
+            drop_backend(backend);
+            drop(keep);
+            None
         });
         match spawned {
             Ok(thread) => Host::Thread {
                 owner,
                 thread: Some(thread),
+                leave,
             },
             Err(e) => {
                 log::warn!("render thread not started ({e}): rendering on the main thread");
                 match slot.lock().take() {
-                    Some((backend, keep)) => Host::Inline(Box::new(backend), keep),
+                    Some((backend, keep)) => Host::Inline(std::mem::ManuallyDrop::new(Box::new(backend)), keep),
                     // the closure never ran, so the backend is still there;
                     // were it not, every hand-over would report the worker gone
-                    None => Host::Thread { owner, thread: None },
+                    None => Host::Thread {
+                        owner,
+                        thread: None,
+                        leave,
+                    },
                 }
             }
         }
@@ -330,26 +395,51 @@ impl Host {
 /// closes without it (the process ends it) instead of hanging at exit.
 const LEAVE_WAIT: Duration = Duration::from_secs(3);
 
+/// Drops the backend; a lost device's through `drop_guarded`, where wgpu's
+/// queue may panic on its last wait (#3915, device_lost.rs).
+/// AURORA_DEMO_GPU_DROP_FAIL=1 (with AURORA_DEMO and AURORA_DEMO_GPU_LOST):
+/// that panic, as wgpu gives it, for the lost backend the recovery drops.
+fn drop_backend(backend: Backend) {
+    let lost = backend.device_lost();
+    let demo_fail = lost && std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_GPU_DROP_FAIL").is_some();
+    crate::device_lost::drop_guarded(lost, move || {
+        if demo_fail {
+            // the backend drops while this unwinds, inside the guard
+            panic!("Unexpected error while waiting for queue idle on drop: Unexpected (AURORA_DEMO_GPU_DROP_FAIL)");
+        }
+        drop(backend);
+    });
+}
+
 impl Drop for Host {
     /// The render thread finishes the frame in its hands, then leaves and
     /// gives the backend back: the surface and the swapchain are destroyed
     /// by the thread that created them, as without a render thread.
     fn drop(&mut self) {
-        if let Host::Thread { owner, thread } = self {
+        if let Host::Inline(backend, _) = self {
+            // SAFETY: taken once, here, and never used again: the host is
+            // being dropped, and its keep-alive drops after this.
+            let backend = unsafe { std::mem::ManuallyDrop::take(backend) };
+            drop_backend(*backend);
+            return;
+        }
+        if let Host::Thread { owner, thread, leave } = self {
             owner.close();
             if let Some(t) = thread.take() {
                 let deadline = Instant::now() + LEAVE_WAIT;
                 while !t.is_finished() && Instant::now() < deadline {
                     std::thread::sleep(Duration::from_millis(5));
                 }
-                if !t.is_finished() {
-                    // the window stays with it (its keep-alive)
+                // (a thread that gave the backend back just now is joined)
+                if !t.is_finished() && leave.host_leaves() {
+                    // the window stays with it (its keep-alive); the thread
+                    // drops the backend itself if the driver lets it go
                     log::error!("render thread still in the GPU after {LEAVE_WAIT:?}: left behind");
                     return;
                 }
                 match t.join() {
                     Ok(Some((backend, keep))) => {
-                        drop(backend);
+                        drop_backend(backend);
                         drop(keep);
                     }
                     Ok(None) => {}
@@ -420,6 +510,30 @@ mod tests {
     use std::sync::mpsc;
 
     const TICK: Duration = Duration::from_millis(40);
+
+    /// #5092: a render thread `Host`'s drop stopped waiting for drops its
+    /// backend itself, and one that gave it back just as the wait ended is
+    /// joined: exactly one side drops it, whichever order they come in.
+    #[test]
+    fn exactly_one_side_drops_the_backend_of_a_thread_left_behind() {
+        // the wait ended first: the thread, back later, keeps it
+        let leave = Leave::default();
+        assert!(leave.host_leaves());
+        assert!(!leave.thread_returns());
+        // the thread gave it back first: Host joins it
+        let leave = Leave::default();
+        assert!(leave.thread_returns());
+        assert!(!leave.host_leaves());
+        // both at once, many times over: never both, never neither
+        for _ in 0..200 {
+            let leave = Leave::default();
+            let other = leave.clone();
+            let thread = std::thread::spawn(move || other.thread_returns());
+            let host_left = leave.host_leaves();
+            let thread_returned = thread.join().expect("thread");
+            assert_ne!(host_left, thread_returned, "one side and only one drops the backend");
+        }
+    }
 
     /// Wait for a state the other thread reaches, without assuming how long
     /// the scheduler takes to run it (CI runners and busy PCs can hold a

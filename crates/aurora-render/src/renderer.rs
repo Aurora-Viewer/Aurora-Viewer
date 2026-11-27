@@ -3978,6 +3978,12 @@ struct Ranges {
 }
 
 impl Backend {
+    /// The device-lost callback said the device is gone (device_lost.rs):
+    /// the backend is then dropped through `drop_guarded` (render_thread.rs).
+    pub(crate) fn device_lost(&self) -> bool {
+        self.lost.get()
+    }
+
     /// Surface configuration, pipelines, targets and per-frame buffers.
     ///
     /// Made in one error scope: a full video memory that refuses any of it
