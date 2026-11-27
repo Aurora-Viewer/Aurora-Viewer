@@ -78,7 +78,11 @@ impl App {
         if due.is_empty() {
             return;
         }
-        let mut left = self.scene.send_lost_textures(&due, renderer);
+        // (sent again into no layer, video memory still full: they wait
+        // their turn again, longer)
+        let mut refused = Vec::new();
+        let mut left = self.scene.send_lost_textures(&due, renderer, &mut refused);
+        self.lost_textures.note(refused, now);
         // (AURORA_DEMO_STREAM's checkers have no data the streamer could
         // decode again: the scenario decodes them)
         if let Some(demo) = &mut self.stream_demo {

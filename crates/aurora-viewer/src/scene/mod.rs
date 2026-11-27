@@ -2537,9 +2537,10 @@ impl Scene {
 
     /// Slots whose texels the renderer could not stage (app/lost_textures.rs):
     /// the streamer's textures and the scene's own are sent again. Returns
-    /// the slots none of them holds.
-    pub fn send_lost_textures(&mut self, slots: &[u32], renderer: &mut Renderer) -> Vec<u32> {
-        let mut left = self.textures.send_again(slots, renderer);
+    /// the slots none of them holds; those sent again that video memory
+    /// refused a layer for go to `refused`.
+    pub fn send_lost_textures(&mut self, slots: &[u32], renderer: &mut Renderer, refused: &mut Vec<u32>) -> Vec<u32> {
+        let mut left = self.textures.send_again(slots, renderer, refused);
         // (each of these holds two slots, lost together or not)
         self.banlines.texture_lost(&mut left, renderer);
         self.snow_detail.texture_lost(&mut left, renderer);

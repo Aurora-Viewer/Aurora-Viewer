@@ -2041,8 +2041,11 @@ impl TextureStreamer {
     /// decoded again from the data in memory, or read again from the cache.
     /// The demo's procedural textures are made again. Returns the slots no
     /// texture of the streamer holds, for the other producers.
-    pub fn send_again(&mut self, slots: &[u32], renderer: &mut Renderer) -> Vec<u32> {
+    /// The demo's procedural textures sent again that video memory refused
+    /// a layer for go to `refused`, to be sent again later.
+    pub fn send_again(&mut self, slots: &[u32], renderer: &mut Renderer, refused: &mut Vec<u32>) -> Vec<u32> {
         let mut left = self.send_again_entries(slots);
+        let lost: HashSet<u32> = slots.iter().copied().collect();
         // AURORA_DEMO_TEXTURES: the stress textures have no data to load
         // again from; their texels come again, as a download would bring
         // them (as `refeed_demo_stress`)
@@ -2050,12 +2053,20 @@ impl TextureStreamer {
             let stress: Vec<u32> = self
                 .entries
                 .iter()
-                .filter(|(_, e)| e.slot != NO_SLOT && slots.contains(&e.slot))
+                .filter(|(_, e)| e.slot != NO_SLOT && lost.contains(&e.slot))
                 .filter_map(|(id, _)| crate::demo::stress_index(id))
                 .collect();
             for i in stress {
                 self.feed_demo_stress(i);
             }
+        }
+        // AURORA_DEMO_ANIMESH: its texture is made, not loaded
+        if self
+            .entries
+            .get(&crate::demo::ANIMESH_TEXTURE)
+            .is_some_and(|e| e.slot != NO_SLOT && lost.contains(&e.slot))
+        {
+            self.feed_demo_animesh();
         }
         left.retain(|&slot| {
             let Some((&id, _)) = self.local_slots.iter().find(|(_, s)| **s == slot) else {
@@ -2075,7 +2086,9 @@ impl TextureStreamer {
                     data,
                 })
                 .collect();
-            renderer.replace_texture(slot, &mips);
+            if !renderer.replace_texture(slot, &mips) {
+                refused.push(slot);
+            }
             false
         });
         left
@@ -3464,7 +3477,8 @@ impl TextureStreamer {
     /// AURORA_DEMO_TEXTURES with AURORA_GPU_OOM: the stress textures whose
     /// upload waits for video memory (`memory_waits`) have no data to
     /// decode again, unlike a grid texture; once their wait is over their
-    /// texels come again, as a download would bring them.
+    /// texels come again, as a download would bring them. So does the
+    /// animesh demo's texture (`feed_demo_animesh`).
     pub fn refeed_demo_memory_waits(&mut self) {
         let now = Instant::now();
         let ids: Vec<Uuid> = self
@@ -3476,6 +3490,8 @@ impl TextureStreamer {
         for id in ids {
             if let Some(i) = crate::demo::stress_index(&id) {
                 self.feed_demo_stress(i);
+            } else if id == crate::demo::ANIMESH_TEXTURE {
+                self.feed_demo_animesh();
             }
         }
     }
@@ -3501,6 +3517,23 @@ impl TextureStreamer {
             }
             self.on_job(result);
         }
+    }
+
+    /// AURORA_DEMO_ANIMESH: the animesh's texture (`demo::animesh_texture`)
+    /// arrives, as a download would bring it; it has no data to load again
+    /// from, so it is fed again when sent again (`send_again`).
+    pub fn feed_demo_animesh(&mut self) {
+        let rgba = crate::demo::animesh_texture();
+        self.on_job(JobResult::Texture {
+            id: crate::demo::ANIMESH_TEXTURE,
+            discard: 0,
+            pick_mask: PickMask::from_rgba(32, 32, &rgba),
+            mips: vec![(32, 32, rgba)],
+            staged: None,
+            alpha: AlphaKind::Blend,
+            alpha_channel: true,
+            sculpt: None,
+        });
     }
 
     /// AURORA_DEMO_STREAM with `j2k=`: the texture is in use, the disk

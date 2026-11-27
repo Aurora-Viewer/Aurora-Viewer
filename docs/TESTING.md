@@ -6307,10 +6307,15 @@ both open states and the selection count. Capture at frame 620.
   for a smaller one), a texture write is not made, nor any texture write
   after it in that frame (`journal staging: texture writes not made, a
   staging buffer of … KB was refused …: their textures are sent again`, at
-  most once every 10 s for each size); the texture keeps what it showed, and its owner
-  sends it again after 2 s, then up to 30 s apart while the refusals go on
-  (`textures: … sent again after video memory refused their staging
-  buffer`). With `0` nothing is ever made: the world's textures stay black
+  most once every 10 s for each size); a texture written over in its own
+  layer keeps what it showed, one the lost write gave a new layer (its
+  first texels, another size, a media texture's first frame) shows the
+  loading placeholder again once the frame is answered, or the reserved
+  texture it showed before (the flat normal of a derived normal map), and
+  its owner sends it again after 2 s, then up to 30 s apart while the
+  refusals go on (`textures: … sent again after video memory refused their
+  staging buffer`); one sent again that video memory has no layer for
+  waits its turn again. With `0` nothing is ever made: the world's textures stay black
   (in the demo, the plaza's floor, pillars, sculpture and avatars; the sky
   and the ground draw as usual), the device is not lost and the
   interface keeps drawing. Before, wgpu made the staging buffer of every
@@ -15165,7 +15170,10 @@ What the inventory must show with these scenarios:
   Texture writes are staged too, rows padded to 256 bytes: in the
   frame's staging buffer when they fit beside its buffer writes, otherwise
   in a staging buffer of their own, kept afterwards for the next ones up to
-  32 MB and 64 buffers in all. wgpu loses the device when the staging buffer it makes for
+  32 MB and 64 buffers in all. Where under 1 GB of video memory is
+  mappable (no Resizable BAR, `AURORA_MAPPABLE_MB`), the texture writes
+  grow the frame's staging buffer to 8 MB at most, and 8 MB and 16 buffers
+  are kept. wgpu loses the device when the staging buffer it makes for
   a queue texture write is refused; a refusal of the viewer's own is
   handled (`AURORA_STAGING_OOM`). Up to three staging buffers take turns;
   a frame whose buffer writes are more than any of them holds sends those

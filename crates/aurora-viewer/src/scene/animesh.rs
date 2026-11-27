@@ -810,7 +810,6 @@ impl super::Scene {
     }
 
     pub fn install_demo_animesh(&mut self, renderer: &mut aurora_render::Renderer) {
-        use super::jobs::JobResult;
         self.install_demo_animesh_mesh(renderer, crate::demo::ANIMESH_MESH);
         if crate::demo::animesh_points() {
             self.install_demo_point_mesh(renderer);
@@ -845,29 +844,7 @@ impl super::Scene {
         }
         self.textures
             .acquire(renderer, crate::demo::ANIMESH_TEXTURE, super::textures::TexSource::Asset);
-        let mut rgba = Vec::new();
-        for y in 0..32 {
-            for x in 0..32 {
-                let alpha = if x < 4 || y < 4 || x > 27 || y > 27 {
-                    0
-                } else if x < 6 || y < 6 || x > 25 || y > 25 {
-                    100
-                } else {
-                    255
-                };
-                rgba.extend([255, 255, 255, alpha]);
-            }
-        }
-        self.textures.on_job(JobResult::Texture {
-            id: crate::demo::ANIMESH_TEXTURE,
-            discard: 0,
-            pick_mask: super::textures::PickMask::from_rgba(32, 32, &rgba),
-            mips: vec![(32, 32, rgba)],
-            staged: None,
-            alpha: super::jobs::AlphaKind::Blend,
-            alpha_channel: true,
-            sculpt: None,
-        });
+        self.textures.feed_demo_animesh();
     }
 }
 

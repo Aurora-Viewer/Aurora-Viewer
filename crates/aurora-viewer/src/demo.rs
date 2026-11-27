@@ -7805,6 +7805,24 @@ pub const EXPLORER_WAVE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_
 
 pub const ANIMESH_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0100);
 pub const ANIMESH_TEXTURE: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0101);
+
+/// `ANIMESH_TEXTURE`'s texels: 32 by 32, white, its edge fading out.
+pub fn animesh_texture() -> Vec<u8> {
+    let mut rgba = Vec::with_capacity(32 * 32 * 4);
+    for y in 0..32 {
+        for x in 0..32 {
+            let alpha = if x < 4 || y < 4 || x > 27 || y > 27 {
+                0
+            } else if x < 6 || y < 6 || x > 25 || y > 25 {
+                100
+            } else {
+                255
+            };
+            rgba.extend([255, 255, 255, alpha]);
+        }
+    }
+    rgba
+}
 pub const ANIMESH_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0102);
 pub const ANIMESH_UNRIGGED_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0103);
 /// AURORA_DEMO_ANIMESH=points: a bar rigged to an attachment point alone,

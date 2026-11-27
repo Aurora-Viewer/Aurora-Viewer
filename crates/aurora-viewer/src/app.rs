@@ -15844,9 +15844,10 @@ impl App {
                 self.world.objects.len()
             );
         }
-        // AURORA_DEMO_TEXTURES with AURORA_GPU_OOM: the uploads that waited
+        // AURORA_DEMO_TEXTURES (or the animesh demo) with AURORA_GPU_OOM or
+        // a refused staging buffer: the made textures whose upload waited
         // for video memory get their texels again (`refeed_demo_memory_waits`)
-        if self.demo && self.frame_count.is_multiple_of(30) && crate::demo::texture_stress_count().is_some() {
+        if self.demo && self.frame_count.is_multiple_of(30) {
             self.scene.textures.refeed_demo_memory_waits();
         }
         // AURORA_DEMO_TEXTURES_CHURN=1: stress cubes removed at frame 300
