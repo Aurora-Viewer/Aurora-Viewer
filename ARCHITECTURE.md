@@ -1,5 +1,188 @@
 # Aurora Viewer architecture
 
+`ui/toolbar/native_context.rs` scopes native toolbar widgets while their context
+menus render. The shared menu popup appends one final Customize interface entry
+inside that scope; ordinary world/window menus do not acquire it. A queued target
+opens the editor and selects the native control without rewriting its layout.
+Normal menus retain actions and individual properties; block/bar layout operations
+are exposed in customization mode. Bug-version copying and notification DND are
+explicit context actions, sharing the same final customization entry.
+Appearance and customization rows share one footer group; preceding
+control-specific content introduces a separator above that group.
+Normal context menus expose per-button presentation directly and anchor the
+shared icon picker beside the menu. Its protected rectangle keeps the menu tree
+open while the picker is used. Customization mode retains the appearance floater.
+Normal button choices are Icon only, Label only, Icon and label, then Default;
+a separator follows these four rows before a normal Change icon row with a fixed
+glyph. It opens the same protected adjacent picker without closing the menu.
+Toolbar footer markers identify owned context popups; a second stationary right
+click dismisses their stack and suppresses reopening during the same input frame.
+Native readouts retain their live widget rendering during customization: a fully
+opaque disabled preview suppresses functional gestures, and an enabled edit
+target owns selection, dragging and context options on the same rectangle.
+Their independent favorites surface inherits that disabled preview state; volume
+and graphics hover panels do not open from read-only native previews.
+The nearby-media panel is drawn after all movable controls. Its anchor resets
+each frame; only the live media control registers it, and customization suppresses
+its hover panel. It uses the shared viewport placement rule at any bar edge.
+`ui/toolbar/commands.rs` records explicitly identified main-menu entries with live
+checks and availability; selection dispatches one enabled entry through its original
+menu handler. Layout overrides preserve semantic IDs across locales and new commands.
+`ui/toolbar/appearance.rs` owns per-button presentation and the virtualized Tabler
+icon picker; menu entries have overrides independent of their toolbar copies. `ui/bars/top.rs` shares the toolbar renderer and drag payload with the
+bottom and side bars. Global toolbar preferences also hold main-menu order and the
+reversible SLURL address-bar visibility.
+`ui/bars/chat_bar.rs` makes the nearby-chat input a native toolbar command. A one-time
+migration materializes the implicit field using the active skin. Every placement,
+including the first bottom block, shares chrome slots, bar geometry and the original
+input/send/focus path. Canonical drop rectangles and the editing region contain
+the field directly; edit interception uses the same selection cell and whole-block
+controls as other native entries. No position-dependent external chat island remains.
+`ui/toolbar/catalogue_view.rs` groups the editor's commands by purpose and merges
+explicit aliases of menu and toolbar actions while preserving saved command IDs.
+Its resizable editor reflows the tile grid and filters categories independently
+of the search text.
+The initial catalogue contains curated everyday commands; specialist tools and
+native menu details are in Advanced. Search spans both levels without changing
+the selected level or any saved placements.
+`ui/toolbar/edit_mode.rs` owns the editing bounds, session header, selection highlight and
+split/merge rules. Opening the catalogue exposes all four destinations and
+replaces native actions with shared selection/drag/context controls for the
+whole editing session, extending LLToolBarView::draw's drag-only destinations.
+`ui/toolbar/surface_drop.rs` reserves the central 40% of the bar axis for creating
+a drawer after a stationary 350 ms hover. Reordering remains available along both
+ends and on quick centre drops; release cannot arm a grouping preview unseen.
+Canonical pre-drag targets take precedence over moving preview geometry; their
+full faces and adjacent gaps keep the same insertion rank throughout the wait,
+even if the provisional block shrinks or recentres. Existing
+drawer icons remain immediate, full-face drop targets for every source.
+`ui/toolbar/drop_preview.rs` collects canonical root geometry and resolves one
+nearby destination after the editor/drawers/menus. The same commit transaction
+derives a transient layout with stable virtual separator IDs. `Display` renders
+that layout while mapping control rectangles back to the canonical command list;
+drawer contents use a separate display scope. Native metrics follow the proposed
+placement. The button and separator space therefore appear at their final layout
+positions, without an outcome tooltip or a settings write. A detached floating
+glass group follows the pointer away from destinations. Singleton same-place
+drops are no-ops, while detached whole-group moves reuse a boundary run and its
+size instead of adding redundant separators. Only release commits the layout.
+`ui/toolbar/blocks.rs` overlays editing grips on complete blocks and moves their
+members through that same commit path, preserving internal order and settings.
+Icon-only block controls face inward: below top blocks, right of left blocks,
+and the opposite edges for bottom/right blocks. A dotted drag area is paired with
+a settings gear immediately beside it (below it for vertical blocks). Both stay
+button-sized and form a compact pair centered on their block. Hover or an open settings menu
+highlights the whole block. The gear opens block-scoped presentation, sizing, alignment, split, merge, drawer,
+divider and removal actions through the guarded transaction. Interface-customization
+context menus share one final Customize interface row with consistent target selection.
+Block defaults persist independently of bar defaults and individual button
+appearances. The shared commit path reconciles membership after moves, splits and
+merges; drawer unfolding creates a separate block with its content default.
+`ui/bars/sizing.rs` applies optional block anchors on every edge and style. Blocks
+with the same anchor form a run; runs use free space while retaining canonical
+order, intrinsic control sizes and minimum gaps. Surplus extends existing gap
+slots, so the renderer, edit handles and provisional drop layout agree. The
+legacy bar-wide alignment remains the fallback for blocks without an override.
+Editing bands use translucent guides independent of compact glass block bounds.
+The catalogue does not insert an action panel when selection changes; context
+menus and block gears remain the editing controls. `ui/toolbar/presets.rs` owns
+the five named layouts and their typed import bindings. The editor queues a
+preset; the app applies layout and the existing Preferences Aurora/Legacy look
+setter together after drawing, then marks settings changed for renderer/UI refresh.
+Locked layouts refuse presets. Aurora, OldSchool and Builder clone validated
+bundled profiles from assets/toolbar/, parsed once with LazyLock through the
+shared interface codec. Authored order, icons, spacing, dividers and block styles
+are preserved; built-in captions stay localized and generated local IDs become
+deterministic. OldSchool retains six native text menus after separate Aurora,
+Bug report and Customize interface blocks. Builder keeps its authored import
+block and gaps, with Save back to object contents after an internal divider.
+That button uses the identified native Build-menu action, including live
+selection availability and validation again on dispatch. Legacy retains its traditional code-generated arrangement.
+Photographer clones Aurora’s complete bottom presentation and customization
+block, then adds graphics/environment controls at the top and camera tools
+not already placed at the left. Snapshot/camera controls therefore keep their
+Aurora bottom positions; photo roll and immersive mode stay on the left.
+Typed import commands open the existing per-type windows and stay in Advanced.
+`ui/toolbar/selection.rs` persists the selected built-in or personal preset identity
+and its confirmed portable snapshot separately from toolbar exports. The editor caches
+normalized presentation, highlights that identity and reports unsaved edits until a
+matching successful upload; reverting restores the clean state. Uploads retain their
+original snapshot, so edits made during saving stay dirty and switching presets does
+not let an older reply replace the new selection. `notecards/save_picker.rs` presents
+one Save selector with an editable name and personal interfaces for replacement; existing
+cards reuse the shared COPY/MODIFY preview rule and native content-update command.
+The selected-interface header and Save/Delete actions stay above the preset section. Save is present only for an unsaved interface; a clean personal interface retains Delete. The actions and conditional unsaved status share the selected-interface row, reserving their widths and eliding long names; the status follows the displayed name immediately. The customization heading has no separate Finish button: the normal floater close path ends editing. The draggable divider sits beside Main/Advanced, outside search filtering.
+`notecards/removal.rs` moves only a selected personal notecard to Trash through the
+shared inventory mutation rules, including protected entries and the existing delete-confirmation preference. Only its matching
+successful acknowledgement clears that selected identity; the displayed layout stays
+as a custom unsaved interface. A later selection is never cleared by an older reply.
+
+Toolbar notecards use ui/toolbar/profile.rs for the bounded versioned layout document (indented technical JSON, schema version 2 with a required Aurora/Legacy bar base), ui/toolbar/notecards.rs for the COPY-aware picker/transfer state, and app/toolbar_notecards.rs for native inventory callbacks. `ui/toolbar/notecards/library.rs` resolves the dedicated #Aurora/Aurora Interfaces path from fetched parents and caches its notecard list by inventory generation. Save snapshots its name/content before loading or creating folders; dependent uploads wait for a matching mutation acknowledgement, including remapped folder IDs. Saved-preset clicks retain live lock and COPY checks. The editor bounds and scrolls its preset area on short windows so command controls and a catalogue row remain reachable. The snapshot materializes source-skin bar defaults and restores classic_bars from its explicit base, leaving other preferences and window geometry unchanged. Successful loading is silent; unsupported older schemas are rejected. Only a fully validated, matching download with unchanged rights, base and layout is applied; save success requires its matching upload acknowledgement. An internal demo-only import picker retains its distinct owner ID; the editor loads personal presets directly from its saved list.
+Default composition anchors newly added nearby chat at the start of its block.
+The microphone always draws its live-state glyph and exposes display modes only.
+Legacy side destinations use panels even while empty, so a provisional block
+does not switch layout backends during hover or on release.
+Dragging a placed control or block away from accepted destinations shows its
+glass preview with a removal badge and commits removal only on release inside
+the viewport. Catalogue/menu copies and releases outside the viewport cancel.
+`ui/bars/location_popup.rs` owns the SLURL button's inward-facing popup and its
+separate editing/focus state. It shares navigation parsing, suggestions and
+privacy guards without changing integrated navigation placement or visibility.
+`ui/toolbar/drawers.rs` anchors collapsible glass panels to toolbar buttons.
+`ui/toolbar/floating.rs` draws the floating blocks, drawers of their own on
+the screen that the quick import bar is one of.
+`ui/toolbar/block_window.rs` is the one "Edit block…" window of every block,
+drawer, floating or fixed: the same fields whatever its type, read from and
+applied to where that type keeps them (a fixed block's name, icon, closing,
+orientation and hiding live in `block_profiles` until it becomes a drawer).
+`ui/toolbar/shortcuts.rs` holds the keyboard shortcuts of toolbar buttons,
+drawers and blocks: the keys refused at capture, the target of a press, and the
+click it gives the drawn button (or the menu's way when it is not drawn).
+One-level drawer contents persist in the toolbar settings, reuse the same native
+handlers and drag payload, and can move between drawers and all four bars.
+`ui/toolbar/surface_drop.rs` freezes idle button-face geometry throughout a drag,
+restores the canonical layout before drawing an accepted face, and resolves it
+before root insertion or removal. Drawer faces append; ordinary root button faces
+create a drawer whose content mode inherits the target's effective display.
+A typed release snapshot prevents unrelated drop handlers from consuming toolbar
+cargo. All sources share lock, uniqueness and no-nesting guards; hover never saves.
+The shared commit transaction removes a previously populated drawer when its last
+control leaves, while new empty placeholders remain available to fill.
+Each drawer persists its own default content mode (icons and text for older
+settings); explicit per-command appearances override it. Its right-click menu
+opens a unified editor for name, toggle display and icon, then content defaults, or interface
+editing. The icon button opens a shared picker beside the editor, flipping left near the screen edge.
+Expanded panels show contents alone and align their icon row with the toggle's block height.
+Their current effective child modes determine
+their size: icon-only side drawers unfold as horizontal rows; one visible label
+restores a column, and top/bottom icon drawers remain narrow columns. Native
+conversation strips, divider geometry, insertion and scrolling follow the same
+orientation. Scrolling starts only beyond viewport capacity. Only their open state is transient.
+Folding/unfolding preserves group order;
+the shared commit path enforces lock, uniqueness and cycle protection.
+Live conversation placement includes the drawer identity and child index;
+moving the icons into a drawer does not disable their display preference.
+`ui/toolbar/structure.rs` owns uniquely identified gap separators, visible-group
+layout, internal dividers and the one-time migration of the complete top row.
+Dividers draw across the toolbar's cross axis without splitting its glass or
+becoming elastic gaps. `ui/bars/chrome.rs`
+measures live navigation, availability status, balance, clock, latency, FPS,
+traffic, media, music, volume, notification and conversation blocks,
+then renders them in toolbar slots on any edge using the original widget handlers
+and layer. Glass surfaces split at gaps; hidden blocks leave no empty groups.
+Separator instances own a persisted minimum size and optional elasticity.
+Horizontal and vertical layouts allocate surplus to elastic gaps before button
+Fill or navigation expansion; multiple elastic gaps share it. Explicit outer
+gaps remain visible, while untouched decorative gaps retain their compacting
+rules. The separator dialog uses the shared appearance-editor selection and
+commit/lock guards, and dock springs preserve conversation-thumbnail space.
+The old account/system aggregates expand in place on any edge once, preserving
+separators and explicit existing placements. The split controls share the native
+account/readout/audio widgets, including their click handlers and hover panels.
+Conversation blocks derive their orientation from their saved edge. Side bars
+reserve a narrow column and its full height; thumbnails share the same unread
+ordering, overflow menu, interactions and clipping as horizontal rows.
+
 `imports::ImageSizeLimit` separates a draft's Default/1024/2048 choice from
 the shared persisted image limit beside Import. Effective options feed previews,
 quotes, deduplication and encoding; changing the general limit updates inherited
@@ -55,6 +238,41 @@ is within 0.25% of the hull diagonal. Support-plane extremes remain, instance
 scales tighten the bound, and 16-bit upload quantization has its own allowance.
 `imports::mesh` uses Lowest first for automatic collision;
 explicit collision sources and convex decomposition retain their existing path.
+
+`Inventory::retrying_folders` owns background cooldowns. The walker checks each
+target before retrying it. Open views retry after ten seconds through
+`Inventory::request_shown`, honoring cooldown ownership and folder limits.
+An explicit folder open can issue an interactive read during cooldown;
+the walker reconciles that result before resuming. Bulk demand requests only
+unknown folders. The watchdog and subtree splitting from #4094 still handle
+unanswered or incomplete reads, while cooldown-owned folders stay with
+their pending retry.
+
+`session/inventory_reads.rs` coalesces ordinary and attachment AIS reads by
+owner and item within a session and admits up to 16 at once, separately
+from background folder reads. An attachment consumer promotes a queued
+ordinary read. Each single-item HTTP attempt has a 180-second deadline.
+The queue handles retry pacing with per-key 2/10/60-second cooldowns.
+On 429 or 503 the item's capability also pauses new single-item starts
+for the server's Retry-After (up to 60 seconds, at least 2 seconds).
+Only newly discovered records in a version-checked folder snapshot acknowledge
+redundant ordinary reads. A background reply that arrives after its read has
+been retired cannot apply snapshots or cancel item reads. Shared successes
+use attachment parent repair once and release both claims. Pending AIS reads pause during seed changes
+and resume on the new capability; stale replies cannot classify originals.
+`CheckInventoryOffer` uses a separate fresh server read and private reply.
+
+Outfit restoration keeps still-linked originals pending past the initial
+metadata grace period. Accepted late metadata resumes attachment restoration.
+Explicit detaches, confirmed absence and authoritative outfit changes cancel
+pending intent. Late attachments have independent retry windows; after the
+initial restore, passive pending checks run at most once per second. A
+deliberate wear may omit an exhausted original when the background walk is
+idle. #4094's bounded ten-minute reread rounds still run; exhausted reads
+never mark an original as missing or unlink it from the saved outfit.
+The restorer requests due rereads for still-linked originals even when
+Appearance is closed. An entirely unreadable outfit cannot replace the
+worn outfit through the partial-wear fallback.
 
 `ui/chat/select/document.rs` scopes the transcript's rich-text selection to
 group notice bodies, in group profiles and notification cards. It retains
@@ -541,11 +759,17 @@ with `ui/fonts.rs::TextEmphasis` carried through emoji runs, links and search
 highlights. `ChatKind::volume` includes object messages. `ui/chat/volume_tests.rs`
 checks the painted text across all renderers.
 
-`imports/ui/launcher.rs` supplies the optional movable quick import bar.
+`imports/ui/launcher.rs` keeps the quick import bar's window id and Esc;
+the bar itself is a floating block of the toolbars.
 One shared Aurora glass overlay groups flat native action buttons and a drag
 grip; the visible inspector or Permissions receives the accent state.
 Preferences > Inventory persists `imports.icon_bar` (off by default) for
-the shared Import shortcut/menu entry point. `imports/windows.rs` owns independent
+the shared Import shortcut/menu entry point. `imports/quick.rs` runs the
+toolbar's quick imports (textures, materials, sounds): the files picked go up
+without the list through `start_confirmed`, scoped to them alone
+(`Imports::with_only`), after one price or 1024 / 2048 question drawn by
+`imports/ui.rs`; anything that cannot go up as it is falls back to its type
+window. `imports/windows.rs` owns independent
 type windows (open state, selection, tab, filters and destination picker), over
 the shared drafts and asynchronous workers. Each type scopes its queue, prices,
 confirmation and delayed folder/mesh work; its geometry uses a separate Floater ID.
@@ -1247,19 +1471,44 @@ geometry, expires after 30 seconds, and cancels on failure, manual movement,
 Escape, Stop or closing the controller. A recovered pilot requires at least
 one metre of actual travel before another automatic recovery can be requested.
 
+`ui/inspect/` draws Inspect, a board of tiles: `mod.rs` the window and its
+rows, `wide.rs` the tiles (the objects in 3D, items, complexity or land
+impact, Made by, Worn on / Owned by, figures, prims) and what one narrows in
+the others, `model.rs` the prims gathered into objects (body areas, badge
+tiers, shares), `details.rs` the Legacy prim table of the grown Prims tile,
+`people.rs` the complexity among the people here. `app/inspect.rs` selects
+the prims, builds their rows and answers the window's actions (profiles, Look
+at). `ui/board.rs` is the board Inspect and Area Search share: packing on
+four, two or one columns, a tile that grows, rows with one Tab stop, virtual
+lists, table headings.
+
+`object_stage/` is their 3D view: `mod.rs` keeps one model per window up to
+date (refused under RLVa's `second_camera_blocked`), `build.rs` takes the
+objects from the caches on the main thread and makes the model on a worker
+(every prim owns its bones, so moving and isolating are a new palette; what is worn
+follows its wearer's joints, and what is pointed at is found in
+the bones' own space, without skinning), `layout.rs` where the objects stand, `own.rs`
+what has a skeleton of its own: an animesh, and the parts of the avatar's own body that show. `ui/object_stage.rs` draws it with
+`aurora_render::preview::paint_stage` and its controls. `View::studio` lights it
+(`preview.wgsl`: analytic lamps that a rough surface blurs, a key light with a
+shadow map, a floor, Khronos PBR Neutral tone mapping), `Highlight` outlines
+parts (`preview_outline.wgsl`), `preview_blend.rs` sorts a studio's see-through faces pixel by pixel with the
+lists and shader functions of the world's exact order (`blend_exact.rs`),
+`preview_mips.rs` makes the smaller sizes of every preview's textures. It asks nothing of the
+network and shows no asset id.
+
 `ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search
 window and cache its filtered, sorted, virtualized object rows.
-`ui/area_search/controls.rs` places Results, Search, Filters and Ranges in shared tabs on the left, showing
-one inline form above the virtualized table; Filters pairs required properties
-with exclusions/parcel/ownership (side by side when wide), while Ranges holds
-distance and price. Columns stays in a right-aligned
-popout. Forms scroll independently to reserve result rows below them; selecting
-Results hides the form to give the table more room. All edits apply immediately.
-Reset sits at the bottom right of each section and restores only its own options or
-column choices; the result footer resets the entire search. Save as default
+`ui/area_search/model.rs` counts what the window shows once per result list
+(distance bars and bands, owners, kinds, what is for sale, ranks) and names the
+filters that are on. `chart.rs` is the distance chart with its two handles,
+`sheet.rs` the filters (three-state kinds, click action, permissions, price,
+scope, the six fields), `list.rs` the lists (bands, owners, for sale, the whole
+table with the name kept in view, the card of the selected object), `wide.rs`
+the window's board of tiles (its only view). All edits apply immediately. Save as default
 persists filter options without search text. Compiled regex filters survive
 live snapshots; one matching-limit failure cancels the rest of that batch,
-with diagnostics visible above the table.
+with diagnostics in the footer.
 `settings/area_search.rs` owns typed defaults and Legacy-compatible
 `openfloater/area_search` link encoding/decoding, routed by `slapp.rs`.
 Aurora retains its broader physical/temporary defaults, live text search,
@@ -1744,6 +1993,9 @@ value keep their own guards against `inf` and `nan`. `rlva/dictionary.rs` is
 the Legacy behaviour dictionary in registration order, which @getcommand
 lists. `rlva/startup.rs` keeps the settings RLVa reads once when it starts
 (at the login) and retains the commands received before the login completes.
+`rlva/switch.rs` holds whether RLVa runs in this start of the viewer, apart
+from its saved switch: it starts with a login, and once it runs a change
+applies at the next start.
 `collection.rs` is shared by forced wear and worn-inventory queries:
 it folds point folders and single-level folder links, includes gestures,
 honors shared-wear and prefix preferences, and reports missing targets for
@@ -1966,6 +2218,11 @@ Contents keeps its three-column action strip. The fixed Legacy controls remain
 independent of the customized Aurora arrangement. Aurora's five editing sections share a full-width
 folding transform area and an editable footer; `build/ui/second_tab.rs` shows a
 second section beside the active one in a window widened for two.
+The Aurora main window is the Edit tool's: Camera, Move, Create and Land each
+have a window of their own (`build/ui/tool_floaters.rs`), opened and closed
+from the rail, their toolbar buttons, menu entries and Ctrl+1, 2, 4, 5;
+`build/tool_windows.rs` holds which ones are shown, the tool in use (the
+window last opened or pressed) and the lit buttons, for both styles.
 `build/face_buttons.rs` holds the face buttons, Invert / All and the face step
 shared by the arrows and the Ctrl+, / Ctrl+. keys. `build/layout.rs` owns the saved
 item order/destinations and the versioned, validated notecard profile, excluding
@@ -2730,24 +2987,23 @@ and pointer events; `drag_navigation_tests.rs` covers hover latching, scrolling,
 hidden sources, filtered lists, window ownership and cancellation.
 `drag_demo.rs` provides offline move/hover/rejection/scroll/fold scenarios.
 
-`ui/toolbar.rs` owns Firestorm's three toolbars (the bottom one, left and
-right), their context menus and drag/drop edits; a command stands in one of
-them at most. `toolbar/catalogue.rs` lists Firestorm's toybox commands and
-Aurora's own, with whether Aurora runs them; `toolbar/editor.rs` is the
-"Toolbar buttons" window (tiles, each toolbar's mode / alignment / size,
-Locked, Clear all, Restore defaults). `Settings::toolbar` stores the three
-button lists, each toolbar's style and the lock, shared by all accounts at the
+`ui/toolbar.rs` owns the four edge toolbars, drawer membership, context menus
+and drag/drop commits; a command has at most one placement across all containers.
+`toolbar/catalogue.rs` lists the Legacy Viewer's toybox commands and Aurora's
+own, with whether Aurora runs them; `toolbar/editor.rs` is the resizable
+"Buttons and menus" catalogue and interface editing window. `Settings::toolbar`
+stores the root button lists, drawer contents, styles and lock, shared by all accounts at the
 human's request; a style left unset follows the default of the look in use.
 The first account entering the world after the update supplies its former
 per-account layout; an existing shared layout always wins. Legacy layouts
 survive pre-login saves until migration. Without an override the skin's live
 bottom layout remains authoritative. Edits save only on release or an
 explicit action, and an empty override stays empty. The empty Aurora dock
-is drawn only during an unlocked toolbar drag, matching
+is drawn during an unlocked drag or the entire visual editing session, extending
 LLToolBarView::draw; nearby chat retains its independent island (#1631).
 `ui/bars/side.rs` draws
 the left and right toolbars (glass islands with the islands, full-height
-panels with Firestorm's bars) and the windows' room beside them;
+panels with Legacy bars) and the windows' room beside them;
 `ui/bars/sizing.rs` lays out a toolbar's buttons by mode and layout style on
 one row, cutting labels before buttons narrow.
 `ui/balance_gains.rs` shows the balance's changes, for both bar styles: rows
@@ -3065,10 +3321,10 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `world/edit_echo.rs` | Our own transform edits against the simulator's late reports of them: the values of each MultipleObjectUpdate sent (`ObjectStore::note_sent_transforms`, from `App::send`; with the prims of a stretched linkset) are kept over the reports of earlier sends until one agrees with them, so a stretch streamed ten times a second does not shake once released; a refused edit shows the simulator's last report after 2 s (`ObjectStore::expire_sent_edits`) |
 | `ao/`, `app/ao.rs`, `ui/ao.rs` | Built-in Animation Overrider: catalogue of the authoritative `#Aurora/Aurora AO` sets, inventory links and ZHAO import (`inventory.rs`), one startup reconstruction from `#Firestorm/#AO` when the Aurora folder is absent (`bootstrap.rs`), explicit single-set Legacy Viewer copying (`migration.rs`, on-demand picker in `ui/ao/migration.rs`), states / cycles / groups / tracks and remapping of the pose of our avatar only (`runtime.rs`), synthetic assets and transitions (`demo.rs`); AIS operations and asynchronous replies in `app/ao.rs`, management window opened by the AO button of the bottom bar. The raw signals of the simulator are still used for movement and transitions; the overrides are announced through AgentAnimation. Activation and last set saved per account UUID; pause and standing poses specific to the session. |
 | `camera/` | The camera like LLAgentCamera: view behind the avatar, Alt camera on a point or an object (`focus.rs`), seat camera, scripted camera (`follow.rs`: LLFollowCam parameters, per-object activation stack held by World and avatar-relative simulation; `world/mod.rs` deactivates seat/attachment linkset sources before parent changes, retaining parameters and unrelated sources), mouselook and its right-button zoom (`mouselook_zoom.rs`: LLToolCompGun's held zoom, the wheel steps, the view limits), transitions, smoothing, pull-back in flight, collision sent by the simulator; camera presets (`presets.rs`, issue #1164: a saved `CameraShot` held by the avatar, a place in global metres or an object it follows, with the photo mode's lens, looks and light as optional parts; captured and applied by `app/camera_presets.rs`, listed by the viewfinder's `ui/viewfinder/presets.rs` panel and the Controls window); the photo window's free camera (`free.rs`: its own position and heading while the avatar stays, moves in the camera's frame like the Legacy Viewer's 3D mouse flycam, optional collisions that slide along objects and the ground; `Camera::update` shows it and keeps the avatar's view behind it); Legacy Viewer settings (`settings.rs`, with `SavedViews`: the Rear, Front, Side and Shoulder views the user saved over their templates, #2755), demo scenarios (`demo.rs`) |
-| `world/` | World state received from the network: the favourites (`favorites.rs`: the Favorites folder's landmarks in the account's order, LLFavoritesOrderStorage), objects, regions, terrain, objects of the out-of-range regions set aside until these close or come back into range (`parked.rs`), environment (EEP: cycles and settings assets in `eep.rs`, choice local > parcel > region > default day, local environment and fades in `eep_env.rs`, the photo's own sky, water, day cycle, time and sun laid over it in `eep_photo.rs`, what experience controllers push (ENV_PUSH, above the parcel and under the local environment) in `eep_push.rs`, lists of the environment picker and loading of the folders in `env_select.rs`), selected parcel of "About Land", its rights and its refresh while the window is open (`land.rs`), who may freeze or eject a resident where they stand (`land_moderation.rs`), social, avatar profiles, inventory, groups (active, pinned; the open profile's members and roles in `group_data.rs`, its parcels and accounts in `group_money.rs`), contact sets and nicknames (`contact_sets.rs`; a set's own online notices and automatic responses in `contact_sets/notices.rs`), blocks, derendered objects and residents and the account's asset blacklist (`derender.rs`: their updates dropped, kept to come back at once; Show Friends Only hides the avatars that are not friends the same way, `friends_only.rs`), messages of the Legacy Viewer's LSL bridge (hidden), body orientation, gaze (LookAt), map, place profiles of "Places" and of the separate windows (`place_details.rs`: region by its name, landmark, RemoteParcelRequest, ParcelInfoRequest), the parcel snapshots of the favourites and of the Places rows without a thumbnail, by landmark or by point (`place_snapshots.rs`), landmark assets and handles of their regions (`landmarks.rs`), dated and saved teleport history (`tphistory.rs`), how long a teleport or crossing waits for the region to confirm the arrival (`arrival_wait.rs`), what an avatar wears against the worn objects its appearance lists, for the Dev Toolbox's J2 (`worn_listed.rs`, issue #2747), teleport offers and requests from other residents waiting for their answer (`teleport_invites.rs`), whether the teleport screen offers Cancel and what a cancel leaves (`teleport_cancel.rs`), what a teleport refused for its content rating offers (handle_teleport_access_blocked's prompts, the maturity dialog) and the refused request sent again once the preference is kept (`teleport_access.rs`), what any other teleport failure tells the resident: the Legacy Viewer's wording of the simulator's code and the line that explains an OpenSim Hypergrid refusal (`teleport_failure.rs`), our temporary attachments (an experience's or llAttachToAvatarTemp's, with no inventory item) and their names from AttachmentResources (`temp_attachments.rs`), residents' inventory offers as cards in the giver's conversation, answered through their notification, and the inventory opened on a kept offer's item (ShowInInventory) (`inventory_offers.rs`), direct payments between a resident and us as cards in their conversation, and lines in its transcript (`payments.rs`), calling cards given and received (`calling_cards.rs`), the content rating chosen during the session and its sync with the server (`maturity.rs`), the animation editor's stand-in Person B, a client-only mirror of our avatar and what it wears, its shape and bakes read from ours (`mirror.rs`), LiveMesh's Fit lab mannequins, copies of the same kind each in a shape of its own (`mannequins.rs`), experiences' details, the permission questions waiting for them and the agent's permission for each (`experiences.rs`), one text rule for the names of objects and owners in dialogs: on one line, without bidi embeddings, overrides or isolates, the name as sent kept for blocking (`dialog_names.rs`), Set Home to Here and the map's home that follows it (`home.rs`), the account settings of Preferences › Privacy the grid keeps (`user_info.rs`)… |
+| `world/` | World state received from the network: the favourites (`favorites.rs`: the Favorites folder's landmarks in the account's order, LLFavoritesOrderStorage), objects, regions, terrain, objects of the out-of-range regions set aside until these close or come back into range (`parked.rs`), environment (EEP: cycles and settings assets in `eep.rs`, choice local > parcel > region > default day, local environment and fades in `eep_env.rs`, the photo's own sky, water, day cycle, time and sun laid over it in `eep_photo.rs`, what experience controllers push (ENV_PUSH, above the parcel and under the local environment) in `eep_push.rs`, lists of the environment picker and loading of the folders in `env_select.rs`), selected parcel of "About Land", its rights and its refresh while the window is open (`land.rs`), who may freeze or eject a resident where they stand (`land_moderation.rs`), social, avatar profiles, inventory, groups (active, pinned; the open profile's members and roles in `group_data.rs`, its parcels and accounts in `group_money.rs`), contact sets and nicknames (`contact_sets.rs`; a set's own online notices and automatic responses in `contact_sets/notices.rs`), blocks, derendered objects and residents and the account's asset blacklist (`derender.rs`: their updates dropped, kept to come back at once; Show Friends Only hides the avatars that are not friends the same way, `friends_only.rs`), messages of the Legacy Viewer's LSL bridge (hidden), body orientation, gaze (LookAt), map, place profiles of "Places" and of the separate windows (`place_details.rs`: region by its name, landmark, RemoteParcelRequest, ParcelInfoRequest), the parcel snapshots of the favourites and of the Places rows without a thumbnail, by landmark or by point (`place_snapshots.rs`), landmark assets and handles of their regions (`landmarks.rs`), dated and saved teleport history (`tphistory.rs`), how long a teleport or crossing waits for the region to confirm the arrival (`arrival_wait.rs`), a Legacy Viewer's teleport history, asset blacklist, media filter list and contact sets added to the account, its files only read (`legacy_lists.rs`), what an avatar wears against the worn objects its appearance lists, for the Dev Toolbox's J2 (`worn_listed.rs`, issue #2747), teleport offers and requests from other residents waiting for their answer (`teleport_invites.rs`), whether the teleport screen offers Cancel and what a cancel leaves (`teleport_cancel.rs`), what a teleport refused for its content rating offers (handle_teleport_access_blocked's prompts, the maturity dialog) and the refused request sent again once the preference is kept (`teleport_access.rs`), what any other teleport failure tells the resident: the Legacy Viewer's wording of the simulator's code and the line that explains an OpenSim Hypergrid refusal (`teleport_failure.rs`), our temporary attachments (an experience's or llAttachToAvatarTemp's, with no inventory item) and their names from AttachmentResources (`temp_attachments.rs`), residents' inventory offers as cards in the giver's conversation, answered through their notification, and the inventory opened on a kept offer's item (ShowInInventory) (`inventory_offers.rs`), direct payments between a resident and us as cards in their conversation, and lines in its transcript (`payments.rs`), calling cards given and received (`calling_cards.rs`), the content rating chosen during the session and its sync with the server (`maturity.rs`), the animation editor's stand-in Person B, a client-only mirror of our avatar and what it wears, its shape and bakes read from ours (`mirror.rs`), LiveMesh's Fit lab mannequins, copies of the same kind each in a shape of its own (`mannequins.rs`), experiences' details, the permission questions waiting for them and the agent's permission for each (`experiences.rs`), one text rule for the names of objects and owners in dialogs: on one line, without bidi embeddings, overrides or isolates, the name as sent kept for blocking (`dialog_names.rs`), Set Home to Here and the map's home that follows it (`home.rs`), the account settings of Preferences › Privacy the grid keeps (`user_info.rs`)… |
 | `camera/vr.rs` | Pure VR comfort controls: positional centering layered on native Avatar movement, horizontal zoom and delayed-authority first-person body arrival, independent from direct headset tracking. |
 | `scene/` | What is sent to the GPU: geometry and LOD, textures (streaming), avatars (skeleton, animations, silhouette), particles, water, reflection probes, world sounds, impostors, environment settings assets (`settings.rs`: sky, water, day cycle) |
-| `ui/` | egui interface: bars (`bars.rs`: the Legacy Viewer's full-width bars and what both looks share; `bars/islands.rs`: Aurora's top bar, glass islands over the world sampling the windows' blur, the system island's items, detailed tooltip and right click; `bars/clock.rs`: the bars' clock, SLT or local time with its zone's abbreviation (tz database) switched by a click, with or without seconds, in 12 or 24 hours (Auto: the system's regional format); `bars/place.rs`: the place island, what it shows by the room it has, its menu; `bars/location_suggest.rs`: what the destination field and the Legacy bars' location field suggest while a place is typed (landmarks, then places of the history, Legacy matching and dictionary order) and the row Enter takes; `bars/dock.rs`: the bottom islands, the chat island with the chat bar's field and the toolbar's buttons in a centred dock, one height for both; `bars/side.rs`: the left and right toolbars; `bars/sizing.rs`: the widths of a toolbar's buttons; `bars/favorites.rs`: the favourites in the place island's menu, the row under the islands or the dock's grid, chosen by "Favourites access"; `bars/demo.rs`: `AURORA_DEMO_BARS`; `interface.rs`: the interface hidden by Alt+Shift+U, immersive mode (hidden but the chat) and the bars in mouselook), windows, options, chat, contacts (friends, groups, contact sets: `contacts.rs`), avatar profiles (`profile.rs`, the Legacy Viewer's tabbed window, and `profile/aurora.rs`, the default window with its header and cards, on the same state), world map (`worldmap/`: the full-frame layout's floating panels in `overlay.rs`, the Legacy Viewer's side panel in `mod.rs`), "Places" (`places.rs`: the Legacy Viewer's tabs of favourites, landmarks, teleport history; `places/aurora.rs`: Aurora's look, narrow with tabs and rows that open in place, widened with a rail of sources and folders and a preview; `places/model.rs`: its places, one per landmark asset, their last visit from the history, the history's places without a landmark) and place profiles (`place_details.rs`, also as separate windows), "Create landmark" (`landmark_create.rs`), "Asset blacklist" (`blacklist.rs`: the derendered objects and residents), "Region / Estate" (`region/`: the window, its roles and "View as" in `mod.rs`, the header and the overview in `overview.rs`, Manage's sections in `manage.rs`, the "Region settings" of Aurora-Sim based grids (shown with the DispatchOpenRegionSettings capability, a Manage section and a classic tab) in `opensim.rs`, its Interventions and their dialogs (message, teleport home, kick, objects returned, restart, schedule) in `interventions.rs`, the Top scripts / Top colliders window in `top_objects.rs`, Environment, Experiences and Covenant with their pickers and scope question in `estate_wide.rs`, the rules' and terrain's Advanced folds (telehub and spawn points, PBR terrain materials and their transforms, RAW file) in `advanced.rs`, the classic window (the Legacy Viewer's eight tabs over the same sections) in `classic.rs`, their changes waiting for "Apply" in `draft.rs`, the questions and notices in `confirm.rs`, People's four estate lists with their pickers, scope question and CSV files in `people.rs`; data in `world/estate.rs`, what the app feeds it (the selection for the telehub, the terrain's materials) in `app/region_window.rs`, protocol in `aurora-net/src/estate.rs`, `session/estate.rs` and `session/terrain_raw.rs` (the RAW file's Xfer)), "About Land" (`land/`, one file per tab, dialogs; Aurora's layout over them in `aurora.rs`, its overview in `overview.rs`, the settings by intent in `manage.rs`, the access lists and object owners in `people.rs`, Script info in `scripts.rs`), the pieces the redesigned windows share (`sheet.rs`: header on the field's face with its gauge, page tabs with "View as", pills, cards with a title and a link, lines of facts, settings rows with their sentence, amber lock banner and line, "Advanced" folds, a column of sections whose navigation follows the scrolling (a row of icons in a compact window), the bar of changes waiting for "Apply", list heads and resident rows), group profile (`group_profile.rs` and `group_profile/`: header, Home, Members, Notices, Land and L$ (`land.rs`), Experiences (`experiences.rs`) and Administration tabs, or the classic window), resident picker (`avatar_picker.rs`), experience profile with its permission (`experience_profile.rs`), the Me › Experiences window with its five lists (`experiences.rs`), web page in a window (`web_view.rs`), the media filter's question and its list in the preferences (`media_filter.rs`), the nearby media panel under the top bar's media button (`nearby_media.rs`: LLPanelNearByMedia, rows from `media/nearby.rs`, applied by `app/nearby_media.rs`), the Marketplace web site in a window (`marketplace.rs`), the toolbar's built-in web browser (`web_browser.rs`: LLFloaterWebContent on `web_view.rs`), the Avatar Welcome Pack (`avatar_welcome.rs`: the grid's page in a trusted `web_view.rs`, whose folder commands the app wears), the login screen's "Create an account" (`signup.rs`: LLFloaterJoin, Second Life's sign-up page or the grid's registration page in a modal `web_view.rs`, the page's `floaterjoin` commands read by `slapp.rs`, the Terms and Privacy pages in a modal of their own, the new account's name and password handed to the login form), the grid's Destination Guide (`destinations.rs`: LLFloaterDestinations on `web_view.rs`, the guide's address per grid, the Legacy style; `destinations/aurora.rs`: Aurora's window on the guide's feed, compact with category chips and rows that open in place, widened with a rail of categories, cards and a preview; the shared place rows of `place_card.rs`), texture picker, inventory, environment picker and "Personal lighting" (`environment.rs`), maps, debug overlays; sounds caused by the widgets (`sound_cues.rs`: clicks, refused keys, windows); the progress window of a selection's script actions (`script_queue.rs`); right-click menus: shared look (`menu.rs`: Tabler icon, submenus, checked boxes) and entries like the Legacy Viewer (`context.rs`: world, avatar names, groups) |
+| `ui/` | egui interface: bars (`bars.rs`: the Legacy Viewer's full-width bars and what both looks share; `bars/islands.rs`: Aurora's top bar, glass islands over the world sampling the windows' blur, the system island's items, detailed tooltip and right click; `bars/clock.rs`: the bars' clock, SLT or local time with its zone's abbreviation (tz database) switched by a click, with or without seconds, in 12 or 24 hours (Auto: the system's regional format); `bars/place.rs`: the place island, what it shows by the room it has, its menu; `bars/location_suggest.rs`: what the destination field and the Legacy bars' location field suggest while a place is typed (landmarks, then places of the history, Legacy matching and dictionary order) and the row Enter takes; `bars/dock.rs`: the bottom islands, the chat island with the chat bar's field and the toolbar's buttons in a centred dock, one height for both; `bars/side.rs`: the left and right toolbars; `bars/sizing.rs`: the widths of a toolbar's buttons; `bars/favorites.rs`: the favourites in the place island's menu, the row under the islands or the dock's grid, chosen by "Favourites access"; `bars/demo.rs`: `AURORA_DEMO_BARS`; `interface.rs`: the interface hidden by Alt+Shift+U, immersive mode (hidden but the chat) and the bars in mouselook), windows, options, chat, contacts (friends, groups, contact sets: `contacts.rs`), avatar profiles (`profile.rs`, the Legacy Viewer's tabbed window, and `profile/aurora.rs`, the default window with its header and cards, on the same state), world map (`worldmap/`: the full-frame layout's floating panels in `overlay.rs`, the Legacy Viewer's side panel in `mod.rs`), "Places" (`places.rs`: the Legacy Viewer's tabs of favourites, landmarks, teleport history; `places/aurora.rs`: Aurora's look, narrow with tabs and rows that open in place, widened with a rail of sources and folders and a preview; `places/model.rs`: its places, one per landmark asset, their last visit from the history, the history's places without a landmark) and place profiles (`place_details.rs`, also as separate windows), "Create landmark" (`landmark_create.rs`), "Asset blacklist" (`blacklist.rs`: the derendered objects and residents), "Region / Estate" (`region/`: the window, its roles and "View as" in `mod.rs`, the header and the overview in `overview.rs`, Manage's sections in `manage.rs`, the "Region settings" of Aurora-Sim based grids (shown with the DispatchOpenRegionSettings capability, a Manage section and a classic tab) in `opensim.rs`, its Interventions and their dialogs (message, teleport home, kick, objects returned, restart, schedule) in `interventions.rs`, the Top scripts / Top colliders window in `top_objects.rs`, Environment, Experiences and Covenant with their pickers and scope question in `estate_wide.rs`, the rules' and terrain's Advanced folds (telehub and spawn points, PBR terrain materials and their transforms, RAW file) in `advanced.rs`, the classic window (the Legacy Viewer's eight tabs over the same sections) in `classic.rs`, their changes waiting for "Apply" in `draft.rs`, the questions and notices in `confirm.rs`, People's four estate lists with their pickers, scope question and CSV files in `people.rs`; data in `world/estate.rs`, what the app feeds it (the selection for the telehub, the terrain's materials) in `app/region_window.rs`, protocol in `aurora-net/src/estate.rs`, `session/estate.rs` and `session/terrain_raw.rs` (the RAW file's Xfer)), "About Land" (`land/`, one file per tab, dialogs; Aurora's layout over them in `aurora.rs`, its overview in `overview.rs`, the settings by intent in `manage.rs`, the access lists and object owners in `people.rs`, Script info in `scripts.rs`), the pieces the redesigned windows share (`sheet.rs`: header on the field's face with its gauge, page tabs with "View as", pills, cards with a title and a link, lines of facts, settings rows with their sentence, amber lock banner and line, "Advanced" folds, a column of sections whose navigation follows the scrolling (a row of icons in a compact window), the bar of changes waiting for "Apply", list heads and resident rows), group profile (`group_profile.rs` and `group_profile/`: header, Home, Members, Notices, Land and L$ (`land.rs`), Experiences (`experiences.rs`) and Administration tabs, or the classic window), resident picker (`avatar_picker.rs`), experience profile with its permission (`experience_profile.rs`), the Me › Experiences window with its five lists (`experiences.rs`), web page in a window (`web_view.rs`), the media filter's question and its list in the preferences (`media_filter.rs`), the import window of a Legacy Viewer's lists (`options/legacy_lists.rs`; reading and merging in `app/legacy_lists.rs`), the nearby media panel under the top bar's media button (`nearby_media.rs`: LLPanelNearByMedia, rows from `media/nearby.rs`, applied by `app/nearby_media.rs`), the Marketplace web site in a window (`marketplace.rs`), the toolbar's built-in web browser (`web_browser.rs`: LLFloaterWebContent on `web_view.rs`), the Avatar Welcome Pack (`avatar_welcome.rs`: the grid's page in a trusted `web_view.rs`, whose folder commands the app wears), the login screen's "Create an account" (`signup.rs`: LLFloaterJoin, Second Life's sign-up page or the grid's registration page in a modal `web_view.rs`, the page's `floaterjoin` commands read by `slapp.rs`, the Terms and Privacy pages in a modal of their own, the new account's name and password handed to the login form), the grid's Destination Guide (`destinations.rs`: LLFloaterDestinations on `web_view.rs`, the guide's address per grid, the Legacy style; `destinations/aurora.rs`: Aurora's window on the guide's feed, compact with category chips and rows that open in place, widened with a rail of categories, cards and a preview; the shared place rows of `place_card.rs`), texture picker, inventory, environment picker and "Personal lighting" (`environment.rs`), maps, debug overlays; sounds caused by the widgets (`sound_cues.rs`: clicks, refused keys, windows); the progress window of a selection's script actions (`script_queue.rs`); right-click menus: shared look (`menu.rs`: Tabler icon, submenus, checked boxes) and entries like the Legacy Viewer (`context.rs`: world, avatar names, groups) |
 | `build/` | Building tools like LLFloaterTools: selection and manipulators (`manip.rs`), selection regressions for linked parts and whole objects (`selection_tests.rs`), cycling through the selection under the pointer with CTRL + wheel (`cycle.rs`: units per linkset or prims of a single object, high-precision wheel), the face buttons 0 to 8 that pick a face on every selected prim at once (`face_buttons.rs`), direct moving of HUDs (`hud_drag.rs`: root of the linkset, screen / attachment point conversion, local echo and position MultipleObjectUpdate on release), Move (`grab.rs`) and Align (`align.rs`) tools, a click that puts the selection against the surface under the cursor (`place.rs`, "Place on surface"), snap to objects while moving (`object_snap.rs`: the selection flush against nearby prims, a box prim by its box and a mesh or shaped prim by its visible triangles, stopped at their faces, with its guides; Aurora's own, `object_snap_tests.rs` on the demo boxes), terrain (`land.rs`), edits of the selection (`edits.rs`), materials and media (`materials.rs`), object contents (`contents.rs`) and the inventory dropped into them, one item or a whole selection with its folders, from the world or the Contents tab (`contents_drop.rs`), the texture and material ids a face, sculpt or projector copy may carry to another prim, and the limited item that follows them into its contents (`texture_copy.rs`), the script actions of a selection (`script_queue.rs`: Reset / Run / Stop / Remove scripts, object after object), impact and weights (`costs.rs`), whether a mesh has a physics shape of its own for the Features tab's Prim entry, with the collision blocks asked for to find out and released every frame (`mesh_physics.rs`), the avatars and animated objects whose animations pause while something they carry is selected (`anim_pause.rs`), the selection saved as a Collada or OBJ file (`export/`: the rights of the Legacy Viewer's export in `rights.rs`, the prims and their shapes in `gather.rs`, faces and materials in `model.rs`, the formats in `collada.rs` and `obj.rs`, the texture files in `textures.rs`; its window `build/ui/export.rs`), demo simulator (`demo_sim.rs`); the window and its tabs in `build/ui/`. An empty click on that window, when it does not hold the keyboard, focuses Name or the last of Name and Description and selects all (`build/ui/name_focus.rs`) |
 | `interaction.rs`, `cursors.rs`, `ui/object_actions.rs` | Rules of the click actions 0–9, inheritance, permissions, cursors drawn from the Tabler icons (Firestorm's rules), buy / pay windows and contents list; transaction after confirmation |
 | `hover_tips.rs`, `ui/hover_tips.rs`, `app/hover_tips.rs` | The world's hover tips (LLToolPie::handleToolTip, LLToolTipMgr): the object, avatar or parcel under the pointer and what makes it the same tip, the rest delay, the press that hides it and the room the pointer may cross to the card (`Timing`), the hovered parcels asked per 4 m cell with HOVERED_PARCEL_SEQ_ID and kept by bitmap (`HoverParcels`), the tip's content and its Legacy text (`build`); drawn as Aurora's bubble, card with its buttons or readout, or the Legacy Viewer's text (`ui/hover_tips.rs`); the frame's requests (ObjectPropertiesFamily, GetObjectCost) and the card's actions as context menu actions (`app/hover_tips.rs`); avatars from `Scene::avatar_on_ray`, the hover search leaving them out; demo `AURORA_DEMO_HOVER_TIPS` (`demo_hover_tips.rs`) |
@@ -3206,11 +3462,12 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/exit.rs` | Translated exit modal: quit, log out to the login screen, cancel; background blurred on the GPU and interactions blocked; non-blocking wait for the end of the session, with Firestorm's six-second fallback timeout |
 | `updater.rs`, `ui/update.rs`, `app/update_notice.rs` | Asynchronous controller and update window: notes, progress, restart and errors; manual check in Help / login, ignored tag, Ask / Automatic / Required only choice and Stable / Beta channel (a change checks again). A running viewer checks again every `update_check_interval` (10 min by default): a quiet check that never blocks the login nor opens the window, whose new version becomes a notice once per session (`app/update_notice.rs`: a card of the notifications in the world, the window on the login screen), downloaded first in the Automatic mode. Isolated synthetic demo through `AURORA_DEMO_UPDATE`, the notice through `AURORA_DEMO_UPDATE_NOTICE`. |
 | `ui/news.rs`, `ui/news/markdown.rs`, `links.rs` | News of the login screen: Markdown files `news/<language>.md` of the repository, one per interface language (fallback to the base language, then English). At startup, the last download kept in the cache (`news-<language>.json`) or, failing that, the files compiled into the viewer; then the file from `main`, downloaded in the background (bounded size, 20 news items, texts cut, `https://` links only), replaces them. Reloaded when the interface language changes; a failure leaves the panel as it is. No download in demo nor in the test installation of updates; `AURORA_NEWS_URL` reads a local server or another branch, without cache. `markdown.rs`: tolerant reading of the format (`## date — title`, text, link), HTML comments ignored |
-| `ui/inventory.rs`, `ui/inventory/view.rs`, `ui/inventory/controls.rs`, `ui/inventory/context.rs`, `ui/inventory/clipboard.rs`, `ui/inventory/delete.rs`, `ui/inventory/dialogs.rs`, `ui/inventory/properties.rs`, `ui/inventory/thumbnail.rs`, `app/inventory.rs`, `app/inventory_thumbnail.rs` | Inventory: pure sorting / filters and per-generation view cache in `view.rs` (index, sorting and filtering in parallel with rayon), persistent commands and preferences in `controls.rs`, filtered tree including the parent folders, expansion states per tab, results drawn according to the visible area without a limit of 500 and status area of fixed height; scrolling on both axes, width of the names measured in the visible area then kept for the virtual results, commands adapted to small widths; menus per type (`inventory/context_catalog.rs` builds native commands with live permissions and caches a complete locale-specific, command-free catalogue for customization regardless of the clicked type; `inventory/menu_layout.rs` resolves stable identities, eight-cell icon bars, a recoverable hidden zone, independent dividers and named groups; locked presentation hides recursively empty groups without changing the saved arrangement; the movable layout lock and its containing groups/bars cannot be hidden, and legacy fixed Delete-footer placements migrate to the bottom icon bar; `inventory/context_customize.rs` handles layout editing in an adjacent settings companion, locking and bounded undo without executing commands; one common arrangement, group filters, expansion and lock state are stored globally across inventory types in `InventoryPreferences::context_menus`; `inventory/context_notecards.rs` validates a bounded, versioned presentation-only snapshot and uses native notecard upload/download callbacks before replacing settings; `inventory/context_notecards/picker.rs` uses shared inventory view/tree caches for the searchable notecard hierarchy, virtual rows and bounded descendant loading; initial/reset menu defaults preserve the supplied shared arrangement and open groups without replacing saved customizations; save/restore confirmations use the same five-second success notice as inventory mutations, shared by both window presentations), multiple selection with grouped add / detach, renaming in the row after creation or on request, folder windows limited to their descendants with a filter of their own, clipboard shared between windows and native Ctrl+C / Ctrl+X / Ctrl+V shortcuts according to the focus of the list in `clipboard.rs`, Delete and bottom-of-window trash through the shared deletion in `delete.rs`, the keyboard shortcuts of the lists in one table (`shortcuts.rs`: what each key does, and the labels the tooltips and the menus show), the selection keys and the type-ahead (`select_keys.rs`), the desktop file manager's menu entries and the explorer's empty-space menu (`context_catalog/explorer.rs`), drag modes and the right-button drop menu in `drag.rs`, properties and confirmations, previews / editing of notecards and scripts, reading of the animation statistics; image editor with six actions, tree picker and screenshot of the scene without the interface; decoding / resizing / encoding off the render thread and execution of the actions after the interface is drawn |
+| `ui/inventory.rs`, `ui/inventory/view.rs`, `ui/inventory/controls.rs`, `ui/inventory/context.rs`, `ui/inventory/clipboard.rs`, `ui/inventory/delete.rs`, `ui/inventory/dialogs.rs`, `ui/inventory/properties.rs`, `ui/inventory/thumbnail.rs`, `app/inventory.rs`, `app/inventory_thumbnail.rs` | Inventory: pure sorting / filters and per-generation view cache in `view.rs` (index, sorting and filtering in parallel with rayon), persistent commands and preferences in `controls.rs`, filtered tree including the parent folders, expansion states per tab, results drawn according to the visible area without a limit of 500 and status area of fixed height; scrolling on both axes, width of the names measured in the visible area then kept for the virtual results, commands adapted to small widths; menus per type (`inventory/context_catalog.rs` builds native commands with live permissions and caches a complete locale-specific, command-free catalogue for customization regardless of the clicked type; `inventory/menu_layout.rs` resolves stable identities, eight-cell icon bars, a recoverable hidden zone, independent dividers and named groups; locked presentation hides recursively empty groups without changing the saved arrangement; the movable layout lock and its containing groups/bars cannot be hidden, and legacy fixed Delete-footer placements migrate to the bottom icon bar; `inventory/context_customize.rs` handles layout editing in an adjacent settings companion, locking and bounded undo without executing commands; one common arrangement, group filters, expansion and lock state are stored globally across inventory types in `InventoryPreferences::context_menus`; `inventory/context_notecards.rs` validates a bounded, versioned presentation-only snapshot and uses native notecard upload/download callbacks before replacing settings; `inventory/context_notecards/picker.rs` uses shared inventory view/tree caches for the searchable notecard hierarchy, virtual rows and bounded descendant loading; initial/reset menu defaults preserve the supplied shared arrangement and open groups without replacing saved customizations; save/restore confirmations use the same five-second success notice as inventory mutations, shared by both window presentations), multiple selection with grouped add / detach, renaming in the row after creation or on request, folder windows limited to their descendants with a filter of their own, clipboard shared between windows and native Ctrl+C / Ctrl+X / Ctrl+V shortcuts according to the focus of the list in `clipboard.rs`, Delete and bottom-of-window trash through the shared deletion in `delete.rs`, the keyboard shortcuts of the lists in one table (`shortcuts.rs`: what each key does, and the labels the tooltips and the menus show), the selection keys and the type-ahead (`select_keys.rs`: native IME composition offered at the list, `ImeEvent::Commit` accepted, a click starts a new prefix), the desktop file manager's menu entries and the explorer's empty-space menu (`context_catalog/explorer.rs`), drag modes and the right-button drop menu in `drag.rs`, properties and confirmations, previews / editing of notecards and scripts, reading of the animation statistics; image editor with six actions, tree picker and screenshot of the scene without the interface; decoding / resizing / encoding off the render thread and execution of the actions after the interface is drawn |
 | `world/inventory/actions.rs`, `world/inventory/wearable.rs`, `world/inventory/demo.rs`, `world/inventory/preview.rs`, `world/inventory/tests.rs`, `world/inventory/background.rs` | Permission rules, moves / copies / links and offers, preparation of the Marketplace listings, default clothing assets and synthetic scenario; v3 inventory cache with full permissions and AIS favorite metadata; the whole inventory fetched in the background from login on (port of LLInventoryModelBackgroundFetch: batched recursive AIS reads, at most 19 in flight) |
 | `aurora-net/src/inventory/operations.rs`, `aurora-net/src/inventory/thumbnail.rs`, `aurora-net/src/session/inventory_upload.rs` | AIS mutations with read-back, remapping of the UUIDs assigned by the server, UDP creations / copies and acknowledgements with expiry, saving of the documents through capabilities; AssetUpload / Xfer upload of clothing before the item is created; free thumbnails through InventoryThumbnailUpload, JPEG2000 POST then AIS and read-back |
 | `aurora-assets/src/j2k/encode.rs` | Memory-bounded OpenJPEG encoder, square RGB / RGBA thumbnails of 64 to 256 pixels and alpha preserved |
 | `logging.rs`, `cache.rs`, `cache_key.rs`, `credentials.rs` | Logs (written by the `aurora-log-write` thread from a bounded queue, so a stalled disk never holds a thread that logs, and flushed to the disk once per second, so a frozen and reset PC keeps them; the capture of the lines one thread logs, and in memory the last warnings and the recent output of the diagnostics, for the Dev Toolbox), disk cache (`cache/store`; `cache_key.rs` keeps its key in the OS vault), remembered password (OS vault) |
+| `open_files.rs` | The open-file limit on Linux and macOS (#2970): at startup the soft limit is raised to the hard one (macOS: at most `OPEN_MAX`, 10240), and both are logged (`open files:`). A desktop session's 1024 ran out in a busy region, and the drivers' refused descriptors came back as a GPU device loss |
 | `open_path.rs` | Files and folders handed to the system's file manager or viewer (`xdg-open`, `open`, `explorer`), the launcher waited for on a short thread so that none stays a zombie process |
 | `dev_toolbox/`, `ui/dev_toolbox.rs` | The Dev Toolbox (Advanced › Dev Toolbox, Ctrl+Alt+D; the former Preferences › Debug page): every tool with its stable identifier (J2, L1, R3…), kind, icon and group, the layout the user arranges and its saved form (new tools join their group, removed ones stay out), the anonymisation of what is copied ("Avatar 1", "Me") and the header of a copy (`dev_toolbox/`); the window: target bar, groups dragged in Customize, "Send a diagnostic", the last warnings (`ui/dev_toolbox.rs`). The agents' guide is docs/DEV_TOOLBOX.md; `AURORA_DEMO_TOOLBOX` |
 | `world/rlva_selftest.rs`, `world/rlva_selftest/`, `app/rlva_selftest.rs`, `ui/rlva_selftest.rs` | The RLVa self-test (Dev Toolbox T1, development builds only): the runner and its step types, the inventory and relay factory, the guard of what a case may send, the phase 1 and phase 2 cases, the cleanup, the report and the offline simulator (`world/`); the tool, the frame step and the hand-over to the send and receive paths (`app/rlva_selftest.rs`); the confirmation dialog and the report window (`ui/rlva_selftest.rs`). `AURORA_DEMO_RLVA=selftest` |
@@ -4460,6 +4717,8 @@ GPU had queued (`Renderer::pick_world`), is now only used for comparison
 (`AURORA_CLICK_PICK=wait` or `check`). If the render thread disappears
 (panic), every wait ends, the pending clicks receive an empty reply and the
 viewer closes cleanly.
+
+What the regions send of themselves (`app/interest_list.rs`, LLAgent::changeInterestListMode): the camera's view, or everything around while the 360° photo or Area Search is open; the mode is asked once for both. For the first 30 s of Area Search a frame applies less of the network's messages, unless they wait.
 
 The 360° snapshot is a format of the photo window (`SnapshotUi::pano`, the "360°" chip after the proportions; the toolbar's `360capture` opens the window in it). The engine is `app/capture_360.rs` (LLFloater360Capture), its rules `snapshot/capture_360.rs` (qualities, output sizes, the heading roll, the XMP block, the item name and its marker). For each face the camera is swapped for a flycam looking along the face, 90° high and wide (`PhotoFrame::cube_face`, put back at the next frame); the world holds still through the photo mode's freeze, and "Hide all avatars" flags every avatar and what it wears through the photo isolation's `hide_avatars`. The photo window's colour looks apply to each face (`LookOp::is_pointwise`: the others, which would differ from face to face, stay greyed in the stack). The faces never leave the GPU: each photo frame carries `SnapshotSpec::cube` and is copied into its layer of a cube texture (`equirect::CubeTarget`), the main thread does not wait for it, the six frames share one set of render targets (`Backend::cube_hold`: made for the first face, again after the last, with the history of the temporal passes cleared at each face), and a compute pass (`shaders/equirect.wgsl`) projects the cube, whose faces are mirrored by the cube map layout (the +X and -X captures swap layers and the cube is sampled at (-x, y, z), `aurora-render/src/equirect.rs`, proven against the cube face formulas). Only the panorama is read back, asynchronously (`equirect::Readbacks`: the map is polled by later frames, the rows are copied on a worker thread, the answer comes in a later `FrameResult`). The panorama is four faces wide (512 to 8192 pixels, the card's limit with a fallback to 4096); a JPEG carries the GPano XMP block as an APP1 segment (`sl360_<region>_<w>x<h>_<face>_<stamp>.jpg`); for the inventory the panorama is rolled so that the camera's heading is its middle column (the XMP does not survive the upload) and uploaded as a 2048 x 1024 texture named `360 Snapshot : <place>` (ASCII: the grid replaces every other byte of a name) to the Photo Album. The panorama viewer is `aurora-render/src/panorama.rs` (a paint-callback region of `preview::Cache`: a mip chain built by 2x2 blits, `textureSampleGrad` with gradients from the view direction so that the longitude wrap leaves no seam, redrawn only when the view or the image changes) with its controls in `ui/panorama.rs` (drag, wheel zoom 30° to 100°, double-click reset, slow auto-rotate, arrows and `+` / `-` while focused, enlarge). The inventory's texture preview offers it for any 2:1 texture of 256 pixels or more (a "360°" switch; a texture named for the marker opens as a panorama), under the same Copy UUID and Save As gates as the flat preview (`texture_view::gates`). While the window is open in 360° the session posts `{"mode":"360"}` to the InterestList capability of every region (`NetCommand::SetInterestListMode`), again to the agent's region when its capabilities arrive, and `default` when it closes or the format is left, and the textures treat every direction as in view.
 

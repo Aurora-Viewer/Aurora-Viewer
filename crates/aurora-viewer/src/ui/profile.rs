@@ -114,6 +114,11 @@ const TAB_PICKS: usize = 2;
 const TAB_CLASSIFIEDS: usize = 3;
 const TAB_RL: usize = 4;
 const TAB_NOTES: usize = 5;
+/// The classic window's favorite: its description's least height (the
+/// fixed one it had), and what the rows under it are taken to need before
+/// they are first measured (#4986).
+const PICK_DESC_MIN_H: f32 = 80.0;
+const PICK_BELOW_GUESS: f32 = 110.0;
 
 /// Left column of the labels ("Name:", "Key:", "Info:"...), right-aligned.
 const LABEL_W: f32 = 60.0;
@@ -1902,7 +1907,7 @@ fn feed_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, web: &WebContext) {
 
 /// LLAvatarName::getAccountName ("first.last"), else
 /// LLCacheName::buildUsername from the legacy name.
-fn web_username(world: &World, scope: NameScope, id: &Uuid) -> Option<String> {
+pub(crate) fn web_username(world: &World, scope: NameScope, id: &Uuid) -> Option<String> {
     let names = &world.social.avatar_names;
     if let Some(u) = names.get_in(scope, id).map(|n| n.username.clone()).filter(|u| !u.is_empty()) {
         return Some(u.replace(' ', "."));
@@ -2147,7 +2152,11 @@ fn pick_detail(
     if own && let Some(i) = info {
         w.follow_pick(i);
     }
-    let width = (ui.available_width() - 8.0).min(300.0);
+    // panel_profile_pick.xml: the name, the description and the location
+    // follow the window's width (follows left|right), the picture keeps its
+    // size (follows left|top); every field stopped at 300 px (#4986)
+    let width = (ui.available_width() - 8.0).max(0.0);
+    let picture_w = width.min(300.0);
     ui.set_max_width(width);
     let (snapshot, pos, name, desc) = match (&w.pick_edit, info) {
         (Some((e, _)), _) if own => (e.snapshot, e.pos, e.name.clone(), e.desc.clone()),
@@ -2164,7 +2173,7 @@ fn pick_detail(
         ui,
         p,
         c.images.get(&snapshot),
-        Vec2::new(width, width * 179.0 / 290.0),
+        Vec2::new(picture_w, picture_w * 179.0 / 290.0),
         "user-filled",
         "",
     )
@@ -2188,8 +2197,15 @@ fn pick_detail(
             .strong()
             .color(p.ink),
     );
-    // a fixed height: sizes taken from the space left would grow the window
-    let desc_h = 80.0;
+    // The description takes the height the pane has left (follows all),
+    // 80 px at the least: the pane's bottom is the bottom of the scroll
+    // area it is shown in, less what the rows under the description took
+    // at the frame before. The page is then as tall as the pane, never
+    // more, so the window does not grow from it (#4986).
+    let below_id = ui.scope_id().with(("pick_below", sel));
+    let below = ui.ctx().data(|d| d.get_temp::<f32>(below_id)).unwrap_or(PICK_BELOW_GUESS);
+    let room = ui.clip_rect().bottom() - ui.cursor().top() - below;
+    let desc_h = room.max(PICK_DESC_MIN_H).floor();
     if let (true, Some((e, _))) = (own, w.pick_edit.as_mut()) {
         egui::ScrollArea::vertical()
             .id_salt(("pick_desc", sel))
@@ -2212,6 +2228,7 @@ fn pick_detail(
                 .show(ui, |ui| rich(ui, p, emoji, world, want_names, &desc));
         });
     }
+    let below_top = ui.cursor().top();
     ui.label(
         RichText::new(aurora_i18n::tr!("ui-profile-location-2"))
             .size(12.0)
@@ -2290,6 +2307,13 @@ fn pick_detail(
                 }
             }
         });
+    }
+    // what the rows under the description took, for its height at the next
+    // frame; a change is drawn again at once
+    let taken = (ui.cursor().top() - below_top).max(0.0).ceil();
+    if (taken - below).abs() > 0.5 {
+        ui.ctx().data_mut(|d| d.insert_temp(below_id, taken));
+        ui.ctx().request_discard("pick rows measured");
     }
     if save {
         w.save_pick(actions);

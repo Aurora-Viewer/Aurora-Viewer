@@ -41,6 +41,16 @@ anim-timeline-mirror = Miroir : modifier et enregistrer aussi le côté opposé
 anim-timeline-limb-handles = Afficher les poignées des mains, des pieds, des coudes et des genoux
 anim-timeline-key = Clé
 anim-timeline-key-hint = Enregistrer une clé de l’os sélectionné à cette frame (K)
+anim-timeline-channels-hint = Afficher les clés de rotation et de position de cet os sur des lignes à part
+anim-timeline-channel-rotation = Rotation
+anim-timeline-channel-location = Position
+anim-timeline-keying-hint = Ce qu’une clé enregistre. Avec Position, Déplacer prend l’articulation seule, hors de sa chaîne IK. Les animations Second Life n’ont pas de clés d’échelle.
+anim-timeline-keying-auto = Auto : rotation, et position pour le bassin et les articulations déplacées
+anim-timeline-keying-auto-short = Auto
+anim-timeline-keying-loc-rot = Position et rotation
+anim-timeline-keying-loc-rot-short = Pos + Rot
+anim-timeline-keying-rot-short = Rot
+anim-timeline-keying-loc-short = Pos
 anim-timeline-zoom-out = Dézoomer (Ctrl+molette)
 anim-timeline-zoom-in = Zoomer (Ctrl+molette)
 anim-timeline-fit = Afficher toute l’animation (Maj+molette pour défiler)
@@ -77,7 +87,7 @@ anim-timeline-keys-selected = { $count ->
     [one] { $count } clé choisie : faites-la glisser pour la déplacer, Suppr la supprime, clic droit ou Échap la désélectionne
    *[other] { $count } clés choisies : faites-en glisser une pour toutes les déplacer, Ctrl+C les copie, Suppr les supprime, clic droit ou Échap les désélectionne
     }
-anim-edit-shortcut-play = Lire ou mettre en pause (Espace)
+anim-edit-shortcut-play = Lire ou mettre en pause
 anim-edit-shortcut-rewind = Revenir au début (Début)
 anim-edit-shortcut-undo = Annuler (Ctrl+Z)
 anim-edit-shortcut-redo = Rétablir (Ctrl+Y ou Ctrl+Maj+Z)
@@ -296,14 +306,14 @@ owned-land-area = { $actual } m² · { $billable } m² facturables
 owned-land-total = Total : { $actual } m² · { $billable } m² facturables
 owned-land-contributions = Contributions foncières aux groupes
 owned-land-contribution = { $area } m²
-toolbar-edit = Boutons de la barre…
-toolbar-title = Boutons de la barre
+toolbar-edit = Personnaliser les boutons et menus…
+toolbar-title = Boutons et menus
 toolbar-remove = Retirer ce bouton
-toolbar-locked = Verrouiller
+toolbar-interface-locked = Interface verrouillée
 toolbar-locked-bars = Verrouiller les barres
-toolbar-help = Glissez un bouton vers le dock ou une barre latérale ; déposez-le ici pour le retirer. Clic droit sur une barre : mêmes réglages.
-toolbar-help-classic = Glissez un bouton vers la barre du bas ou une barre latérale ; déposez-le ici pour le retirer. Clic droit sur une barre : mêmes réglages.
-toolbar-help-modes = Les boutons s’affichent comme ici, ou en icônes seules, selon les réglages de chaque barre.
+toolbar-help = Glissez les boutons ou les options du menu vers les barres du haut, du bas ou des côtés. Ramenez un bouton ici pour le retirer. Clic droit sur un bouton pour changer son apparence.
+toolbar-help-classic = Glissez les boutons ou les options du menu vers les barres du haut, du bas ou des côtés. Ramenez un bouton ici pour le retirer. Clic droit sur un bouton pour changer son apparence.
+toolbar-help-modes = Choisissez une icône, un libellé, les deux ou le défaut de la barre pour chaque bouton. Glissez les options dans le menu Aurora pour le réorganiser.
 toolbar-search = Chercher une commande ({ $count })
 toolbar-in-dock = Dans le dock
 toolbar-in-bottom = Dans la barre du bas
@@ -362,18 +372,18 @@ toolbar-command-chat-bar = Barre de chat
 toolbar-command-area-search = Recherche d’objets
 
 # Area Search (issue #930).
-area-search-hint = Objets, descriptions, propriétaires, créateurs ou UUID…
 area-search-refresh = Actualiser
-area-search-parcel = Parcelle actuelle uniquement
-area-search-children = Inclure les prims liés
+area-search-scope-heading = Où
+area-search-scope-parcel = Parcelle
+area-search-scope-region = Région
+area-search-scope-neighbours = Voisines
+area-search-objects-heading = Quels objets
 area-search-mine = Mes objets
 area-search-filters = Filtres
 area-search-sale = À vendre
 area-search-physical = Physique
 area-search-phantom = Fantôme
 area-search-temporary = Temporaire
-area-search-distance = Distance maximale
-area-search-reset = Réinitialiser les filtres
 area-search-count = { $shown } / { $total } objets · { $pending } en attente de détails
 area-search-parcel-pending = En attente des limites de la parcelle actuelle…
 area-search-scope = Seuls les objets reçus par le visualiseur sont listés.
@@ -382,7 +392,6 @@ area-search-price = Prix
 area-search-inspect = Inspecter
 area-search-zoom = Zoomer
 area-search-copy = Copier l’UUID
-area-search-neighbors = Inclure les régions voisines
 area-search-demo-description = Objet hors ligne pour tester la recherche et les filtres
 area-search-empty = Aucun objet ne correspond à ces filtres.
 area-search-sit = S'asseoir
@@ -1048,11 +1057,6 @@ login-accounts-remove = Retirer le compte
 login-accounts-confirm = Cette action concerne uniquement { $name }. Confirmer ?
 
 import-title = Importer des assets
-import-entry-point = Ouvrir les imports avec
-import-entry-point-help = Choisir ce qu’ouvrent le raccourci Importer (Ctrl+U par défaut) et Construire > Importer. La barre d’import rapide donne aussi accès à la fenêtre d’upload complète.
-import-entry-window = Fenêtre d’upload
-import-launcher-folder = Dossier
-import-icon-bar = Barre d’import rapide
 import-type-title = Importer — { $type }
 import-open-inventory = Voir dans l’inventaire
 import-lod-high = Haut
@@ -1240,7 +1244,12 @@ import-hands-salute = Salut de la main droite
 import-hands-typing = Saisie au clavier
 import-hands-peace = Signe de paix à droite
 import-menu = Importer
-import-launcher-settings = Settings
+import-menu-textures = Textures
+import-menu-animations = Animations
+import-menu-sounds = Sons
+import-menu-materials = Matériaux
+import-menu-meshes = Meshes
+import-menu-options = Options d'import
 import-settings-title = Paramètres d’import
 import-texture = Texture
 import-sound = Son
@@ -1293,6 +1302,31 @@ import-confirm-price = Ces imports coûteront { $cost } L$.
 import-confirm-shared-textures = Les textures partagées ne seront chargées qu’une fois.
 import-price-unavailable = Tarif indisponible ; connectez-vous avant l’import.
 import-insufficient-balance = Le solde ne permet pas cet import.
+import-upload-payment-title = Import
+import-upload-payment = L’import a coûté { $cost } L$.
+import-quick-textures = { $count ->
+    [one] Importer 1 texture pour { $cost } L$ ?
+   *[other] Importer { $count } textures pour { $cost } L$ ?
+}
+import-quick-materials = { $count ->
+    [one] Importer 1 matériau pour { $cost } L$ ?
+   *[other] Importer { $count } matériaux pour { $cost } L$ ?
+}
+import-quick-sounds = { $count ->
+    [one] Importer 1 son pour { $cost } L$ ?
+   *[other] Importer { $count } sons pour { $cost } L$ ?
+}
+import-quick-textures-size = { $count ->
+    [one] Cette texture peut être importée en 2048 × 2048. Choisissez sa taille :
+   *[other] Certaines de ces { $count } textures peuvent être importées en 2048 × 2048. Choisissez leur taille :
+}
+import-quick-materials-size = { $count ->
+    [one] Ce matériau a des images qui peuvent être importées en 2048 × 2048. Choisissez leur taille :
+   *[other] Ces { $count } matériaux ont des images qui peuvent être importées en 2048 × 2048. Choisissez leur taille :
+}
+import-quick-size-choice = { $size } px · { $cost } L$
+import-quick-free-full-size = Envoyer les images gratuites en 2048 × 2048 sans demander
+import-quick-free-full-size-help = « Importer des textures » et « Importer des matériaux » ne demandent alors 1024 ou 2048 que si l’envoi coûte des L$.
 import-invalid-request = Vérifiez le nom, le dossier et les paramètres du fichier.
 import-service-unavailable = Cette région ne propose pas le service d’import nécessaire.
 import-rejected = Le serveur a refusé l’import. Le brouillon est conservé.
@@ -4127,6 +4161,7 @@ dev-toolbox-l1 = Sous le curseur
 dev-toolbox-l2 = Objets portés de la cible
 dev-toolbox-l3 = Problèmes en direct
 dev-toolbox-n3 = Chargements
+dev-toolbox-n4 = Chargement de l’inventaire
 dev-toolbox-r1 = Afficher la transparence
 dev-toolbox-r2 = … objets riggés aussi
 dev-toolbox-r3 = Passe et alpha par face
@@ -4195,6 +4230,7 @@ dev-toolbox-what-l2 = Les objets portés de la cible, faces dessinées et écart
 dev-toolbox-what-l3 = Les 20 derniers avertissements, mis à jour
 dev-toolbox-what-n2 = Sans nom de lieu ni adresse
 dev-toolbox-what-n3 = Mémoire des textures, téléchargements, meshes et matériaux
+dev-toolbox-what-n4 = Dossiers lus, en échec et restants, lectures en cours et nouvelles tentatives ; aucun nom
 dev-toolbox-hide-names = Masquer les noms des résidents
 dev-toolbox-hide-names-hint = Avatar 1, Avatar 2… dans le texte copié. Conseillé pour un ticket public.
 dev-toolbox-with-system = Joindre la config système (J4)
@@ -5029,8 +5065,8 @@ ui-land-general-script-info = Infos sur les scripts
 world-profiles-joined-today = Inscrit aujourd'hui
 keybinds-insert = Inser
 ui-context-inspect-2 = Inspecter
-ui-context-inspect-all-attachments = Inspecter tous les accessoires
-inspect-title = Inspecter les objets
+ui-context-inspect-avatar = Inspecter l’avatar
+inspect-window = Inspecter
 inspect-col-name = Nom de l'objet
 inspect-col-description = Description
 inspect-col-owner = Propriétaire
@@ -5044,22 +5080,125 @@ inspect-col-created = Date de création
 inspect-date = { $day }/{ $month }/{ $year } { $hour }:{ $minute }
 inspect-empty = Aucun objet à inspecter.
 inspect-group-owner = [{ $name }] (groupe)
-inspect-owner-profile = Voir le profil du propriétaire…
 inspect-owner-profile-tip = Profil du propriétaire de l'objet en surbrillance
-inspect-creator-profile = Voir le profil du créateur…
 inspect-creator-profile-tip = Profil du créateur d'origine de l'objet en surbrillance
-inspect-options = Colonnes affichées
-inspect-totals = Totaux
-inspect-totals-objects = { $objects ->
-    [one] { $objects } objet
-   *[other] { $objects } objets
-    }, { $prims ->
-    [one] { $prims } prim
-   *[other] { $prims } prims
-    }
 inspect-totals-visible = Faces visibles
 inspect-totals-complexity = Complexité
 inspect-totals-textures = Textures
+inspect-tab-objects = Objets
+inspect-objects-title = { $count ->
+    [one] { $count } objet
+   *[other] { $count } objets
+    }
+inspect-summary-items = { $count ->
+    [one] { $count } élément
+   *[other] { $count } éléments
+    }
+inspect-open-profile = Ouvrir le profil
+inspect-over-limit = Au-dessus de votre limite
+inspect-limit-tip = Votre limite de complexité : { $limit }
+inspect-search = Chercher un élément ou un créateur
+inspect-outlined = { $name } est souligné dans le monde
+inspect-area-head = Tête
+inspect-area-body = Corps
+inspect-area-arms = Bras et mains
+inspect-area-legs = Jambes et pieds
+inspect-area-hud = HUD
+inspect-area-other = Autre
+inspect-area-world = Objets
+inspect-own-eyes = Yeux système
+inspect-own-body = Corps système
+inspect-own-description = Partie de l’avatar lui-même, pas un accessoire
+inspect-own-maker = Avatar Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n } k
+inspect-megabytes = { $n } Mo
+inspect-section-complexity = complexité { $value }
+inspect-no-match = Rien ne correspond à « { $query } ».
+inspect-spoken-worn = { $name }, porté sur { $point }, complexité { $complexity }, créé par { $creator }
+inspect-spoken-object = { $name }, appartenant à { $owner }, complexité { $complexity }, créé par { $creator }
+inspect-look-at-tip = Amener la caméra dessus
+inspect-profile-tip = Ouvrir le profil du créateur
+inspect-made-by = Créé par
+inspect-owned-by = Appartient à
+inspect-worn-on = Porté sur
+inspect-prims-count = { $count ->
+    [one] { $count } prim
+   *[other] { $count } prims
+    }
+inspect-percent = { $percent } %
+inspect-tile-tmem = Mémoire des textures
+inspect-tile-vram = VRAM
+inspect-tile-prims = Prims
+board-close = Fermer { $title }
+board-grow = Agrandir { $title }
+board-remove = Retirer { $name }
+board-more = et { $count } de plus
+board-more-short = +{ $count }
+board-some-of = { $shown } sur { $all }
+board-of-all = sur { $all }
+stage-turn-left = Tourner à gauche
+stage-turn-right = Tourner à droite
+stage-higher = Regarder de plus haut
+stage-lower = Regarder de plus bas
+stage-nearer = Plus près
+stage-further = Plus loin
+stage-reset = Revenir au début
+stage-hint = Glisser pour tourner, clic droit pour déplacer
+stage-light = Fond clair
+stage-dark = Fond sombre
+stage-playing = AO
+stage-paused = En pause
+stage-pause-tip = Mettre leur animation en pause
+stage-play-tip = Reprendre leur animation
+stage-loading = Préparation de la vue 3D…
+stage-nothing = Rien à montrer en 3D pour l’instant.
+stage-refused = La vue 3D est coupée tant que RLVa limite ce que vous pouvez voir.
+inspect-your-limit = Votre limite : { $limit }
+inspect-without-it = { $value } sans lui
+inspect-you = Vous
+inspect-person = Personne
+inspect-difference = Écart
+inspect-drawn-in-full = Affiché en entier
+inspect-nobody = La complexité de personne n’est encore connue.
+inspect-aside-count = { $count } mis de côté
+inspect-is-aside = mis de côté
+inspect-set-aside = Mettre de côté
+inspect-set-aside-tip = Voir la complexité sans cet objet. Dans cette fenêtre seulement : rien ne change dans le monde.
+inspect-put-back = Remettre
+inspect-put-back-tip = Compter de nouveau cet objet
+inspect-complexity-spoken = Complexité { $value }, numéro { $rank } sur { $count } personnes ici
+inspect-stage-outfit = La tenue
+inspect-stage-objects = Les objets
+inspect-stage-back = Revenir à l’ensemble
+inspect-place-made-by = { $place } · créé par { $name }
+inspect-owned-by-name = Appartient à { $name }
+inspect-tile-items = Objets
+inspect-tile-figures = Chiffres
+inspect-col-item = Nom
+inspect-point = Point
+inspect-look-at = Regarder
+inspect-selected-count = { $count } sélectionnés
+inspect-worn-count = { $count } portés
+inspect-creators-word = créateurs
+inspect-areas-word = zones du corps
+inspect-owners-word = propriétaires
+inspect-triangles-word = triangles
+inspect-made-of = { $count } objets sur { $all }
+inspect-kilobytes = { $n } Ko
+inspect-linkset-order = { $count }, dans l’ordre de liaison
+inspect-reset-columns = Rétablir les colonnes
+inspect-by-creators = { $count ->
+    [one] { $items } d’un seul créateur
+   *[other] { $items } de { $count } créateurs
+}
+inspect-owner-button = Profil du propriétaire
+inspect-group-button = Profil du groupe
+inspect-creator-button = Profil du créateur
+inspect-land-others = Autres { $n }
+inspect-land-these = Ceux-ci { $n }
+inspect-land-free = Libre { $n }
+inspect-land-unknown = La place de la parcelle s’affiche quand les objets sont tous sur la parcelle où vous êtes.
 ui-login-installed = Installée
 world-inventory-demo-instructions = Instructions
 build-ui-features-intensity = Intensité
@@ -5302,7 +5441,7 @@ ui-bars-immersive-hide-tags = Masquer les étiquettes des avatars
 toolbar-use-name-tag-preferences = Utiliser les préférences des étiquettes des avatars
 ui-bars-immersive-show-huds = Afficher les HUDs
 ui-bars-immersive-hide-huds = Masquer les HUDs
-ui-bars-customize-bars = Personnaliser les barres…
+ui-bars-customize-bars = Personnaliser l’interface
 session-inventory-upload-the-clothing-upload-timed-out-reload-inventory-before-trying = Le chargement du vêtement a expiré. Rechargez l’inventaire avant de réessayer.
 session-inventory-upload-the-clothing-upload-was-interrupted = Le chargement du vêtement a été interrompu.
 ui-place-details-could-not-find-the-region-s-location-it-may = Le client n'a pas pu obtenir l'emplacement de la région. La région est peut-être temporairement indisponible ou a été supprimée.
@@ -6640,6 +6779,11 @@ ui-options-planar-scene-reflection-high-and-ultra-are-costly = Reflet plan du d�
 ui-options-reflections = Reflets
 ui-options-water-reflections = Reflets de l'eau
 ui-options-screen-space-reflections-ssr = Reflets écran (SSR)
+ui-options-normal-precision = Précision des reflets
+ui-options-normal-precision-help = La finesse avec laquelle la direction de chaque surface est conservée pour les reflets. Standard peut montrer des paliers dans les reflets des surfaces lisses et courbes, comme la peinture d’une voiture ; Élevée les supprime et utilise plus de mémoire vidéo. Automatique utilise Élevée avec les reflets par lancer de rayons, où les paliers se voient le plus, et Standard sinon
+ui-options-normal-precision-automatic = Automatique
+ui-options-normal-precision-standard = Standard
+ui-options-normal-precision-high = Élevée
 ui-options-automatic-rejections = Refus automatiques
 ui-notifications-decline = Refuser
 ui-options-reject-chat-from-groups-whose-notices-you-do-not = Refuser le chat des groupes dont vous ne recevez pas les avis
@@ -6887,6 +7031,7 @@ ui-inventory-recent-note-period = Récent : les { $days } j { $hours } h passés
 ui-land-general-reclaim-land = Récupérer le terrain
 common-collapse = Réduire
 common-window-outside = Sortir de la fenêtre du viewer
+common-window-reset = Réinitialiser la position et la taille
 common-window-inside = Ramener dans la fenêtre du viewer
 common-window-rename-name = Double-cliquer pour renommer
 common-carry-hint = Cliquez pour le déposer ici, Échap pour le lâcher
@@ -10707,6 +10852,20 @@ build-compact-paste-system = Coller depuis le presse-papiers système
 build-compact-paste-vector = Coller le vecteur copié
 build-compact-copy-vector = Copier le vecteur
 build-compact-camera = Caméra
+build-tool-in-use = En cours
+build-create-options-toggle = Afficher / masquer les options
+build-create-keep-creating = Continuer à créer
+build-create-center-on-prim = Centrer sur le prim
+build-create-copy-prim-rotation = Copier la rotation du prim
+build-create-align-to-surface = Aligner sur la surface
+build-capture-shape-button = Copier la forme d’une prim : cliquez ici, puis sur une prim dans le monde
+build-capture-shape-armed = Cliquez sur une prim pour copier sa forme (Échap annule)
+build-capture-shape-full = 20 formes sont gardées. Retirez-en une pour en copier une autre
+build-capture-shape-remove = Retirer cette forme
+build-capture-shape-tooltip = Forme copiée ({ $kind })
+build-capture-shape-not-a-prim = Seule la forme d’une prim peut être copiée
+build-capture-shape-mesh-or-sculpt = La forme d’un mesh ou d’une prim sculptée ne peut pas être copiée
+build-capture-shape-no-modify = Il faut la permission de modifier cette prim pour copier sa forme
 build-compact-move-tool = Déplacer
 build-compact-edit = Modifier
 build-compact-create = Créer
@@ -12989,7 +13148,7 @@ demo-buy-land-bought = Achat de terrain simulé : la parcelle est à vous (démo
 import-permissions-tab = Permissions
 import-permissions-help = Ces réglages s’appliquent aux textures, sons, animations, matériaux et meshes importés.
 import-permissions-sharing = Partage
-import-permissions-payment = Paiement
+import-other-options = Autres options
 import-preview-enlarge = Agrandir l’aperçu
 import-preview-enlarged = Aperçu agrandi — { $name }
 import-preview-gestures = Glisser : tourner · Maj + glisser : déplacer · Molette : zoomer
@@ -14510,7 +14669,10 @@ rlva-hidden-region = (Région cachée)
 rlva-hidden-parcel = (Parcelle cachée)
 rlva-enable = Activer RLVa
 rlva-enable-hint = Autoriser les objets à contrôler les actions du viewer par les commandes RestrainedLove. Une session verrouillée peut imposer une connexion à la dernière position. Désactivé par défaut.
-rlva-session-hint = Désactiver RLVa libère immédiatement toutes les restrictions et efface la contrainte de prochaine connexion.
+rlva-restart-hint = RLVa démarre à la connexion. Une fois lancé, l'activer ou le désactiver ne prend effet qu'au prochain démarrage du viewer : les restrictions des objets restent jusque-là.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa sera activé après le redémarrage.
+rlva-toggle-disabled-restart = RLVa sera désactivé après le redémarrage.
 rlva-blocked = Cette action est restreinte par RLVa.
 rlva-active = Restrictions actives
 rlva-none = Aucune restriction active
@@ -15644,25 +15806,12 @@ area-search-last-owner = Dernier propriétaire
 area-search-land-impact = Impact sur le terrain
 area-search-prim-count = Nombre de primitives
 
-area-search-search = Rechercher
-area-search-columns = Colonnes
-area-search-regex = Utiliser les expressions régulières
 area-search-regex-error = Expression régulière : { $error }
 
-area-search-required = Ne lister que les objets qui sont
-area-search-excluded = Exclure les objets qui sont
-area-search-ranges = Distance et prix de vente
-area-search-attachment = Pièces jointes
 area-search-media = Média partagé
 area-search-copy-perm = Copie
 area-search-modify-perm = Modification
 area-search-transfer-perm = Transfert
-area-search-probes = Sondes de réflexion
-area-search-child-prim = Prims enfants
-area-search-neighbor-regions = Dans les régions voisines
-area-search-distance-range = Distance
-area-search-min = Min
-area-search-max = Max
 area-search-click-action = Action au clic de souris
 area-search-click-unrestricted = Sans restriction
 area-search-click-any = Toute action
@@ -15676,15 +15825,91 @@ area-search-reset-columns = Réinitialiser les colonnes
 
 area-search-regex-limit = Limite de recherche dépassée. Simplifiez l'expression.
 
-area-search-reset-all-tip = Réinitialiser toute la recherche.
-area-search-reset-search-tip = Effacer les champs de recherche et les expressions régulières.
-area-search-reset-options-tip = Rétablir les options de filtrage d’origine.
 area-search-reset-columns-tip = Rétablir les colonnes par défaut.
 
-area-search-range-options = Plages
-area-search-reset-ranges-tip = Rétablir les plages de distance et de prix par défaut.
 
-area-search-results = Résultats
+area-search-metres = { $n } m
+area-search-band-reach = À portée
+area-search-band-close = Tout près
+area-search-band-around = Autour de vous
+area-search-band-further = Plus loin
+area-search-band-far = Loin
+area-search-band = Zone
+area-search-within = À moins de { $distance }
+area-search-within-across = À moins de { $distance } à l’horizontale
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Montrer toutes les distances
+area-search-from = Distance à partir de
+area-search-to = Distance jusqu’à
+area-search-bar-tip = { $count ->
+    [one] Un objet, de { $from } à { $to }
+   *[other] { $count } objets, de { $from } à { $to }
+}
+area-search-of-objects = sur { $total } objets
+area-search-li = { $value } IS
+area-search-li-count = { $value } d’impact sur le terrain
+area-search-owner-count = { $count ->
+    [one] un propriétaire
+   *[other] { $count } propriétaires
+}
+area-search-object-count = { $count ->
+    [one] un objet
+   *[other] { $count } objets
+}
+area-search-objects-word = objets
+area-search-in-reach = ici
+area-search-tab-objects = Objets
+area-search-tab-owners = Propriétaires
+area-search-hint-wide = Objets, propriétaires, créateurs ou UUID
+area-search-kind-heading = Genre d’objet
+area-search-kind-tip = Un clic : seulement ceux-ci. Encore : masqués.
+area-search-kind-any = tous
+area-search-kind-only = seulement ceux-ci
+area-search-kind-hidden = Masqués
+area-search-kind-attached = Attachés
+area-search-kind-probes = Sondes
+area-search-click-all = Tout
+area-search-click-any-short = Toute
+area-search-permissions = Permissions
+area-search-price-heading = Prix, pour les objets à vendre
+area-search-price-to = à
+area-search-price-tip = Choisissez d’abord « À vendre »
+area-search-linked = Prims liés
+area-search-one-field = Chercher dans un champ
+area-search-regex-switch = Expressions régulières
+area-search-regex-invalid = Expression régulière non valide
+area-search-reset-filters-tip = Rétablir tous les filtres ; le texte cherché reste
+area-search-save-defaults-tip = Ouvrir désormais avec ces filtres
+area-search-reset-search = Vider les textes cherchés
+area-search-reset-filters = Rétablir les options de filtre
+area-search-reset-ranges = Rétablir distance et prix
+area-search-reset-all = Tout rétablir
+area-search-more = Plus
+area-search-several = En choisir plusieurs
+area-search-several-tip = Les clics ajoutent à la sélection (aussi Ctrl ou Maj + clic, Ctrl+A)
+area-search-actions = Actions
+area-search-nothing = Aucun objet reçu pour l’instant.
+area-search-nothing-for-sale = Rien à vendre ici.
+area-search-not-for-sale = Pas à vendre
+area-search-from-price = dès { $price }
+area-search-nearest = Les plus proches
+area-search-heaviest = Les plus lourds
+area-search-order-tip = Changer l’ordre : les plus proches ou les plus lourds d’abord
+area-search-rank = n° { $rank } sur { $all }
+area-search-rank-here = n° { $rank } ici
+area-search-card-more = Montrer tous les chiffres
+area-search-card-less = En montrer moins
+area-search-open-group = Ouvrir le groupe
+area-search-spoken = { $name }, { $distance }, impact { $li }, appartient à { $owner }
+area-search-owner-spoken = { $name }, { $count } objets, impact { $li }
+area-search-stage-line = À { $distance } · impact { $li } · { $owner }
+area-search-tile-3d = Vue 3D
+area-search-on = { $count } actifs
+area-search-on-word = actifs
+area-search-more-on = { $count ->
+    [one] un autre filtre actif
+   *[other] { $count } autres filtres actifs
+}
 
 # Applied local textures and materials (#1375).
 local-appearance-warning = { $count ->
@@ -15905,6 +16130,25 @@ ui-weather-precipitation-on-tip = La pluie ou la neige tombe comme réglée dess
 ui-weather-wind-on-tip = Le vent de la météo pousse la pluie et la neige, et s’entend dehors ; désactivé, l’air est calme
 ui-weather-wind-follow-region = Vent de la région
 
+ui-options-legacy-lists = Importer les listes du Legacy Viewer
+ui-options-legacy-lists-help = Ajoute l'historique des téléportations, la liste noire des ressources, la liste du filtre média et les cercles de ce compte. Les fichiers du Legacy Viewer sont seulement lus.
+ui-options-legacy-lists-button = Importer depuis le Legacy Viewer…
+ui-options-legacy-lists-no-account = Connectez-vous pour importer les listes de ce compte.
+ui-options-legacy-lists-title = Importer depuis le Legacy Viewer
+ui-options-legacy-lists-text = Tout est ajouté aux listes de ce compte et rien n'est retiré ici. Ce que nomme la liste noire des ressources quitte le monde aussitôt. Importer à nouveau ramène ce que vous avez retiré ici.
+ui-options-legacy-lists-searching = Recherche des dossiers du Legacy Viewer…
+ui-options-legacy-lists-none = Aucun dossier du Legacy Viewer contenant des listes n'a été trouvé pour ce compte.
+ui-options-legacy-lists-teleports = Historique des téléportations ({ $count })
+ui-options-legacy-lists-derender = Liste noire des ressources ({ $count })
+ui-options-legacy-lists-media = Liste du filtre média ({ $count })
+ui-options-legacy-lists-contact-set-entries = Entrées des cercles ({ $count })
+ui-options-legacy-lists-confirm = Importer
+ui-options-legacy-lists-added = Ajouté ou mis à jour. Historique des téléportations : { $teleports }, liste noire : { $derender }, filtre média : { $media }, entrées des cercles : { $sets }.
+ui-options-legacy-lists-nothing = Rien de nouveau : ce compte a déjà ces listes.
+ui-options-legacy-lists-failed = Illisible : { $files }.
+ui-options-legacy-lists-unsaved = Enregistrement impossible, inchangé : { $files }.
+ui-options-legacy-lists-other-grid = Sur cette grille, un dossier du même nom peut appartenir à une autre grille : vérifiez que c'est le bon.
+
 picker-pipette-hint = Cliquez sur une face pour sélectionner sa texture ou son matériau dans votre inventaire.
 
 picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventaire.
@@ -15913,6 +16157,148 @@ picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventa
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
 
+# Main menu and toolbar customization
+toolbar-button-icons = Icône seulement
+toolbar-button-text = Libellé seulement
+toolbar-button-icons-text = Icône et libellé
+toolbar-icon-default = Rétablir l’icône par défaut
+toolbar-icon-choose = Choisir une icône
+toolbar-icon-change = Changer d’icône
+toolbar-presets = Presets
+toolbar-interfaces = Interfaces
+toolbar-interfaces-shown = Affiché dans le bloc Interfaces
+toolbar-interfaces-hidden = Masqué dans le bloc Interfaces
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora OldSchool
+toolbar-preset-photographer = Aurora Photographer
+toolbar-preset-legacy = Legacy
+toolbar-import-textures = Importer des textures
+toolbar-import-sounds = Importer des sons
+toolbar-import-animations = Importer des animations
+toolbar-import-materials = Importer des matériaux
+toolbar-import-meshes = Importer des maillages
+toolbar-import-local = Fichiers locaux
+toolbar-import-advanced = Import avancé
+toolbar-import-settings = Paramètres d’import
+toolbar-import-bar = Barre d’import
+toolbar-icon-search = Rechercher une icône…
+toolbar-in-top = Dans la barre du haut
+toolbar-bar-top = Barre du haut
+toolbar-drop-here = Déposer ici
+toolbar-separator = Séparateur
+toolbar-interface-edit = Personnaliser l’interface
+toolbar-edit-done = Terminer
+toolbar-edit-top = Haut
+toolbar-edit-bottom = Bas
+toolbar-edit-left = Gauche
+toolbar-edit-right = Droite
+toolbar-edit-help = Cliquez sur un élément pour le sélectionner, glissez-le pour le déplacer ou faites un clic droit pour le modifier. Fermez cette fenêtre pour terminer.
+toolbar-edit-locked = Les barres sont verrouillées. Déverrouillez-les ci-dessous pour modifier l’interface.
+toolbar-edit-move = Déplacer vers
+toolbar-edit-split-before = Couper avant
+toolbar-edit-split-after = Couper après
+toolbar-edit-merge-before = Fusionner avec le bloc précédent
+toolbar-edit-merge-after = Fusionner avec le bloc suivant
+toolbar-edit-merge-groups = Fusionner ces blocs
+toolbar-drawer = Tiroir
+toolbar-drawer-default-mode = Affichage par défaut des boutons
+toolbar-drawer-closes = Fermer après un clic sur un bouton
+toolbar-block-shortcut = Raccourci :
+toolbar-drawer-hides-needs-shortcut = Nécessite un raccourci
+toolbar-floating-close-button = Ajouter un bouton Fermer
+toolbar-block-name = Nom du bloc :
+toolbar-block-button-mode = Affichage du bouton du bloc
+toolbar-button-inherited = Hérité
+toolbar-drawer-hides-button = Masquer le bouton en mode flottant
+toolbar-floating-new = Bloc flottant
+toolbar-floating-orientation = Orientation
+toolbar-floating-horizontal = Horizontale
+toolbar-floating-vertical = Verticale
+toolbar-floating-empty = Déposez des boutons ici
+toolbar-shortcut-title = Raccourci
+toolbar-shortcut-block-name = Bloc : { $name }
+toolbar-shortcut-none = Aucun raccourci
+toolbar-shortcut-press-key = Appuyez sur une touche
+toolbar-shortcut-esc = Échap pour annuler
+toolbar-shortcut-clear = Retirer
+toolbar-shortcut-overrides = Court-circuite { $name } : ce raccourci lance celui de la barre au lieu de son usage par défaut.
+toolbar-shortcut-used = Déjà le raccourci de { $names }.
+toolbar-shortcut-replace = Remplacer
+toolbar-shortcut-add = Ajouter
+toolbar-shortcut-save = Enregistrer
+toolbar-shortcut-choose-key = Choisir une touche
+toolbar-shortcut-help = Activez ou désactivez Ctrl, Alt et Maj, puis cliquez sur la touche pour la changer. Ctrl ou Alt est nécessaire, sauf avec F1 à F24.
+toolbar-shortcut-inactive = Ce bouton n'est dans aucune barre : son raccourci fonctionnera quand il y sera replacé.
+toolbar-shortcut-refused-keyboard = Seules les touches du clavier peuvent servir de raccourci.
+toolbar-shortcut-refused-modifier = Une touche de modification seule ne peut pas être un raccourci.
+toolbar-shortcut-refused-needs-modifier = Ajoutez Ctrl ou Alt : une touche seule, ou avec Maj seulement, écrit dans les champs de texte.
+toolbar-shortcut-refused-altgr = Ctrl+Alt avec cette touche est AltGr, qui écrit des caractères sur beaucoup de claviers.
+toolbar-shortcut-refused-editing = Les champs de texte utilisent ce raccourci (tout sélectionner, copier, couper, coller, annuler, rétablir).
+toolbar-shortcut-refused-navigation = Les champs de texte se déplacent et effacent avec cette touche.
+toolbar-shortcut-refused-typing = Le chat et les fenêtres de dialogue utilisent cette touche.
+toolbar-shortcut-refused-system = Le système garde ce raccourci.
+toolbar-shortcut-refused-window = Ce raccourci ferme ou change de fenêtre.
+toolbar-shortcut-refused-zoom = Ce raccourci zoome l'interface.
+toolbar-spacer = Espacement entre blocs
+toolbar-add-spacer = Ajouter un espacement entre blocs
+toolbar-button-settings = Réglages du bouton
+toolbar-button-edit = Modifier le bouton…
+toolbar-button-edit-title = Modifier le bouton
+toolbar-button-name = Nom du bouton :
+toolbar-button-display = Affichage du bouton
+toolbar-shortcut-fixed-block-help = Le raccourci d'un bloc fixe l'affiche et le masque ; pendant l'édition de l'interface, il reste affiché.
+toolbar-block-settings = Réglages du bloc
+toolbar-parent-block-settings = Réglages du bloc parent
+toolbar-block-edit = Modifier le bloc…
+toolbar-block-edit-title = Modifier le bloc
+toolbar-block-alignment = Alignement
+toolbar-block-sizing = Taille des boutons
+toolbar-block-fixed-options = Options en mode fixe
+toolbar-block-floating-options = Options en mode flottant
+toolbar-block-kind-fixed = Bloc fixe
+toolbar-block-kind-drawer = Tiroir
+toolbar-block-kind-floating = Bloc flottant
+toolbar-block-remove = Retirer le bloc
+toolbar-move-block = Glissez pour déplacer tout le bloc
+toolbar-remove-block = Retirer le bloc
+toolbar-drawer-empty = Ce tiroir est vide.
+toolbar-drawer-drop = Glissez des boutons ici pour les ajouter ou les réorganiser.
+toolbar-separator-settings = Espacement entre blocs
+toolbar-separator-size = Taille / minimum (px)
+toolbar-separator-stretch = Occuper l’espace libre
+toolbar-separator-help = Les espaces extensibles se partagent la place laissée par les blocs. La taille est leur largeur minimale, ou leur hauteur dans une barre latérale.
+toolbar-block-navigation = Navigation et SLURL
+toolbar-block-account = Compte et solde
+toolbar-block-system = Heure, indicateurs et son
+toolbar-block-status = Statut de présence
+toolbar-block-balance = Argent (solde)
+toolbar-block-clock = Heure
+toolbar-block-ping = Latence de la région
+toolbar-block-fps = Images par seconde (FPS)
+toolbar-block-network = Trafic réseau
+toolbar-block-media = Médias
+toolbar-block-music = Musique
+toolbar-block-volume = Volume
+toolbar-block-notifications = Notifications
+toolbar-block-conversations = Icônes des conversations
+toolbar-block-chat = Barre de chat local
+toolbar-category-all = Toutes les catégories
+toolbar-section-main = Principaux
+toolbar-section-advanced = Avancés
+toolbar-search-all = La recherche inclut aussi les boutons avancés.
+toolbar-category-avatar = Personnage et déplacements
+toolbar-category-communication = Communication
+toolbar-category-world = Monde et destinations
+toolbar-category-creation = Construction et contenu
+toolbar-category-interface = Interface et caméra
+toolbar-category-advanced = Outils avancés
+toolbar-category-help = Aide
+toolbar-category-custom = Commandes personnalisées
+toolbar-bar-settings = Réglages des barres
+toolbar-menu-group = Menu : { $name }
+toolbar-location-bar = Barre d’adresse SLURL
+
+
 # Menu commands can be added to or removed from a toolbar.
 toolbar-add-from-menu = Ajouter à la barre d’outils
 toolbar-remove-from-menu = Retirer de la barre d’outils
@@ -15920,6 +16306,11 @@ toolbar-remove-from-menu = Retirer de la barre d’outils
 toolbar-command-build-edit = Modifier des objets
 toolbar-command-build-create = Créer des prims
 toolbar-command-build-land = Modifier le terrain
+toolbar-command-build-tool-focus = Construire - Caméra
+toolbar-command-build-tool-grab = Construire - Déplacer
+toolbar-command-build-tool-edit = Construire - Modifier
+toolbar-command-build-tool-create = Construire - Créer
+toolbar-command-build-tool-land = Construire - Terrain
 
 # La fenêtre Photo 360° (LLFloater360Capture, floater_360capture.xml)
 capture-360-quality-preview = Aperçu (rapide)
@@ -16132,6 +16523,39 @@ joystick-layout-positional = Positionnelle
 joystick-layout-auto = Automatique
 joystick-layout-xinput = XInput
 
+bug-copy-version = Copier la version du viewer
+
+
+toolbar-notecard-save = Enregistrer dans une notecard…
+toolbar-notecard-load = Charger depuis une notecard…
+toolbar-notecard-name = Interface Aurora
+toolbar-notecard-help = Disposition et apparence des barres, boutons, tiroirs et menus.
+toolbar-notecard-saved = Configuration de l’interface enregistrée dans votre inventaire.
+toolbar-notecard-invalid = Cette notecard ne contient pas de configuration d’interface compatible.
+toolbar-notecard-unavailable = Cette notecard n’est plus disponible ou ne peut pas être copiée.
+toolbar-notecard-layout-changed = L’interface a changé pendant le chargement de la notecard. Rechargez-la pour appliquer sa configuration.
+toolbar-notecard-demo-valid = Interface Photographer
+toolbar-notecard-demo-invalid = Autre notecard
+
+toolbar-notecard-too-large = Cette configuration d’interface est trop volumineuse pour une notecard.
+
+toolbar-saved-interfaces = Interfaces enregistrées
+toolbar-saved-interfaces-empty = Aucune interface enregistrée pour le moment.
+toolbar-notecard-destination = Dossier : { $path }
+toolbar-notecard-folder-error = Le dossier des interfaces n’a pas pu être chargé ou créé. Réessayez.
+
+toolbar-current-preset = Interface sélectionnée : { $name }
+toolbar-preset-custom = Interface personnalisée
+toolbar-preset-unsaved = Modifications non enregistrées
+toolbar-preset-save-title = Enregistrer l’interface
+toolbar-preset-save-name = Nom de l’interface
+toolbar-preset-save-new = Nouvelle interface personnelle
+toolbar-preset-save-replace = Remplacer cette interface personnelle
+toolbar-preset-save-unavailable = Cette interface ne peut pas être enregistrée ici. Choisissez un autre nom ou une interface personnelle disponible et modifiable.
+
+toolbar-interface-delete-unavailable = Cette interface personnelle ne peut pas être supprimée.
+
+toolbar-interface-delete-confirm = Placer l’interface personnelle « { $name } » dans la corbeille ?
 ## Teleport failures (world/teleport_failure.rs; teleport_strings.xml "errors")
 teleport-failed-title = Échec de la téléportation.
 teleport-error-invalid-tport = Les tentatives de téléportation sont limitées à 6 par minute. En cas de difficulté, attendez une minute et réessayez. Si le problème persiste, déconnectez-vous puis reconnectez-vous.
