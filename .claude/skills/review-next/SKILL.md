@@ -51,6 +51,13 @@ scripts, as they are:
   to four options each; more subjects: the checks they owe together in one
   question with several answers allowed). The end-of-turn box ends the
   turn: it only carries the merge of the PRs reviewed ✅ in this turn.
+  - **What your human needs to decide goes in your message first**, before
+    the dialog, written out cleanly: per PR a short heading (number,
+    author, title) and a few bullets (what changed, what you checked, what
+    is asked). The dialog then stays short: one line per question (`#3935:
+    approve its CI?`), a label of a few words per option, and a
+    description of one short sentence at most. Never a paragraph in a
+    question or an option.
 - **Every request to an author is a `## Changes requested`** (AGENTS.md
   section 11), a merge of `main` included, and only once your human chose
   it over a fix of yours (step 6).
