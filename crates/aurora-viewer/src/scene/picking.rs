@@ -3325,7 +3325,9 @@ pub(crate) mod tests {
     /// when the walk has not returned within 10 s (it takes milliseconds):
     /// a walk that no longer ends (#5021) fails by name instead of holding
     /// the test run until it is killed. The clock starts once `setup` is
-    /// done. The spinning thread is left behind; the test process ends it.
+    /// done. A walk that ends is waited for until its thread has dropped what
+    /// `setup` built, and a panic there fails the test; a spinning thread is
+    /// left behind, and the test process ends it.
     #[track_caller]
     pub(crate) fn walk_ends<S, T: Send + 'static>(
         setup: impl FnOnce() -> S + Send + 'static,
@@ -3351,7 +3353,10 @@ pub(crate) mod tests {
             rethrow(thread);
         }
         match ended.recv_timeout(LIMIT) {
-            Ok(out) => out,
+            Ok(out) => match thread.join() {
+                Ok(()) => out,
+                Err(panic) => std::panic::resume_unwind(panic),
+            },
             Err(RecvTimeoutError::Timeout) => panic!("the walk did not end within {LIMIT:?}"),
             Err(RecvTimeoutError::Disconnected) => rethrow(thread),
         }
