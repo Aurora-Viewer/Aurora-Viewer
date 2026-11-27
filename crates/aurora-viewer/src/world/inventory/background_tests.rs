@@ -10,6 +10,44 @@ fn cooling_read(inv: &mut Inventory, children: Vec<Uuid>, now: Instant) -> Backg
 }
 
 #[test]
+fn superseded_403_retries_the_same_read_without_spending_its_backoff() {
+    let mut inv = skeleton(&[(10, 1, -1)]);
+    let now = Instant::now();
+    let mut fetch = BackgroundFetch::default();
+    let mut sent = Vec::new();
+    let folder = id(10);
+    fetch.send(
+        &mut inv,
+        AGENT,
+        Kind::FolderAndContent,
+        folder,
+        Vec::new(),
+        0,
+        &mut sent,
+        BACKGROUND_RETRIES,
+    );
+    fetch.on_reply_at(
+        &mut inv,
+        0,
+        &[],
+        Err(FetchError::new(FetchFailure::SupersededCapability, Some(403))),
+        now,
+    );
+    assert!(!inv.too_big.contains(&folder));
+    let mut reads = fetch.pump_at(&mut inv, AGENT, now);
+    let NetCommand::FetchInventoryTree {
+        request, parent, depth, ..
+    } = reads.pop().expect("immediate retry")
+    else {
+        panic!("expected the folder read");
+    };
+    assert_eq!((parent, depth), (folder, 0));
+    assert_eq!(fetch.in_flight[&request].attempt, BACKGROUND_RETRIES);
+    fetch.on_reply_at(&mut inv, request, &[], Err(FetchError::new(FetchFailure::TooBig, Some(403))), now);
+    assert!(inv.too_big.contains(&folder));
+}
+
+#[test]
 fn recovery_automatic_folder_reads_cannot_bypass_background_cooldown() {
     let mut inv = skeleton(&[(10, 1, -1)]);
     let now = Instant::now();
@@ -257,7 +295,7 @@ impl Server<'_> {
     fn answer(&self, read: &Read) -> Result<Vec<FolderContents>, FetchError> {
         if let Some(kind) = (self.failure)(read) {
             let status = match kind {
-                FetchFailure::TooBig => 403,
+                FetchFailure::TooBig | FetchFailure::SupersededCapability => 403,
                 FetchFailure::Transient => 503,
                 FetchFailure::Fatal => 500,
             };

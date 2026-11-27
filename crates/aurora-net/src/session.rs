@@ -387,6 +387,7 @@ struct Session<'a> {
     asset_imports: asset_imports::Imports,
     inventory_previews: inventory_preview::Previews,
     inventory_reads: Option<inventory_reads::Reader>,
+    inventory_folder_scope: Arc<()>,
     script_transfers: scripts::ScriptTransfers,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
     inventory_copies: inventory_copies::Pending,
@@ -617,6 +618,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         asset_imports: Default::default(),
         inventory_previews: Default::default(),
         inventory_reads: None,
+        inventory_folder_scope: Arc::default(),
         script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
         inventory_copies: inventory_copies::Pending::default(),
@@ -826,6 +828,9 @@ impl Session<'_> {
 
     fn set_main(&mut self, addr: SocketAddr, seed: String) {
         let changed = self.main != Some(addr);
+        if changed {
+            self.inventory_folder_scope = Arc::default();
+        }
         self.main = Some(addr);
         self.set_seed(addr, seed);
         if changed {
@@ -875,6 +880,7 @@ impl Session<'_> {
             old.abort();
         }
         if self.main == Some(addr) {
+            self.inventory_folder_scope = Arc::default();
             self.sync_inventory_reader(false);
         }
         self.request_caps(addr);
@@ -1027,10 +1033,21 @@ impl Session<'_> {
                     // ModifyRegion granted only now: the handshake could not ask it
                     let modify_new = !sim.caps.contains_key("ModifyRegion") && caps.contains_key("ModifyRegion");
                     let caps = Arc::new(caps);
+                    let inventory_cap_changed = [
+                        "InventoryAPIv3",
+                        "LibraryAPIv3",
+                        "FetchInventoryDescendents2",
+                        "FetchLibDescendents2",
+                    ]
+                    .iter()
+                    .any(|name| sim.caps.get(*name) != caps.get(*name));
                     sim.caps = caps.clone();
                     let handle = sim.handle;
                     let terrain_handle = (sim.handshake_seen && modify_new).then_some(handle);
                     if self.main == Some(addr) {
+                        if inventory_cap_changed {
+                            self.inventory_folder_scope = Arc::default();
+                        }
                         self.sync_inventory_reader(true);
                     }
                     emit(self.sh, NetEvent::Capabilities { handle, caps });
@@ -1434,6 +1451,7 @@ impl Session<'_> {
         }
         if self.main == Some(addr) {
             self.main = None;
+            self.inventory_folder_scope = Arc::default();
             self.sync_inventory_reader(false);
         }
         self.sh.stats.sim_count.store(self.sims.len() as u32, Ordering::Relaxed);
@@ -3558,6 +3576,7 @@ impl Session<'_> {
     }
 
     fn fetch_inventory(&mut self, folders: Vec<uuid::Uuid>, owner: uuid::Uuid, library: bool) {
+        let scope = Arc::downgrade(&self.inventory_folder_scope);
         if !library && let Some(cap) = self.main_cap("InventoryAPIv3") {
             let http = self.sh.caps_http.clone();
             let events = self.sh.events.clone();
@@ -3571,7 +3590,9 @@ impl Session<'_> {
                         // one alone, so that only the folder the server
                         // refuses by itself is over the limit
                         // (BGFolderHttpHandler::processFailure splits a 403).
-                        Err(error) if error.kind == crate::inventory::ais::FetchFailure::TooBig && chunk.len() > 1 => {
+                        Err(error)
+                            if error.kind == crate::inventory::ais::FetchFailure::TooBig && chunk.len() > 1 && scope.strong_count() > 0 =>
+                        {
                             for id in chunk {
                                 match crate::inventory::ais::fetch_folders(&http, &cap, owner, std::slice::from_ref(id)).await {
                                     Ok(contents) => {
@@ -3583,6 +3604,7 @@ impl Session<'_> {
                                             folders: vec![*id],
                                             too_big: error.kind == crate::inventory::ais::FetchFailure::TooBig,
                                             status: error.status,
+                                            read_scope: Some(scope.clone()),
                                         });
                                     }
                                 }
@@ -3595,6 +3617,7 @@ impl Session<'_> {
                                 folders: chunk.to_vec(),
                                 too_big,
                                 status: error.status,
+                                read_scope: Some(scope.clone()),
                             });
                         }
                     }
@@ -3618,6 +3641,7 @@ impl Session<'_> {
                     folders,
                     too_big: false,
                     status: None,
+                    read_scope: None,
                 },
             );
             return;
@@ -3651,6 +3675,7 @@ impl Session<'_> {
                             too_big: status == Some(403),
                             folders: chunk,
                             status,
+                            read_scope: Some(scope.clone()),
                         });
                     }
                 }
@@ -3676,6 +3701,7 @@ impl Session<'_> {
         } else {
             "FetchInventoryDescendents2"
         });
+        let read_scope = (ais.is_some() || legacy.is_some()).then(|| Arc::downgrade(&self.inventory_folder_scope));
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
@@ -3698,7 +3724,11 @@ impl Session<'_> {
             if let Err(error) = result {
                 log::warn!("background inventory fetch of {parent} failed ({count} folders, depth {depth}): {error}");
             }
-            let _ = events.send(NetEvent::InventoryTreeFetched { request, result });
+            let _ = events.send(NetEvent::InventoryTreeFetched {
+                request,
+                result,
+                read_scope,
+            });
         });
     }
 
@@ -7213,6 +7243,7 @@ mod event_queue_tests {
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
             inventory_reads: None,
+            inventory_folder_scope: Arc::default(),
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: inventory_copies::Pending::default(),
@@ -7426,14 +7457,21 @@ mod event_queue_tests {
         };
 
         // EstablishAgentCommunication: the neighbour's seed, its first answer
+        let previous_read = Arc::downgrade(&session.inventory_folder_scope);
         session.set_seed(neighbour_addr, seed.clone());
         assert!(session.sims[&neighbour_addr].caps_requested);
         session.on_caps(neighbour_addr, &seed, Ok(child.clone()));
         assert_eq!(caps_events(&received), [(20, 2)]);
+        assert_eq!(
+            previous_read.strong_count(),
+            1,
+            "a neighbour's seed does not invalidate the main region"
+        );
 
         // the crossing gives the same seed: its capabilities stay meanwhile
         session.switch_region(20, Some(Ipv4Addr::LOCALHOST), neighbour_addr.port(), seed.clone(), (256, 256));
         assert_eq!(session.main, Some(neighbour_addr));
+        assert_eq!(previous_read.strong_count(), 0, "the old region's folder read expired");
         assert!(session.sims[&neighbour_addr].caps_again_task.is_some());
         assert_eq!(session.main_cap("ViewerAsset").as_deref(), Some("http://127.0.0.1:9/ViewerAsset"));
         assert_eq!(session.main_cap("InventoryAPIv3"), None);
@@ -7452,8 +7490,14 @@ mod event_queue_tests {
 
         // a new seed drops them until its own answer comes; the answer to
         // the old seed still on its way is ignored
+        let active_read = Arc::downgrade(&session.inventory_folder_scope);
         let new_seed = "http://127.0.0.1:9/new-seed".to_owned();
         session.set_seed(neighbour_addr, new_seed.clone());
+        assert_eq!(
+            active_read.strong_count(),
+            0,
+            "replacing the active seed invalidates its folder reads"
+        );
         assert!(session.sims[&neighbour_addr].caps.is_empty());
         assert!(session.sims[&neighbour_addr].caps_again_task.is_none());
         session.on_caps(neighbour_addr, &seed, Ok(agent.clone()));
@@ -7595,6 +7639,7 @@ mod script_dialog_tests {
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
             inventory_reads: None,
+            inventory_folder_scope: Arc::default(),
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: super::inventory_copies::Pending::default(),

@@ -1431,6 +1431,8 @@ pub enum NetEvent {
     InventoryTreeFetched {
         request: u64,
         result: Result<Vec<crate::inventory::FolderContents>, crate::inventory::ais::FetchError>,
+        /// Session-owned lifetime of the inventory capability used by this read.
+        read_scope: Option<std::sync::Weak<()>>,
     },
     InventoryFetchFailed {
         folders: Vec<Uuid>,
@@ -1438,6 +1440,7 @@ pub enum NetEvent {
         too_big: bool,
         /// The HTTP status the refusal carried, when one was read.
         status: Option<u16>,
+        read_scope: Option<std::sync::Weak<()>>,
     },
     /// Items fetched by id (FetchInventory2).
     InventoryItems(Vec<crate::inventory::InvItem>),

@@ -160,6 +160,8 @@ pub enum FetchFailure {
     /// A timeout or throttling (408, 425, 429) or a server error (5xx), still
     /// failing after the retries.
     Transient,
+    /// A folder refusal from a capability discarded during a region change.
+    SupersededCapability,
     /// A malformed or incomplete reply, or a refusal retrying cannot fix.
     Fatal,
 }

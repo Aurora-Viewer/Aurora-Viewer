@@ -839,7 +839,8 @@ impl BackgroundFetch {
                 }
                 return;
             }
-            if error.kind == FetchFailure::Transient && attempt < BACKGROUND_RETRIES {
+            let superseded = error.kind == FetchFailure::SupersededCapability;
+            if superseded || (error.kind == FetchFailure::Transient && attempt < BACKGROUND_RETRIES) {
                 for id in &targets {
                     self.pending.remove(id);
                     if let Some(f) = inv.folders.get_mut(id)
@@ -849,10 +850,15 @@ impl BackgroundFetch {
                         inv.retrying_folders.insert(*id);
                     }
                 }
-                let delay = BACKGROUND_BACKOFF[attempt.min(BACKGROUND_BACKOFF.len() as u32 - 1) as usize];
+                let delay = if superseded {
+                    std::time::Duration::ZERO
+                } else {
+                    BACKGROUND_BACKOFF[attempt.min(BACKGROUND_BACKOFF.len() as u32 - 1) as usize]
+                };
+                let next_attempt = attempt + u32::from(!superseded);
                 log::debug!(
-                    "background inventory read of {folder} failed transiently; retry {} in {delay:?}",
-                    attempt + 1
+                    "background inventory read of {folder} failed ({:?}); retry {next_attempt} in {delay:?}",
+                    error.kind
                 );
                 self.retries.push(Retry {
                     due: now + delay,
@@ -860,7 +866,7 @@ impl BackgroundFetch {
                     folder,
                     children,
                     depth,
-                    attempt: attempt + 1,
+                    attempt: next_attempt,
                 });
                 return;
             }

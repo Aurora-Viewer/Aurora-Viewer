@@ -3700,6 +3700,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             vec![NetEvent::InventoryTreeFetched {
                 request: *request,
                 result: Ok(out),
+                read_scope: None,
             }]
         }
         // block list: Violet Wolf, an object, a name and the chat of group 2

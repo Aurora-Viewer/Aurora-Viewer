@@ -419,6 +419,7 @@ mod tests {
             inventory_uploads: Default::default(),
             inventory_previews: Default::default(),
             inventory_reads: None,
+            inventory_folder_scope: Arc::default(),
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: Default::default(),
