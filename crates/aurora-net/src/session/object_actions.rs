@@ -105,7 +105,9 @@ impl Session<'_> {
                         normal: surface.normal,
                         binormal: surface.binormal,
                     });
-                    self.send(addr, &m, true);
+                    // sent once, unreliable, as send_ObjectGrab_message
+                    // (indra/newview/lltoolgrab.cpp, sendMessage)
+                    self.send(addr, &m, false);
                 }
             }
             NetCommand::ObjectGrabUpdate {
@@ -149,7 +151,8 @@ impl Session<'_> {
                         normal: surface.normal,
                         binormal: surface.binormal,
                     });
-                    self.send(addr, &m, true);
+                    // once, unreliable (send_ObjectDeGrab_message)
+                    self.send(addr, &m, false);
                 }
             }
             NetCommand::RequestTaskInventory { handle, local_id, object } => self.request_task_inventory(*handle, *local_id, *object),
