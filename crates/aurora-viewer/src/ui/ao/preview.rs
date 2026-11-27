@@ -17,6 +17,9 @@ const LAYER: f32 = 16.0;
 const SEGMENTS: f32 = 12.0;
 /// How far above the caption the fade to the stage's ground starts.
 const FADE: f32 = 36.0;
+/// How blurred the picture's bottom row is under the fade: each step halves
+/// it (`aurora_render::preview::Veil`).
+const VEIL_DEPTH: f32 = 4.0;
 
 /// Which entry of the open slot the preview shows.
 #[derive(Default)]
@@ -110,6 +113,17 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, set: Option<&Set>, runtime: &
     let (ink, muted) = (state.stage.ink(p), state.stage.muted(p));
     ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, ground);
     let title_room = 40.0;
+    let layers = set.and_then(|s| s.states.get(&state.state)).map_or(0, |c| c.tracks.len().min(2));
+    let segments = if names.len() > 1 { SEGMENTS + 6.0 } else { 0.0 };
+    let height = EYEBROW + HERO + layers as f32 * LAYER + segments;
+    let bottom = rect.bottom() - STAGE_BAR;
+    let caption = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 18.0, bottom - height),
+        egui::pos2(rect.right() - 18.0, bottom),
+    );
+    // the picture blurred under the fade, more and more toward the bottom
+    let from = (caption.top() - FADE - rect.top()) / rect.height().max(1.0);
+    state.stage.veil = Some(aurora_render::preview::Veil { from, depth: VEIL_DEPTH });
     let spoken = aurora_i18n::tr!("ao-preview");
     let _ = state.stage.show(ui, p, rect, title_room, Default::default(), spoken, &|_| None);
     let y = rect.top() + title_room / 2.0;
@@ -121,14 +135,6 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, set: Option<&Set>, runtime: &
         rect.width() - 50.0,
         egui::FontId::new(13.0, super::super::fonts::semibold(ui.ctx())),
         ink,
-    );
-    let layers = set.and_then(|s| s.states.get(&state.state)).map_or(0, |c| c.tracks.len().min(2));
-    let segments = if names.len() > 1 { SEGMENTS + 6.0 } else { 0.0 };
-    let height = EYEBROW + HERO + layers as f32 * LAYER + segments;
-    let bottom = rect.bottom() - STAGE_BAR;
-    let caption = egui::Rect::from_min_max(
-        egui::pos2(rect.left() + 18.0, bottom - height),
-        egui::pos2(rect.right() - 18.0, bottom),
     );
     fade(
         ui,

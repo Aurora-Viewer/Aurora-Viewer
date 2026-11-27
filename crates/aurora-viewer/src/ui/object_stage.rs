@@ -74,6 +74,9 @@ pub struct StageUi {
     /// the view's ground and drawn by the caller (`show_bar`) over what it
     /// lays on the view (the AO window's preview, its caption on a fade).
     pub bar_face: bool,
+    /// The view's bottom band blurred more and more toward its bottom edge
+    /// (the AO window's preview, under its caption).
+    pub veil: Option<aurora_render::preview::Veil>,
     /// The animation plays; None: it was not chosen (it does, unless motion is
     /// reduced).
     playing: Option<bool>,
@@ -125,6 +128,7 @@ impl Default for StageUi {
             single: false,
             picking: true,
             bar_face: true,
+            veil: None,
             playing: None,
             live: None,
             joints: None,
@@ -262,7 +266,7 @@ impl StageUi {
         } else {
             None
         };
-        aurora_render::preview::paint_stage(ui, id, model.model.clone(), view, view_rect, Some(pose), highlight);
+        aurora_render::preview::paint_stage_veiled(ui, id, model.model.clone(), view, view_rect, Some(pose), highlight, self.veil);
         let clicked = resp.clicked() && self.picking;
         let hit = clicked.then(|| resp.interact_pointer_pos()).flatten().and_then(|at| {
             let (from, dir) = view.ray(&model.model, view_rect, at);
