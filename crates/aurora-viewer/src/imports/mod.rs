@@ -579,6 +579,7 @@ pub struct Imports {
     pub message: String,
     pub confirm: bool,
     pub confirm_choice: Option<Choice>,
+    pub(crate) webcam_confirm: Option<Vec<Uuid>>,
     pub pending_files: Option<Uuid>,
     pending_picker: Option<file_picker::Pending>,
     pending_file_choice: Option<Choice>,
@@ -647,6 +648,7 @@ impl Default for Imports {
             message: String::new(),
             confirm: false,
             confirm_choice: None,
+            webcam_confirm: None,
             pending_files: None,
             pending_picker: None,
             pending_file_choice: None,
@@ -702,7 +704,7 @@ impl Imports {
         name: String,
         bytes: Arc<Vec<u8>>,
         animation: Arc<Animation>,
-    ) {
+    ) -> Uuid {
         let mut entry = Entry::new(
             PathBuf::from(format!("{name}.anim")),
             Ok(Source::Animation {
@@ -713,10 +715,40 @@ impl Imports {
             self.load_preferences.texture(),
         );
         entry.folder = Self::default_folder(world, prefs, Kind::Animation);
-        self.active = Some(entry.id);
+        let id = entry.id;
+        self.active = Some(id);
         self.entries.push(entry);
         self.open(Choice::Animation);
+        id
     }
+
+    pub(crate) fn review_webcam_uploads(&mut self, ctx: &egui::Context, ids: &[Uuid]) {
+        for entry in &mut self.entries {
+            entry.selected = ids.contains(&entry.id);
+        }
+        self.open_window(ctx);
+    }
+
+    pub(crate) fn authored_sound(
+        &mut self,
+        world: &crate::world::World,
+        prefs: &crate::ui::inventory::InventoryPreferences,
+        name: String,
+        sound: Sound,
+    ) -> Uuid {
+        let mut entry = Entry::new(
+            PathBuf::from(format!("{name}.wav")),
+            Ok(Source::Sound(Arc::new(sound))),
+            self.load_preferences.texture(),
+        );
+        entry.folder = Self::default_folder(world, prefs, Kind::Sound);
+        let id = entry.id;
+        self.active = Some(id);
+        self.entries.push(entry);
+        self.open(Choice::Sound);
+        id
+    }
+
     /// Import (Build › Import, its shortcut, the toolbar's "Import"): the
     /// import window. The quick import bar it could open is the import
     /// floating block now, with its own Ctrl+U (human request, 2026-11-25).

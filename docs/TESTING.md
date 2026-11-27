@@ -4187,6 +4187,9 @@ To check with these scenarios:
 | `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-derez-closed\|static-repaint\|warnings\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|sleeves\|fit-lab\|fit-lab-walk\|fit-lab-sit\|fit-lab-sit-stand\|fit-lab-clip\|fit-lab-range\|fit-lab-pose-<name>\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
 | `AURORA_DEMO_BLENDER_LIVE_TAB=place\|avatar\|import\|plugins\|quick-look\|sweep` | Opens the LiveMesh window of the Blender demo on that tab, Quick look, or a card's update sweep |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
+| `AURORA_DEMO_WEBCAM_VIDEO=<file>` | Replay a local video through webcam tracking in offline demo mode |
+| `AURORA_WEBCAM_DEMOS=<directory>` | Show local face, hand and body clips in the offline webcam input menu |
+| `AURORA_WEBCAM_PYTHON=<executable>` | Python interpreter for webcam tracking |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_IK_EDIT=<mode>` | Local pose and animation editor (IK Edit, Poser, native animation creation) |
 | `AURORA_DEMO_COUPLE=1\|leave\|clip\|hover\|mirror` | The animation editor's couple mode with a partner who accepts (see Details) |
@@ -4203,6 +4206,21 @@ To check with these scenarios:
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
 ### Details
+
+`AURORA_DEMO_WEBCAM_VIDEO` replaces the camera with a local clip for the
+offline demo on initial selection. Open **Build › Webcam Tracking** and
+select **Replay test video**. Select a second video while playing and verify
+it starts on selection, the preview changes and the new subject controls
+the pose. Compare the displayed preview and tracking rates. The preview
+should continue at the clip's rate (up to 30 fps) when inference is slower.
+Disable Loop and check that the end of the clip restores the usual animation.
+`AURORA_WEBCAM_DEMOS` lists local MP4s in its directory by name. Watch the
+preview before starting, while the camera or video opens, and after stopping.
+The preview and Stop button keep their positions. The first source frame can
+appear while the landmark models are still starting.
+Set
+`AURORA_WEBCAM_PYTHON` to the interpreter in the environment described in
+[Webcam tracking](WEBCAM_TRACKING.md).
 
 `AURORA_DEMO_BLENDER_LIVE=1` opens the local bridge and places a purple shell
 on our animated avatar, through the production protocol and GPU skinning.
@@ -7209,6 +7227,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open\|delete` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the import floating block; `type-*` opens independent type windows |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
+| `AURORA_DEMO_IMPORT_MODEL=<file>` | Custom rigged preview model for the offline animation-custom Import scenario |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
 | `AURORA_DEMO_LOCAL_APPEARANCES=1\|menu\|reveal\|confirm\|remove\|cancel\|deleted` | Applied-local-appearance warning, highlight toggle, confirmed removal and object deletion |
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
@@ -7963,6 +7982,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   avatar. The slider and the pose must stay fixed until Resume.
   `animation-custom` loads a local rigged Bento tail and its looping animation,
   with the saved-model list open to show the removal icons at each row's right.
+  Set `AURORA_DEMO_IMPORT_FILE` to a captured animation and
+  `AURORA_DEMO_IMPORT_MODEL` to a local rigged DAE, glTF or GLB to see the
+  motion on that model without saving it to the regular model list.
   Its tail must move in the preview. Choose model loads a rigged DAE, glTF or
   GLB from disk; its initial camera includes the bones' rotational reach, so a
   tail or wing must remain in view while turning. Standard restores the

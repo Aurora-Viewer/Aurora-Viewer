@@ -78,6 +78,29 @@ fn check_rate(rate: u32) -> Result<(), AudioError> {
 }
 
 impl DecodeStream {
+    /// Seek to a packet before the requested time. Return the remaining
+    /// difference for the caller to discard after decoding.
+    pub(crate) fn seek_before(&mut self, seconds: f64) -> Option<f64> {
+        use symphonia::core::{
+            formats::{SeekMode, SeekTo},
+            units::Time,
+        };
+        let base = self.format.tracks().iter().find(|track| track.id == self.track_id)?.time_base?;
+        let time = Time::try_from_secs_f64(seconds)?;
+        let seek = self
+            .format
+            .seek(
+                SeekMode::Accurate,
+                SeekTo::Time {
+                    time,
+                    track_id: Some(self.track_id),
+                },
+            )
+            .ok()?;
+        self.decoder.reset();
+        Some((base.calc_time(seek.required_ts)?.as_secs_f64() - base.calc_time(seek.actual_ts)?.as_secs_f64()).max(0.0))
+    }
+
     /// `ext` is a file-extension style hint ("mp3", "aac", "ogg", "wav").
     pub(crate) fn open(source: Box<dyn MediaSource>, ext: Option<&str>) -> Result<Self, AudioError> {
         Self::open_as(source, ext, Layout::Declared)

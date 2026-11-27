@@ -15,6 +15,7 @@ pub(super) struct State {
     pub manager: Manager,
     pub ui: GesturesUi,
     pub new_editor: bool,
+    webcam_pending: Option<(Uuid, String, Gesture)>,
     pending: BTreeMap<Uuid, Load>,
     saves: BTreeMap<Uuid, Save>,
     cof: BTreeSet<Uuid>,
@@ -47,6 +48,10 @@ struct Save {
 }
 
 impl State {
+    pub(super) fn cancel_webcam_gesture(&mut self) {
+        self.webcam_pending = None;
+    }
+
     fn queue_load(&mut self, item: Uuid, asset: Uuid, open: bool, play: bool, active: Option<bool>, inform: bool) {
         let load = self.pending.entry(item).or_insert_with(|| Load {
             asset,
@@ -114,6 +119,83 @@ impl State {
 }
 
 impl App {
+    pub(super) fn create_webcam_gesture(&mut self, assets: crate::webcam::GestureAssets) {
+        if self.gesture_state.webcam_pending.is_some() {
+            return;
+        }
+        let inventory = &self.world.inventory;
+        let step_item = |id, kind| {
+            let item = inventory.items.get(&id)?;
+            // LLPreviewGesture::addStep (Firestorm): a gesture uses only
+            // fully permissive animation and sound items, like the editor.
+            let required = rules::COPY | rules::MODIFY | rules::TRANSFER;
+            (item.asset_type == kind
+                && !item.asset_id.is_nil()
+                && rules::held(inventory, item) & required == required
+                && !rules::in_type(inventory, id, 14))
+            .then_some((item.name.clone(), item.asset_id))
+        };
+        let definition = (|| {
+            let (name, asset) = step_item(assets.animation, 20)?;
+            let mut steps = vec![Step::Animation { name, asset, flags: 0 }];
+            let mut previous = 0.0;
+            for (at, id) in assets.sounds {
+                let (name, asset) = step_item(id, 1)?;
+                if at > previous {
+                    steps.push(Step::Wait {
+                        seconds: at - previous,
+                        flags: aurora_assets::gesture::WAIT_TIME,
+                    });
+                }
+                steps.push(Step::Sound { name, asset, flags: 0 });
+                previous = at;
+            }
+            Some(Gesture {
+                steps,
+                ..Gesture::default()
+            })
+        })();
+        let Some(definition) = definition else {
+            self.gesture_state.ui.message = aurora_i18n::tr!("webcam-gesture-permissions").into();
+            self.panels.gestures = true;
+            return;
+        };
+        let parent = rules::system(inventory, 21).unwrap_or(inventory.root);
+        let suffix = Uuid::new_v4().simple().to_string();
+        let name = format!("{} {}", aurora_i18n::tr!("webcam-gesture-name"), &suffix[..8]);
+        self.gesture_state.webcam_pending = Some((parent, name.clone(), definition));
+        self.apply_inventory_action(crate::ui::inventory::InvAction::Create {
+            parent,
+            kind: aurora_net::inventory::operations::NewItem::Gesture,
+            name,
+        });
+    }
+
+    pub(super) fn open_webcam_gesture(&mut self, id: Uuid) -> bool {
+        let Some(item) = self.world.inventory.items.get(&id) else {
+            return false;
+        };
+        if self
+            .gesture_state
+            .webcam_pending
+            .as_ref()
+            .is_none_or(|(parent, name, _)| *parent != item.parent || *name != item.name)
+        {
+            return false;
+        }
+        let (_, _, definition) = self.gesture_state.webcam_pending.take().expect("matched pending gesture");
+        self.gesture_state.ui.open(&self.world.inventory, id);
+        if let Some(editor) = self.gesture_state.ui.editors.get_mut(&id) {
+            editor.loaded(Gesture::default());
+            editor.step = Some(0);
+            editor.definition = Some(definition.clone());
+            let description = editor.description.clone();
+            self.gesture_save(id, definition, description, false);
+        }
+        self.webcam.clear_gesture_upload();
+        true
+    }
+
     pub(super) fn restore_gestures(&mut self, raw: &aurora_llsd::Llsd) {
         if let aurora_llsd::Llsd::Array(values) = &raw["gestures"] {
             for value in values {

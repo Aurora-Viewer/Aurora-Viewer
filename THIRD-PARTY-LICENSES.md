@@ -509,6 +509,7 @@ The other components (ported code, native libraries, assets) are in
 | symphonia-codec-vorbis 0.6.1 | MPL-2.0 |
 | symphonia-common 0.6.1 | MPL-2.0 |
 | symphonia-core 0.6.1 | MPL-2.0 |
+| symphonia-format-isomp4 0.6.1 | MPL-2.0 |
 | symphonia-format-ogg 0.6.1 | MPL-2.0 |
 | symphonia-format-riff 0.6.1 | MPL-2.0 |
 | symphonia-metadata 0.6.1 | MPL-2.0 |
@@ -17196,7 +17197,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 
 ### Mozilla Public License 2.0
 
-Used by: symphonia-bundle-mp3 0.6.1, symphonia-codec-aac 0.6.1, symphonia-codec-pcm 0.6.1, symphonia-codec-vorbis 0.6.1, symphonia-common 0.6.1, symphonia-core 0.6.1, symphonia-format-ogg 0.6.1, symphonia-format-riff 0.6.1, symphonia-metadata 0.6.1, symphonia 0.6.1
+Used by: symphonia-bundle-mp3 0.6.1, symphonia-codec-aac 0.6.1, symphonia-codec-pcm 0.6.1, symphonia-codec-vorbis 0.6.1, symphonia-common 0.6.1, symphonia-core 0.6.1, symphonia-format-isomp4 0.6.1, symphonia-format-ogg 0.6.1, symphonia-format-riff 0.6.1, symphonia-metadata 0.6.1, symphonia 0.6.1
 
 ````text
 Mozilla Public License Version 2.0

@@ -1286,6 +1286,7 @@ pub struct App {
     gesture_state: gestures::State,
     imports: crate::imports::Imports,
     blender_live: crate::blender_live::Live,
+    webcam: crate::webcam::Webcam,
     /// The external script editor sync's server (editor_sync.rs).
     editor_sync: crate::editor_sync::EditorSync,
     task_transfer: std::collections::VecDeque<ui::inventory::task_drop::PendingTransfer>,
@@ -2486,6 +2487,7 @@ impl App {
             gesture_state: Default::default(),
             imports: Default::default(),
             blender_live: Default::default(),
+            webcam: Default::default(),
             editor_sync: Default::default(),
             task_transfer: Default::default(),
             contents_copies: Default::default(),
@@ -3932,6 +3934,8 @@ impl App {
         self.blender_live.stop();
         self.clear_blender_preview();
         self.blender_live.reset();
+        self.webcam = Default::default();
+        self.scene.webcam_pose = None;
         if let Some(g) = &mut self.gfx {
             self.scene.clear(&mut g.renderer);
         }
@@ -4135,14 +4139,19 @@ impl App {
                 return;
             }
             let material_map = self.imports.uploading_entry(request);
+            let gesture_asset = material_map.is_some_and(|entry| self.webcam.owns_gesture_asset(entry));
+            let failed = result.is_err();
             let cost = result.as_ref().map_or(0, |receipt| receipt.cost);
             if let Some(item) = self.imports.uploaded(request, result) {
                 if let Some(entry) = material_map {
                     self.texture_library.map_uploaded(entry, &item);
+                    self.webcam.uploaded(entry, item.id);
                 }
                 let id = item.id;
                 self.world.inventory.add_items(vec![item]);
-                self.show_uploaded(id, cost);
+                self.show_uploaded(id, cost, !gesture_asset);
+            } else if gesture_asset && failed {
+                self.imports.open_window(&self.egui_ctx);
             }
             return;
         }
@@ -4162,6 +4171,9 @@ impl App {
             }
             self.world.inventory.add_items(vec![item]);
             self.inventory_ui.show_original(&self.world.inventory, id);
+            if gesture && self.open_webcam_gesture(id) {
+                return;
+            }
             self.inventory_ui.begin_rename(&self.world.inventory, id);
             if gesture && self.gesture_state.new_editor {
                 self.gesture_state.new_editor = false;
@@ -4254,6 +4266,7 @@ impl App {
         }
         if let NetEvent::InventoryOperationFailed(reason) = ev {
             self.gesture_state.new_editor = false;
+            self.gesture_state.cancel_webcam_gesture();
             if self.physics_ui.creation_failed() {
                 self.appearance_ui.message.clone_from(&reason);
             }
@@ -12335,6 +12348,7 @@ impl App {
             }
             // poses first: attachments follow their bone in the same frame
             self.scene.update_foot_scope(&self.world, cull, world_frame);
+            self.scene.webcam_pose = self.webcam.update(self.audio_engine.as_ref(), &self.world.avatar_lib.rig);
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, world_frame);
             self.scene.set_auto_hover_second_life(matches!(
                 self.settings.grid,
@@ -17155,6 +17169,9 @@ impl App {
             BarAction::BlenderLive => {
                 ui::widgets::open_floater(&self.egui_ctx, "blender_live", &mut self.blender_live.open);
             }
+            BarAction::WebcamTracking => {
+                ui::widgets::open_floater(&self.egui_ctx, crate::webcam::WINDOW, &mut self.webcam.open);
+            }
             BarAction::EditParticles => self.open_particle_editor(),
             BarAction::SaveToObjectContents => self.build.save_to_contents(&mut self.world),
             BarAction::BuildOptions(options) => {
@@ -21162,6 +21179,63 @@ impl App {
                 self.poll_preview_animations();
                 self.show_imports(&ctx, &p);
                 self.show_blender_live(&ctx, &p);
+                let webcam_media_audible = self.media_volume() > 0.0;
+                self.webcam
+                    .show(&ctx, &p, self.demo, &self.world.avatar_lib.rig, webcam_media_audible);
+                if let Some(recording) = self.webcam.take_recorded_upload() {
+                    let entry = self.imports.authored_animation(
+                        &self.world,
+                        &self.settings.inventory,
+                        recording.name,
+                        recording.bytes,
+                        recording.animation,
+                    );
+                    self.imports.review_webcam_uploads(&ctx, &[entry]);
+                }
+                if let Some(media) = self.webcam.take_media_upload() {
+                    let was_open = self.imports.open;
+                    let animation_entry = media.animation.map(|recording| {
+                        self.imports.authored_animation(
+                            &self.world,
+                            &self.settings.inventory,
+                            recording.name,
+                            recording.bytes,
+                            recording.animation,
+                        )
+                    });
+                    let sound_entries = media
+                        .sounds
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, (at, sound))| {
+                            let name = format!("{} Audio {:02}", media.name, index + 1);
+                            (at, self.imports.authored_sound(&self.world, &self.settings.inventory, name, sound))
+                        })
+                        .collect::<Vec<_>>();
+                    let entries: Vec<_> = animation_entry
+                        .iter()
+                        .copied()
+                        .chain(sound_entries.iter().map(|(_, id)| *id))
+                        .collect();
+                    self.imports.active = entries.first().copied();
+                    if media.direct && self.imports.webcam_confirm.is_none() {
+                        self.imports.open = was_open;
+                        self.imports.webcam_confirm = Some(entries.clone());
+                    } else {
+                        self.imports.review_webcam_uploads(&ctx, &entries);
+                    }
+                    if let Some(entry) = animation_entry {
+                        self.webcam.track_gesture_upload(entry, sound_entries);
+                    } else {
+                        self.play_import_preview(&ctx, entries.first().copied());
+                    }
+                }
+                if let Some(assets) = self.webcam.take_gesture_request() {
+                    self.create_webcam_gesture(assets);
+                }
+                if self.webcam.take_front_view_request() && !self.world.rlva.camera_preset_locked(uuid::Uuid::nil()) {
+                    self.switch_camera_view(crate::camera::CameraPreset::Front);
+                }
                 let inventory_preferences = self.settings.inventory.clone();
                 let import_preferences = self.settings.imports.clone();
                 let mut open = self.panels.inventory;
@@ -22754,6 +22828,9 @@ impl ApplicationHandler for App {
         });
         if std::env::var_os("AURORA_DEMO").is_some() {
             self.demo = true;
+            if std::env::var_os("AURORA_DEMO_WEBCAM_VIDEO").is_some() {
+                self.webcam.prewarm_demo();
+            }
             // the starting session speed only: Advanced › Animation Speed
             // still changes it live
             if let Some(speed) = std::env::var("AURORA_DEMO_ANIM_SPEED")

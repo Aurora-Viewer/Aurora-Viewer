@@ -21,6 +21,7 @@ use uuid::Uuid;
 mod animations;
 mod authoring;
 mod clip;
+pub(crate) use clip::{Prepared as PreparedAnimation, write_atomic as write_animation_atomic};
 mod enable;
 pub(crate) mod gizmo;
 mod poles;

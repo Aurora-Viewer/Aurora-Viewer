@@ -232,6 +232,7 @@ pub(crate) struct PcmSource {
     rebuffer: usize,
     max_latency: Option<usize>,
     kill: Option<Arc<AtomicBool>>,
+    mute: Option<Arc<AtomicBool>>,
     starved: Option<Arc<AtomicBool>>,
     #[cfg(test)]
     underruns: usize,
@@ -271,11 +272,17 @@ impl PcmSource {
             rebuffer: rebuffer_frames * ENGINE_CHANNELS,
             max_latency: max_latency_frames.map(|f| f * ENGINE_CHANNELS),
             kill,
+            mute: None,
             starved,
             #[cfg(test)]
             underruns: 0,
             fade: 0.0,
         }
+    }
+
+    pub(crate) fn with_mute(mut self, mute: Arc<AtomicBool>) -> Self {
+        self.mute = Some(mute);
+        self
     }
 
     /// Mixes into `bus`. Returns `false` when the source is finished and can
@@ -324,10 +331,13 @@ impl PcmSource {
         }
 
         let n = self.read(want.min(avail), tmp);
-        let step = 1.0 / SOURCE_FADE_FRAMES;
+        // Keep consuming samples while muted so turning sound back on does
+        // not replay old audio or move it out of sync with the video.
+        let muted = self.mute.as_ref().is_some_and(|mute| mute.load(Ordering::Relaxed));
+        let step = if muted { -1.0 } else { 1.0 } / SOURCE_FADE_FRAMES;
         let frames = tmp[..n].as_chunks::<ENGINE_CHANNELS>().0;
         for (frame, out) in frames.iter().zip(bus.as_chunks_mut::<ENGINE_CHANNELS>().0) {
-            self.fade = (self.fade + step).min(1.0);
+            self.fade = (self.fade + step).clamp(0.0, 1.0);
             for (o, s) in out.iter_mut().zip(frame) {
                 *o += s * self.fade;
             }

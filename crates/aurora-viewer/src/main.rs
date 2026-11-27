@@ -137,6 +137,7 @@ mod url_scheme;
 mod voice;
 mod wearable_editor;
 mod weather;
+mod webcam;
 #[cfg(any(windows, test))]
 mod wide_chars;
 mod window_hold;

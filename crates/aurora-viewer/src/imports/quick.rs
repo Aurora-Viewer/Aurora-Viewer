@@ -95,7 +95,7 @@ impl Imports {
 
     /// Runs `body` on the entries `ids` alone: the others of the same type
     /// leave the selection meanwhile, and get their tick back after.
-    pub(super) fn with_only<R>(&mut self, ids: &[Uuid], body: impl FnOnce(&mut Self) -> R) -> R {
+    pub(crate) fn with_only<R>(&mut self, ids: &[Uuid], body: impl FnOnce(&mut Self) -> R) -> R {
         let mut others = Vec::new();
         for entry in &mut self.entries {
             if !ids.contains(&entry.id) && entry.selected {
