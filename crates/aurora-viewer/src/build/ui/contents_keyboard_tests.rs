@@ -442,3 +442,30 @@ fn azerty_ctrl_4_leaves_contents_focus_and_opens_create() {
     assert_eq!(inspector.tool.tool, Tool::Create);
     assert!(inspector.tool.open);
 }
+
+/// The simulator lists the object again while the editor is open: the cached
+/// order is rebuilt and the rows follow the new listing.
+#[test]
+fn contents_refresh_when_the_listing_changes_while_the_editor_is_open() {
+    let (mut inspector, object, _) = fixture();
+    assert!(inspector.show(vec![]).1.iter().any(|(t, _)| t.starts_with("Entry 003")));
+    let items = ["Alpha", "Beta"]
+        .iter()
+        .enumerate()
+        .map(|(i, name)| TaskItem {
+            item_id: uuid::Uuid::from_u128(98000 + i as u128),
+            parent_id: object,
+            owner_id: inspector.world.agent_id,
+            name: (*name).into(),
+            asset_type: 10,
+            inv_type: 10,
+            owner_mask: perm::COPY | perm::MODIFY | perm::TRANSFER,
+            ..Default::default()
+        })
+        .collect();
+    inspector.tool.on_task_inventory(&inspector.world, object, Some(2), items);
+    let texts = inspector.show(vec![]).1;
+    assert!(texts.iter().any(|(t, _)| t.starts_with("Alpha")), "the new listing shows");
+    assert!(texts.iter().any(|(t, _)| t.starts_with("Beta")));
+    assert!(!texts.iter().any(|(t, _)| t.starts_with("Entry ")), "the old listing is gone");
+}

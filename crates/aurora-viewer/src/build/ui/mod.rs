@@ -286,6 +286,9 @@ pub struct FloaterState {
     /// where SLua runs, as LLPanelContents::getState resets it).
     pub new_script_lua: Option<bool>,
     pub contents_selection: contents_selection::Selection,
+    /// The Contents list's filtered, ordered rows, kept between frames
+    /// (build/ui/contents.rs).
+    pub contents_projection: contents::Projection,
     /// Whether the inventory held over the Contents tab may go in.
     pub contents_drop: crate::build::contents_drop::PlanCheck,
     /// Item being renamed in the Contents tab.

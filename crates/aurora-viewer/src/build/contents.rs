@@ -41,6 +41,9 @@ pub struct TaskInventory {
     /// Reset every script once the listing comes ("Reset scripts"
     /// pressed before it was known).
     pub reset_pending: bool,
+    /// Bumped when the listing is replaced or changed on our side; the
+    /// Contents list rebuilds its cached order when it moves.
+    pub generation: u64,
 }
 
 #[derive(Debug, Default)]
@@ -124,6 +127,7 @@ impl BuildTool {
         }
         inv.items = items;
         inv.loading = false;
+        inv.generation = inv.generation.wrapping_add(1);
         // A newer successful listing supersedes an earlier request error.
         if let Some(job) = self.replacement.job.as_mut()
             && job.inventory_error.as_ref().is_some_and(|(id, _)| *id == object_id)
@@ -492,6 +496,7 @@ impl BuildTool {
         if let Some(inv) = self.contents.objects.get_mut(&object_id) {
             inv.loading = false;
             inv.requested = None;
+            inv.generation = inv.generation.wrapping_add(1);
         }
     }
 }
@@ -499,6 +504,18 @@ impl BuildTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Our own change (a rename, a removal, a new item) moves the generation,
+    /// so the Contents list rebuilds its cached order.
+    #[test]
+    fn our_own_change_bumps_the_listing_generation() {
+        let mut tool = BuildTool::default();
+        let object = Uuid::from_u128(7);
+        tool.contents.objects.entry(object).or_default();
+        let before = tool.contents.objects[&object].generation;
+        tool.contents_changed(object);
+        assert_eq!(tool.contents.objects[&object].generation, before.wrapping_add(1));
+    }
 
     #[test]
     fn script_description_date() {

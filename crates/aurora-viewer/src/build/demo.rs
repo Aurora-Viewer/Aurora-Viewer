@@ -42,6 +42,9 @@
 //!   contents-multi | contents-rename-ready: show task multi-selection or rename.
 //!   contents-move-many: drop every item into inventory at once (two no-copy
 //!   items share one move warning).
+//!   contents-perf: open one object's Contents and its listing, doing
+//!   nothing else; with `AURORA_DEMO_CONTENTS_ITEMS=<n>` the object holds
+//!   `n` items, to profile the list at scale (one against a thousand).
 //!   shared | shared-denied: another resident's object with granted / denied editing.
 //!   place: `place,object:<id>,<target id>[,click][,rotate:<side>]` turns
 //!   "Place on surface" on and holds the cursor over the target's top
@@ -639,7 +642,9 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             }
             260 if parts[0] == "contents-move-many" => vec![Step::TakeAll],
             260 if parts[0] == "contents-new" => vec![Step::ContentsNew],
-            260 if !matches!(parts[0], "contents-ready" | "contents-new") => vec![Step::TakeTask(parts[0] == "contents-copy")],
+            260 if !matches!(parts[0], "contents-ready" | "contents-new" | "contents-perf") => {
+                vec![Step::TakeTask(parts[0] == "contents-copy")]
+            }
             _ => Vec::new(),
         };
     }

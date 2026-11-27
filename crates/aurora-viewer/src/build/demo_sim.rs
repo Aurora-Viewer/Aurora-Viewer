@@ -86,6 +86,32 @@ fn echo_delay() -> Option<Duration> {
     })
 }
 
+/// `AURORA_DEMO_CONTENTS_ITEMS=<n>`: `n` items in the demo object's
+/// contents instead of the four reference ones, to profile the list at scale.
+/// Names carry numbers (natural order); a few lose Copy or Transfer.
+fn contents_many() -> Option<usize> {
+    std::env::var("AURORA_DEMO_CONTENTS_ITEMS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+}
+
+fn demo_contents_many(object: Uuid, n: usize) -> Vec<TaskItem> {
+    const KINDS: [(i8, i8, &str); 4] = [(0, 0, "Texture"), (6, 6, "Object"), (7, 7, "Note card"), (10, 10, "Script")];
+    (0..n)
+        .map(|k| {
+            let (asset_type, inv_type, kind) = KINDS[k % KINDS.len()];
+            let mut item = demo_item(object, 1_000_000 + k as u128, &format!("{kind} {k}"), asset_type, inv_type);
+            match k % 10 {
+                3 => item.owner_mask &= !perm::COPY,
+                7 => item.owner_mask &= !perm::TRANSFER,
+                _ => {}
+            }
+            item
+        })
+        .collect()
+}
+
 fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) -> TaskItem {
     TaskItem {
         item_id: Uuid::from_u128(object.as_u128() ^ (0x17E0 << 64) ^ n),
@@ -258,6 +284,10 @@ impl DemoSim {
                         Vec::new()
                     },
                 );
+            }
+            // A large listing for the Contents list's profiling scenario.
+            if let Some(n) = contents_many() {
+                return (1, demo_contents_many(id, n));
             }
             let mut items = vec![
                 demo_item(id, 1, aurora_i18n::tr!("build-demo-sim-door-script"), 10, 10),
