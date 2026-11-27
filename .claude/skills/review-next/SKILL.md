@@ -119,12 +119,10 @@ decisions of step 6.
      cannot.
    - **Conflict with main** (note `conflict with main`): its CI cannot run
      against the current `main`, and a green run is an older merge's. Do not
-     ask for its CI approval, do not wait for CI, do not read the code: post
-     a `## Changes requested` (step 6) that names the conflicting files
-     (`git merge-tree --write-tree --name-only origin/main <head>`) and asks
-     the author to merge (or rebase onto) `main` and to say so in a comment
-     when it is pushed (a merge of main alone does not bring the PR back to
-     the queue). That comment is the review: the claim ends with it.
+     ask for its CI approval, do not wait for CI, do not read the code. Name
+     the conflicting files (`git merge-tree --write-tree --name-only
+     origin/main <head>`) and offer the fix or the request (below, "Fix it
+     or ask the author").
    - **Head and files**, not the diff yet (`gh pr view` stops at 100 files):
 
      ```
@@ -193,9 +191,15 @@ decisions of step 6.
    - **Demo** (default for what a scenario shows): you build the PR merged
      into the latest `main` in a detached worktree (`git worktree add
      --detach ../work/review-<n> origin/main`, then merge the PR's head
-     into it), run its tests and the scenarios it touches, before and
-     after, with `--title "Test review-<n>"` (AGENTS.md section 4), look at
-     the captures and put them in the review (`pr-captures.ps1`).
+     into it; start the build while CI runs, it reads no code), run its
+     tests there and the scenarios it touches, before and after, with
+     `--title "Test review-<n>"` (AGENTS.md section 4), look at the captures
+     and put them in the review (`pr-captures.ps1`). The tests on the merge
+     matter even when CI is green: approved runs test the merge with `main`
+     as it was when they were started, and a PR far behind breaks on what
+     `main` added since. Capture late enough that the world has loaded
+     (`AURORA_CAPTURE_FRAMES=1500` on a slow PC): a capture of the loading
+     screen is taken again.
    - **Grid test**: you launch that build for your human with the same
      title; they log in and test (AGENTS.md section 1, rule 1), and you say
      precisely what to do and what they should see. Their result goes in
@@ -210,6 +214,26 @@ decisions of step 6.
    its review says why. Remove the worktree once the review is posted
    (`git worktree remove ../work/review-<n>`). A problem the test shows is
    a finding like the others: `## Changes requested`.
+
+   **Fix it or ask the author.** Whenever the review finds something the
+   author has to change (a conflict with `main`, a test broken by the merge
+   with `main`, a finding of the code, a demo or grid test that fails), ask
+   your human in a mid-turn dialog, before posting anything:
+   - **Fix it yourself**, offered only when the branch allows maintainers'
+     pushes (`gh pr view <n> --json maintainerCanModify`) and the fix is
+     small and sure (a merge of `main` and its conflicts, a field a test of
+     `main` lacks, a TASKS.md line, a typo): on the PR's head, in the
+     review worktree, merge `main` and fix; run the tests the fix touches
+     and `cargo fmt --check`; push to the author's branch (`git push
+     https://github.com/<owner>/<repo>.git HEAD:refs/heads/<branch>`).
+     The new head's runs start without an approval when a maintainer
+     pushed them (approve any at `action_required`); wait for green, then
+     the review goes on from the test step, naming the new head and what
+     the maintainer pushed.
+   - **Post the `## Changes requested`** (step 6), with every point and,
+     for a conflict, the files and a request to say so in a comment once
+     it is pushed (a merge of main alone does not bring the PR back to the
+     queue). That comment is the review: the claim ends with it.
 
 6. **Post it yourself**, without asking first:
 
