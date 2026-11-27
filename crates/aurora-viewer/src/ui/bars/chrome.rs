@@ -309,31 +309,24 @@ pub(super) fn raise_chat(ctx: &egui::Context, columns: egui::Rangef, by: f32) {
     }
 }
 
-/// The room of a side bar, from `room`, what the bars leave to the windows.
+/// The room of a side bar, from `room`, what the bars leave to the windows,
+/// and the place the raised chat island takes in it, its margin included.
 /// The windows keep clear of the chat island raised over the dock's row,
-/// all along the screen; a side bar goes down to the dock's row, unless
-/// the raised island stands in its column. Its buttons then keep their
-/// place when the recent emojis' row comes and goes or a paragraph is
-/// typed, where a centred bar moved by half of what the island rose (the
-/// human's report, 2026-11-27).
-pub(super) fn side_room(ctx: &egui::Context, room: Rect, bar: Bar) -> Rect {
+/// all along the screen; a side bar goes down to the dock's row. Its
+/// buttons then keep their place when the recent emojis' row comes and
+/// goes or a paragraph is typed, where a centred bar moved by half of what
+/// the island rose (the human's report, 2026-11-27). Only a bar that would
+/// stand over the raised island gives it room (`side::column`).
+pub(super) fn side_room(ctx: &egui::Context, room: Rect) -> (Rect, Option<Rect>) {
     let Some((columns, by)) = ctx
         .data(|data| data.get_temp::<Metrics>(metrics_id()))
         .and_then(|metrics| metrics.chat_raised)
     else {
-        return room;
+        return (room, None);
     };
-    // (the side bars' inner sides, as drawn last frame)
-    let [left, right] = super::side::edges(ctx);
-    let under = match bar {
-        Bar::Left => columns.min <= left + islands::MARGIN,
-        Bar::Right => columns.max >= right - islands::MARGIN,
-        Bar::Top | Bar::Bottom => true,
-    };
-    if under {
-        return room;
-    }
-    Rect::from_min_max(room.min, egui::pos2(room.right(), room.bottom() + by))
+    let own = Rect::from_min_max(room.min, egui::pos2(room.right(), room.bottom() + by));
+    let raised = Rect::from_x_y_ranges(columns.expand(islands::MARGIN), room.bottom()..=own.bottom());
+    (own, Some(raised))
 }
 
 /// The bar that holds the chat block raises the block's island over its

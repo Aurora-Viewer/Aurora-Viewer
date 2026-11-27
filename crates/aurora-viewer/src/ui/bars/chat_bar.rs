@@ -446,11 +446,46 @@ mod tests {
     }
 
     /// The windows keep clear of the chat island raised over the dock's row
-    /// all along the screen, but a side bar keeps its place beside it: its
-    /// buttons do not move when the recent emojis' row comes and goes. Only
-    /// the bar that has the raised island in its column gives it room.
+    /// all along the screen, but a side bar keeps its place: its buttons do
+    /// not move when the recent emojis' row comes and goes, on the side of
+    /// the chat block as on the other. Only a bar that would stand over the
+    /// raised island (held to the bottom of its room) gives it room.
     #[test]
     fn a_side_bar_keeps_its_place_beside_the_raised_chat_island() {
+        let row = crate::ui::emoji::recent::HEIGHT;
+        let centred = side_bars_as_the_row_comes(crate::ui::toolbar::Align::Center);
+        assert_eq!(
+            centred.rooms[1].bottom(),
+            centred.rooms[0].bottom() - row,
+            "the windows leave the raised island its room"
+        );
+        assert_eq!(centred.fly[1], centred.fly[0], "the right bar keeps its place");
+        assert_eq!(
+            centred.sit[1], centred.sit[0],
+            "the left bar, on the chat block's side, does not reach the island: it keeps its place too"
+        );
+
+        let held = side_bars_as_the_row_comes(crate::ui::toolbar::Align::End);
+        assert_eq!(held.fly[1], held.fly[0], "the right bar keeps its place");
+        assert_eq!(
+            held.sit[1],
+            held.sit[0].translate(egui::vec2(0.0, -row)),
+            "the left bar held to the bottom would stand over the raised island: it gives it room"
+        );
+        assert!(held.sit[1].bottom() <= held.rooms[1].bottom(), "{held:?}");
+    }
+
+    /// The windows' room and the buttons of a left (Sit) and a right (Fly)
+    /// bar, the recent emojis' row hidden then shown, with the chat block at
+    /// the left of the dock and the left bar aligned by `left`.
+    #[derive(Debug)]
+    struct SideBars {
+        rooms: [Rect; 2],
+        sit: [Rect; 2],
+        fly: [Rect; 2],
+    }
+
+    fn side_bars_as_the_row_comes(left: crate::ui::toolbar::Align) -> SideBars {
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
         let p = crate::theme::Theme::default().palette();
@@ -466,6 +501,7 @@ mod tests {
             right: vec![crate::ui::bars::top::button("fly", "plane-tilt-filled")],
             ..Default::default()
         };
+        settings.left_style.align = Some(left);
         settings.compose_chat(&skin);
         let status = islands::tests::status(true, true);
         let icons = Icons::default();
@@ -577,19 +613,17 @@ mod tests {
 
         chat.recent_emojis = crate::ui::emoji::recent::Recent::demo("👍😂");
         chat.recent_emojis.enabled = true;
-        let row = crate::ui::emoji::recent::HEIGHT;
         let raised = settle(&mut chat);
-        assert_eq!(raised.bottom(), room.bottom() - row, "the windows leave the raised island its room");
-        assert_eq!(button("fly"), fly, "the right bar keeps its place: the island is not in its column");
-        let moved = button("sit");
-        assert!(
-            moved.center().y < sit.center().y && moved.bottom() <= raised.bottom() + 0.5,
-            "the left bar, over the raised island, gives it room: {moved:?} from {sit:?}"
-        );
+        let shown = (button("sit"), button("fly"));
 
         chat.recent_emojis.enabled = false;
         assert_eq!(settle(&mut chat), room);
         assert_eq!((button("sit"), button("fly")), (sit, fly), "the row gone, both are where they were");
+        SideBars {
+            rooms: [room, raised],
+            sit: [sit, shown.0],
+            fly: [fly, shown.1],
+        }
     }
 
     /// On the dock, the chat block's island alone rises for the recent
