@@ -1713,6 +1713,19 @@ fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     return apply_air_fog(col,world_pos);
 }
 
+// `apply_fog` for an additive layer (additive particles). What it lands on
+// already holds the weather fog's light in front of it: the layer takes the
+// fog's transmittance only, not that light again, or every sprite shows as a
+// fog-coloured quad in thick fog. `weather_fog` is affine in its colour
+// (`col * T + L`), so its light is what it gives a black surface. The haze
+// and the water's fog stay as `apply_fog` has them.
+fn apply_fog_additive(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+    let fogged = apply_fog(col, world_pos);
+    let weather = !water_fogs_source(world_pos) || (!camera_underwater() && water_excluded(world_pos));
+    if (!weather || fog_mode() == FOG_MODE_OFF) { return fogged; }
+    return max(fogged - weather_fog(vec3<f32>(0.0), world_pos), vec3<f32>(0.0));
+}
+
 // ------------------------------------------------------------- shadows
 
 // Half-width of the shadow filter in metres, the same in every cascade:

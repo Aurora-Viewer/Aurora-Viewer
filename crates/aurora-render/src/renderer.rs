@@ -3185,15 +3185,19 @@ impl Backend {
         };
         let made = self.fog.is_none();
         if made {
-            let queue = &self.queue;
-            self.fog = extra(&mut self.oom, &self.device, self.lost.get(), "fog", |d| {
-                crate::fog::Fog::new(d, queue)
-            });
+            // (its noise is made on a thread of its own the first time:
+            // until it is ready, none, as below)
+            if let Some(noise) = crate::fog::noise_ready() {
+                let queue = &self.queue;
+                self.fog = extra(&mut self.oom, &self.device, self.lost.get(), "fog", |d| {
+                    crate::fog::Fog::new(d, queue, noise)
+                });
+            }
         }
         self.fog_volume_now = false;
         let Some(fog) = &mut self.fog else {
-            // (refused for now: none at all rather than a fogged ground
-            // under a clear sky)
+            // (refused or not ready yet: none at all rather than a fogged
+            // ground under a clear sky)
             self.fog_terms = None;
             self.fog_shelter = false;
             return;
@@ -8444,7 +8448,7 @@ impl Backend {
         if let Some((look, ground)) = &self.fog_terms {
             let forward = crate::light_tiles::view_forward(view);
             u.fog_look[..4].copy_from_slice(&crate::fog::frame_terms(look, &f.sky, *ground, forward, crate::fog::MODE_HEIGHT));
-            // the ground the fog lies on, in every view (binding 33)
+            // the ground the fog lies on, in every view (binding 35)
             if let Some([x, y, side]) = self.fog.as_ref().and_then(|f| f.ground_rect()) {
                 u.fog_look[6] = [x, y, side, 0.0];
             }
@@ -12372,7 +12376,6 @@ impl Backend {
                     scene_samples,
                     scene_gbuf,
                     HDR_FORMAT,
-                    GBUF_FORMAT,
                     DEPTH_FORMAT,
                 );
             }

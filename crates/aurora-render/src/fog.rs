@@ -31,6 +31,7 @@ use crate::pipeline_cache::CachedPipelines;
 use crate::types::{FOG_GROUND_SIZE, FogGround, FogLook, FogTier, SkyParams};
 use bytemuck::{Pod, Zeroable};
 use glam::{IVec3, Mat4, Vec2, Vec3, Vec4};
+use std::sync::{Once, OnceLock};
 
 /// The noise's tile (m). Must match fog.wgsl `FOG_NOISE_PERIOD`; the
 /// viewer's drift wraps on a multiple of it.
@@ -477,7 +478,7 @@ pub struct Fog {
     inject_layout: wgpu::BindGroupLayout,
     integrate_layout: wgpu::BindGroupLayout,
     sky_layout: wgpu::BindGroupLayout,
-    sky_pipelines: Vec<((u32, bool), wgpu::RenderPipeline)>,
+    sky_pipelines: Vec<((u32, Option<wgpu::TextureFormat>), wgpu::RenderPipeline)>,
     sky_group: Option<wgpu::BindGroup>,
     params: wgpu::Buffer,
     noise: wgpu::TextureView,
@@ -501,7 +502,8 @@ pub struct Fog {
 }
 
 impl Fog {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Fog {
+    /// `noise` the noise's mip levels (`noise_ready`).
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, noise: &[Vec<u8>]) -> Fog {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fog"),
             source: wgpu::ShaderSource::Wgsl(format!("{}\n{}", crate::common_shader_source(), include_str!("shaders/fog.wgsl")).into()),
@@ -633,7 +635,7 @@ impl Fog {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let noise = noise_texture(device, queue);
+        let noise = noise_texture(device, queue, noise);
         let repeat = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("fog noise"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -741,14 +743,14 @@ impl Fog {
         true
     }
 
-    /// The flow as the scene reads it (binding 32 of the main view's frame
+    /// The flow as the scene reads it (binding 34 of the main view's frame
     /// group): its steps are even, so the last lands in the same texture
     /// each frame and the group stays bound to it.
     pub fn flow_view(&self) -> &wgpu::TextureView {
         &self.flow.flow[0]
     }
 
-    /// The ground the fog pools on, as the scene reads it (binding 33 of
+    /// The ground the fog pools on, as the scene reads it (binding 35 of
     /// every frame group: the far fog and the height fog lie on it), and its
     /// square (corner, side; None: none uploaded).
     pub fn ground_view(&self) -> &wgpu::TextureView {
@@ -1115,7 +1117,8 @@ impl Fog {
     }
 
     /// Makes the sky's pipeline for the scene pass's sample count and
-    /// G-buffer, and binds what it reads this frame: before the pass.
+    /// G-buffer (`gbuf`: its format), and binds what it reads this frame:
+    /// before the pass.
     #[allow(clippy::too_many_arguments)]
     pub fn prepare_sky(
         &mut self,
@@ -1124,9 +1127,8 @@ impl Fog {
         lin_clamp: &wgpu::Sampler,
         dummy_volume: &wgpu::TextureView,
         samples: u32,
-        gbuf: bool,
+        gbuf: Option<wgpu::TextureFormat>,
         color: wgpu::TextureFormat,
-        gbuf_format: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
     ) {
         let volume = self.targets.as_ref().map_or(dummy_volume, |t| &t.integrated);
@@ -1171,9 +1173,9 @@ impl Fog {
             blend: Some(blend),
             write_mask: wgpu::ColorWrites::COLOR,
         })];
-        if gbuf {
+        if let Some(format) = gbuf {
             targets.push(Some(wgpu::ColorTargetState {
-                format: gbuf_format,
+                format,
                 blend: None,
                 write_mask: wgpu::ColorWrites::empty(),
             }));
@@ -1202,7 +1204,7 @@ impl Fog {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &self.module,
-                entry_point: Some(if gbuf { "fs_fog_sky_g" } else { "fs_fog_sky" }),
+                entry_point: Some(if gbuf.is_some() { "fs_fog_sky_g" } else { "fs_fog_sky" }),
                 compilation_options: Default::default(),
                 targets: &targets,
             }),
@@ -1215,7 +1217,7 @@ impl Fog {
     /// Draws the sky's fog in scene pass A, after the sky and the clouds
     /// (everything drawn after covers it where it stands). `prepare_sky`
     /// was called for these `samples`.
-    pub fn draw_sky(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32, gbuf: bool) {
+    pub fn draw_sky(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32, gbuf: Option<wgpu::TextureFormat>) {
         let (Some(group), Some((_, pipeline))) = (&self.sky_group, self.sky_pipelines.iter().find(|(k, _)| *k == (samples, gbuf))) else {
             return;
         };
@@ -1225,11 +1227,30 @@ impl Fog {
     }
 }
 
+/// The noise's mip levels (`noise_texels`, `noise_levels`), made once per
+/// run on a thread of their own: none until they are ready. The first call
+/// starts them, so turning the fog on does not hold the render thread while
+/// they are made; the fog shows a few frames later instead.
+pub fn noise_ready() -> Option<&'static [Vec<u8>]> {
+    static LEVELS: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
+    static STARTED: Once = Once::new();
+    let make = || noise_levels(noise_texels(NOISE_SIZE), NOISE_SIZE);
+    STARTED.call_once(|| {
+        let spawned = std::thread::Builder::new().name("fog noise".into()).spawn(move || {
+            let _ = LEVELS.set(make());
+        });
+        if let Err(e) = spawned {
+            log::warn!("fog noise: no thread ({e}), made here");
+            let _ = LEVELS.set(make());
+        }
+    });
+    LEVELS.get().map(Vec::as_slice)
+}
+
 /// The noise the fog is shaped by: `NOISE_SIZE`^3 texels that tile, a sum
 /// of gradient noise (three octaves) and billowy cells (inverted Worley),
-/// stretched to 0..1.
-fn noise_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
-    let levels = noise_levels(noise_texels(NOISE_SIZE), NOISE_SIZE);
+/// stretched to 0..1; `levels` its mip levels (`noise_ready`).
+fn noise_texture(device: &wgpu::Device, queue: &wgpu::Queue, levels: &[Vec<u8>]) -> wgpu::TextureView {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("fog noise"),
         size: wgpu::Extent3d {

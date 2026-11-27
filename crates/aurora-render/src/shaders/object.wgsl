@@ -3838,11 +3838,16 @@ fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
         let gap = distance(sp, frame.camera_pos.xyz) - distance(in.world_pos, frame.camera_pos.xyz);
         alpha *= clamp(gap / max(frame.cam_right.w, 0.01), 0.0, 1.0);
     }
-    col = apply_fog(col, in.world_pos);
+    let additive = (in.flags & PART_ADDITIVE) != 0u;
+    if (additive) {
+        col = apply_fog_additive(col, in.world_pos);
+    } else {
+        col = apply_fog(col, in.world_pos);
+    }
     if (alpha < 0.002) {
         discard;
     }
-    if ((in.flags & PART_ADDITIVE) != 0u) {
+    if (additive) {
         // premultiplied blend with zero alpha = additive
         return vec4<f32>(col * alpha, 0.0);
     }

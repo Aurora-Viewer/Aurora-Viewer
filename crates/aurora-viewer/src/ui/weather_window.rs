@@ -1455,7 +1455,14 @@ mod tests {
             assert_eq!(layout(n).len(), n);
             assert_eq!(
                 cards,
-                [Card::Precipitation, Card::Ground, Card::Fog, Card::Wind, Card::Thunder, Card::NorthernLights],
+                [
+                    Card::Precipitation,
+                    Card::Ground,
+                    Card::Fog,
+                    Card::Wind,
+                    Card::Thunder,
+                    Card::NorthernLights
+                ],
                 "{n}"
             );
         }
