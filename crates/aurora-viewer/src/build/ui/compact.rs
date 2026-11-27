@@ -413,7 +413,9 @@ pub(super) fn action_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, w
         (false, "arrow-back-up", aurora_i18n::tr!("build-compact-undo")),
         (true, "arrow-forward-up", aurora_i18n::tr!("build-compact-redo")),
     ] {
-        if icon_button_sized(ui, p, icon, title, selected, Vec2::splat(crate::ui::widgets::TEXT_BUTTON_HEIGHT)).clicked() {
+        // LLSelectMgr::canUndo / canRedo grey the buttons out
+        let enabled = tool.can_undo(world, redo);
+        if icon_button_sized(ui, p, icon, title, enabled, Vec2::splat(crate::ui::widgets::TEXT_BUTTON_HEIGHT)).clicked() {
             tool.undo(world, redo);
         }
     }
