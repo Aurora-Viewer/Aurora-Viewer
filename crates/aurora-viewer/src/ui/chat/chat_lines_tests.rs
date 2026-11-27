@@ -96,11 +96,14 @@ fn the_lines_stand_by_the_chat_block_above_it_or_under_it() {
     let at = super::LinesPlace::by(dock, Auto, screen, room);
     assert!(!at.down);
     assert_eq!(at.edge, super::LinesPlace::above(BAR).edge, "the bottom the lines had");
-    assert_eq!(at.left(screen, 470.0), 8.0, "the left they had");
+    assert_eq!(at.column(screen, 470.0), (8.0, false), "the left they had");
     // asked under a bar that has nothing under it: above all the same
     assert_eq!(super::LinesPlace::by(dock, Down, screen, room), at);
     let centred = ChatPlace::at(block(450.0, 760.0, 380.0), Bar::Bottom, false);
-    assert_eq!(super::LinesPlace::by(centred, Auto, screen, room).left(screen, 470.0), 446.0);
+    assert_eq!(
+        super::LinesPlace::by(centred, Auto, screen, room).column(screen, 470.0),
+        (446.0, false)
+    );
 
     // the top bar's block: hung under it, clear of what stands under the bar
     let top = ChatPlace::at(block(300.0, 8.0, 380.0), Bar::Top, false);
@@ -108,13 +111,19 @@ fn the_lines_stand_by_the_chat_block_above_it_or_under_it() {
     assert!(at.down);
     assert_eq!(at.edge, 52.0 + 6.0);
     assert_eq!(at.limit, BAR - 6.0, "down to the bottom bar");
-    assert_eq!(at.left(screen, 470.0), 296.0);
+    assert_eq!(at.column(screen, 470.0), (296.0, false));
     assert_eq!(super::LinesPlace::by(top, Up, screen, room), at, "no room above the top bar");
-    // near the right end of the bar: kept on the screen
+    // at the right end of the bar, no room from the block's left: the
+    // lines end on its right, kept on the screen
     let right = ChatPlace::at(block(890.0, 8.0, 380.0), Bar::Top, false);
     assert_eq!(
-        super::LinesPlace::by(right, Auto, screen, room).left(screen, 470.0),
-        1280.0 - 8.0 - 470.0
+        super::LinesPlace::by(right, Auto, screen, room).column(screen, 470.0),
+        (1280.0 - 8.0 - 470.0, true)
+    );
+    let right = ChatPlace::at(block(840.0, 8.0, 380.0), Bar::Top, false);
+    assert_eq!(
+        super::LinesPlace::by(right, Auto, screen, room).column(screen, 470.0),
+        (1224.0 - 470.0, true)
     );
 
     // a floating block: where there is more room, or as asked
@@ -134,12 +143,16 @@ fn the_lines_stand_by_the_chat_block_above_it_or_under_it() {
     let at = super::LinesPlace::by(left, Auto, screen, room);
     assert!(!at.down);
     assert_eq!(at.edge, 632.0);
-    assert_eq!(at.left(screen, 470.0), 40.0 + 8.0);
+    assert_eq!(at.column(screen, 470.0), (40.0 + 8.0, false));
     let side = ChatPlace::at(block(1244.0, 100.0, 28.0), Bar::Right, false);
     let at = super::LinesPlace::by(side, Auto, screen, room);
     assert!(at.down);
     assert_eq!(at.edge, 96.0);
-    assert_eq!(at.left(screen, 470.0), 1240.0 - 8.0 - 470.0, "they end before the right bar");
+    assert_eq!(
+        at.column(screen, 470.0),
+        (1240.0 - 8.0 - 470.0, true),
+        "they end before the right bar"
+    );
 }
 
 /// Lines hung under a chat bar start under it; when they reach the bottom
@@ -154,7 +167,7 @@ fn lines_hung_under_the_chat_bar_start_there_and_stop_over_the_bottom_bar() {
         say(&mut world, 2, "nope", 0);
         let place = |limit: f32| super::LinesPlace {
             left: Some(300.0),
-            until: None,
+            right: None,
             edge: 58.0,
             down: true,
             limit,
@@ -172,6 +185,25 @@ fn lines_hung_under_the_chat_bar_start_there_and_stop_over_the_bottom_bar() {
             "cards {cards}: the lines start under the bar, at its left: {few:?}"
         );
         assert!(few.bottom() < 200.0, "cards {cards}: two lines: {few:?}");
+        // by a bar of the right side: every line ends on the edge given
+        let ended = super::LinesPlace {
+            left: None,
+            right: Some(900.0),
+            ..place(734.0)
+        };
+        let mut drawn = None;
+        for n in 0..4 {
+            drawn = drawn_at(&ctx, &world, 200.0, cards, n, ended);
+        }
+        let drawn = drawn.expect("lines");
+        assert!(
+            (895.0..=900.5).contains(&drawn.right()) && drawn.left() > 430.0,
+            "cards {cards}: the lines end on the bar's side: {drawn:?}"
+        );
+        assert!(
+            (few.height() - drawn.height()).abs() < 0.5 && (few.width() - drawn.width()).abs() < 1.5,
+            "cards {cards}: aligned, the lines keep their size: {few:?}, {drawn:?}"
+        );
         for who in 10..35 {
             say(&mut world, who, "one more line of the nearby chat", 0);
         }

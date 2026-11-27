@@ -158,7 +158,7 @@ pub(super) fn cards(
     }
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &ChatLine)> = Vec::new();
-    let shift = super::lines_area(ctx, place, WIDTH, |ui| {
+    let shift = super::lines_area(ctx, place, WIDTH, |ui, right| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for group in groups(&recent) {
             let card_alpha = group.iter().map(|l| alpha(seconds, l, now)).fold(0.0_f32, f32::max);
@@ -174,6 +174,7 @@ pub(super) fn cards(
             let glass = p.panel_alpha < 255;
             let mut slot = None;
             let small = super::object_row::compact(group[0], compact_automated);
+            let (start, link0, name0) = (super::painted(ui), links.len(), names.len());
             let card = egui::Frame::new()
                 .fill(if glass { Color32::TRANSPARENT } else { tint })
                 .corner_radius(radius)
@@ -210,10 +211,11 @@ pub(super) fn cards(
                         &mut names,
                     );
                 });
+            let rect = super::align_line(ui, right, start, card.response.rect, &mut links[link0..], &mut names[name0..]);
             if glass && let Some(slot) = slot {
                 ui.painter().set(
                     slot,
-                    aurora_render::glass_panel_faded(card.response.rect, f32::from(radius.nw), tint, card_alpha * console_blur),
+                    aurora_render::glass_panel_faded(rect, f32::from(radius.nw), tint, card_alpha * console_blur),
                 );
             }
             ui.add_space(4.0);

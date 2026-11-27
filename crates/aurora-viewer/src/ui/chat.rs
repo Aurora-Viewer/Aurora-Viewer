@@ -5194,19 +5194,9 @@ impl Held {
             .round_to_pixels(ui.pixels_per_point())
             .round_ui();
         let shift = egui::vec2(0.0, top - ui.max_rect().top());
-        if shift.y != 0.0 {
-            let moved = egui::emath::TSTransform::from_translation(shift);
-            let layer = ui.layer_id();
-            ui.ctx().graphics_mut(|g| {
-                let list = g.entry(layer);
-                for i in self.start..list.next_idx().0 {
-                    // the shapes alone: the clip stays the area's, the
-                    // screen's (moved too, it could cut off a line that just
-                    // arrived)
-                    list.mutate_shape(egui::layers::ShapeIdx(i), |s| s.shape.transform(moved));
-                }
-            });
-        }
+        // the shapes alone: the clip stays the area's, the screen's (moved
+        // too, it could cut off a line that just arrived)
+        move_painted(ui, self.start, shift);
         shift
     }
 
@@ -5262,16 +5252,7 @@ impl Hung {
             .max(0.0)
             .round_to_pixels(ui.pixels_per_point());
         let shift = egui::vec2(0.0, -over);
-        if over > 0.0 {
-            let moved = egui::emath::TSTransform::from_translation(shift);
-            let layer = ui.layer_id();
-            ui.ctx().graphics_mut(|g| {
-                let list = g.entry(layer);
-                for i in self.start..list.next_idx().0 {
-                    list.mutate_shape(egui::layers::ShapeIdx(i), |s| s.shape.transform(moved));
-                }
-            });
-        }
+        move_painted(ui, self.start, shift);
         shift
     }
 }
@@ -5284,8 +5265,10 @@ impl Hung {
 pub struct LinesPlace {
     /// Their left edge; None, the screen's with the usual 8 px.
     left: Option<f32>,
-    /// Where they must end instead (by a bar of the right side).
-    until: Option<f32>,
+    /// The edge they end on instead, each line aligned on it, when there
+    /// is no left edge (by a bar of the right side) or no room from it (a
+    /// block at the right end of its bar).
+    right: Option<f32>,
     /// Their bottom, or their top when they hang `down`.
     edge: f32,
     down: bool,
@@ -5305,7 +5288,7 @@ impl LinesPlace {
     pub fn above(bottom: f32) -> Self {
         Self {
             left: None,
-            until: None,
+            right: None,
             edge: bottom - Self::GAP,
             down: false,
             limit: bottom - Self::GAP,
@@ -5334,13 +5317,13 @@ impl LinesPlace {
         let surface = block.rect.expand(PAD);
         let docked = !block.floating;
         let limit = room.1 - Self::GAP;
-        let (left, until, up, down) = if block.bar.vertical() {
-            let (left, until) = if surface.center().x < screen.center().x {
+        let (left, right, up, down) = if block.bar.vertical() {
+            let (left, right) = if surface.center().x < screen.center().x {
                 (Some(surface.right() + MARGIN), None)
             } else {
                 (None, Some(surface.left() - MARGIN))
             };
-            (left, until, surface.bottom().min(limit), surface.top().max(room.0))
+            (left, right, surface.bottom().min(limit), surface.top().max(room.0))
         } else {
             let up = if docked && block.bar == Bar::Bottom {
                 // what the bottom bar keeps free, its other rows included
@@ -5354,7 +5337,7 @@ impl LinesPlace {
             } else {
                 under
             } + Self::GAP;
-            (Some(surface.left()), None, up, down)
+            (Some(surface.left()), Some(surface.right()), up, down)
         };
         let (above, below) = (up - screen.top(), limit - down);
         let down_wanted = match direction {
@@ -5364,30 +5347,85 @@ impl LinesPlace {
         };
         Self {
             left,
-            until,
+            right,
             edge: if down_wanted { down } else { up },
             down: down_wanted,
             limit,
         }
     }
 
-    /// The left of lines `width` wide, kept on the screen.
-    fn left(&self, screen: egui::Rect, width: f32) -> f32 {
-        let left = match (self.until, self.left) {
-            (Some(until), _) => until - width,
-            (None, Some(left)) => left,
-            (None, None) => screen.left() + 8.0,
-        };
-        left.min(screen.right() - 8.0 - width).max(screen.left() + 8.0)
+    /// The left of a column `width` wide for the lines, kept on the
+    /// screen, and whether they are aligned on its right.
+    fn column(&self, screen: egui::Rect, width: f32) -> (f32, bool) {
+        let least = screen.left() + 8.0;
+        let most = (screen.right() - 8.0 - width).max(least);
+        match (self.left, self.right) {
+            (Some(left), _) if left <= most => (left.max(least), false),
+            (_, Some(right)) => ((right - width).clamp(least, most), true),
+            (Some(_), None) => (most, false),
+            (None, None) => (least, false),
+        }
     }
 }
 
+/// How many shapes `ui`'s layer holds: what is painted next starts there.
+fn painted(ui: &egui::Ui) -> usize {
+    let layer = ui.layer_id();
+    ui.ctx().graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0))
+}
+
+/// Moves what was painted on `ui`'s layer since `start` (`painted`). The
+/// shapes alone: their clip stays the area's.
+fn move_painted(ui: &egui::Ui, start: usize, by: egui::Vec2) {
+    if by == egui::Vec2::ZERO {
+        return;
+    }
+    let moved = egui::emath::TSTransform::from_translation(by);
+    let layer = ui.layer_id();
+    ui.ctx().graphics_mut(|g| {
+        let list = g.entry(layer);
+        for i in start..list.next_idx().0 {
+            list.mutate_shape(egui::layers::ShapeIdx(i), |s| s.shape.transform(moved));
+        }
+    });
+}
+
+/// A card or a line just laid out at `rect`, in lines aligned on `right`
+/// (`LinesPlace::column`; None, on their left as laid out): moves what it
+/// painted since `start` and the click areas it added, and returns where it
+/// stands. A layout aligned on the right would align the content of the
+/// card too.
+fn align_line(
+    ui: &egui::Ui,
+    right: Option<f32>,
+    start: usize,
+    rect: egui::Rect,
+    links: &mut [(egui::Rect, Link, Color32)],
+    names: &mut [(egui::Rect, &crate::world::ChatLine)],
+) -> egui::Rect {
+    use egui::emath::GuiRounding as _;
+    let Some(right) = right else {
+        return rect;
+    };
+    let by = egui::vec2((right - rect.right()).round_to_pixels(ui.pixels_per_point()), 0.0);
+    move_painted(ui, start, by);
+    for (r, ..) in links.iter_mut() {
+        *r = r.translate(by);
+    }
+    for (r, _) in names.iter_mut() {
+        *r = r.translate(by);
+    }
+    rect.translate(by)
+}
+
 /// The area of the nearby chat lines at `place`, at most `width` wide:
-/// `lines` draws them in it. Returns what they were moved by after their
-/// layout, for the click areas laid over them.
-fn lines_area(ctx: &egui::Context, place: LinesPlace, width: f32, lines: impl FnOnce(&mut egui::Ui)) -> egui::Vec2 {
+/// `lines` draws them in it, and aligns each on the edge it is given
+/// (`align_line`). Returns what they were moved by after their layout, for
+/// the click areas laid over them.
+fn lines_area(ctx: &egui::Context, place: LinesPlace, width: f32, lines: impl FnOnce(&mut egui::Ui, Option<f32>)) -> egui::Vec2 {
     let screen = ctx.content_rect();
-    let left = place.left(screen, width);
+    let (left, aligned) = place.column(screen, width);
+    let right = aligned.then_some(left + width);
     let mut shift = egui::Vec2::ZERO;
     let area = egui::Area::new(egui::Id::unique("chat_toasts"))
         .interactable(false)
@@ -5396,7 +5434,7 @@ fn lines_area(ctx: &egui::Context, place: LinesPlace, width: f32, lines: impl Fn
         area.fixed_pos(egui::pos2(left, place.edge)).constrain(false).show(ctx, |ui| {
             let hung = Hung::new(ui, place.edge, place.limit);
             ui.set_max_width(width);
-            lines(ui);
+            lines(ui, right);
             shift = hung.settle(ui);
         });
     } else {
@@ -5407,7 +5445,7 @@ fn lines_area(ctx: &egui::Context, place: LinesPlace, width: f32, lines: impl Fn
                 // frame only (#2544)
                 let held = Held::new(ui, lift);
                 ui.set_max_width(width);
-                lines(ui);
+                lines(ui, right);
                 shift = held.settle(ui);
             });
     }
@@ -5481,7 +5519,7 @@ pub fn toasts(
     }
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &crate::world::ChatLine)> = Vec::new();
-    let shift = lines_area(ctx, place, 560.0, |ui| {
+    let shift = lines_area(ctx, place, 560.0, |ui, right| {
         // the islands' pills: the mockup's 12 px text, 9 × 4 margins and
         // 4 px between two lines
         let (size, margin, gap) = if pills {
@@ -5505,6 +5543,7 @@ pub fn toasts(
             let radius = ui.visuals().window_corner_radius;
             let glass = p.panel_alpha < 255;
             let mut slot = None;
+            let (start, link0, name0) = (painted(ui), links.len(), names.len());
             let bubble = egui::Frame::new()
                 .fill(if glass { Color32::TRANSPARENT } else { tint })
                 .corner_radius(radius)
@@ -5557,8 +5596,8 @@ pub fn toasts(
                     let col = color_for(line.kind, p).gamma_multiply(shown);
                     line_extras(ui, p, world, &visual, rect.min, size, shown, badges, line_links, col, &mut links);
                 });
+            let rect = align_line(ui, right, start, bubble.response.rect, &mut links[link0..], &mut names[name0..]);
             if glass && let Some(slot) = slot {
-                let rect = bubble.response.rect;
                 ui.painter().set(
                     slot,
                     aurora_render::glass_panel_faded(rect, f32::from(radius.nw), tint, alpha * console_blur),
