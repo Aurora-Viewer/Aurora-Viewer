@@ -120,24 +120,25 @@ fn unavailable_preference_links_preserve_the_current_search_and_show_a_notice_on
     }
 }
 
-/// The real window's frames, with what each asks of the platform; the
-/// accessibility tree is on, for the copy button's place and state.
+/// The real window's frames.
 fn search_link_frames() -> (Frames, Palette, Icons) {
     let frames = Frames::new();
-    frames.ctx.enable_accesskit();
     let theme = crate::theme::Theme::default();
     theme.apply(&frames.ctx, 1.0);
     let icons = Icons::load(&frames.ctx, None);
     (frames, theme.palette(), icons)
 }
 
-/// The copy button in that tree: where it is and whether it is greyed.
-fn copy_button(output: &egui::PlatformOutput) -> Option<(egui::Pos2, bool)> {
-    let label = aurora_i18n::tr!("ui-options-copy-search-link");
-    output.accesskit_update.as_ref()?.nodes.iter().find_map(|(_, node)| {
-        let b = node.bounds().filter(|_| node.label().is_some_and(|l| l == label))?;
-        Some((pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32), node.is_disabled()))
-    })
+/// The texts copied to the clipboard by these frames.
+fn copied(outputs: &[egui::PlatformOutput]) -> Vec<String> {
+    outputs
+        .iter()
+        .flat_map(|o| &o.commands)
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -176,44 +177,70 @@ fn a_search_link_fills_the_search_as_typed_and_changes_no_setting() {
     assert_eq!(st.query, "draw distances");
 }
 
+/// A right click at `at`: pressed, released, then two frames for the menu
+/// (an egui area, drawn from its second frame).
+fn right_click(at: egui::Pos2) -> Vec<Vec<egui::Event>> {
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    vec![
+        vec![egui::Event::PointerMoved(at)],
+        vec![button(true)],
+        vec![button(false)],
+        Vec::new(),
+        Vec::new(),
+    ]
+}
+
+/// The search field's right-click menu (the shared text menu, run after
+/// the pass as the app runs it) has "Copy search as link" under Select
+/// All: greyed without a search, the Legacy Viewer's link with one.
 #[test]
-fn the_copy_button_copies_the_search_as_a_legacy_link_once_there_is_one() {
+fn the_search_fields_menu_copies_the_search_as_a_legacy_link_once_there_is_one() {
     let (mut frames, p, icons) = search_link_frames();
+    let ctx = frames.ctx.clone();
     let mut settings = Settings::default();
     let mut st = OptionsUi::default();
+    let mut menu = crate::ui::text_menu::TextMenu::default();
+    let entry = aurora_i18n::tr!("ui-options-copy-search-link");
     let mut frame = |st: &mut OptionsUi, events: Vec<egui::Event>| {
         let mut open = true;
-        frames
-            .run_with_output(events, |ui| {
-                show(ui.ctx(), &p, &icons, &mut settings, st, &mut open);
-            })
-            .1
+        frames.run_with_output(events, |ui| {
+            show(ui.ctx(), &p, &icons, &mut settings, st, &mut open);
+            menu.after(ui.ctx(), &p);
+        })
     };
-    let copied = |outputs: &[egui::PlatformOutput]| -> Vec<String> {
-        outputs
-            .iter()
-            .flat_map(|o| &o.commands)
-            .filter_map(|c| match c {
-                egui::OutputCommand::CopyText(t) => Some(t.clone()),
-                _ => None,
-            })
-            .collect()
-    };
-    let mut last = frame(&mut st, Vec::new());
-    for _ in 0..2 {
-        last = frame(&mut st, Vec::new());
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = frame(&mut st, Vec::new()).0;
     }
-    // no search: greyed, and a click copies nothing
-    let (at, greyed) = copy_button(&last).expect("the copy button");
-    assert!(greyed);
-    let outputs: Vec<_> = click(at).into_iter().map(|events| frame(&mut st, events)).collect();
+    // the field has the whole width of the sidebar again: its hint whole
+    let hint = aurora_i18n::tr!("ui-options-search-settings");
+    assert!(!crate::ui::widgets::elide_tests::painted(&texts, hint).cut, "{hint}");
+    // the window gives the field the keyboard as it opens
+    let field = ctx
+        .memory(|m| m.focused())
+        .and_then(|id| ctx.read_response(id))
+        .expect("the search field focused")
+        .rect;
+    // no search: the entry is there, greyed, and its click copies nothing
+    for events in right_click(field.center()) {
+        texts = frame(&mut st, events).0;
+    }
+    let at = crate::ui::widgets::elide_tests::painted(&texts, entry).rect.center();
+    let outputs: Vec<_> = click(at).into_iter().map(|events| frame(&mut st, events).1).collect();
     assert!(copied(&outputs).is_empty());
     // a search: the Legacy Viewer's link, which opens the same search
     st.query = "# of lines".into();
-    let last = frame(&mut st, Vec::new());
-    let (at, greyed) = copy_button(&last).expect("the copy button");
-    assert!(!greyed);
-    let outputs: Vec<_> = click(at).into_iter().map(|events| frame(&mut st, events)).collect();
+    frame(&mut st, Vec::new());
+    for events in right_click(field.center()) {
+        texts = frame(&mut st, events).0;
+    }
+    let at = crate::ui::widgets::elide_tests::painted(&texts, entry).rect.center();
+    let outputs: Vec<_> = click(at).into_iter().map(|events| frame(&mut st, events).1).collect();
     let url = "secondlife:///app/openfloater/preferences?search=%23%20of%20lines";
     assert_eq!(copied(&outputs), vec![url.to_owned()]);
     assert_eq!(st.query, "# of lines", "copying leaves the search as it is");
