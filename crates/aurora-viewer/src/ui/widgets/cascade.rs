@@ -121,7 +121,22 @@ pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: 
         let anchor = windows.0.iter().rev().find(|w| w.group == group && w.visible && !w.minimized);
         let primary = anchor.is_none();
         let mut size = saved.map_or(default.size(), |r| r.size()).min(work.size());
-        let mut target = anchor.map_or_else(|| saved.map_or(default.min, |r| r.min), |w| w.rect.min + OFFSET);
+        // a window still opening is anchored where the cascade put it, not
+        // where its first draw was shown: a window taller than its room is
+        // pushed up on that draw, and a copy opens its windows a frame apart,
+        // so each next one would step from that higher rect and land on the
+        // one before (#4964 review)
+        let mut target = anchor.map_or_else(
+            || saved.map_or(default.min, |r| r.min),
+            |w| {
+                let min = if w.opening {
+                    super::fit_in(work, w.target, w.rect.size())
+                } else {
+                    w.rect.min
+                };
+                min + OFFSET
+            },
+        );
         // a step down that would leave less than half the group's first
         // window, or less than a window of the group can really take, starts
         // a new column, back at that window's top; at the screen's right edge

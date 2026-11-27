@@ -17,8 +17,9 @@ use uuid::Uuid;
 /// that no profile window shows goes first.
 const MAX_CACHED_GROUPS: usize = 20;
 
-/// A member request that never answered (a failed GroupMemberData POST
-/// answers nothing) stops holding back the next one after this.
+/// A member request that never answered (a lost UDP reply; a failed
+/// GroupMemberData POST sends `GroupMembersFailed`) stops holding back the
+/// next one after this.
 const MEMBER_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The notices read, per account: a group's notices are unread once they
@@ -785,6 +786,11 @@ impl GroupMgr {
     pub fn on_event(&mut self, ev: &NetEvent) -> bool {
         match ev {
             NetEvent::GroupMembers(page) => self.on_members(page),
+            NetEvent::GroupMembersFailed { request } => {
+                if self.member_in_flight.is_some_and(|(r, _)| r == *request) {
+                    self.member_in_flight = None;
+                }
+            }
             NetEvent::GroupRoles(page) => self.on_roles(page),
             NetEvent::GroupRoleMembers(page) => self.on_role_members(page),
             NetEvent::GroupTitles { group, request, titles } => match self.groups.get_mut(group) {
@@ -1337,6 +1343,11 @@ mod tests {
         mgr.pump_members(Instant::now() + MEMBER_REQUEST_TIMEOUT + Duration::from_secs(1));
         let third = asked(&std::mem::take(&mut mgr.out));
         assert_eq!(third.iter().map(|a| a.0).collect::<Vec<_>>(), [groups[2]]);
+        // a request that failed frees the way at once, not after the time-out
+        let third = third[0].1;
+        mgr.request_members(groups[0]);
+        mgr.on_event(&NetEvent::GroupMembersFailed { request: third });
+        assert_eq!(asked(&mgr.take_commands()).iter().map(|a| a.0).collect::<Vec<_>>(), [groups[0]]);
         // a group forgotten while waiting is not asked
         mgr.request_members(groups[0]);
         mgr.clear(&groups[0]);

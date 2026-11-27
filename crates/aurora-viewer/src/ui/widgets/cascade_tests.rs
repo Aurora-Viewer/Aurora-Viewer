@@ -21,7 +21,11 @@ struct Fixture {
 
 impl Fixture {
     fn settle(&mut self) {
-        for _ in 0..8 {
+        self.frames(8);
+    }
+
+    fn frames(&mut self, count: usize) {
+        for _ in 0..count {
             self.frame += 1;
             let mut output = self.ctx.run_ui(
                 egui::RawInput {
@@ -54,6 +58,12 @@ impl Fixture {
     }
 
     fn open_with(&mut self, group: CascadeGroup, size: Vec2, least: Option<Vec2>, content: f32) -> usize {
+        let n = self.push(group, size, least, content);
+        self.settle();
+        n
+    }
+
+    fn push(&mut self, group: CascadeGroup, size: Vec2, least: Option<Vec2>, content: f32) -> usize {
         let n = self.windows.len();
         self.windows.push(Window {
             id: format!("cascade_{n}"),
@@ -63,7 +73,6 @@ impl Fixture {
             least,
             content,
         });
-        self.settle();
         n
     }
 
@@ -265,4 +274,62 @@ fn cascade_group_profiles_with_a_real_least_size_start_a_new_column_instead_of_p
         }
         assert!(columns >= 3, "30 windows on an 800 px screen take several columns: {columns}");
     }
+}
+
+/// A copy opens its group windows one frame after the other, so the window
+/// before has only had its first draw when the next is placed, and a window
+/// taller than its room is pushed up on that draw (#4964 review, round 2:
+/// from the 14th on, each window anchored on that higher rect, landed at the
+/// same spot as the one before and the wrap never came).
+#[test]
+fn cascade_group_profiles_opened_a_frame_apart_still_wrap_into_columns() {
+    for (least, content) in [(egui::vec2(320.0, 300.0), 420.0), (egui::vec2(400.0, 380.0), 200.0)] {
+        let mut f = Fixture::default();
+        let profile = CascadeGroup::Profile { classic: false };
+        let opened: Vec<usize> = (0..30)
+            .map(|_| {
+                let n = f.push(profile, egui::vec2(500.0, 600.0), Some(least), content);
+                f.frames(1);
+                n
+            })
+            .collect();
+        f.settle();
+        let first = f.rect(opened[0]);
+        let mut columns = 1;
+        for (i, &n) in opened.iter().enumerate() {
+            let b = f.rect(n);
+            assert!(b.bottom() <= 800.5, "on screen: {b:?}");
+            if i > 0 {
+                let a = f.rect(opened[i - 1]);
+                assert!((b.min - a.min).length() > 1.0, "{n} lands on the window before: {a:?} {b:?}");
+            }
+            if i > 0 && (b.min.y - first.min.y).abs() < 1.0 {
+                columns += 1;
+            }
+        }
+        assert!(columns >= 3, "30 windows on an 800 px screen take several columns: {columns}");
+    }
+}
+
+/// A window still opening is anchored where the cascade put it, not where
+/// its first draw was shown (#4964 review, round 2: a window taller than its
+/// room is pushed up on that draw, and the next one stepped from there).
+#[test]
+fn cascade_steps_from_where_an_opening_window_was_placed_not_its_first_draw() {
+    let ctx = egui::Context::default();
+    let work = Rect::from_min_size(Pos2::ZERO, egui::vec2(1000.0, 800.0));
+    let default = Rect::from_min_size(egui::pos2(100.0, 80.0), egui::vec2(500.0, 600.0));
+    let profile = CascadeGroup::Profile { classic: false };
+    let least = egui::vec2(220.0, 120.0);
+    let (a, b) = (Id::unique("a"), Id::unique("b"));
+    let placed = super::cascade::prepare(&ctx, a, profile, default, work, least).expect("placed");
+    // the first draw shows it 32 px higher than it was placed
+    super::cascade::shown(
+        &ctx,
+        a,
+        Rect::from_min_size(placed.pos - egui::vec2(0.0, 32.0), egui::vec2(500.0, 600.0)),
+        false,
+    );
+    let next = super::cascade::prepare(&ctx, b, profile, default, work, least).expect("placed");
+    same(next.pos.to_vec2() - placed.pos.to_vec2(), Vec2::splat(32.0));
 }

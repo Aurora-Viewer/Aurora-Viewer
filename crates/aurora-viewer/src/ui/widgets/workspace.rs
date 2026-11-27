@@ -596,7 +596,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         // the toolbar's conversation_log command
         "conversation_log" => "file-text-filled",
         "people" | "group_picker" | "group_profile" | "contact_set_config" => "users-group",
-        "group_invite" | "group_invite_choice" => "user-plus",
+        "group_invite_choice" => "user-plus",
         "group_titles" => "tags-filled",
         "region_tracker" => "location-filled",
         "wearable_favorites" => "hanger-2-filled",
