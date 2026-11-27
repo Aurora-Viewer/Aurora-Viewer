@@ -71,6 +71,24 @@ impl PickPixel {
     }
 }
 
+/// World ray through the window point (x, y) of a camera: origin on the
+/// near plane, unit direction. [`crate::Renderer::cursor_ray`] and the
+/// drawn pick's answers (drawn_pick.rs) build it the same way: a camera
+/// that has not moved gives both the same ray.
+pub(crate) fn pixel_ray(inv_view_proj: Mat4, size: (u32, u32), x: f32, y: f32) -> Option<(Vec3, Vec3)> {
+    let (w, h) = (size.0 as f32, size.1 as f32);
+    let ndc = |z: f32| Vec4::new(x / w * 2.0 - 1.0, 1.0 - y / h * 2.0, z, 1.0);
+    let un = |v: Vec4| {
+        let p = inv_view_proj * v;
+        (p.w.abs() > 1e-9).then(|| p.truncate() / p.w).filter(|v| v.is_finite())
+    };
+    // reverse-Z: 1 is the near plane, small values far away
+    let near = un(ndc(1.0))?;
+    let far = un(ndc(0.001))?;
+    let dir = (far - near).try_normalize()?;
+    Some((near, dir))
+}
+
 struct Slot {
     buffer: wgpu::Buffer,
     state: Arc<AtomicU8>,

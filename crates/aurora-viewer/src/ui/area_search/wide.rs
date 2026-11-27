@@ -51,6 +51,7 @@ pub(super) fn show(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, env
         for tile in placed {
             let id = egui::Id::unique(("area_search_tile", tile.id));
             let rect = board::slide(ui, id, tile.rect);
+            let rect = board::in_sight(ui, rect, tile.form);
             let (toggled, asked) = one_tile(state, ui, p, env, d, id, rect, tile.id, tile.form);
             if toggled {
                 state.grown = (state.grown != Some(tile.id)).then_some(tile.id);
@@ -63,7 +64,9 @@ pub(super) fn show(state: &mut AreaSearchUi, ui: &mut egui::Ui, p: &Palette, env
     };
     if height > area.height() + 1.0 {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            let area = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), 1.0));
+            // the area in sight: the rows take their least height, a grown
+            // tile the area's
+            let area = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), area.height()));
             let height = draw(ui, area);
             ui.allocate_space(Vec2::new(area.width(), height));
         });

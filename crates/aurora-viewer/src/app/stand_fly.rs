@@ -81,8 +81,7 @@ impl App {
             // RLVa restrictions arriving once seated / flying
             (300, "locked" | "fly-rlva") => {
                 // the global opt-in, for this run only (the demo never saves)
-                self.settings.rlva_enabled = true;
-                self.world.rlva_configure(true);
+                self.rlva_demo_switch(true);
                 self.world.rlva_console_input(if mode == "locked" { "@unsit=n" } else { "@fly=n" });
             }
             (480, "stand") => self.stand_fly_action(Action::Stand),
