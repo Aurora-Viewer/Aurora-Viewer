@@ -3312,7 +3312,6 @@ ui-options-show-chat-channel-hint = Mostra o seletor de canal (/0) nos campos de
 ui-options-show-recent-emojis = Mostrar emojis recentes
 ui-options-show-recent-emojis-hint = Depois que você envia um emoji, os últimos usados aparecem acima dos campos de chat. Clique em um emoji para inseri-lo na mensagem.
 ui-options-show-recent-emojis-legacy = Mostrar emojis recentes (estilo Legacy)
-ui-options-show-recent-emojis-legacy-hint = No estilo de chat Legacy, mostra os últimos emojis usados abaixo dos campos de chat. Vem desativado, como a barra de emojis fechada do Legacy Viewer.
 ui-options-favorite-emojis = Emojis favoritos
 ui-options-favorite-emojis-hint = Clique com o botão direito em um emoji no seletor ou na barra de recentes para salvá-lo. Os favoritos aparecem primeiro nessa barra e em uma aba própria no seletor.
 ui-options-script-errors = Erros de script

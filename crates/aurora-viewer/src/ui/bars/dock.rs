@@ -261,10 +261,26 @@ pub fn bottom(
         chat_space,
     );
     let mut action = BarAction::None;
+    let split = buttons
+        .iter()
+        .any(|button| crate::ui::toolbar::structure::is_separator(&button.command))
+        || sizing::has_alignment(&ctx, buttons);
     if buttons.iter().any(|button| button.command == "bar_chat") {
+        // The chat block's island alone rises for the recent emojis' row
+        // and for a paragraph, as the chat island did before the field
+        // became a block: the dock's other islands keep their height. A
+        // dock in one piece has no island of the chat's to raise, and is
+        // as high as its chat block.
+        let lift = if toolbar.islands && split && !row.editing && !row.floating {
+            super::chrome::lift_chat(&ctx)
+        } else {
+            0.0
+        };
         let height = super::chrome::height(&ctx, "bar_chat") + V_PAD * 2.0;
         geo.height = geo.height.max(height);
         geo.dock.min.y = geo.dock.bottom() - geo.height;
+        // (what the islands keep of the screen: `Geometry::reserved`)
+        geo.chat.min.y = geo.chat.bottom() - geo.height - lift;
     }
     let mut committed = false;
 
@@ -336,10 +352,6 @@ pub fn bottom(
         };
         geo.dock.max.x = screen.right() - MARGIN;
     }
-    let split = buttons
-        .iter()
-        .any(|button| crate::ui::toolbar::structure::is_separator(&button.command))
-        || sizing::has_alignment(&ctx, buttons);
     super::islands::area_surface(&ctx, p, "dock", geo.dock, !split && !row.editing, |ui| {
         crate::ui::toolbar::edit_mode::region(ui, p, row.bar, geo.dock, buttons.is_empty());
         // the dock's background: its right-click menu and the drop target
@@ -417,17 +429,17 @@ pub(super) fn chat_island(
     // the field and the button, centred in the islands' common height
     let slot = geo.button - 4.0;
     let inset = (geo.height - slot) / 2.0;
-    // the recent emojis over the field, or at the island's foot with the
-    // Legacy chat style
+    // the recent emojis over the field, with every chat style: the bar's
+    // field stays at the foot of its island (the human's choice,
+    // 2026-11-27; the Legacy style keeps them under the field in
+    // Conversations alone, `Recent::above`)
     let recent = if emoji.is_some() { chat.recent_emojis.height() } else { 0.0 };
-    let above = chat.recent_emojis.above;
-    let (over, under) = if above { (recent, 0.0) } else { (0.0, recent) };
-    let bottom = island.bottom() - under;
+    let bottom = island.bottom();
     let top = bottom - inset - slot;
     let button = Rect::from_min_size(Pos2::new(island.right() - PAD - slot, top), Vec2::splat(slot));
     let field_right = if with_button { button.left() - GAP } else { island.right() - PAD };
     let field = Rect::from_min_max(
-        Pos2::new(island.left() + PAD, island.top() + inset + over),
+        Pos2::new(island.left() + PAD, island.top() + inset + recent),
         Pos2::new(field_right, bottom - inset),
     );
     let radius = ui.visuals().window_corner_radius;
@@ -439,6 +451,10 @@ pub(super) fn chat_island(
         Vec2::splat(EMOJI_ICON),
     );
     let smile_resp = ui.interact(smile.expand(4.0), Id::unique("chat_island_emoji"), Sense::click());
+    // (the button's own reading, not the layer's under the pointer: the
+    // dock's chat block stands on a layer over the dock's, whose area is
+    // only what stands out of the dock, `chrome::show_lifted_chat`)
+    let on_smile = smile_resp.contains_pointer();
     let hot = smile_resp.hovered() || chat.bar_emoji_open;
     paint_icon(ui, icons, "mood-smile-filled", smile, EMOJI_ICON, slot_ink(p, hot, true));
     if smile_resp.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
@@ -475,24 +491,17 @@ pub(super) fn chat_island(
     if recent > 0.0
         && let Some(emoji) = emoji.as_deref_mut()
     {
-        let row = if above {
-            Rect::from_min_max(
-                Pos2::new(field.left(), island.top() + inset),
-                Pos2::new(field.right(), island.top() + inset + recent - 2.0),
-            )
-        } else {
-            Rect::from_min_max(
-                Pos2::new(field.left(), island.bottom() - inset - (recent - 2.0)),
-                Pos2::new(field.right(), island.bottom() - inset),
-            )
-        };
+        let row = Rect::from_min_max(
+            Pos2::new(field.left(), island.top() + inset),
+            Pos2::new(field.right(), island.top() + inset + recent - 2.0),
+        );
         let id = crate::ui::chat::bar_input_id();
         if let Some(c) = chat.recent_emojis.row(ui, p, emoji, row, id) {
             crate::ui::emoji::recent::insert(ui.ctx(), id, &mut chat.input, c);
         }
     }
     if chat.bar_emoji_open {
-        emoji_picker(ui, p, icons, chat, emoji, smile, island, row.bar);
+        emoji_picker(ui, p, icons, chat, emoji, on_smile, island, row.bar);
     }
 
     if with_button {
@@ -525,14 +534,15 @@ pub(super) fn chat_island(
 /// The emoji picker of the chat field (the one of the Conversations
 /// window), its bottom right corner at `corner`, above the island; a pick
 /// goes at the end of the field, Shift keeps the picker open, a click away
-/// from it and from its `button` closes it.
+/// from it and from its button (`on_button`: the pointer is on it) closes
+/// it.
 fn emoji_picker(
     ui: &egui::Ui,
     p: &Palette,
     icons: &Icons,
     chat: &mut crate::ui::chat::ChatUi,
     emoji: Option<&mut crate::ui::emoji::Emoji>,
-    button: Rect,
+    on_button: bool,
     island: Rect,
     bar: crate::ui::toolbar::Bar,
 ) {
@@ -574,7 +584,7 @@ fn emoji_picker(
             });
         });
     // the emoji's menu can hang outside the picker: its click stays in it
-    let away = shown.response.clicked_elsewhere() && !starred && !ui.rect_contains_pointer(button.expand(4.0));
+    let away = shown.response.clicked_elsewhere() && !starred && !on_button;
     if escape {
         // the field gets the keyboard back, its caret where it was
         chat.bar_emoji_open = false;

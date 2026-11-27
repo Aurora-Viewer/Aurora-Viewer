@@ -292,7 +292,9 @@ pub(super) fn show(
                                 st.recent_emojis.toggle_favorite(c);
                             }
                             if let Some(c) = picked.chosen {
-                                draft.push(c);
+                                // at the caret, which follows it (chat.rs,
+                                // the Legacy style, does the same)
+                                crate::ui::emoji::recent::place(ui.ctx(), conv_input, &mut draft, c);
                                 close = !ui.input(|i| i.modifiers.shift);
                             }
                             close |= picked.escape;

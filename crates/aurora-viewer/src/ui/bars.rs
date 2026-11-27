@@ -4335,9 +4335,26 @@ pub(crate) fn toolbar_row(
         let bounds = rects.iter().copied().filter(|rect| rect.is_positive()).reduce(egui::Rect::union);
         if let Some(bounds) = bounds {
             let outer = bounds.expand(islands::PAD).intersect(painter.clip_rect());
+            // the chat block's island, raised over the dock's row
+            // (`chrome::lift_chat`)
+            let lifted = (row.bar == super::toolbar::Bar::Bottom && !row.floating && !row.editing)
+                .then(|| chrome::chat_lift(ui.ctx()))
+                .flatten()
+                .filter(|lift| *lift > 0.0)
+                .and_then(|lift| {
+                    let chat = buttons.iter().position(|button| button.command == "bar_chat")?;
+                    Some((rects.get(chat)?.center(), lift))
+                });
             let shapes = super::toolbar::structure::groups(buttons, &rects, outer, row.bar.vertical())
                 .into_iter()
-                .map(|rect| super::widgets::island_shape(ui.ctx(), p, rect))
+                .map(|mut rect| {
+                    if let Some((chat, lift)) = lifted
+                        && rect.contains(chat)
+                    {
+                        rect.min.y -= lift;
+                    }
+                    super::widgets::island_shape(ui.ctx(), p, rect)
+                })
                 .collect();
             painter.set(underlay, egui::Shape::Vec(shapes));
         }

@@ -3274,7 +3274,6 @@ ui-options-show-chat-channel-hint = 在附近聊天輸入框與底部聊天欄�
 ui-options-show-recent-emojis = 顯示最近使用的表情
 ui-options-show-recent-emojis-hint = 最近使用的表情會顯示在聊天輸入框上方，傳送過一次後出現。點選即可加入訊息。
 ui-options-show-recent-emojis-legacy = 顯示最近使用的表情（舊版樣式）
-ui-options-show-recent-emojis-legacy-hint = 使用舊版聊天樣式時：最近使用的表情顯示在輸入框下方一行。預設關閉，因為傳統檢視器也保持該行收起。
 ui-options-favorite-emojis = 收藏的表情
 ui-options-favorite-emojis-hint = 在表情選擇器或最近行中右鍵某個表情即可收藏：收藏會排在該行最前，並在表情選擇器中有單獨分頁。
 ui-options-script-errors = 指令碼錯誤

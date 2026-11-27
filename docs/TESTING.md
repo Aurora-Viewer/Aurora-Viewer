@@ -7141,7 +7141,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
-| `AURORA_DEMO_RECENT_EMOJIS=1\|<emojis>` | Recent emojis over the chat fields (under them with the Legacy chat style): a full row, or the emojis given |
+| `AURORA_DEMO_RECENT_EMOJIS=1\|<emojis>` | Recent emojis over the chat fields (under the Conversations field with the Legacy chat style): a full row, or the emojis given |
 | `AURORA_DEMO_FAVORITE_EMOJIS=<emojis>` | Favourite emojis: first in that row, the picker opening on their tab |
 | `AURORA_DEMO_CHAT_INPUT=1\|long\|ime\|os-ime` | Paragraph drafts, Japanese IME composition in chat inputs, or an empty field for a real input method |
 | `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
@@ -9586,8 +9586,9 @@ failure. Grid validation and any paid upload are performed by the human.
   `demo chat os-ime:` with the field's text and focus, and
   `demo ime output:` as for `AURORA_DEMO_INVENTORY=ime`, whose entry
   describes `scripts/test-ime-linux.py`.
-- **`AURORA_DEMO_RECENT_EMOJIS=1|<emojis>`**: the row under the chat
-  fields (the island's, the Conversations window's), `1` a full row of 20,
+- **`AURORA_DEMO_RECENT_EMOJIS=1|<emojis>`**: the row over the chat
+  fields (the island's, the Conversations window's; under the
+  Conversations field with the Legacy chat style), `1` a full row of 20,
   or the emojis given, the last one first. Nothing is saved. A click adds
   the emoji at the caret; a message sent moves its emojis to the front.
   Unset, the row takes no room until a first emoji is sent. Set, the row

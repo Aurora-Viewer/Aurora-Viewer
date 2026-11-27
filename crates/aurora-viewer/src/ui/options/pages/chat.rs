@@ -58,7 +58,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 cx.conditional(legacy, |cx| {
                     cx.toggle(
                         tr!("ui-options-show-recent-emojis-legacy"),
-                        tr!("ui-options-show-recent-emojis-legacy-hint"),
+                        tr!("ui-options-show-recent-emojis-legacy-places-hint"),
                         &field!(show_recent_emojis_legacy),
                     );
                 });

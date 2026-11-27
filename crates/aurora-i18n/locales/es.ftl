@@ -3292,7 +3292,6 @@ ui-options-show-chat-channel-hint = Muestra el selector de canal (/0) en los cam
 ui-options-show-recent-emojis = Mostrar emojis recientes
 ui-options-show-recent-emojis-hint = Sus últimos emojis usados, en una fila sobre los campos de chat, que aparece en cuanto haya enviado uno. Haga clic en uno para añadirlo a su mensaje.
 ui-options-show-recent-emojis-legacy = Mostrar emojis recientes (estilo Legacy)
-ui-options-show-recent-emojis-legacy-hint = Con el estilo de chat Legacy: sus últimos emojis usados, en una fila bajo los campos de chat. Desactivado por defecto, porque el Legacy Viewer mantiene esa fila cerrada.
 ui-options-favorite-emojis = Emojis favoritos
 ui-options-favorite-emojis-hint = Haga clic derecho en un emoji del selector o de la fila de recientes para conservarlo: los favoritos aparecen primero en esa fila y tienen su propia pestaña en el selector.
 ui-options-script-errors = Errores de scripts
