@@ -234,7 +234,8 @@ For each PR claimed, before its CI is asked for:
   CI question: fix it yourself or ask the author. Resolving a conflict in
   code reads those files before the CI is green, which AGENTS.md section
   11 forbids unless your human chooses that fix (the PR's change to rule
-  3): the question says so.
+  3): the question says so, and that the fix is pushed without
+  `check.ps1`, which runs once CI is green (step 6).
 - **CI waits for "Approve and run"** (note `CI waits for Approve and run`,
   or no run at all on the head): your human approves it (AGENTS.md section
   11). Ask once for every PR claimed, in one dialog, naming any that
@@ -441,7 +442,10 @@ that choice, fix by fix, opens the author's branch or description to you
   an English message in the imperative, no AI mention (section 10). Then
   `check.ps1` again on the merged tree, after every change you make to a
   PR, however small, before it is pushed (a change to docs alone
-  excepted). The push:
+  excepted). One exception keeps AGENTS.md section 11 (nothing of a PR
+  runs before its CI is green and its diff read): a conflict in code you
+  resolve before CI is pushed without `check.ps1`; its CI, then the diff
+  and step 5's `check.ps1` test it before any verdict. The push:
 
   ```
   git -C <W> push https://github.com/<owner>/<repo>.git <commit>:refs/heads/<headRefName>

@@ -862,8 +862,9 @@ says how they are handled.
    to it: a branch of this repository, or a fork that allows maintainers'
    pushes; and the fix is small and sure) or post the `## Changes
    requested`. A fix of yours is checked with `check.ps1` on the PR merged
-   with the latest `main`, then pushed without a merge of `main` unless it
-   needs one (a conflict, a fix that only works on today's `main`): as for
+   with the latest `main` (a conflict resolved before CI excepted: nothing
+   of the PR runs before its CI is green, so its CI and step 5 test it),
+   then pushed without a merge of `main` unless it needs one (a conflict, a fix that only works on today's `main`): as for
    your own PR (step 1 above), no merge of `main` nobody needs. Rule 3
    keeps you off others' work in progress:
    only your human's choice, PR by PR and fix by fix, opens the author's
