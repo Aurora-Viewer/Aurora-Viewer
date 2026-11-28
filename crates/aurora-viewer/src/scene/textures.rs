@@ -3213,10 +3213,10 @@ impl TextureStreamer {
                 e.failures += 1;
                 let backoff = 2u64.pow(e.failures.min(6));
                 e.retry_at = Some(Instant::now() + Duration::from_secs(backoff));
-                // the asset CDN answers 403 for a missing asset (S3), as for
-                // meshes; LLTextureFetchWorker gives up on it as on any
-                // failed GET (WAIT_HTTP_REQ, "Fail harder")
-                e.gone = matches!(r.status, 403 | 404);
+                // the asset CDN answers 403 for a missing asset (S3);
+                // LLTextureFetchWorker gives up on it as on any failed GET
+                // (WAIT_HTTP_REQ, "Fail harder")
+                e.gone = aurora_net::fetch::asset_missing(r.status);
                 if e.gone {
                     e.retry_at = Some(Instant::now() + Duration::from_secs(600));
                 }

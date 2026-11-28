@@ -200,6 +200,16 @@ pub enum StatusClass {
     Failed,
 }
 
+/// An asset the asset server does not have: 404, and 403, which the asset
+/// CDN (an object store) answers for a key it does not hold. The Legacy
+/// Viewer gets the same 403 for the same ids and gives up on them
+/// (LLTextureFetchWorker, WAIT_HTTP_REQ: "abort: fail harder"; LLAssetStorage
+/// does not retry a failed asset either): the fetchers treat it as missing,
+/// not as a transient error asked again every few seconds (#1859).
+pub fn asset_missing(status: u16) -> bool {
+    matches!(status, 403 | 404)
+}
+
 pub fn classify_status(status: u16) -> StatusClass {
     match status {
         200..=299 => StatusClass::Success,
@@ -967,6 +977,9 @@ mod tests {
         assert_eq!(classify_status(416), StatusClass::RangeNotSatisfiable);
         assert_eq!(classify_status(404), StatusClass::Failed);
         assert_eq!(classify_status(403), StatusClass::Failed);
+        // #1859: 403 and 404 are a missing asset; a server error is not
+        assert!(asset_missing(403) && asset_missing(404));
+        assert!(!asset_missing(500) && !asset_missing(503) && !asset_missing(401) && !asset_missing(200));
         assert_eq!(classify_status(429), StatusClass::Failed);
         for s in [499, 500, 502, 503, 504, 599] {
             assert_eq!(classify_status(s), StatusClass::Retryable, "{s}");
