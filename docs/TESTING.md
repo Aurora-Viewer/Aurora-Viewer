@@ -13670,6 +13670,7 @@ What the inventory must show with these scenarios:
 | `AURORA_OCCLUSION=0` or `1` | Overrides the "Occlusion" setting (Graphics › Quality) |
 | `AURORA_NO_OCCLUSION=1` | Turns off GPU occlusion |
 | `AURORA_MSAA_PREPASS=0` or `alt` | MSAA without the prepass of its depth, or both alternately |
+| `AURORA_REFLECTION_PREPASS=0` | Water reflection and mirrors without the depth prepass of their solid faces, as before |
 | `AURORA_NOVSYNC=1` | Turns off vertical sync |
 | `AURORA_PRESENT_MODE=<mode>` | Forces the present mode of the swapchain |
 | `AURORA_WINDOW_HOLD=0` | No frames while a mouse button is held on the window frame or the system menu is open, as before (Windows) |
@@ -15329,6 +15330,21 @@ What the inventory must show with these scenarios:
     between two equal measurements.
   - To be seen with `AURORA_DEMO_OVERDRAW=12` (clear gain) and with the
     demo alone (little overlap: the prepass costs about what it saves).
+- **`AURORA_REFLECTION_PREPASS=0`**: the planar reflections (water,
+  mirrors) draw the reflected scene from a camera of their own, with no
+  culling and in no particular order, so a single pass lights every layer
+  that passes the depth test at its turn, most of them hidden later. By
+  default, a depth pass of the solid faces comes first (the same discards:
+  side, portal clip, plane, alpha mask; no lighting), and the colour pass,
+  at depth Equal, lights only the face each pixel shows. Two faces at
+  exactly the same depth now show the last one drawn, as in the main view,
+  where the single pass showed the first.
+  The blended faces, the water seen from below and the reflection probe
+  faces keep their single pass.
+  - `0`: the single pass, as before, to compare the image and the times
+    (`g_planar` of `perf summary`, which holds the planar reflections).
+  - To be seen in front of a mirror facing a busy scene, and over water:
+    the gain grows with the layers behind each pixel of the reflection.
 - **`AURORA_EYE_RELATIVE=0`**: computes the vertices of the objects and the
   terrain in region coordinates, as before, to compare. By default, the
   vertex shader removes the camera position from the model's translation

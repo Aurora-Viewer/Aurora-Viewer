@@ -1900,6 +1900,37 @@ fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec
     return vec4<f32>(s.color.rgb, 1.0);
 }
 
+// The planar reflections' depth prepass (AURORA_REFLECTION_PREPASS): fs_reflect's
+// discards (side, portal clip, plane, alpha mask) without its lighting, so
+// that its colour pass, at depth Equal, lights each pixel once: drawn alone,
+// it lights every layer that passes the depth test at its turn. The mask's
+// alpha is eval_material's, as fs_reflect tests it (st_material_alpha's, not
+// called: the scene module is built without that section; these solid faces
+// carry no FLAG_ALPHA_BLEND, so no legacy glare raises it); the other faces
+// fetch no texture.
+@fragment
+fn fs_reflect_depth(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    let facing = front != mirrored_pass();
+    if (!facing && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
+        discard;
+    }
+    portal_clip(rec, in.world_pos);
+    var masked = false;
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
+        // (an emissive mask's alpha is the face colour's)
+        var alpha = rec.base_color.a;
+        if ((rec.flags.x & FLAG_EMISSIVE_MASK) == 0u) {
+            alpha = sample_tex(rec.tex.x, in.uv).a * alpha;
+        }
+        masked = alpha < rec.params.w;
+    }
+    if (reflection_clip(in.world_pos) || masked) {
+        discard;
+    }
+    return vec4<f32>(0.0);
+}
+
 // The mirror's blended faces (lace, sheer cloth, hair strands, lashes,
 // appliers on a blended layer), drawn back to front over its solid image:
 // the Legacy Viewer's hero probe renders the whole scene, its alpha pools
