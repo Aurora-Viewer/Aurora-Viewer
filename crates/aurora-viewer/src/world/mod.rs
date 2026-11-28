@@ -931,6 +931,13 @@ pub struct World {
     /// Since when our avatar wears objects the region it is in has not sent
     /// (`drop_left_behind`).
     left_behind_since: Option<Instant>,
+    /// The items of those objects asked again on their point, once each
+    /// while some are left behind, and when they were last looked at.
+    left_behind_asked: HashSet<Uuid>,
+    left_behind_checked: Option<Instant>,
+    /// Items a detach was sent for and that nothing wore again since
+    /// (`note_outfit_command`): a left-behind copy of one is not asked for.
+    taken_off: HashSet<Uuid>,
     /// Landmark assets and the handles of their regions.
     pub landmarks: landmarks::Landmarks,
     /// World map regions, items, tracking and parcel overlays.
@@ -1289,6 +1296,9 @@ impl World {
             inventory_retried: HashSet::new(),
             origin_shift: Vec3::ZERO,
             left_behind_since: None,
+            left_behind_asked: HashSet::new(),
+            left_behind_checked: None,
+            taken_off: HashSet::new(),
             landmarks: Default::default(),
             map: worldmap::WorldMap::default(),
             region_tracker: Default::default(),
@@ -1596,14 +1606,31 @@ impl World {
         false
     }
 
-    /// What our avatar wore that the region it arrived in did not send
-    /// again (taken off on the way, or a kill ignored above): removed once
-    /// that region has had the time to send it. Firestorm keeps such ghosts
-    /// until its next attachment refresh.
+    /// What our avatar wore that the region it arrived in has not sent
+    /// again yet (a kill ignored above, or a region slow to send it).
+    ///
+    /// The Legacy Viewer never drops them on a timer:
+    /// LLViewerObject::setRegion (indra/newview/llviewerobject.cpp) takes
+    /// the avatar's attachments along to the agent's region, and they stay
+    /// until that region sends them under its own ids or kills them. Aurora
+    /// removed them 15 s after the avatar came: on a busy region the whole
+    /// outfit went and was built again when the objects came later
+    /// (issue #3071), the Aurora bridge with it.
+    ///
+    /// Once the region has had `LEFT_BEHIND_AFTER`, an object still linked
+    /// in the Current Outfit is asked again on its point, once
+    /// (LLAttachmentsMgr::refreshAttachments, indra/newview/llattachmentsmgr.cpp,
+    /// which the Legacy Viewer runs when a region kills a worn object
+    /// just after a teleport), and kept until the region sends it, or the
+    /// object it rezzes for that item. One taken off on purpose, no longer
+    /// in the Current Outfit, or with no item of ours (temporary) is
+    /// removed, as before: nothing would bring it back or take it off.
     fn drop_left_behind(&mut self, now: Instant) {
         const LEFT_BEHIND_AFTER: f32 = 15.0;
+        // (what is kept is looked at again this often, not every frame)
+        const RECHECK: f32 = 1.0;
         let Some(avatar) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
-            self.left_behind_since = None;
+            self.forget_left_behind();
             return;
         };
         let (key, region) = (avatar.key, avatar.key.region);
@@ -1611,7 +1638,7 @@ impl World {
         // never confirm their arrival or require their removal.
         let stale = |w: &World, i: &usize| w.objects.get(*i).is_some_and(|o| o.key.region != region && !o.is_client_preview());
         if !self.objects.children_of(&key).iter().any(|i| stale(self, i)) {
-            self.left_behind_since = None;
+            self.forget_left_behind();
             return;
         }
         let since = *self.left_behind_since.get_or_insert(now);
@@ -1620,17 +1647,67 @@ impl World {
             self.left_behind_since = Some(now);
             return;
         }
-        if now.duration_since(since).as_secs_f32() < LEFT_BEHIND_AFTER {
+        if now.duration_since(since).as_secs_f32() < LEFT_BEHIND_AFTER
+            || self
+                .left_behind_checked
+                .is_some_and(|at| now.duration_since(at).as_secs_f32() < RECHECK)
+        {
             return;
         }
-        let gone: Vec<usize> = self.objects.children_of(&key).iter().copied().filter(|i| stale(self, i)).collect();
-        log::info!("{} worn objects not sent by the region arrived in: removed", gone.len());
-        for i in gone {
-            self.release_linkset_camera(i, true);
-            self.objects.remove_idx(i);
+        self.left_behind_checked = Some(now);
+        let (left, sent): (Vec<usize>, Vec<usize>) = self.objects.children_of(&key).iter().copied().partition(|i| stale(self, i));
+        // the items of the objects the region did send: a left-behind copy
+        // of one of them is a ghost of what the region rezzed again
+        let arrived: HashSet<Uuid> = sent
+            .iter()
+            .filter_map(|i| self.objects.get(*i)?.attachment_item_id())
+            .collect();
+        let linked: Option<HashSet<Uuid>> = outfit::current_outfit_objects(&self.inventory).map(|ids| ids.into_iter().collect());
+        let mut gone = Vec::new();
+        let mut asked = Vec::new();
+        for i in left {
+            let Some(o) = self.objects.get(i) else { continue };
+            let kept = o
+                .attachment_item_id()
+                .filter(|item| !item.is_nil() && *item != o.full_id && !arrived.contains(item))
+                .filter(|item| !self.taken_off.contains(item))
+                .filter(|item| linked.as_ref().is_some_and(|linked| linked.contains(item)))
+                .and_then(|item| self.inventory.items.get(&item));
+            match kept {
+                Some(item) => {
+                    if self.left_behind_asked.insert(item.id) {
+                        let mut request = outfit::attach_request(item, self.agent_id);
+                        request.point = o.attachment_point();
+                        asked.push(request);
+                    }
+                }
+                None => gone.push(i),
+            }
         }
-        self.forget_gone_look_ats();
+        if !asked.is_empty() {
+            let names: Vec<Uuid> = asked.iter().map(|r| r.item_id).collect();
+            log::info!(
+                "{} worn objects not sent yet by the region arrived in: kept, asked again: {}",
+                asked.len(),
+                outfit::names(&self.inventory, &names)
+            );
+            self.outfit.commands.push(aurora_net::NetCommand::RezAttachments(asked));
+        }
+        if !gone.is_empty() {
+            log::info!("{} worn objects not sent by the region arrived in: removed", gone.len());
+            for i in gone {
+                self.release_linkset_camera(i, true);
+                self.objects.remove_idx(i);
+            }
+            self.forget_gone_look_ats();
+        }
+    }
+
+    /// Nothing is left behind any more: the next arrival starts again.
+    fn forget_left_behind(&mut self) {
         self.left_behind_since = None;
+        self.left_behind_checked = None;
+        self.left_behind_asked.clear();
     }
 
     pub fn main_origin(&self) -> Option<(u32, u32)> {
@@ -3206,12 +3283,19 @@ impl World {
     }
 
     /// Tells the outfit restore which worn objects are taken off on
-    /// purpose (a detach sent by the resident, a script or RLVa).
+    /// purpose (a detach sent by the resident, a script or RLVa), and
+    /// `drop_left_behind` which ones must not be asked for again.
     pub fn note_outfit_command(&mut self, command: &aurora_net::NetCommand) {
         match command {
             aurora_net::NetCommand::DetachAttachments(items) => {
                 self.outfit.on_detach_requested(items);
                 self.attachment_inventory.detaching(items);
+                self.taken_off.extend(items.iter().copied());
+            }
+            aurora_net::NetCommand::RezAttachments(items) => {
+                for item in items {
+                    self.taken_off.remove(&item.item_id);
+                }
             }
             aurora_net::NetCommand::DetachObject { handle, local_id } => {
                 if let Some(item) = self
@@ -3225,6 +3309,7 @@ impl World {
                 {
                     self.outfit.on_detach_requested(&[item]);
                     self.attachment_inventory.detaching(&[item]);
+                    self.taken_off.insert(item);
                 }
             }
             _ => {}
@@ -9706,6 +9791,8 @@ mod motion_tests {
         assert!(world.arrival_overdue(t + Duration::from_secs(25), count));
     }
 
+    /// A worn object with no item of ours (no AttachItemID): nothing can ask
+    /// for it again, it goes once the region has had the time to send it.
     #[test]
     fn worn_object_the_destination_never_sends_is_removed() {
         let (mut world, avatar, worn, here, there) = worn_fixture();
@@ -9728,6 +9815,190 @@ mod motion_tests {
         world.flush_arrival(t + std::time::Duration::from_secs(46));
         assert!(world.objects.index_of_uuid(&worn.full_id).is_none());
         assert!(world.objects.index_of_uuid(&world.agent_id).is_some());
+    }
+
+    /// The item `linked_worn_fixture` wears from, linked in the Current Outfit.
+    const LINKED_ITEM: u128 = 0x1771;
+
+    /// `worn_fixture` with the worn object's item (AttachItemID) linked in
+    /// a fetched Current Outfit folder.
+    fn linked_worn_fixture() -> (
+        World,
+        aurora_net::objects::ObjectUpdate,
+        aurora_net::objects::ObjectUpdate,
+        RegionHandle,
+        RegionHandle,
+    ) {
+        let (mut world, avatar, mut worn, here, there) = worn_fixture();
+        let item = Uuid::from_u128(LINKED_ITEM);
+        worn.name_values = format!("AttachItemID STRING RW SV {item}");
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: vec![worn.clone()],
+        });
+        let (cof, link) = (Uuid::from_u128(0x11), Uuid::from_u128(0x1772));
+        world.inventory.folders.insert(
+            cof,
+            inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: cof,
+                    name: "Current Outfit".into(),
+                    type_default: outfit::FT_CURRENT_OUTFIT,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: vec![link],
+                state: inventory::FetchState::Fetched,
+                library: false,
+            },
+        );
+        world.inventory.items.insert(
+            link,
+            aurora_net::inventory::InvItem {
+                id: link,
+                parent: cof,
+                asset_type: 24,
+                inv_type: 17,
+                asset_id: item,
+                ..Default::default()
+            },
+        );
+        world.inventory.items.insert(
+            item,
+            aurora_net::inventory::InvItem {
+                id: item,
+                asset_type: 6,
+                inv_type: 17,
+                name: "Mesh body".into(),
+                ..Default::default()
+            },
+        );
+        (world, avatar, worn, here, there)
+    }
+
+    /// A teleport from `here` to `there` whose region has sent our avatar
+    /// (local id 7001) but not yet what it wears.
+    fn arrive_without_attachments(world: &mut World, avatar: &aurora_net::objects::ObjectUpdate, here: RegionHandle, there: RegionHandle) {
+        world.apply(NetEvent::MainRegionChanged { handle: there });
+        world.apply(NetEvent::RegionRemoved { handle: here });
+        let mut arrived = avatar.clone();
+        arrived.local_id = 7001;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: there,
+            objects: vec![arrived],
+        });
+    }
+
+    /// The items `world` asked the region to wear again.
+    fn asked_again(world: &World) -> Vec<(Uuid, u8, bool)> {
+        world
+            .outfit
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                aurora_net::NetCommand::RezAttachments(items) => Some(items),
+                _ => None,
+            })
+            .flatten()
+            .map(|a| (a.item_id, a.point, a.add))
+            .collect()
+    }
+
+    /// Issue #3071: a busy region sends what we wear long after our avatar.
+    /// LLViewerObject::setRegion takes it along and nothing drops it on a
+    /// timer: it stays on, is asked again once on its point
+    /// (LLAttachmentsMgr::refreshAttachments) and is the same object when
+    /// the region sends it at last.
+    #[test]
+    fn worn_object_the_destination_sends_late_stays_worn_and_is_asked_again() {
+        let (mut world, avatar, worn, here, there) = linked_worn_fixture();
+        let worn_idx = world.objects.index_of_uuid(&worn.full_id).expect("worn");
+        arrive_without_attachments(&mut world, &avatar, here, there);
+        let t = Instant::now();
+        world.flush_arrival(t);
+        world.flush_arrival(t + Duration::from_secs(14));
+        assert!(asked_again(&world).is_empty(), "asked before the region had the time");
+        world.flush_arrival(t + Duration::from_secs(16));
+        assert_eq!(world.objects.index_of_uuid(&worn.full_id), Some(worn_idx), "the outfit came off");
+        assert_eq!(asked_again(&world), [(Uuid::from_u128(LINKED_ITEM), 2, true)]);
+        world.outfit.commands.clear();
+        world.flush_arrival(t + Duration::from_secs(60));
+        assert_eq!(world.objects.index_of_uuid(&worn.full_id), Some(worn_idx));
+        assert!(asked_again(&world).is_empty(), "asked twice");
+        let mut sent = worn.clone();
+        sent.local_id = 7002;
+        sent.parent_id = 7001;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: there,
+            objects: vec![sent],
+        });
+        let w = world.objects.get(worn_idx).expect("worn");
+        assert_eq!((w.key.region, w.key.local_id), (there, 7002));
+        world.flush_arrival(t + Duration::from_secs(61));
+        assert_eq!(world.objects.index_of_uuid(&worn.full_id), Some(worn_idx));
+    }
+
+    /// The region rezzes the item again under a new object id (it had lost
+    /// it): the copy left behind goes, the new one stays.
+    #[test]
+    fn worn_object_rezzed_again_replaces_the_copy_left_behind() {
+        let (mut world, avatar, worn, here, there) = linked_worn_fixture();
+        arrive_without_attachments(&mut world, &avatar, here, there);
+        let t = Instant::now();
+        world.flush_arrival(t);
+        world.flush_arrival(t + Duration::from_secs(16));
+        assert_eq!(asked_again(&world).len(), 1);
+        let mut rezzed = worn.clone();
+        rezzed.full_id = Uuid::from_u128(0xBEEF9);
+        rezzed.local_id = 7003;
+        rezzed.parent_id = 7001;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: there,
+            objects: vec![rezzed],
+        });
+        world.flush_arrival(t + Duration::from_secs(18));
+        assert!(world.objects.index_of_uuid(&worn.full_id).is_none(), "two copies worn");
+        assert!(world.objects.index_of_uuid(&Uuid::from_u128(0xBEEF9)).is_some());
+        assert_eq!(world.worn_attachment_items().len(), 1);
+    }
+
+    /// Taken off on purpose during the trip, or no longer in the Current
+    /// Outfit: nothing will send it again, it goes after the delay and is
+    /// not worn again.
+    #[test]
+    fn worn_object_taken_off_on_the_way_is_removed_not_asked_again() {
+        let item = Uuid::from_u128(LINKED_ITEM);
+        let (mut world, avatar, worn, here, there) = linked_worn_fixture();
+        world.note_outfit_command(&aurora_net::NetCommand::DetachAttachments(vec![item]));
+        arrive_without_attachments(&mut world, &avatar, here, there);
+        let t = Instant::now();
+        world.flush_arrival(t);
+        world.flush_arrival(t + Duration::from_secs(16));
+        assert!(world.objects.index_of_uuid(&worn.full_id).is_none());
+        assert!(asked_again(&world).is_empty());
+
+        let (mut world, avatar, worn, here, there) = linked_worn_fixture();
+        world.inventory.items.remove(&Uuid::from_u128(0x1772));
+        if let Some(cof) = world.inventory.folders.get_mut(&Uuid::from_u128(0x11)) {
+            cof.items.clear();
+        }
+        arrive_without_attachments(&mut world, &avatar, here, there);
+        world.flush_arrival(t);
+        world.flush_arrival(t + Duration::from_secs(16));
+        assert!(world.objects.index_of_uuid(&worn.full_id).is_none());
+        assert!(asked_again(&world).is_empty());
+
+        // worn again since the detach: kept and asked again
+        let (mut world, avatar, worn, here, there) = linked_worn_fixture();
+        world.note_outfit_command(&aurora_net::NetCommand::DetachAttachments(vec![item]));
+        let rez = outfit::attach_request(world.inventory.items.get(&item).expect("item"), world.agent_id);
+        world.note_outfit_command(&aurora_net::NetCommand::RezAttachments(vec![rez]));
+        arrive_without_attachments(&mut world, &avatar, here, there);
+        world.flush_arrival(t);
+        world.flush_arrival(t + Duration::from_secs(16));
+        assert!(world.objects.index_of_uuid(&worn.full_id).is_some());
+        assert_eq!(asked_again(&world).len(), 1);
     }
 
     #[test]
