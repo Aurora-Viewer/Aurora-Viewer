@@ -15340,7 +15340,6 @@ large-surface-frame-max-hint = La superficie degli oggetti grandi disegnata prim
 ui-options-attached-particles = Particelle degli oggetti indossati
 ui-options-attached-particles-hint = Disegna le particelle di ciò che gli avatar indossano: scintille, fumo, fuoco.
 ui-options-draw-distance-stepping = Distanza di disegno progressiva
-ui-options-draw-distance-stepping-hint = Dopo l'accesso e dopo un teleport in un'altra regione, la distanza di disegno parte da 32 m e raddoppia fino a quella impostata, così ciò che è vicino si carica per primo.
 panorama-reset = Ripristina la vista
 panorama-enlarge = Ingrandisci
 panorama-leave-full = Esci dalla vista ingrandita

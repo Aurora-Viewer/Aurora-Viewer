@@ -225,6 +225,12 @@ pub const DETAIL_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Raise `s`, returning what to restore.
 pub fn boost(s: &mut Settings) -> Held {
+    // the progressive draw distance ends with the user's value: the boost
+    // holds the draw distance itself, and a step (or a step back) held as
+    // the user's would be given back and saved at its end
+    if let Some(steps) = s.draw_stepping.take() {
+        s.draw_distance = steps.user;
+    }
     let values = Values::read(s);
     let shadows = s.shadows;
     boosted(values).write(s);

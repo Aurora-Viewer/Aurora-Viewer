@@ -753,11 +753,15 @@ pub struct Settings {
     pub start_region: String,
     pub draw_distance: f32,
     /// FSRenderFarClipStepping: after the login and a teleport to another
-    /// region, the draw distance starts at 32 m and doubles every
-    /// `draw_distance_stepping_interval` seconds (settings/draw_stepping.rs;
-    /// off).
+    /// region, the draw distance starts at 32 m and grows back to the
+    /// user's as the load allows (settings/draw_stepping.rs; off): doubling
+    /// every 2 s while the arrival is quiet and the frames fast, more slowly
+    /// while they are not, and stepping back one level when frames stay
+    /// heavy.
     pub draw_distance_stepping: bool,
-    /// FSRenderFarClipSteppingInterval: 20 s, 5 to 30 (Debug Settings only).
+    /// FSRenderFarClipSteppingInterval: 20 s, 5 to 30 (Debug Settings only):
+    /// the pace of the steps while objects are still arriving or the frames
+    /// are slow (the Legacy Viewer's fixed pace).
     pub draw_distance_stepping_interval: u32,
     /// The steps under way; the file keeps the user's draw distance.
     #[serde(skip)]
@@ -4157,8 +4161,12 @@ impl Settings {
             held.sync(&copy);
             held.restore(&mut copy);
         }
-        // the draw distance being stepped: the user's
-        if let Some(steps) = copy.draw_stepping.take() {
+        // the draw distance being stepped: the user's, unless the user set
+        // another since the last step (a graphics level, the slider): that
+        // one is theirs, saved now (the next tick ends the steps on it)
+        if let Some(steps) = copy.draw_stepping.take()
+            && copy.draw_distance == steps.step
+        {
             copy.draw_distance = steps.user;
         }
         // the values Autotune holds: the user's (after the two above, whose

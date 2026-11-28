@@ -15716,7 +15716,6 @@ large-surface-frame-max-hint = Powierzchnia dużych obiektów rysowana, zanim na
 ui-options-attached-particles = Cząstki z założonych obiektów
 ui-options-attached-particles-hint = Rysuje cząstki tego, co mają na sobie awatary: iskry, dym, ogień.
 ui-options-draw-distance-stepping = Stopniowe pole widzenia
-ui-options-draw-distance-stepping-hint = Po zalogowaniu i po teleporcie do innego regionu pole widzenia zaczyna się od 32 m i podwaja się aż do ustawionej wartości, aby najpierw wczytało się to, co jest blisko.
 panorama-reset = Resetuj widok
 panorama-enlarge = Powiększ
 panorama-leave-full = Opuść powiększony widok

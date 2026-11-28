@@ -523,7 +523,7 @@ fn quality(cx: &mut Cx) {
         // FSRenderFarClipStepping; its interval in Debug Settings (clean menus)
         cx.keywords("FSRenderFarClipStepping progressive").toggle(
             tr!("ui-options-draw-distance-stepping"),
-            tr!("ui-options-draw-distance-stepping-hint"),
+            tr!("ui-options-draw-distance-stepping-load-hint"),
             &field!(draw_distance_stepping),
         );
         cx.row(

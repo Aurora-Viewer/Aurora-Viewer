@@ -15326,7 +15326,6 @@ large-surface-frame-max-hint = 隐藏最大物件前所绘制的大型物件总�
 ui-options-attached-particles = 穿戴物件的粒子
 ui-options-attached-particles-hint = 绘制化身穿戴物件的粒子：闪光、烟雾、火焰。
 ui-options-draw-distance-stepping = 渐进绘制距离
-ui-options-draw-distance-stepping-hint = 登录后以及瞬间传送到其他区域后，绘制距离从 32 米开始并逐步加倍到您的设定，让近处先加载。
 panorama-reset = 重置视角
 panorama-enlarge = 放大
 panorama-leave-full = 退出放大视图

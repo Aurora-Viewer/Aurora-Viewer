@@ -590,7 +590,7 @@ fn the_photo_quality_and_the_steps_keep_the_users_values() {
         },
     );
     s.autotune_hold = Some(h);
-    let (steps, value) = crate::settings::draw_stepping::start(None, s.draw_distance, Duration::from_secs(20), Instant::now());
+    let (steps, value) = crate::settings::draw_stepping::start(None, s.draw_distance, Instant::now());
     s.draw_stepping = Some(steps);
     s.draw_distance = value;
     assert_eq!(s.to_saved().draw_distance, 256.0, "saved during the steps: the user's");
@@ -688,7 +688,7 @@ fn a_change_of_the_avatars_during_the_steps_is_the_users() {
             max_avatars: 8,
         },
     );
-    let (steps, value) = crate::settings::draw_stepping::start(None, s.draw_distance, Duration::from_secs(20), Instant::now());
+    let (steps, value) = crate::settings::draw_stepping::start(None, s.draw_distance, Instant::now());
     s.draw_stepping = Some(steps);
     s.draw_distance = value;
     // the user sets 10 avatars in Preferences during the steps
@@ -704,6 +704,56 @@ fn a_change_of_the_avatars_during_the_steps_is_the_users() {
     h.restore(&mut s);
     assert_eq!(s.max_avatars, 10);
     assert_eq!(s.draw_stepping.map(|st| st.user), Some(256.0));
+}
+
+#[test]
+fn autotune_writes_again_once_the_steps_reach_the_users_distance() {
+    use crate::settings::draw_stepping::{Tick, begin, tick};
+    let mut s = Settings {
+        draw_distance: 256.0,
+        draw_distance_stepping: true,
+        ..Settings::default()
+    };
+    let t0 = Instant::now();
+    begin(&mut s, t0).expect("on");
+    let quiet = crate::settings::draw_stepping::Load {
+        waiting: 0,
+        gpu_ms: Some(8.0),
+        shadow_ms: Some(2.0),
+    };
+    // the steps climb (Autotune paused meanwhile) and end at 256 m, as the
+    // Legacy Viewer's do: nothing holds the draw distance after the arrival
+    let mut t = Duration::ZERO;
+    while let Some(steps) = s.draw_stepping {
+        assert!(t <= Duration::from_secs(10), "the steps end in about 6 s");
+        match tick(steps, s.draw_distance, true, false, quiet, Duration::from_secs(20), t0 + t) {
+            Tick::Wait => {}
+            Tick::Hold(next) => s.draw_stepping = Some(next),
+            Tick::Step(next, value) => {
+                s.draw_stepping = Some(next);
+                s.draw_distance = value;
+            }
+            Tick::End(value) => {
+                s.draw_stepping = None;
+                s.draw_distance = value;
+            }
+        }
+        t += Duration::from_millis(100);
+    }
+    assert_eq!(s.draw_distance, 256.0);
+    let mut h = Hold::new(&s);
+    let max_avatars = s.max_avatars;
+    h.write(
+        &mut s,
+        Tuned {
+            draw_distance: 100.0,
+            max_avatars,
+        },
+    );
+    assert_eq!(s.draw_distance, 100.0, "Autotune writes again");
+    assert_eq!(h.user(&s).draw_distance, 256.0);
+    s.autotune_hold = Some(h);
+    assert_eq!(s.to_saved().draw_distance, 256.0);
 }
 
 #[test]

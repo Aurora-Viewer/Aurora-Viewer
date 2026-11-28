@@ -973,6 +973,9 @@ pub struct App {
     last_seat: Option<uuid::Uuid>,
     /// The login's first arrival is past (app/draw_stepping.rs).
     first_arrival_done: bool,
+    /// The last GPU measure the progressive draw distance read
+    /// (app/draw_stepping.rs).
+    draw_stepping_readback: crate::settings::draw_stepping::Readback,
     /// Report Abuse (LLFloaterReporter).
     report_abuse: ui::report_abuse::ReportAbuseUi,
     /// The depth of field's focus distance and its transition.
@@ -2286,6 +2289,7 @@ impl App {
             director: Default::default(),
             last_seat: None,
             first_arrival_done: false,
+            draw_stepping_readback: Default::default(),
             follow_ui: Default::default(),
             portal_ui: Default::default(),
             object_export: Default::default(),

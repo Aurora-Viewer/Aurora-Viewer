@@ -16350,7 +16350,7 @@ ui-options-attached-particles-hint = アバターが装着しているものの�
 
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = 描画距離を段階的に広げる
-ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。
+ui-options-draw-distance-stepping-load-hint = ログイン後と別のリージョンへのテレポート後、描画距離を３２ｍから始め、負荷に合わせて設定値まで広げます。オブジェクトの読み込みが終わりフレームが軽い間は２秒ごとに倍にし、そうでない間はよりゆっくり広げます。重いフレームが続くと一段戻し、次に試すまで長めに待ちます。
 
 # Panorama viewer (ui/panorama.rs)
 panorama-reset = 表示をリセット

@@ -15500,7 +15500,6 @@ large-surface-frame-max-hint = Die Gesamtoberfläche großer Objekte, die gezeic
 ui-options-attached-particles = Partikel getragener Objekte
 ui-options-attached-particles-hint = Zeigt Partikel von Objekten, die Avatare tragen, etwa Funken, Rauch und Feuer.
 ui-options-draw-distance-stepping = Sichtweite stufenweise erhöhen
-ui-options-draw-distance-stepping-hint = Nach der Anmeldung oder dem Teleport in eine andere Region beginnt die Sichtweite bei 32 m und verdoppelt sich schrittweise bis zu Ihrem eingestellten Wert. Nahe Objekte werden zuerst geladen.
 panorama-reset = Ansicht zurücksetzen
 panorama-enlarge = Vergrößern
 panorama-leave-full = Vergrößerte Ansicht verlassen
