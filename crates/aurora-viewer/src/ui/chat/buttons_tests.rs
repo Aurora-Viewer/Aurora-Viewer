@@ -918,6 +918,90 @@ fn an_objects_full_size_line_offers_to_ignore_it_in_every_style() {
     }
 }
 
+/// The sender's name keeps its own input when the message's text wraps under
+/// it (#3137: in Compact the text starts after the name on the same row and
+/// comes back under it): the pointing hand over the name, its click opening
+/// the profile, its right click the author's menu; and a drag across the text
+/// copies the message as the transcript writes it, nothing of the name's
+/// widgets added. Aurora, whose text sits under its head, for comparison.
+#[test]
+fn the_name_keeps_its_input_when_the_text_wraps_under_it() {
+    let said = "this message is long enough to wrap onto several rows of the thread, \
+                so that its text goes on under the sender's name and past it, \
+                in the Compact layout as in the Aurora one, for every row it takes";
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for conversation in [None, Some(JANE)] {
+            let fresh = || {
+                let mut h = H::new(style);
+                let message = line("Jane", JANE, ChatKind::Im, said);
+                if let Some(id) = conversation {
+                    h.world.social.session_mut(id).lines = [message].into();
+                } else {
+                    h.world.chat = [message].into();
+                }
+                h.open(conversation);
+                h
+            };
+            let case = format!("{style:?}, {conversation:?}");
+            let mut h = fresh();
+            let text = h.text_rect(said);
+            assert!(text.height() > 30.0, "{case}: the message wraps ({text:?})");
+            let name = h
+                .texts
+                .iter()
+                .rev()
+                .find(|t| t.source == "Jane")
+                .unwrap_or_else(|| panic!("{case}: the name is painted"))
+                .rect;
+            if style == ChatStyle::Compact {
+                assert!(
+                    (name.center().y - text.top()).abs() < 12.0,
+                    "{case}: the name leads the text's first row"
+                );
+                assert!(name.right() <= text.left(), "{case}: the text starts after the name");
+            }
+            // the pointing hand, then a click to the profile
+            h.frame(vec![egui::Event::PointerMoved(name.center())]);
+            let out = h.frame_out(Vec::new());
+            assert_eq!(out.cursor_icon, egui::CursorIcon::PointingHand, "{case}: the hand over the name");
+            h.at(name.center());
+            assert_eq!(
+                crate::ui::profile::take_open_request(&h.frames.ctx),
+                Some(JANE),
+                "{case}: the name's click opens the profile"
+            );
+            // the author's menu
+            let mut h = fresh();
+            h.right_click(name.center());
+            assert!(h.painted(aurora_i18n::tr!("common-view-profile")), "{case}: the name's menu");
+            // a drag across the whole text: the transcript's line, no more
+            let mut h = fresh();
+            let message = line("Jane", JANE, ChatKind::Im, said);
+            let expected = format!("{}{said}", super::copy_prefix(&message, &message.from));
+            let (from, to) = (
+                egui::pos2(text.left() + 1.0, text.top() + 6.0),
+                egui::pos2(text.right() + 2.0, text.bottom() - 4.0),
+            );
+            let button = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            h.frame(vec![egui::Event::PointerMoved(from), button(from, true)]);
+            for k in 1..=4 {
+                h.frame(vec![egui::Event::PointerMoved(from + (to - from) * (k as f32 / 4.0))]);
+            }
+            h.frame(vec![button(to, false)]);
+            let copied = h.frame_out(vec![egui::Event::Copy]).commands.into_iter().find_map(|c| match c {
+                egui::OutputCommand::CopyText(t) => Some(t),
+                _ => None,
+            });
+            assert_eq!(copied, Some(expected), "{case}: the drag copies the message");
+        }
+    }
+}
+
 /// A double click on the first or the last word of a message, then Ctrl+C,
 /// copies that word alone: not the line's "[time] Name: " prefix, nor the
 /// whole message. A third click copies the message as a drag from the start

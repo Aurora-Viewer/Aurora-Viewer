@@ -94,6 +94,10 @@ pub(crate) struct Text {
     /// What is on screen (with the ellipsis when cut).
     pub shown: String,
     pub cut: bool,
+    /// Where it is painted. A text laid out after other widgets of its row
+    /// (a compact chat row's text after the name, #3137) starts where its
+    /// first glyph does, not under those widgets (its first row's leading
+    /// space, `PlacedRow::rect_without_leading_space`).
     pub rect: egui::Rect,
 }
 
@@ -107,12 +111,22 @@ fn flatten(shape: egui::Shape, out: &mut Vec<egui::Shape>) {
 fn collect_texts(shape: &egui::Shape, out: &mut Vec<Text>) {
     match shape {
         egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_texts(s, out)),
-        egui::Shape::Text(t) => out.push(Text {
-            source: t.galley.text().to_owned(),
-            shown: t.galley.rows.iter().flat_map(|r| r.row.glyphs.iter().map(|g| g.chr)).collect(),
-            cut: t.galley.elided,
-            rect: egui::Rect::from_min_size(t.pos, t.galley.size()),
-        }),
+        egui::Shape::Text(t) => {
+            let mut rect = egui::Rect::from_min_size(t.pos, t.galley.size());
+            // the leading space only: 0 for a text without it (its first
+            // glyph at its row's left edge, wherever a centred row stands),
+            // and for a first row left empty (the text starts on the next)
+            if let Some(first) = t.galley.rows.first().filter(|r| !r.glyphs.is_empty()) {
+                let lead = first.rect_without_leading_space().left() - first.rect().left();
+                rect.min.x = (rect.min.x + lead).min(rect.max.x);
+            }
+            out.push(Text {
+                source: t.galley.text().to_owned(),
+                shown: t.galley.rows.iter().flat_map(|r| r.row.glyphs.iter().map(|g| g.chr)).collect(),
+                cut: t.galley.elided,
+                rect,
+            });
+        }
         _ => {}
     }
 }

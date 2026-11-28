@@ -460,24 +460,30 @@ fn compact_row(
             );
         }
         let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
-        if !emote {
-            ui.add_space(0.0);
-            let color = name_color(env, th, line, who);
-            let max = (ui.available_width() * 0.35).max(60.0);
-            ui.allocate_ui_with_layout(egui::vec2(max, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 5.0;
-                name_label(ui, env, line, name, color, who, max);
-                tags(ui, p, th, line, who);
-            });
-        }
         let (text, color, italics) = body(env, line, super::shown_name(line, name));
         let emphasis = super::line_emphasis(env, line, italics);
-        let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width() - RIGHT);
+        // the text and the cards in one column after the times; the name
+        // and its tags lead the text's first row, and its next rows come back
+        // under the name, using the whole width (#3137; the Legacy Viewer's
+        // plain-text history writes "[time] Name: text" as one paragraph,
+        // FSChatHistory::appendMessage, indra/newview/fschathistory.cpp)
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
-            ui.add_space(1.0);
-            if !visible.is_empty() {
-                let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
+            let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width());
+            let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
+            crate::ui::emoji::text_rows_continued(ui, size, |ui| {
+                if !emote {
+                    let name_color = name_color(env, th, line, who);
+                    let max = (ui.available_width() * 0.35).max(60.0);
+                    ui.spacing_mut().item_spacing.x = 5.0;
+                    name_label(ui, env, line, name, name_color, who, max);
+                    tags(ui, p, th, line, who);
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.add_space(1.0);
+                }
+                if visible.is_empty() {
+                    return;
+                }
                 if let Some(action) = super::emote_action(line) {
                     let action = super::previews::text(env.previews.as_deref(), line, action, ui.available_width() - RIGHT);
                     super::emote_text_marked(
@@ -514,7 +520,7 @@ fn compact_row(
                         mark,
                     );
                 }
-            }
+            });
             super::previews::cards(ui, env, line, &text);
         });
     });

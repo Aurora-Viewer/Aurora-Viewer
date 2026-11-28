@@ -7158,6 +7158,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MUTED_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:hidden\|collapsed\|greyed]` | A blocked resident talking in nearby chat: the history hides, folds or greys the lines |
 | `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines][:inspect][:unnamed\|spoof]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact; `unnamed` an object without a name imitating a resident, `spoof` the same marked "(no name)" |
 | `AURORA_DEMO_CHAT_RANGE=aurora\|compact\|bubbles\|legacy\|lines` | Residents and objects talking from near and from beyond the say range, the far lines dimmed |
+| `AURORA_DEMO_COMPACT_WRAP=1\|compact\|aurora\|bubbles\|legacy` | Long nearby chat lines from long names with tags, to see how the Compact style wraps them |
 | `AURORA_DEMO_EMOTES=aurora\|compact[:on]` | A resident's line, emote and line in the nearby chat of a workspace style; `on` groups the emotes with their sender's messages (Aurora style only) |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
@@ -10141,6 +10142,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the kiosk's at full brightness. Move the slider: the lines already shown
   follow it (1: no difference; 0.3: the far lines barely show). Above the
   chat bar a far line gets its own card, the card's glass undimmed.
+
+- **`AURORA_DEMO_COMPACT_WRAP=1|compact|aurora|bubbles|legacy`** (#3137):
+  six nearby chat lines at the arrival, one every 0.3 s from 2 s in world:
+  the demo's long-named resident (`DEMO_LONG_NAME`) shouts a long line (the
+  SHOUTS tag), the resident of `DEMO_NOVA` says a paragraph and emotes a
+  long action, the long name sends a line with a long link and emoji,
+  `DEMO_NOVA` says "Thanks!", and an object says a long line; the names are
+  those the demo's name service gives these ids. The Conversations window
+  (560 points wide) shows the nearby chat in the style named (`1` is
+  `compact`), for this launch only: the style saved in Preferences does not
+  change what it shows. In Compact, the name and its tags lead the first row
+  of a message, and its next rows come back under the name, using the whole
+  width: no narrow column after a long name, and the time column stays
+  clear. With `AURORA_DEMO_STAFF=1` the `DEMO_NOVA` resident's name carries
+  the Aurora team's mark too. Narrow the window: the rows wrap again under
+  the name.
 
 - **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines][:inspect][:unnamed|spoof]`**
   (#475, #741): nearby chat said at the arrival, two residents among a
