@@ -3,9 +3,17 @@
 //! does). Each key's character is its level 1 keysym in the active layout;
 //! `KeyboardLayout::from_typed` turns them into labels and names.
 //!
-//! Wayland only tells a focused surface which layout is active, so on
-//! Wayland the first layout of the keymap is used; X11 reports the active
-//! one.
+//! Every layout of the keymap is read (`us,fr` gives two). X11 reports the
+//! active one at start; Wayland only tells a focused surface, and XWayland
+//! takes the compositor's once one of its windows has the focus, so there
+//! the first layout stands in until the watch hears the active one.
+//!
+//! `OsWatch` follows the layout while the viewer runs, on the window's own
+//! display server: on Wayland a keyboard of our own on winit's connection
+//! (the group of `wl_keyboard.modifiers`, and a new keymap), on X11 a
+//! connection of our own, read by a thread of its own, that selects XKB's
+//! group changes and new keymaps (`XkbStateNotify`, `XkbNewKeyboardNotify`,
+//! `XkbMapNotify`). Neither waits in the frame loop.
 
 use std::ptr;
 
@@ -13,9 +21,9 @@ use winit::keyboard::KeyCode;
 use winit::platform::scancode::PhysicalKeyExtScancode;
 use xkbcommon_dl::{self as xkb, XkbCommon, xkb_context_flags, xkb_keymap_compile_flags::XKB_KEYMAP_COMPILE_NO_FLAGS};
 
-use super::{KeyboardLayout, dead_key_char, detected, detected_keys};
+use super::{KeyboardLayout, Layouts, dead_key_char, detected, detected_keys};
 
-pub(super) fn detect() -> Option<KeyboardLayout> {
+pub(super) fn detect() -> Option<Layouts> {
     let Some(lib) = xkb::xkbcommon_option() else {
         log::info!("libxkbcommon not found: no keyboard layout");
         return None;
@@ -23,17 +31,96 @@ pub(super) fn detect() -> Option<KeyboardLayout> {
     let context = Context::new(lib)?;
     // WAYLAND_SOCKET is a socket handed to one client: connecting through it
     // here would take winit's connection away.
-    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("WAYLAND_SOCKET").is_none();
-    let (keymap, layout, source) = wayland
-        .then(|| wayland::keymap(&context).map(|keymap| (keymap, 0, "Wayland compositor")))
+    let handed_socket = std::env::var_os("WAYLAND_SOCKET").is_some();
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some() && !handed_socket;
+    let (keymap, active, guessed, source) = wayland
+        .then(|| wayland::keymap(&context).map(|keymap| (keymap, 0, true, "Wayland compositor")))
         .flatten()
-        .or_else(|| x11::keymap(&context).map(|(keymap, layout)| (keymap, layout, "X server")))?;
-    // SAFETY: the keymap is valid while `keymap` lives.
-    let layouts = unsafe { (lib.xkb_keymap_num_layouts)(keymap.ptr) };
-    log::info!("keyboard layout: layout {} of {layouts} of the {source}'s keymap", layout + 1);
-    detected(KeyboardLayout::from_typed(
-        detected_keys().filter_map(|key| Some((key, keymap.typed(key, layout)?))),
+        .or_else(|| x11::keymap(&context).map(|(keymap, layout, xwayland)| (keymap, layout, xwayland, "X server")))?;
+    // A separate X server cannot confirm the layout of the Wayland socket handed to winit.
+    let guessed = guessed || handed_socket;
+    let all = layouts_of(&keymap, source);
+    let count = all.len();
+    if all.iter().all(Option::is_none) {
+        return None;
+    }
+    let active = usize::try_from(active).unwrap_or(0);
+    log::info!(
+        "keyboard layout: layout {} in use{}",
+        active + 1,
+        if guessed && count > 1 {
+            " until the active one is reported"
+        } else {
+            ""
+        }
+    );
+    // a layout without the movement letters falls back to US QWERTY alone
+    Some(Layouts::new(
+        all.into_iter().map(Option::unwrap_or_default).collect(),
+        active,
+        guessed,
     ))
+}
+
+/// Every layout of `keymap`: `None` for one without the movement letters,
+/// which counts as US QWERTY.
+fn layouts_of(keymap: &Keymap, source: &str) -> Vec<Option<KeyboardLayout>> {
+    // SAFETY: the keymap is valid while `keymap` lives.
+    let count = unsafe { (keymap.lib.xkb_keymap_num_layouts)(keymap.ptr) }.max(1);
+    (0..count)
+        .map(|layout| {
+            log::info!("keyboard layout: layout {} of {count} of the {source}'s keymap", layout + 1);
+            detected(KeyboardLayout::from_typed(
+                detected_keys().filter_map(|key| Some((key, keymap.typed(key, layout)?))),
+            ))
+        })
+        .collect()
+}
+
+/// Every layout of `keymap`, one without the movement letters as US QWERTY:
+/// what a watch picks the active layout from.
+fn watched_layouts(keymap: &Keymap, source: &str) -> Vec<KeyboardLayout> {
+    layouts_of(keymap, source).into_iter().map(Option::unwrap_or_default).collect()
+}
+
+/// The layout `group` names among a keymap's `layouts`. A group beyond
+/// them wraps, like XKB's default group action.
+fn layout_of_group(layouts: &[KeyboardLayout], group: u32) -> Option<KeyboardLayout> {
+    let index = usize::try_from(group).ok()? % layouts.len().max(1);
+    layouts.get(index).cloned()
+}
+
+/// The active layout on the window's display server.
+pub(super) enum OsWatch {
+    Wayland(wayland::Watch),
+    X11(x11::Watch),
+}
+
+impl OsWatch {
+    pub(super) fn new(window: &winit::window::Window) -> Option<Self> {
+        use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
+        match window.display_handle().ok()?.as_raw() {
+            RawDisplayHandle::Wayland(handle) => wayland::Watch::new(handle).map(Self::Wayland),
+            RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_) => x11::Watch::new().map(Self::X11),
+            _ => None,
+        }
+    }
+
+    /// The layout made active since the last call, if any.
+    pub(super) fn poll(&mut self) -> Result<Option<KeyboardLayout>, String> {
+        match self {
+            Self::Wayland(watch) => watch.poll(),
+            Self::X11(watch) => watch.poll(),
+        }
+    }
+
+    /// Wayland reports the group to a keyboard entering the window; XWayland
+    /// sends no event when its group already matches.
+    pub(super) fn focused(&mut self) {
+        if let Self::X11(watch) = self {
+            watch.focused();
+        }
+    }
 }
 
 struct Context {
@@ -102,12 +189,14 @@ impl Drop for Keymap {
 mod wayland {
     use std::fs::File;
     use std::os::unix::fs::FileExt;
+    use std::sync::mpsc;
 
     use wayland_client::globals::{GlobalListContents, registry_queue_init};
     use wayland_client::protocol::{wl_keyboard, wl_registry, wl_seat};
-    use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
+    use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
+    use winit::raw_window_handle::WaylandDisplayHandle;
 
-    use super::{Context, Keymap, xkb};
+    use super::{Context, KeyboardLayout, Keymap, xkb};
 
     /// The keymap text the compositor sends to a new keyboard.
     #[derive(Default)]
@@ -122,7 +211,11 @@ mod wayland {
         seat.get_keyboard(&queue.handle(), ());
         let mut text = Text::default();
         queue.roundtrip(&mut text).ok()?;
-        let mut text = text.0?;
+        compile(context, text.0?)
+    }
+
+    /// Compiles a keymap the compositor sent as text.
+    fn compile(context: &Context, mut text: Vec<u8>) -> Option<Keymap> {
         while text.last() == Some(&0) {
             text.pop();
         }
@@ -137,6 +230,223 @@ mod wayland {
             )
         };
         Keymap::new(context, ptr)
+    }
+
+    // Compositor keymaps are normally well below a megabyte. Bound each allocation,
+    // including the one used for the initial layout read.
+    const MAX_KEYMAP_BYTES: usize = 16 * 1024 * 1024;
+
+    struct KeymapFile {
+        file: File,
+        size: usize,
+    }
+
+    impl KeymapFile {
+        fn new(file: File, size: u32) -> Option<Self> {
+            let size = usize::try_from(size).ok()?;
+            (1..=MAX_KEYMAP_BYTES).contains(&size).then_some(Self { file, size })
+        }
+
+        fn read(self) -> Option<Vec<u8>> {
+            // Read at offset 0: the compositor may share the file between clients.
+            let mut buf = vec![0; self.size];
+            self.file.read_exact_at(&mut buf, 0).ok()?;
+            Some(buf)
+        }
+    }
+
+    fn keymap_file(event: wl_keyboard::Event) -> Option<KeymapFile> {
+        let wl_keyboard::Event::Keymap {
+            format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
+            fd,
+            size,
+        } = event
+        else {
+            return None;
+        };
+        KeymapFile::new(File::from(fd), size)
+    }
+
+    /// The active layout, heard by a keyboard of our own on winit's
+    /// connection: the compositor sends it the keymap, and `modifiers`,
+    /// whose `group` is the active layout, to every keyboard of the focused
+    /// client, ours with winit's. Its queue is ours alone; winit's event loop
+    /// reads the socket and libwayland files our events there.
+    ///
+    /// The guest backend releases its local proxies before its native event queue.
+    /// It must itself be dropped while winit still owns the display.
+    pub(in super::super) struct Watch {
+        queue: EventQueue<Heard>,
+        heard: Heard,
+        seat: wl_seat::WlSeat,
+        keyboard: wl_keyboard::WlKeyboard,
+    }
+
+    #[derive(Default)]
+    struct Heard {
+        /// The seat has a keyboard (`wl_seat.capabilities`).
+        keyboard: bool,
+        /// At most one parse in flight and the newest file received while it runs.
+        pending: Option<KeymapFile>,
+        parsing: Option<mpsc::Receiver<Option<Vec<KeyboardLayout>>>>,
+        /// The layouts of the keymap last read.
+        layouts: Vec<KeyboardLayout>,
+        /// The group last reported.
+        group: Option<u32>,
+        /// The group or the keymap changed since the last poll.
+        changed: bool,
+    }
+
+    impl Watch {
+        pub(in super::super) fn new(handle: WaylandDisplayHandle) -> Option<Self> {
+            // SAFETY: winit's wl_display, which lives as long as its event
+            // loop; the watch belongs to the window's `Gfx`, dropped in
+            // `exiting` while the loop still lives.
+            let backend = unsafe { wayland_client::backend::Backend::from_foreign_display(handle.display.as_ptr().cast()) };
+            let connection = Connection::from_backend(backend);
+            let (globals, mut queue) = registry_queue_init::<Heard>(&connection).ok()?;
+            // version 5 has `release`
+            let seat: wl_seat::WlSeat = globals.bind(&queue.handle(), 1..=5, ()).ok()?;
+            let mut heard = Heard::default();
+            // `get_keyboard` on a seat that never had a keyboard is a protocol
+            // error, which would end winit's connection with ours: wait for
+            // the seat's capabilities first (one round trip, at window
+            // creation, as `registry_queue_init` makes)
+            queue.roundtrip(&mut heard).ok()?;
+            if !heard.keyboard {
+                log::info!("keyboard layout: the Wayland seat has no keyboard, no layout to follow");
+                return None;
+            }
+            let keyboard = seat.get_keyboard(&queue.handle(), ());
+            globals.destroy();
+            connection.flush().ok()?;
+            log::info!("keyboard layout: following the active layout on the Wayland connection");
+            Some(Self {
+                queue,
+                heard,
+                seat,
+                keyboard,
+            })
+        }
+
+        /// The layout reported since the previous call: a new group, or the
+        /// group's layout in a new keymap. Never waits: only the events
+        /// winit's loop already read are dispatched.
+        pub(in super::super) fn poll(&mut self) -> Result<Option<KeyboardLayout>, String> {
+            self.queue.dispatch_pending(&mut self.heard).map_err(|e| e.to_string())?;
+            self.heard.poll()
+        }
+    }
+
+    impl Heard {
+        /// What the events dispatched so far report: the group's layout once
+        /// a keymap's layouts are known. A report with no layout to name (no
+        /// keymap compiled yet, or the only one failed) stays pending until
+        /// one compiles, so the first report, which settles the stand-in and
+        /// the settings waiting for it, is not lost.
+        fn poll(&mut self) -> Result<Option<KeyboardLayout>, String> {
+            self.poll_keymap()?;
+            if self.parsing.is_some() {
+                return Ok(None);
+            }
+            let Some(group) = self.group.filter(|_| self.changed) else {
+                return Ok(None);
+            };
+            let layout = super::layout_of_group(&self.layouts, group);
+            if layout.is_some() {
+                self.changed = false;
+            }
+            Ok(layout)
+        }
+
+        /// One event of our keyboard.
+        fn keyboard_event(&mut self, event: wl_keyboard::Event) {
+            match event {
+                // sent on every modifier change: only a new group counts
+                wl_keyboard::Event::Modifiers { group, .. } if self.group != Some(group) => {
+                    self.group = Some(group);
+                    self.changed = true;
+                }
+                event @ wl_keyboard::Event::Keymap { .. } => {
+                    // sent when the keyboard is made, then on a new keymap
+                    if let Some(file) = keymap_file(event) {
+                        self.pending = Some(file);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        /// Reading the file and compiling XKB can both wait. Only immutable layout
+        /// data comes back to the frame thread; the worker never borrows winit's display.
+        fn poll_keymap(&mut self) -> Result<(), String> {
+            if let Some(receiver) = &self.parsing {
+                match receiver.try_recv() {
+                    Ok(Some(layouts)) if self.pending.is_none() => {
+                        self.layouts = layouts;
+                        self.changed = true;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => return Ok(()),
+                    _ => {}
+                }
+                self.parsing = None;
+            }
+            if let Some(file) = self.pending.take() {
+                let (send, receive) = mpsc::channel();
+                std::thread::Builder::new()
+                    .name("keyboard-layout-wayland".into())
+                    .spawn(move || {
+                        let layouts = xkb::xkbcommon_option()
+                            .and_then(Context::new)
+                            .and_then(|context| compile(&context, file.read()?))
+                            .map(|keymap| super::watched_layouts(&keymap, "Wayland compositor"));
+                        let _ = send.send(layouts);
+                    })
+                    .map_err(|e| e.to_string())?;
+                self.parsing = Some(receive);
+            }
+            Ok(())
+        }
+    }
+
+    impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Heard {
+        fn event(
+            _: &mut Self,
+            _: &wl_registry::WlRegistry,
+            _: wl_registry::Event,
+            _: &GlobalListContents,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl Drop for Watch {
+        fn drop(&mut self) {
+            if self.keyboard.version() >= 3 {
+                self.keyboard.release();
+            }
+            if self.seat.version() >= 5 {
+                self.seat.release();
+            }
+        }
+    }
+
+    impl Dispatch<wl_seat::WlSeat, ()> for Heard {
+        fn event(heard: &mut Self, _: &wl_seat::WlSeat, event: wl_seat::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+            if let wl_seat::Event::Capabilities {
+                capabilities: WEnum::Value(capabilities),
+            } = event
+            {
+                heard.keyboard = capabilities.contains(wl_seat::Capability::Keyboard);
+            }
+        }
+    }
+
+    impl Dispatch<wl_keyboard::WlKeyboard, ()> for Heard {
+        fn event(heard: &mut Self, _: &wl_keyboard::WlKeyboard, event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+            heard.keyboard_event(event);
+        }
     }
 
     impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Text {
@@ -157,32 +467,127 @@ mod wayland {
 
     impl Dispatch<wl_keyboard::WlKeyboard, ()> for Text {
         fn event(text: &mut Self, _: &wl_keyboard::WlKeyboard, event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-            if let wl_keyboard::Event::Keymap {
-                format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
-                fd,
-                size,
-            } = event
-            {
-                // read at offset 0: the compositor may share one file between clients
-                let mut buf = vec![0; size as usize];
-                if File::from(fd).read_exact_at(&mut buf, 0).is_ok() {
-                    text.0 = Some(buf);
-                }
+            // the keymap's own fd closes with the event
+            if let Some(buf) = keymap_file(event).and_then(KeymapFile::read) {
+                text.0 = Some(buf);
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn file(size: u32) -> Option<KeymapFile> {
+            KeymapFile::new(File::open("/dev/null").expect("readable empty file"), size)
+        }
+
+        #[test]
+        fn keymap_files_reject_oversize_and_truncated_input() {
+            assert!(file(0).is_none());
+            assert!(file(MAX_KEYMAP_BYTES as u32).is_some());
+            assert!(file(MAX_KEYMAP_BYTES as u32 + 1).is_none());
+            assert!(file(128).expect("valid size").read().is_none());
+        }
+
+        #[test]
+        fn an_old_parse_cannot_replace_a_newer_pending_keymap() {
+            let (send, receive) = mpsc::channel();
+            let mut heard = Heard {
+                parsing: Some(receive),
+                ..Default::default()
+            };
+            heard.poll_keymap().expect("an unfinished parse does not block");
+            assert!(heard.parsing.is_some());
+            heard.pending = file(32);
+            send.send(Some(vec![KeyboardLayout::wasd()])).expect("worker reply");
+            heard.poll_keymap().expect("start the newest parse");
+            assert!(heard.layouts.is_empty(), "the stale keymap was discarded");
+            assert!(heard.pending.is_none());
+            assert!(heard.parsing.take().expect("new parse").recv().expect("worker reply").is_none());
+        }
+
+        fn group(group: u32) -> wl_keyboard::Event {
+            wl_keyboard::Event::Modifiers {
+                serial: 1,
+                mods_depressed: 0,
+                mods_latched: 0,
+                mods_locked: 0,
+                group,
+            }
+        }
+
+        /// A parse in flight, its worker's reply sent by the test.
+        fn parsing(heard: &mut Heard) -> mpsc::Sender<Option<Vec<KeyboardLayout>>> {
+            let (send, receive) = mpsc::channel();
+            heard.parsing = Some(receive);
+            send
+        }
+
+        /// `us,fr` with French active: the compositor's group reaches the
+        /// keyboard, the first keymap fails to compile, and the report waits
+        /// for the next keymap instead of being lost; then the report goes
+        /// through `Layouts::activate` and moves a profile's defaults from
+        /// the stand-in to AZERTY once, ending the settings' wait.
+        #[test]
+        fn a_group_heard_before_a_working_keymap_is_reported_once_it_compiles() {
+            use crate::keybinds::{KeyBindings, layout::Layouts};
+            let mut heard = Heard::default();
+            let worker = parsing(&mut heard);
+            heard.keyboard_event(group(1));
+            assert_eq!(heard.poll(), Ok(None), "the keymap is still compiling");
+            worker.send(None).expect("the keymap fails to compile");
+            assert_eq!(heard.poll(), Ok(None), "no layout to name the group with");
+            assert!(heard.changed, "the report stays pending");
+            assert_eq!(heard.poll(), Ok(None));
+
+            heard.keyboard_event(group(1)); // the same group again: no new report
+            let worker = parsing(&mut heard);
+            worker
+                .send(Some(vec![KeyboardLayout::wasd(), KeyboardLayout::zqsd()]))
+                .expect("the next keymap compiles");
+            let reported = heard.poll().expect("no error").expect("the pending group's layout");
+            assert_eq!(reported, KeyboardLayout::zqsd());
+            assert_eq!(heard.poll(), Ok(None), "reported once");
+
+            let layouts = Layouts::new(vec![KeyboardLayout::wasd(), KeyboardLayout::zqsd()], 0, true);
+            let change = layouts.activate(reported, true).expect("the first report");
+            assert!(change.guessed, "it replaces the stand-in");
+            let (us, fr) = (KeyboardLayout::wasd(), KeyboardLayout::zqsd());
+            let mut keys = KeyBindings::for_layout(&us);
+            let mut pending = true;
+            assert!(keys.follow_reported_layout(&change, &mut pending), "the settings are saved");
+            assert!(!pending, "the wait is over");
+            assert_eq!(keys, KeyBindings::for_layout(&fr));
+            assert!(!keys.follow_reported_layout(&change, &mut pending), "once");
+
+            // a later switch back to US changes the labels only
+            heard.keyboard_event(group(0));
+            let switched = heard.poll().expect("no error").expect("the switch");
+            let change = layouts.activate(switched, false).expect("a new layout");
+            assert!(!change.guessed);
+            assert_eq!(*change.after, us);
         }
     }
 }
 
 mod x11 {
     use std::ptr;
+    use std::sync::mpsc;
+    use std::time::Duration;
 
+    use x11rb::connection::{Connection as _, RequestConnection as _};
+    use x11rb::protocol::Event;
+    use x11rb::protocol::xkb::{self as xkb_proto, ConnectionExt as _};
     use x11rb::xcb_ffi::{XCBConnection, load_libxcb};
     use xkbcommon_dl::x11::{self as xkb_x11, xkb_x11_setup_xkb_extension_flags::XKB_X11_SETUP_XKB_EXTENSION_NO_FLAGS};
 
-    use super::{Context, Keymap, xkb};
+    use super::super::{FocusSettle, GroupHeard};
+    use super::{Context, KeyboardLayout, Keymap, xkb};
 
-    /// The X server's keymap and its active layout.
-    pub(super) fn keymap(context: &Context) -> Option<(Keymap, u32)> {
+    /// A connection to the X server with libxkbcommon's XKB set up on it,
+    /// and its core keyboard.
+    fn connect() -> Option<(XCBConnection, &'static xkb_x11::XkbCommonX11, i32)> {
         let lib = xkb_x11::xkbcommon_x11_option()?;
         // libxcb is loaded on first use, and a failed lazy load panics:
         // load it here, where its absence only means no layout.
@@ -191,9 +596,9 @@ mod x11 {
         let raw = connection.get_raw_xcb_connection();
         // SAFETY: `raw` is the live XCB connection owned by `connection`,
         // which outlives these calls; the null out-parameters are optional.
-        unsafe {
+        let device = unsafe {
             let ready = (lib.xkb_x11_setup_xkb_extension)(
-                raw,
+                raw.cast(),
                 xkb_x11::XKB_X11_MIN_MAJOR_XKB_VERSION,
                 xkb_x11::XKB_X11_MIN_MINOR_XKB_VERSION,
                 XKB_X11_SETUP_XKB_EXTENSION_NO_FLAGS,
@@ -202,10 +607,22 @@ mod x11 {
                 ptr::null_mut(),
                 ptr::null_mut(),
             );
-            let device = (lib.xkb_x11_get_core_keyboard_device_id)(raw);
+            let device = (lib.xkb_x11_get_core_keyboard_device_id)(raw.cast());
             if ready != 1 || device < 0 {
                 return None;
             }
+            device
+        };
+        Some((connection, lib, device))
+    }
+
+    /// The keymap of `device` and its active layout.
+    fn read(context: &Context, connection: &XCBConnection, lib: &xkb_x11::XkbCommonX11, device: i32) -> Option<(Keymap, u32)> {
+        let raw = connection.get_raw_xcb_connection().cast();
+        // SAFETY: `raw` is the live XCB connection `connection` owns, with
+        // XKB set up (`connect`); the keymap and state are released here or
+        // by `Keymap`.
+        unsafe {
             let keymap = Keymap::new(
                 context,
                 (lib.xkb_x11_keymap_new_from_device)(context.ptr, raw, device, super::XKB_KEYMAP_COMPILE_NO_FLAGS),
@@ -219,6 +636,187 @@ mod x11 {
                 layout
             };
             Some((keymap, layout))
+        }
+    }
+
+    /// The X server's keymap, its active layout, and whether that layout
+    /// only stands in for the active one: XWayland sets its group from the
+    /// compositor once one of its windows has the focus, and reports the
+    /// first layout until then.
+    pub(super) fn keymap(context: &Context) -> Option<(Keymap, u32, bool)> {
+        let (connection, lib, device) = connect()?;
+        let (keymap, layout) = read(context, &connection, lib, device)?;
+        let xwayland = matches!(connection.extension_information("XWAYLAND"), Ok(Some(_)));
+        Some((keymap, layout, xwayland))
+    }
+
+    /// XKB's group and keymap changes, heard on a connection of our own
+    /// (the group is the server's, the same for every client, and winit's
+    /// connection is not ours to read), by a thread of its own: reading a
+    /// new keymap or the group waits for the server, which the frame loop
+    /// must not. The thread looks at the socket every `TICK` and at once
+    /// when told of a focus; the frame loop only takes what it sent. On
+    /// XWayland a focus read equal to the stand-in waits up to
+    /// `SETTLE_TICKS` for the compositor's group (`FocusSettle`).
+    pub(in super::super) struct Watch {
+        layouts: mpsc::Receiver<Result<KeyboardLayout, String>>,
+        focus: mpsc::Sender<()>,
+    }
+
+    /// How often the thread reads the events the server queued.
+    const TICK: Duration = Duration::from_millis(100);
+
+    /// How many idle ticks (1 s) a focus read equal to XWayland's stand-in
+    /// waits for the compositor's group before it is read again and
+    /// reported. The two normally arrive within a few milliseconds of each
+    /// other; this bound is not measured.
+    const SETTLE_TICKS: u32 = 10;
+
+    impl Watch {
+        pub(in super::super) fn new() -> Option<Self> {
+            let (send, layouts) = mpsc::channel();
+            let (focus, focused) = mpsc::channel();
+            std::thread::Builder::new()
+                .name("keyboard-layout-x11".into())
+                .spawn(move || {
+                    let error = match Listener::new() {
+                        Ok(mut listener) => listener.run(&focused, &send),
+                        Err(e) => e,
+                    };
+                    let _ = send.send(Err(error));
+                })
+                .map_err(|e| log::warn!("keyboard layout: no X11 watch thread: {e}"))
+                .ok()?;
+            Some(Self { layouts, focus })
+        }
+
+        /// The window got the focus: the thread asks for the group.
+        pub(in super::super) fn focused(&mut self) {
+            let _ = self.focus.send(());
+        }
+
+        /// The layout the thread reported since the last call. Never waits.
+        pub(in super::super) fn poll(&mut self) -> Result<Option<KeyboardLayout>, String> {
+            let mut last = None;
+            loop {
+                match self.layouts.try_recv() {
+                    Ok(Ok(layout)) => last = Some(layout),
+                    Ok(Err(e)) => return Err(e),
+                    Err(mpsc::TryRecvError::Empty) => return Ok(last),
+                    Err(mpsc::TryRecvError::Disconnected) => return Err("the X11 watch thread ended".into()),
+                }
+            }
+        }
+    }
+
+    /// The thread's side: the connection and the keymap's layouts.
+    struct Listener {
+        connection: XCBConnection,
+        lib: &'static xkb_x11::XkbCommonX11,
+        device: i32,
+        /// The layouts of the keymap, read again when it changes.
+        layouts: Vec<KeyboardLayout>,
+        /// Holds a stale XWayland read until the first report.
+        settle: FocusSettle,
+    }
+
+    impl Listener {
+        fn new() -> Result<Self, String> {
+            let (connection, lib, device) = connect().ok_or("no XKB on the X server")?;
+            // x11rb parses XKB's events once it knows the extension
+            connection
+                .extension_information(xkb_proto::X11_EXTENSION_NAME)
+                .map_err(|e| e.to_string())?
+                .ok_or("no XKB extension")?;
+            let details = xkb_proto::SelectEventsAux::new().state_notify(xkb_proto::SelectEventsAuxStateNotify {
+                affect_state: xkb_proto::StatePart::GROUP_STATE,
+                state_details: xkb_proto::StatePart::GROUP_STATE,
+            });
+            let keymap_events = xkb_proto::EventType::NEW_KEYBOARD_NOTIFY | xkb_proto::EventType::MAP_NOTIFY;
+            let keymap_parts = xkb_proto::MapPart::KEY_TYPES | xkb_proto::MapPart::KEY_SYMS;
+            connection
+                .xkb_select_events(
+                    u16::try_from(device).map_err(|e| e.to_string())?,
+                    xkb_proto::EventType::from(0u16),
+                    keymap_events,
+                    keymap_parts,
+                    keymap_parts,
+                    &details,
+                )
+                .map_err(|e| e.to_string())?
+                .check()
+                .map_err(|e| e.to_string())?;
+            let context = Context::new(xkb::xkbcommon_option().ok_or("no libxkbcommon")?).ok_or("no XKB context")?;
+            let (keymap, group) = read(&context, &connection, lib, device).ok_or("the keymap could not be read")?;
+            let layouts = super::watched_layouts(&keymap, "X server");
+            // the group XWayland reports before the compositor's: the same
+            // stand-in `detect` read
+            let xwayland = matches!(connection.extension_information("XWAYLAND"), Ok(Some(_)));
+            let settle = FocusSettle::new(xwayland.then_some(group), SETTLE_TICKS);
+            log::info!("keyboard layout: following XKB's group and keymap on the X server");
+            Ok(Self {
+                connection,
+                lib,
+                device,
+                layouts,
+                settle,
+            })
+        }
+
+        /// Reports each layout made active until the watch is dropped, or
+        /// returns why it stopped.
+        fn run(&mut self, focused: &mpsc::Receiver<()>, send: &mpsc::Sender<Result<KeyboardLayout, String>>) -> String {
+            loop {
+                let read_group = match focused.recv_timeout(TICK) {
+                    Ok(()) => true,
+                    // a held XWayland read is read again once its wait is over
+                    Err(mpsc::RecvTimeoutError::Timeout) => self.settle.tick(),
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return "dropped".into(),
+                };
+                match self.step(read_group) {
+                    Ok(Some(layout)) => {
+                        if send.send(Ok(layout)).is_err() {
+                            return "dropped".into();
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => return e,
+                }
+            }
+        }
+
+        /// The layout made active since the last step: a new group, or the
+        /// active layout of a new keymap; with `read_group` (a focus), the
+        /// group in use if no event told it. Every group goes through
+        /// `settle`, which holds a stale XWayland read.
+        fn step(&mut self, read_group: bool) -> Result<Option<KeyboardLayout>, String> {
+            let (mut told, mut new_keymap) = (None, false);
+            while let Some(event) = self.connection.poll_for_event().map_err(|e| e.to_string())? {
+                match event {
+                    Event::XkbStateNotify(state) if i32::from(state.device_id) == self.device => {
+                        told = Some(u32::from(u8::from(state.group)));
+                    }
+                    Event::XkbNewKeyboardNotify(_) | Event::XkbMapNotify(_) => new_keymap = true,
+                    _ => {}
+                }
+            }
+            let mut group = told.and_then(|group| self.settle.heard(GroupHeard::Event(group)));
+            if read_group && told.is_none() {
+                let state = self
+                    .connection
+                    .xkb_get_state(u16::try_from(self.device).map_err(|e| e.to_string())?);
+                let state = state.map_err(|e| e.to_string())?.reply().map_err(|e| e.to_string())?;
+                group = self.settle.heard(GroupHeard::Read(u32::from(u8::from(state.group))));
+            }
+            if new_keymap {
+                log::info!("keyboard layout: the X server's keymap changed");
+                let context = xkb::xkbcommon_option().and_then(Context::new).ok_or("libxkbcommon is gone")?;
+                let (keymap, active) = read(&context, &self.connection, self.lib, self.device).ok_or("the new keymap could not be read")?;
+                self.layouts = super::watched_layouts(&keymap, "X server");
+                // read, not told: on XWayland it can still be the stand-in
+                group = self.settle.heard(GroupHeard::Read(active));
+            }
+            Ok(group.and_then(|group| super::layout_of_group(&self.layouts, group)))
         }
     }
 }

@@ -167,8 +167,10 @@ zbus = "5.19.0"
 async-io = "2.6.0"
 futures-lite = "2.6.1"
 # The keyboard layout (keybinds/layout/linux.rs): the XKB keymap of the
-# Wayland compositor or the X server. All three already in the tree through
-# winit, with its features (MIT, MIT / Apache-2.0, MIT)
+# Wayland compositor or the X server, and the active layout heard on winit's
+# own Wayland connection (`system`: libwayland, as winit uses it). All three
+# already in the tree through winit, with these features (MIT, MIT /
+# Apache-2.0, MIT)
 wayland-client = { version = "0.31.15", features = ["system"] }
 # A window outside brought in front (outside/activation.rs): the
 # xdg-activation protocol, on winit's own connection (`system`, above).

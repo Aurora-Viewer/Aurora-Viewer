@@ -7,6 +7,8 @@
 
 mod layout;
 
+pub use layout::{LayoutChange, Watch as LayoutWatch};
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use winit::event::MouseButton;
@@ -116,6 +118,15 @@ pub fn gesture_chat_key(key: &winit::keyboard::Key, mods: Mods) -> bool {
 
 fn learned(k: &str) -> Option<String> {
     LEARNED.read().ok()?.as_ref()?.get(k).cloned()
+}
+
+/// The keyboard layout changed while the viewer runs: what the keys typed
+/// before no longer names them, the new layout's labels take over until a
+/// key is pressed again.
+fn forget_learned() {
+    if let Ok(mut m) = LEARNED.write() {
+        *m = None;
+    }
 }
 
 fn key_label(k: &str) -> String {
@@ -1277,7 +1288,7 @@ fn inventory_defaults(mac: bool) -> Vec<(Action, [Option<Binding>; 2])> {
 
 impl Default for KeyBindings {
     fn default() -> Self {
-        Self::for_layout(layout::current())
+        Self::for_layout(&layout::current())
     }
 }
 
@@ -2024,12 +2035,39 @@ impl KeyBindings {
     /// the active layout (`for_layout`). A slot the user changed or cleared
     /// stays, and so does a default whose new key another action already uses.
     pub fn follow_layout_letters(&mut self) {
-        self.follow_letters_of(layout::current());
+        self.follow_letters_of(&layout::current());
     }
 
     fn follow_letters_of(&mut self, layout: &layout::KeyboardLayout) {
-        let before = Self::us_places(layout.movement_keys());
-        let after = Self::for_layout(layout);
+        self.move_defaults(&Self::us_places(layout.movement_keys()), &Self::for_layout(layout));
+    }
+
+    /// The defaults of this profile were chosen for a layout that only stood
+    /// in for the active one, not reported yet (Wayland, `LayoutWatch`): its
+    /// letter shortcuts still on those defaults move to the active layout's,
+    /// with the rules of `follow_layout_letters`.
+    pub fn follow_layout_change(&mut self, change: &LayoutChange) {
+        self.move_defaults(&Self::for_layout(&change.before), &Self::for_layout(&change.after));
+    }
+
+    /// A layout the watch reported, while `pending` (the settings'
+    /// `defaults_follow_reported_layout`) waits for the first report: any
+    /// report ends the wait; only one that replaces a stand-in (always the
+    /// first) moves the defaults. True when the settings changed and are to
+    /// be saved.
+    pub fn follow_reported_layout(&mut self, change: &LayoutChange, pending: &mut bool) -> bool {
+        if !std::mem::take(pending) {
+            return false;
+        }
+        if change.guessed && change.before != change.after {
+            // the line docs/TESTING.md tells testers to look for
+            log::info!("keyboard layout: the default shortcuts move to the reported layout");
+            self.follow_layout_change(change);
+        }
+        true
+    }
+
+    fn move_defaults(&mut self, before: &Self, after: &Self) {
         // the defaults still in place that move: (action, slot, old, new)
         let mut moves: Vec<(Action, usize, Binding, Binding)> = Vec::new();
         for ((action, old), (_, new)) in before.map.iter().zip(&after.map) {
@@ -2046,6 +2084,7 @@ impl KeyBindings {
         // someone moves away from it too: two defaults that swap letters
         // (AZERTY's Z and W: the inventory's Undo and Close tab) move
         // together. Refused moves keep their key, which may refuse others.
+        // When two defaults want the same free key, the first keeps it.
         let rivals: Vec<Vec<Action>> = moves.iter().map(|(action, _, _, new)| self.rivals(*action, new)).collect();
         let mut allowed = vec![true; moves.len()];
         loop {
@@ -2053,7 +2092,7 @@ impl KeyBindings {
                 .iter()
                 .zip(&moves)
                 .enumerate()
-                .map(|(n, (rivals, (_, _, _, new)))| {
+                .map(|(n, (rivals, (mover, _, _, new)))| {
                     allowed[n]
                         && rivals.iter().all(|rival| {
                             moves
@@ -2061,6 +2100,10 @@ impl KeyBindings {
                                 .zip(&allowed)
                                 .any(|((action, _, old, _), ok)| *ok && action == rival && old == new)
                         })
+                        && !moves[..n]
+                            .iter()
+                            .zip(&allowed)
+                            .any(|((action, _, _, other), ok)| *ok && other == new && Self::meet(*mover, *action, new))
                 })
                 .collect();
             if next == allowed {
@@ -2118,19 +2161,19 @@ impl KeyBindings {
     /// accelerators go before the focused field), so the chat's would
     /// never be seen.
     pub fn rivals(&self, a: Action, b: &Binding) -> Vec<Action> {
+        self.users(b).into_iter().filter(|x| Self::meet(a, *x, b)).collect()
+    }
+
+    /// Do actions `a` and `x` conflict on binding `b` (`rivals`)?
+    fn meet(a: Action, x: Action, b: &Binding) -> bool {
         let meet_while_typing = (b.ctrl || b.alt) && !kept_on_every_layout(b);
-        self.users(b)
-            .into_iter()
-            .filter(|x| {
-                *x != a
-                    && match (is_inventory(*x), is_inventory(a)) {
-                        (true, true) => true,
-                        (false, false) => is_chat(*x) == is_chat(a) || meet_while_typing,
-                        // the focused list keeps its keys: no meeting
-                        _ => false,
-                    }
-            })
-            .collect()
+        x != a
+            && match (is_inventory(x), is_inventory(a)) {
+                (true, true) => true,
+                (false, false) => is_chat(x) == is_chat(a) || meet_while_typing,
+                // the focused list keeps its keys: no meeting
+                _ => false,
+            }
     }
 
     /// Is a held action active? A binding needs its modifiers and accepts
@@ -3410,6 +3453,141 @@ mod tests {
         // and an AZERTY profile with untouched defaults ends on the new ones
         let mut kb = KeyBindings::us_places(fr.movement_keys());
         kb.follow_letters_of(&fr);
+        assert_eq!(kb, KeyBindings::for_layout(&fr));
+    }
+
+    fn camera_defaults(keys: [KeyCode; 4]) -> KeyBindings {
+        let actions = [Action::CamPanLeft, Action::CamPanRight, Action::CamPanUp, Action::CamPanDown];
+        KeyBindings {
+            map: actions
+                .into_iter()
+                .zip(keys)
+                .map(|(action, code)| (action, [k(code), None]))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn layout_defaults_can_swap_or_cycle_in_either_direction() {
+        use KeyCode as K;
+        let before = camera_defaults([K::KeyR, K::KeyT, K::KeyU, K::KeyJ]);
+        for keys in [[K::KeyT, K::KeyR, K::KeyU, K::KeyJ], [K::KeyT, K::KeyU, K::KeyR, K::KeyJ]] {
+            let after = camera_defaults(keys);
+            let mut saved = before.clone();
+            saved.move_defaults(&before, &after);
+            assert_eq!(saved, after);
+            saved.move_defaults(&before, &after);
+            assert_eq!(saved, after);
+            saved.move_defaults(&after, &before);
+            assert_eq!(saved, before);
+        }
+    }
+
+    #[test]
+    fn a_reserved_key_blocks_its_chain_and_preserves_custom_and_cleared_slots() {
+        use KeyCode as K;
+        let before = camera_defaults([K::KeyR, K::KeyT, K::KeyU, K::KeyJ]);
+        let after = camera_defaults([K::KeyT, K::KeyU, K::KeyV, K::KeyK]);
+        let mut saved = before.clone();
+        saved.set(Action::Inventory, 1, k(K::KeyV));
+        let mut expected = saved.clone();
+        expected.set(Action::CamPanDown, 0, k(K::KeyK));
+        saved.move_defaults(&before, &after);
+        assert_eq!(saved, expected);
+
+        for replacement in [None, k(K::F12)] {
+            let mut saved = before.clone();
+            saved.set(Action::CamPanRight, 0, replacement.clone());
+            let mut expected = after.clone();
+            expected.set(Action::CamPanRight, 0, replacement);
+            saved.move_defaults(&before, &after);
+            assert_eq!(saved, expected);
+        }
+    }
+
+    #[test]
+    fn the_first_default_keeps_a_free_key_when_two_want_it() {
+        use KeyCode as K;
+        let before = camera_defaults([K::KeyR, K::KeyT, K::KeyU, K::KeyJ]);
+        let after = camera_defaults([K::KeyV, K::KeyV, K::KeyU, K::KeyK]);
+        let mut expected = before.clone();
+        expected.set(Action::CamPanLeft, 0, k(K::KeyV));
+        expected.set(Action::CamPanDown, 0, k(K::KeyK));
+        let mut saved = before.clone();
+        saved.move_defaults(&before, &after);
+        assert_eq!(saved, expected);
+    }
+
+    /// A key's label learned from a key press gives way to the new
+    /// layout's when the layout changes (`layout::Watch::poll`). Lang5 is a
+    /// key no other test reads.
+    #[test]
+    fn a_layout_change_forgets_the_learned_labels() {
+        learn(KeyCode::Lang5, "q");
+        assert_eq!(key_label("Lang5"), "Q");
+        forget_learned();
+        assert_eq!(learned("Lang5"), None);
+        assert_ne!(key_label("Lang5"), "Q");
+    }
+
+    /// Wayland: a profile made while the first layout of `us,fr` stood in
+    /// for the active French one moves to AZERTY's places once the
+    /// compositor reports it, and the user's own keys stay.
+    #[test]
+    fn defaults_placed_for_a_stand_in_layout_move_to_the_reported_one() {
+        use KeyCode as K;
+        use std::sync::Arc;
+        let (us, fr) = (Arc::new(layout::KeyboardLayout::wasd()), Arc::new(layout::KeyboardLayout::zqsd()));
+        let change = |before: &Arc<_>, after: &Arc<_>| LayoutChange {
+            before: Arc::clone(before),
+            after: Arc::clone(after),
+            guessed: true,
+        };
+        let mut kb = KeyBindings::for_layout(&us);
+        kb.follow_layout_change(&change(&us, &fr));
+        assert_eq!(kb, KeyBindings::for_layout(&fr));
+        kb.follow_layout_change(&change(&fr, &us));
+        assert_eq!(kb, KeyBindings::for_layout(&us));
+
+        let mut kb = KeyBindings::for_layout(&us);
+        kb.set(Action::Mouselook, 0, k(K::KeyL)); // the user's own key
+        kb.follow_layout_change(&change(&us, &fr));
+        assert_eq!(kb.get(Action::Mouselook)[0], k(K::KeyL));
+        assert_eq!(kb.get(Action::Minimap)[0], kmod(K::Semicolon, true, true));
+        assert_eq!(kb.get(Action::Forward)[1], k(K::KeyW));
+    }
+
+    /// The settings wait for the first report: a report that confirms the
+    /// layout in use ends the wait without moving anything, one that
+    /// replaces a stand-in moves the defaults, and nothing moves once the
+    /// wait is over.
+    #[test]
+    fn the_first_reported_layout_ends_the_wait_of_the_settings() {
+        use std::sync::Arc;
+        let (us, fr) = (Arc::new(layout::KeyboardLayout::wasd()), Arc::new(layout::KeyboardLayout::zqsd()));
+        let change = |before: &Arc<_>, after: &Arc<_>, guessed| LayoutChange {
+            before: Arc::clone(before),
+            after: Arc::clone(after),
+            guessed,
+        };
+        let mut kb = KeyBindings::for_layout(&us);
+        let mut pending = true;
+        assert!(kb.follow_reported_layout(&change(&us, &us, true), &mut pending));
+        assert!(!pending);
+        assert_eq!(kb, KeyBindings::for_layout(&us));
+        assert!(
+            !kb.follow_reported_layout(&change(&us, &fr, true), &mut pending),
+            "the wait is over"
+        );
+        assert_eq!(kb, KeyBindings::for_layout(&us), "a later report moves nothing");
+
+        let mut pending = true;
+        assert!(kb.follow_reported_layout(&change(&us, &fr, false), &mut pending));
+        assert!(!pending, "a start layout that was reported, not guessed");
+        assert_eq!(kb, KeyBindings::for_layout(&us));
+
+        let mut pending = true;
+        assert!(kb.follow_reported_layout(&change(&us, &fr, true), &mut pending));
         assert_eq!(kb, KeyBindings::for_layout(&fr));
     }
 
