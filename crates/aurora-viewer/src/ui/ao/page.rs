@@ -112,7 +112,9 @@ pub(super) fn show(
     }
     ui.horizontal(|ui| {
         widgets::glyph(ui, "hand-finger", p.muted, 14.0);
-        ui.label(RichText::new(aurora_i18n::tr!("ao-page-hint")).small().color(p.muted));
+        // wraps: a longer translation would widen the whole page past the
+        // window, and the slots' remove buttons with it
+        ui.add(egui::Label::new(RichText::new(aurora_i18n::tr!("ao-page-hint")).small().color(p.muted)).wrap());
     });
     egui::ScrollArea::vertical()
         .id_salt(("ao_slots", set.id, category.index(), state.essentials))

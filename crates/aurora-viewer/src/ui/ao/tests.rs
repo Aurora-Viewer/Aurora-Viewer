@@ -267,17 +267,24 @@ fn row_bin(f: &mut Fixture, name: &str) -> egui::Pos2 {
         }
     }
     let shapes = f.draw(Vec::new()).1;
+    // (each bin with the clip rect it is drawn in)
     let (mut texts, mut bins) = (Vec::new(), Vec::new());
     let bin = super::super::icons::global("trash-filled").expect("remove icon").id();
     for shape in &shapes {
         text_rects(&shape.shape, name, &mut texts);
-        meshes(&shape.shape, bin, &mut bins);
+        let mut found = Vec::new();
+        meshes(&shape.shape, bin, &mut found);
+        bins.extend(found.into_iter().map(|b| (b, shape.clip_rect)));
     }
     let row = *texts.first().expect(name);
-    bins.into_iter()
-        .find(|b| (b.center().y - row.center().y).abs() < 6.0 && b.left() > row.right())
-        .expect("the row's remove button")
-        .center()
+    let (bin, clip) = bins
+        .into_iter()
+        .find(|(b, _)| (b.center().y - row.center().y).abs() < 6.0 && b.left() > row.right())
+        .expect("the row's remove button");
+    // a button drawn past its column's clip is neither seen nor clicked: a
+    // longer translation once widened the page past the window this way
+    assert!(clip.contains_rect(bin), "the row's remove button {bin:?} is cut off by its column {clip:?}");
+    bin.center()
 }
 
 /// A click with the secondary button (or with Shift held) on `name`.
@@ -357,7 +364,7 @@ fn ao_manager_at_reduced_ui_scale_keeps_its_size() {
         assert!(
             matches!(&out[..], [Action::Edit(change, None)]
                 if matches!(&change.operations[..], [Operation::Delete { id, folder: false }] if *id == first)),
-            "the entry's removal button is accessible"
+            "AO at scale {zoom}: the entry's removal button is accessible ({} actions)", out.len()
         );
     }
 }
