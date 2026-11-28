@@ -6,6 +6,8 @@
 //! (HKCU\Software\Classes\secondlife, which wins over a machine-wide one),
 //! from Preferences › Interface. The command is the installer's
 //! (`"<exe>" -url "%1"`, MAINT-8305): `cli.rs` reads nothing after the link.
+//! A packaged viewer (`updater::packaged`) adds `--packaged` before `-url`,
+//! on Windows and Linux alike.
 //!
 //! On Linux the Legacy Viewer's register_secondlifeprotocol.sh
 //! (indra/newview/linux_tools/) writes a hidden desktop entry for the scheme
@@ -23,6 +25,34 @@ pub enum Handler {
     /// Another program, by its file name.
     Other(String),
     None,
+}
+
+/// The Windows class's command: `"<exe>" [--packaged] -url "%1"`
+/// (`--packaged` must come before the link, `cli.rs`).
+#[cfg(any(windows, test))]
+fn command_line(exe: &str, packaged: bool) -> String {
+    let packaged = if packaged { " --packaged" } else { "" };
+    format!("\"{exe}\"{packaged} -url \"%1\"")
+}
+
+/// Whether a Windows class's command passes `--packaged` after its program.
+#[cfg(any(windows, test))]
+fn command_packaged(command: &str) -> bool {
+    let command = command.trim();
+    let args = match command.strip_prefix('"') {
+        Some(rest) => rest.split_once('"').map_or("", |(_, args)| args),
+        None => command.split_once(char::is_whitespace).map_or("", |(_, args)| args),
+    };
+    args.split_whitespace().any(|word| word == "--packaged")
+}
+
+/// A Windows class's command with `--packaged` added before its link,
+/// the rest kept as it is; None when the link is not where
+/// `command_line` puts it.
+#[cfg(any(windows, test))]
+fn packaged_command(command: &str) -> Option<String> {
+    let at = command.rfind(" -url \"%1\"")?;
+    Some(format!("{} --packaged{}", &command[..at], &command[at..]))
 }
 
 /// Whether this system lets Aurora register itself.
@@ -166,7 +196,11 @@ mod win {
         write(&class, Some("URL Protocol"), "")?;
         write(&format!(r"{class}\DefaultIcon"), None, &format!("\"{exe}\",0"))?;
         write(&format!(r"{class}\shell\open"), Some("FriendlyAppName"), "Aurora Viewer")?;
-        write(&format!(r"{class}\shell\open\command"), None, &format!("\"{exe}\" -url \"%1\""))?;
+        write(
+            &format!(r"{class}\shell\open\command"),
+            None,
+            &super::command_line(&exe, crate::updater::packaged()),
+        )?;
         log::info!("{scheme} links: registered for this user");
         Ok(())
     }
@@ -216,17 +250,36 @@ mod win {
     }
 
     /// A user class left pointing at an Aurora executable that no longer
-    /// exists (the folder moved) is pointed at this one.
+    /// exists (the folder moved) is pointed at this one. A packaged viewer
+    /// adds `--packaged` to a command of this executable that lacks it,
+    /// keeping the rest; a launch without the launcher removes nothing.
     pub fn repair() {
         for scheme in SCHEMES {
             let class = format!(r"Software\Classes\{scheme}");
-            let Some(exe) = read(HKEY_CURRENT_USER, &format!(r"{class}\shell\open\command"), None).and_then(|c| command_exe(&c)) else {
+            let Some(command) = read(HKEY_CURRENT_USER, &format!(r"{class}\shell\open\command"), None) else {
+                continue;
+            };
+            let Some(exe) = command_exe(&command) else {
                 continue;
             };
             let aurora = exe.file_name().is_some_and(|n| n.eq_ignore_ascii_case("aurora-viewer.exe"));
             if aurora && !exe.exists() {
                 log::info!("{scheme} links: the registered viewer moved");
                 if let Err(e) = register_scheme(scheme) {
+                    log::warn!("{scheme} links: {e}");
+                }
+                continue;
+            }
+            // the flag first: no path lookup on an ordinary launch
+            if !crate::updater::packaged() || super::command_packaged(&command) {
+                continue;
+            }
+            if !std::env::current_exe().is_ok_and(|this| same_file(&exe, &this)) {
+                continue;
+            }
+            if let Some(packaged) = super::packaged_command(&command) {
+                log::info!("{scheme} links: the registered command gets --packaged");
+                if let Err(e) = write(&format!(r"{class}\shell\open\command"), None, &packaged) {
                     log::warn!("{scheme} links: {e}");
                 }
             }
@@ -414,13 +467,62 @@ mod xdg {
         format!("{quoted} -url %u")
     }
 
-    pub(super) fn desktop_entry(exe: &str) -> String {
+    /// The entry that opens the links with `exe`. A packaged viewer
+    /// (`AURORA_PACKAGED`, set by the package's launcher) passes
+    /// `--packaged`: a link opened while Aurora is closed starts the
+    /// executable itself, not the launcher. The program stays the first
+    /// word, which xdg-utils checks before falling back to another handler.
+    pub(super) fn desktop_entry(exe: &str, packaged: bool) -> String {
         let mimes: String = SCHEMES.iter().map(|s| format!("x-scheme-handler/{s};")).collect();
+        let mut exec = exec_line(exe);
+        if packaged {
+            exec = exec.replace(" -url %u", &format!(" {PACKAGED_ARG} -url %u"));
+        }
         format!(
             "[Desktop Entry]\nType=Application\nName=Aurora Viewer\nComment=Opens Second Life and Hypergrid links\n\
-             Exec={}\nIcon=aurora-viewer\nTerminal=false\nNoDisplay=true\nMimeType={mimes}\n",
-            exec_line(exe)
+             Exec={exec}\nIcon=aurora-viewer\nTerminal=false\nNoDisplay=true\nMimeType={mimes}\n"
         )
+    }
+
+    const PACKAGED_ARG: &str = "--packaged";
+
+    /// The `Exec` value of this viewer's entry (`is_this`) with
+    /// `--packaged` added before its link, the rest kept, when a packaged
+    /// viewer finds it missing; None otherwise: an unpackaged launch
+    /// removes nothing, another viewer's entry is left alone, and one whose
+    /// link is not where `exec_line` puts it too.
+    pub(super) fn packaged_exec(exec: &str, is_this: impl Fn(&str) -> bool, packaged: bool) -> Option<String> {
+        // the flag first: no path lookup on an ordinary launch
+        if !packaged || exec_packaged(exec) || !exec_program(exec).is_some_and(|p| is_this(&p)) {
+            return None;
+        }
+        let at = exec.rfind(" -url %u")?;
+        Some(format!("{} {PACKAGED_ARG}{}", &exec[..at], &exec[at..]))
+    }
+
+    /// Whether an `Exec` value passes `--packaged` (`desktop_entry`).
+    pub(super) fn exec_packaged(exec: &str) -> bool {
+        // past the program, quoted as `exec_program` reads it: a word of
+        // the path is no argument
+        let exec = exec.replace("\\\\", "\\");
+        let exec = exec.trim();
+        let args = match exec.strip_prefix('"') {
+            Some(rest) => {
+                let mut chars = rest.char_indices();
+                loop {
+                    match chars.next() {
+                        None => return false,
+                        Some((i, '"')) => break &rest[i + 1..],
+                        Some((_, '\\')) => {
+                            chars.next();
+                        }
+                        Some(_) => {}
+                    }
+                }
+            }
+            None => exec.split_once(char::is_whitespace).map_or("", |(_, args)| args),
+        };
+        args.split_whitespace().any(|word| word == PACKAGED_ARG)
     }
 
     /// The program found on the PATH, as a launcher would run it.
@@ -564,7 +666,7 @@ mod xdg {
 
     fn write_entry() -> Result<(), String> {
         let exe = live_exe(std::env::current_exe().map_err(|e| e.to_string())?);
-        write_atomic(&own_entry()?, &desktop_entry(&exe.to_string_lossy()))
+        write_atomic(&own_entry()?, &desktop_entry(&exe.to_string_lossy(), crate::updater::packaged()))
     }
 
     pub fn register() -> Result<(), String> {
@@ -643,7 +745,10 @@ mod xdg {
     }
 
     /// Aurora's entry left pointing at an executable that no longer exists
-    /// (moved or rebuilt elsewhere) is pointed at this one.
+    /// (moved or rebuilt elsewhere) is pointed at this one. A packaged
+    /// viewer adds `--packaged` to an entry of this executable that lacks
+    /// it, keeping the rest of the line; a launch without the launcher
+    /// removes nothing. The user's defaults stay as they are.
     pub fn repair() {
         let Ok(entry) = own_entry() else {
             return;
@@ -657,6 +762,12 @@ mod xdg {
         if gone {
             log::info!("secondlife links: the registered viewer moved");
             if let Err(e) = write_entry() {
+                log::warn!("secondlife links: {e}");
+            }
+        } else if let Some(exec) = value(&text, "Desktop Entry", "Exec").and_then(|e| packaged_exec(e, is_this, crate::updater::packaged()))
+        {
+            log::info!("secondlife links: the registered entry gets --packaged");
+            if let Err(e) = write_atomic(&entry, &with_value(&text, "Desktop Entry", "Exec", Some(&exec))) {
                 log::warn!("secondlife links: {e}");
             }
         }
@@ -714,13 +825,44 @@ pub fn refresh() {
 }
 
 /// At start, published builds outside demo mode only: a registration left
-/// on a moved Aurora is pointed at this one (test builds never take it).
+/// on a moved Aurora is pointed at this one, and a packaged Aurora adds
+/// `--packaged` to its own (test builds never take it).
 pub fn repair_at_start() {
     if env!("AURORA_BUILD_PROFILE") == "release" && std::env::var_os("AURORA_DEMO").is_none() {
         #[cfg(windows)]
         win::repair();
         #[cfg(target_os = "linux")]
         xdg::repair();
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::{command_line, command_packaged, packaged_command};
+
+    #[test]
+    fn a_packaged_command_passes_the_flag_before_the_link() {
+        let exe = r"C:\Program Files\Aurora --packaged\aurora-viewer.exe";
+        assert_eq!(
+            command_line(r"C:\A\aurora-viewer.exe", false),
+            r#""C:\A\aurora-viewer.exe" -url "%1""#
+        );
+        assert_eq!(
+            command_line(r"C:\A\aurora-viewer.exe", true),
+            r#""C:\A\aurora-viewer.exe" --packaged -url "%1""#
+        );
+        assert!(!command_packaged(&command_line(exe, false)), "a word of the path is no argument");
+        assert!(command_packaged(&command_line(exe, true)));
+        assert!(command_packaged(r#"C:\A\aurora-viewer.exe --packaged -url "%1""#));
+        assert!(!command_packaged(r#"C:\A\aurora-viewer.exe -url "%1""#));
+        assert!(!command_packaged("  "));
+        // added at launch: before the link, the user's own options kept
+        assert_eq!(
+            packaged_command(r#""C:\A\aurora-viewer.exe" --grid aditi -url "%1""#).as_deref(),
+            Some(r#""C:\A\aurora-viewer.exe" --grid aditi --packaged -url "%1""#)
+        );
+        assert_eq!(packaged_command(&command_line(exe, false)), Some(command_line(exe, true)));
+        assert_eq!(packaged_command(r#""C:\A\aurora-viewer.exe" "%1""#), None);
     }
 }
 
@@ -742,7 +884,9 @@ mod tests {
 
 #[cfg(all(test, target_os = "linux"))]
 mod xdg_tests {
-    use super::xdg::{desktop_entry, exec_line, exec_program, live_exe, ours_first, value, with_value, without_ours};
+    use super::xdg::{
+        desktop_entry, exec_line, exec_packaged, exec_program, live_exe, ours_first, packaged_exec, value, with_value, without_ours,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -817,12 +961,46 @@ mod xdg_tests {
             assert_eq!(exec_program(&line).as_deref(), Some(exe), "{line}");
         }
         assert_eq!(exec_program("firestorm %u").as_deref(), Some("firestorm"));
+        // a packaged viewer's entry: the program is still the viewer
+        // (a word of the path is no argument)
+        for exe in [
+            "/usr/bin/aurora-viewer",
+            "/home/me/My Viewers/aurora-viewer",
+            "/opt/Aurora --packaged/aurora-viewer",
+            r#"/odd/"q --packaged"$x`b\\%/aurora"#,
+        ] {
+            let entry = desktop_entry(exe, true);
+            let line = value(&entry, "Desktop Entry", "Exec").unwrap();
+            assert!(line.ends_with(" --packaged -url %u"), "{line}");
+            assert!(exec_packaged(line), "{line}");
+            assert_eq!(exec_program(line).as_deref(), Some(exe), "{line}");
+            let plain = desktop_entry(exe, false);
+            let plain = value(&plain, "Desktop Entry", "Exec").unwrap();
+            assert!(!exec_packaged(plain));
+            // at launch: a packaged viewer adds the flag to its own entry,
+            // as `desktop_entry` writes it; an unpackaged launch removes
+            // nothing, another viewer's entry is never touched
+            let this = |p: &str| p == exe;
+            assert_eq!(packaged_exec(plain, this, true).as_deref(), Some(line));
+            assert_eq!(packaged_exec(plain, this, false), None);
+            assert_eq!(packaged_exec(line, this, false), None);
+            assert_eq!(packaged_exec(line, this, true), None);
+            assert_eq!(packaged_exec(plain, |_| false, true), None);
+        }
         assert_eq!(exec_program("  "), None);
+        // the user's own options stay; an entry without the link as Aurora
+        // writes it is left alone
+        let this = |p: &str| p == "/usr/bin/aurora-viewer";
+        assert_eq!(
+            packaged_exec("/usr/bin/aurora-viewer --grid aditi -url %u", this, true).as_deref(),
+            Some("/usr/bin/aurora-viewer --grid aditi --packaged -url %u")
+        );
+        assert_eq!(packaged_exec("/usr/bin/aurora-viewer %u", this, true), None);
     }
 
     #[test]
     fn desktop_entry_claims_the_three_schemes() {
-        let entry = desktop_entry("/usr/bin/aurora-viewer");
+        let entry = desktop_entry("/usr/bin/aurora-viewer", false);
         assert_eq!(value(&entry, "Desktop Entry", "NoDisplay"), Some("true"));
         assert_eq!(
             value(&entry, "Desktop Entry", "MimeType"),
@@ -831,7 +1009,7 @@ mod xdg_tests {
         // bare, or xdg-utils skips the entry
         assert_eq!(value(&entry, "Desktop Entry", "Exec"), Some("/usr/bin/aurora-viewer -url %u"));
         assert_eq!(
-            value(&desktop_entry("/opt/My Viewers/aurora-viewer"), "Desktop Entry", "Exec"),
+            value(&desktop_entry("/opt/My Viewers/aurora-viewer", false), "Desktop Entry", "Exec"),
             Some(r#""/opt/My Viewers/aurora-viewer" -url %u"#)
         );
     }
