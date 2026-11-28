@@ -142,6 +142,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, jiggle: bool, click_combo: bool, sti
         },
         halo: None,
         glass: 0.0,
+        dim: 0.0,
         hover: play.hover * play.hover * (3.0 - 2.0 * play.hover),
         grow: if still {
             Vec2::ZERO

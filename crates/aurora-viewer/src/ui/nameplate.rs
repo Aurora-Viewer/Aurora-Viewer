@@ -57,6 +57,10 @@ pub const FULL_RANK_MARGIN: usize = 2;
 /// Full and compact plates that blur the world behind them, nearest first;
 /// the others (and the far pills) only tint it.
 pub const MAX_GLASS: usize = 16;
+/// Opacity of an icon only plate where the other styles end in the far
+/// pill (beyond `COMPACT_DISTANCE`): it keeps its picture, dimmed, so the
+/// near ones stand out (the human's request of 2026-11-28).
+pub const FAR_ICON_OPACITY: f32 = 0.5;
 /// Pictures asked per second (profile, then texture): like the radar's
 /// profiles per sweep, a crowd does not fire dozens of requests at once.
 pub const PICTURES_PER_SECOND: u32 = 4;
@@ -73,26 +77,28 @@ pub enum Level {
     /// The display name alone.
     Far,
     /// "Icon only" plates (`PlateStyle::Icon`): the picture in a round
-    /// plate, with its status dot, up to the far distance.
+    /// plate, with its status dot, at every distance.
     Icon,
     /// "Name only" plates (`PlateStyle::Name`): the display name and the
-    /// group title in the compact pill, with only the contact sets'
-    /// badges, up to the far distance.
+    /// group title in the compact pill, with the compact pill's badges,
+    /// up to the far distance.
     Name,
 }
 
-/// The plates' look at close range (Preferences › Aurora › "Plate
-/// style"), the human's request of 2026-11-21: the complete plate, the
-/// picture alone, or the name alone. Beyond the compact distance every
-/// style ends in the far pill, the name alone: a crowd at 60 m is not a
-/// wall of circles, nor dozens of pictures to load. With "Expand a plate on
-/// hover", the hovered one shows the complete plate.
+/// The plates' look (Preferences › Aurora › "Plate style"), the human's
+/// request of 2026-11-21: the complete plate, the picture alone, or the
+/// name alone. Icon only keeps its picture at every distance, dimmed where
+/// the others end in the far pill (`FAR_ICON_OPACITY`; the human's request
+/// of 2026-11-28: a far name pill is a different style, not a smaller
+/// icon); name only ends in the far pill beyond the compact distance, like
+/// the complete plates. With "Expand a plate on hover", the hovered one
+/// shows the complete plate.
 pub fn styled_level(style: crate::settings::PlateStyle, level: Level) -> Level {
     use crate::settings::PlateStyle;
     match style {
         PlateStyle::Plates => level,
-        _ if level == Level::Far => Level::Far,
         PlateStyle::Icon => Level::Icon,
+        PlateStyle::Name if level == Level::Far => Level::Far,
         PlateStyle::Name => Level::Name,
     }
 }
@@ -273,12 +279,19 @@ pub enum Badge {
     /// Drawn as a silhouette by the resident's Never fully render setting.
     RenderNever,
     Blocked,
+    /// The Aurora team's or Linden Lab's mark, on an icon only plate (the
+    /// others carry the tag over their edge).
+    Staff(crate::world::staff::Mark),
 }
+
+/// The most badges a plate carries: five states, the staff mark, eight
+/// contact sets and "+n".
+pub const MAX_BADGES: usize = 15;
 
 /// The badges of a plate, in drawing order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Badges {
-    list: [Option<Badge>; 14],
+    list: [Option<Badge>; MAX_BADGES],
     len: usize,
 }
 
@@ -409,6 +422,7 @@ pub fn preview(ui: &mut egui::Ui, p: &Palette, appearance: std::sync::Arc<crate:
         size_progress: 1.0,
         halo: None,
         glass: 0.0,
+        dim: 0.0,
         hover: 0.0,
         grow: Vec2::ZERO,
         still: false,
@@ -445,25 +459,31 @@ pub fn sub_lines(level: Level, c: &Content) -> [Option<SubLine<'_>>; 2] {
     }
 }
 
-/// The badges of a plate: none on the far pill; only the contact sets'
-/// symbols on the icon and name only plates, where their markers land
-/// (`ui/contact_markers.rs`); a green microphone in the
+/// The badges of a plate: none on the far pill; a green microphone in the
 /// voice channel, always first, and nothing outside it (the human's choice
-/// of 2026-10-14, replacing the red struck-through microphone).
+/// of 2026-10-14, replacing the red struck-through microphone). The icon
+/// and name only plates keep every badge of the others (the human's
+/// request of 2026-11-28, after the design team's review), and the icon,
+/// too small for the team's tag, shows its mark as a badge after the
+/// microphone.
 pub fn badges(level: Level, c: &Content) -> Badges {
     let mut b = Badges::default();
     if level == Level::Far {
         return b;
     }
-    let states = !matches!(level, Level::Icon | Level::Name);
+    let staff = c.mark.filter(|_| level == Level::Icon).map(Badge::Staff);
     for (on, badge) in [
-        (c.in_voice, Badge::Voice),
-        (c.typing, Badge::Typing),
-        (c.friend && !c.appearance.replace_friend, Badge::Friend),
-        (c.too_complex, if c.render_never { Badge::RenderNever } else { Badge::TooComplex }),
-        (c.blocked, Badge::Blocked),
+        (c.in_voice, Some(Badge::Voice)),
+        (true, staff),
+        (c.typing, Some(Badge::Typing)),
+        (c.friend && !c.appearance.replace_friend, Some(Badge::Friend)),
+        (
+            c.too_complex,
+            Some(if c.render_never { Badge::RenderNever } else { Badge::TooComplex }),
+        ),
+        (c.blocked, Some(Badge::Blocked)),
     ] {
-        if on && states {
+        if let Some(badge) = badge.filter(|_| on) {
             b.push(badge);
         }
     }
@@ -562,7 +582,7 @@ pub struct Layout {
     pub subs: [Option<Pos2>; 2],
     /// Left and right of the text column.
     pub text_x: (f32, f32),
-    pub badges: [Rect; 14],
+    pub badges: [Rect; MAX_BADGES],
 }
 
 /// Lay a plate out: the picture at the left of a full plate, the lines
@@ -632,7 +652,7 @@ pub fn layout_with(level: Level, m: &Metrics, text: &TextSize, badges: usize, le
         radius: 7.5 * s,
     });
 
-    let mut rects = [Rect::NOTHING; 14];
+    let mut rects = [Rect::NOTHING; MAX_BADGES];
     let (mut x, top) = match level {
         // 15 px above the inner top edge, 20 px from the inner right edge
         Level::Full => (width - 21.0 * s - row, -14.0 * s),
@@ -671,7 +691,7 @@ fn icon_layout(m: &Metrics, badges: usize) -> Layout {
     } else {
         0.0
     };
-    let mut rects = [Rect::NOTHING; 14];
+    let mut rects = [Rect::NOTHING; MAX_BADGES];
     let mut x = (h - row) * 0.5;
     for r in rects.iter_mut().take(badges) {
         *r = Rect::from_min_size(Pos2::new(x, -14.0 * m.scale), Vec2::splat(m.badge));
@@ -918,6 +938,11 @@ struct Entry {
     voice: VoiceEnvelope,
     /// 1 when the plate blurs the world, 0 when it only tints it.
     glass: f32,
+    /// An icon only plate beyond the compact distance (`styled_level`): its
+    /// distance level stays Far for `level_for`'s margin, as the others'.
+    far: bool,
+    /// 1 when that far icon is dimmed (`FAR_ICON_OPACITY`), eased.
+    dim: f32,
     /// 1 while the pointer is on it (lighter surface and border), eased.
     hover: f32,
     hovered: bool,
@@ -966,6 +991,8 @@ pub struct Plates {
     /// the world, and the complete ones still without their picture.
     levels: Vec<Level>,
     glass: Vec<bool>,
+    /// The icon only plates beyond the compact distance.
+    far: Vec<bool>,
     waiting: Vec<Uuid>,
     /// Preferences › Aurora › "Full plates for friends only".
     pub friends_only_full: bool,
@@ -1049,6 +1076,9 @@ impl Plates {
         let mut levels = std::mem::take(&mut self.levels);
         levels.clear();
         levels.resize(tags.len(), Level::Far);
+        let mut far = std::mem::take(&mut self.far);
+        far.clear();
+        far.resize(tags.len(), false);
         if let Some(id) = self.hovered {
             self.hover_seen = Some((id, now));
         }
@@ -1063,7 +1093,8 @@ impl Plates {
         self.pointer_was = self.hovered;
         let mut rank = 0;
         for (i, tag) in tags.iter().enumerate().rev() {
-            let previous = self.entries.get(&tag.id).map(|e| e.level);
+            // a far icon's distance level is Far, for the margin back in
+            let previous = self.entries.get(&tag.id).map(|e| if e.far { Level::Far } else { e.level });
             let mut level = level_for(tag.distance, previous);
             if self.style == crate::settings::PlateStyle::Plates {
                 level = preferred_level(level, &tag.content, self.friends_only_full);
@@ -1072,24 +1103,37 @@ impl Plates {
                     rank += 1;
                 }
             } else {
+                far[i] = self.style == crate::settings::PlateStyle::Icon && level == Level::Far;
                 level = styled_level(self.style, level);
             }
-            level = hover_level(level, hover == Some(tag.id), self.expand_on_hover);
+            let hovered = hover == Some(tag.id);
+            level = hover_level(level, hovered, self.expand_on_hover);
             levels[i] = level;
-            if level != Level::Far && glass_left > 0 {
+            // a dimmed far icon only tints the world, like the far pills
+            let dimmed = far[i] && !hovered;
+            if level != Level::Far && !dimmed && glass_left > 0 {
                 glass_left -= 1;
                 glass[i] = true;
             }
         }
         let mut waiting = std::mem::take(&mut self.waiting);
         waiting.clear();
-        for ((tag, glass), level) in tags.iter().zip(glass.iter().copied()).zip(levels.iter().copied()) {
+        for (((tag, glass), level), far) in tags
+            .iter()
+            .zip(glass.iter().copied())
+            .zip(levels.iter().copied())
+            .zip(far.iter().copied())
+        {
+            let hovered = hover == Some(tag.id);
+            let dimmed = far && !hovered;
             let entry = self.entries.entry(tag.id).or_insert_with(|| Entry {
                 level,
                 from: level,
                 changed: f64::NEG_INFINITY,
                 voice: VoiceEnvelope::default(),
                 glass: if glass { 1.0 } else { 0.0 },
+                far,
+                dim: if dimmed { 1.0 } else { 0.0 },
                 hover: 0.0,
                 hovered: false,
                 bounced: f64::NEG_INFINITY,
@@ -1133,7 +1177,13 @@ impl Plates {
             } else {
                 (entry.glass - step).max(0.0)
             };
-            let hovered = hover == Some(tag.id);
+            // and the far icon's dimming over the same ease
+            entry.far = far;
+            entry.dim = if dimmed {
+                (entry.dim + step).min(1.0)
+            } else {
+                (entry.dim - step).max(0.0)
+            };
             // a jiggly plate has its jelly instead of the bounce
             if hovered && !entry.hovered && !self.still && !jiggle {
                 entry.bounced = now;
@@ -1165,6 +1215,7 @@ impl Plates {
                 },
                 halo: entry.voice.halo(),
                 glass: entry.glass,
+                dim: entry.dim * entry.dim * (3.0 - 2.0 * entry.dim),
                 hover: entry.hover * entry.hover * (3.0 - 2.0 * entry.hover),
                 grow,
                 still: self.still,
@@ -1189,7 +1240,7 @@ impl Plates {
                 self.wanted_pics.insert(*id);
             }
         }
-        (self.levels, self.glass, self.waiting) = (levels, glass, waiting);
+        (self.levels, self.glass, self.far, self.waiting) = (levels, glass, far, waiting);
         // avatars that left the screen
         self.entries.retain(|_, e| now - e.seen < 5.0);
         self.tally.save_when_idle(now);

@@ -193,6 +193,8 @@ pub(super) struct State {
     pub halo: Option<Halo>,
     /// 1: over the blurred world; 0: tinted only.
     pub glass: f32,
+    /// 1: an icon only plate dimmed by its distance (`FAR_ICON_OPACITY`).
+    pub dim: f32,
     /// 1 under the pointer: a lighter surface and border.
     pub hover: f32,
     /// Points the surface grows on each side, across and up, in its bounce
@@ -415,7 +417,8 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
     let ppp = env.pixels_per_point;
     let min = Pos2::new(tag.anchor.x - size.x * 0.5, tag.anchor.y - size.y);
     let rect = Rect::from_min_size(Pos2::new((min.x * ppp).round() / ppp, (min.y * ppp).round() / ppp), size);
-    let alpha = tag.fade * if c.blocked { BLOCKED_OPACITY } else { 1.0 };
+    let dim = 1.0 + (super::FAR_ICON_OPACITY - 1.0) * st.dim;
+    let alpha = tag.fade * dim * if c.blocked { BLOCKED_OPACITY } else { 1.0 };
     // the bounce moves the surface alone, on whole pixels too; the plate
     // keeps its rectangle for the pointer, which does not chase the bounce
     let grow = (st.grow * ppp).round() / ppp;
@@ -630,6 +633,12 @@ fn badge_icon(p: &Palette, badge: Badge) -> Option<(&'static str, Color32)> {
         Badge::TooComplex => ("alert-triangle-filled", p.amber),
         Badge::RenderNever => ("eye-off", p.amber),
         Badge::Blocked => ("ban", p.danger),
+        // the tag's own icon, in its first letter's color (held still: the
+        // light behind the plate already moves)
+        Badge::Staff(mark) => {
+            let look = Look::new(mark);
+            (look.icon(), look.icon_color(p, 0.0))
+        }
         Badge::Typing => return None,
     })
 }

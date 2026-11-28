@@ -1495,8 +1495,8 @@ fn plate_styles_pick_their_levels() {
     }
     assert_eq!(styled_level(PlateStyle::Icon, Level::Full), Level::Icon);
     assert_eq!(styled_level(PlateStyle::Icon, Level::Compact), Level::Icon);
-    // far away every style is the name alone: no wall of circles to load
-    assert_eq!(styled_level(PlateStyle::Icon, Level::Far), Level::Far);
+    // icon only keeps its picture however far; name only ends in the far pill
+    assert_eq!(styled_level(PlateStyle::Icon, Level::Far), Level::Icon);
     assert_eq!(styled_level(PlateStyle::Name, Level::Full), Level::Name);
     assert_eq!(styled_level(PlateStyle::Name, Level::Compact), Level::Name);
     assert_eq!(styled_level(PlateStyle::Name, Level::Far), Level::Far);
@@ -1507,17 +1507,83 @@ fn plate_styles_pick_their_levels() {
 }
 
 #[test]
-fn icon_and_name_plates_keep_only_the_contact_badges() {
+fn a_far_icon_keeps_its_picture_dimmed() {
+    use crate::settings::PlateStyle;
+    let ctx = egui::Context::default();
+    let mut plates = Plates {
+        style: PlateStyle::Icon,
+        ..Plates::default()
+    };
+    let icon = Metrics::of(Level::Icon, SCALE).height;
+    let id = Uuid::from_u128(1);
+    // (two frames: the dimming eases in over `LEVEL_EASE`)
+    let at = |plates: &mut Plates, distance: f32, now: f64| -> (f32, bool, f32) {
+        let tags = [tag(1, distance, content())];
+        frame(&ctx, plates, &tags, now);
+        let (rects, _) = frame(&ctx, plates, &tags, now + 1.0);
+        let e = &plates.entries[&id];
+        (rects[0].1.height(), e.far, e.dim)
+    };
+    // near: the icon, bright
+    assert_eq!(at(&mut plates, 20.0, 1.0), (icon, false, 0.0));
+    // past the compact distance: still the icon, dimmed
+    assert_eq!(at(&mut plates, 60.0, 5.0), (icon, true, 1.0));
+    // coming back, it brightens past the margin only, as the others change level
+    assert_eq!(at(&mut plates, COMPACT_DISTANCE, 9.0), (icon, true, 1.0));
+    assert_eq!(at(&mut plates, COMPACT_DISTANCE - LEVEL_MARGIN - 0.1, 13.0), (icon, false, 0.0));
+    // the pointer on a far icon brings it back to full brightness
+    plates.hovered = Some(id);
+    assert_eq!(at(&mut plates, 60.0, 17.0), (icon, true, 0.0));
+    // name only is still the far pill out there, never dimmed
+    let mut name = Plates {
+        style: PlateStyle::Name,
+        ..Plates::default()
+    };
+    let far = Metrics::of(Level::Far, SCALE).height;
+    assert_eq!(at(&mut name, 60.0, 1.0), (far, false, 0.0));
+}
+
+#[test]
+fn icon_and_name_plates_keep_every_badge() {
     use crate::world::contact_sets::Appearance;
     use crate::world::contact_sets::appearance::SetIcon;
+    use crate::world::staff::Mark;
     let mut c = content();
     c.in_voice = true;
     c.typing = true;
     c.friend = true;
-    for level in [Level::Icon, Level::Name] {
-        assert_eq!(badges(level, &c).len(), 0);
-    }
-    // a contact set's symbol stays: its marker lands on it
+    c.too_complex = true;
+    c.blocked = true;
+    c.mark = Some(Mark::Aurora);
+    let states = [Badge::Voice, Badge::Typing, Badge::Friend, Badge::TooComplex, Badge::Blocked];
+    // the name only plate carries the team's tag over its edge, as the others
+    assert_eq!(badges(Level::Name, &c).iter().collect::<Vec<_>>(), states);
+    assert_eq!(badges(Level::Compact, &c), badges(Level::Name, &c));
+    // the icon, too small for the tag, shows the mark after the microphone
+    let icon: Vec<_> = badges(Level::Icon, &c).iter().collect();
+    assert_eq!(icon[..2], [Badge::Voice, Badge::Staff(Mark::Aurora)]);
+    assert_eq!(icon[2..], states[1..]);
+    c.mark = Some(Mark::Linden);
+    c.in_voice = false;
+    assert_eq!(badges(Level::Icon, &c).iter().next(), Some(Badge::Staff(Mark::Linden)));
+    // every badge at once fits: the states, the mark, eight sets and "+n"
+    let set = |n: usize| SetIcon {
+        set: format!("Set {n}"),
+        icon: n % 4,
+        color: [1.0, 0.5, 0.0, 1.0],
+    };
+    let everything = Content {
+        appearance: std::sync::Arc::new(Appearance {
+            icons: (0..10).map(set).collect(),
+            ..Appearance::default()
+        }),
+        in_voice: true,
+        ..c.clone()
+    };
+    let b = badges(Level::Icon, &everything);
+    assert_eq!(b.len(), MAX_BADGES);
+    assert_eq!(b.iter().last(), Some(Badge::More(2)));
+    // a contact set's symbol stays where its marker lands
     let with_set = Content {
         appearance: std::sync::Arc::new(Appearance {
             icons: vec![SetIcon {
@@ -1530,15 +1596,14 @@ fn icon_and_name_plates_keep_only_the_contact_badges() {
         ..content()
     };
     for level in [Level::Icon, Level::Name] {
-        let b = badges(level, &with_set);
-        assert_eq!(b.len(), 1);
-        assert!(matches!(b.iter().next(), Some(Badge::Contact { icon: 2, .. })));
+        assert!(badges(level, &with_set).iter().any(|b| matches!(b, Badge::Contact { icon: 2, .. })));
     }
     assert_eq!(sub_lines(Level::Icon, &c), [None, None]);
     // the name only plate keeps the group title, not the username
     assert_eq!(sub_lines(Level::Name, &c), [Some(SubLine::Title("Loups du Nord")), None]);
     c.title = None;
     assert_eq!(sub_lines(Level::Name, &c), [None, None]);
+    c.blocked = false;
     assert_eq!(status_dot(Level::Icon, &c), Some(Presence::Online));
     assert_eq!(status_dot(Level::Name, &c), None);
 }

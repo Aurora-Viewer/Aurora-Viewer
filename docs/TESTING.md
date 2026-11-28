@@ -13452,7 +13452,10 @@ What the inventory must show with these scenarios:
   picture in a round plate with its status dot and voice ring, `name` as
   the display name and group title in the compact pill, without touching
   Preferences › Aurora › "Plate style".
-  Both keep only the contact sets' badges, and beyond 40 m both are the
+  Both keep every badge of the other plates (`icon` shows the Aurora team's or
+  Linden Lab's mark as a badge after the microphone). `icon` keeps its picture at
+  every distance, at half opacity beyond 40 m (full again under the
+  pointer); beyond 40 m `name` becomes the
   far pill. Like `AURORA_NAME_TAGS`, it overrides the setting for the
   whole run (a change made in Preferences shows only after a launch
   without it). With "Expand a plate on hover", the hovered plate shows
