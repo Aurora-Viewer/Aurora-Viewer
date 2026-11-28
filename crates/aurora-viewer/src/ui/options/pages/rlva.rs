@@ -18,17 +18,14 @@ pub fn page(cx: &mut Cx) {
             (true, false) => tr!("rlva-toggle-disabled-restart"),
             (false, _) => tr!("rlva-restart-hint"),
         });
-        cx.keywords("RLVa RLV console locks exceptions modifiers").row_with(
-            tr!("rlva-tools-title"),
-            tr!("rlva-tools-hint"),
-            &Nothing,
-            |ui, _, state, _| {
+        cx.link_as("rlva.tools")
+            .keywords("RLVa RLV console locks exceptions modifiers")
+            .row_with(tr!("rlva-tools-title"), tr!("rlva-tools-hint"), &Nothing, |ui, _, state, _| {
                 if ui.button(tr!("rlva-tools-open")).clicked() {
                     state.rlva_tools.open = true;
                 }
                 false
-            },
-        );
+            });
         cx.greyed(!cx.s.rlva_enabled);
         cx.toggle(tr!("rlva-ooc"), &read_at_login(tr!("rlva-ooc-hint")), &field!(rlva.allow_ooc));
         cx.toggle(tr!("rlva-ellipsis"), tr!("rlva-ellipsis-hint"), &field!(rlva.show_ellipsis));
@@ -148,7 +145,8 @@ pub fn page(cx: &mut Cx) {
             });
         }
         cx.greyed(false);
-        cx.keywords("RLVa RLV RestrainedLove")
+        cx.link_as("rlva.active")
+            .keywords("RLVa RLV RestrainedLove")
             .below()
             .row_with(tr!("rlva-active"), "", &Nothing, |ui, _, st, _| {
                 ui.vertical(|ui| {

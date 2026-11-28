@@ -114,6 +114,70 @@ impl<M: Fn(&Settings, &Settings) -> bool, R: Fn(&mut Settings, &Settings)> Track
     }
 }
 
+/// A setting path as a link id, in `out`: an index becomes one more part
+/// (`joystick.mapping[0]` → `joystick.mapping.0`), since a link takes only
+/// letters, digits, `_` and `.` (`slapp::preference_link`).
+pub(super) fn link_id(path: &str, out: &mut String) {
+    out.clear();
+    for c in path.chars() {
+        match c {
+            '[' => out.push('.'),
+            ']' => {}
+            c => out.push(c),
+        }
+    }
+}
+
+/// A stable key as one part of a link id (`Cx::link_as`): lowercase
+/// letters and digits, every other run of characters one `_`, a `+` or a
+/// lone `-` spelled out, so that `Zoom +` and `Zoom -` stay apart
+/// (`Strafe left/right` → `strafe_left_right`, `Zoom -/+` →
+/// `zoom_minus_plus`).
+pub(super) struct LinkPart<'s>(pub &'s str);
+
+impl std::fmt::Display for LinkPart<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bytes = self.0.as_bytes();
+        let word = |i: usize| bytes.get(i).is_some_and(u8::is_ascii_alphanumeric);
+        let mut gap = false;
+        let mut started = false;
+        for (i, &b) in bytes.iter().enumerate() {
+            let part = match b {
+                b if b.is_ascii_alphanumeric() => None,
+                b'+' => Some("plus"),
+                b'-' if !(i > 0 && word(i - 1) && word(i + 1)) => Some("minus"),
+                _ => {
+                    gap = true;
+                    continue;
+                }
+            };
+            // a spelled sign is a word of its own
+            if started && (gap || part.is_some() || (i > 0 && !word(i - 1))) {
+                f.write_str("_")?;
+            }
+            gap = false;
+            started = true;
+            match part {
+                Some(text) => f.write_str(text)?,
+                None => write!(f, "{}", b.to_ascii_lowercase() as char)?,
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Whether a link to `id` leads to the row labelled `label` (`sole`: the
+/// row links to that one destination only). A destination several rows
+/// share leads to the one [`super::LinkDest`] chose.
+fn owns(id: &str, label: &str, sole: bool) -> bool {
+    with_setting_labels(|labels| {
+        labels
+            .get(id)
+            .and_then(Option::as_ref)
+            .is_some_and(|dest| !dest.shared || (dest.label == label && dest.sole == sole))
+    })
+}
+
 /// `field!(lookat.private)`: the [`F`] of a setting.
 macro_rules! field {
     ($first:ident $(.$rest:ident)*) => {
@@ -331,9 +395,18 @@ pub(super) struct Cx<'a> {
     pick: Option<Vec<&'static str>>,
     // Reuse the row's path buffer across this page pass.
     row_paths: Vec<&'static str>,
+    /// The next row's own link id (`link_as`), then the current row's; and
+    /// the link id a row owns (`row_link`). Kept across rows, so a page
+    /// pass allocates them once.
+    next_link: String,
+    current_link: String,
+    link_buf: String,
     pub collected: Vec<(Page, &'static str)>,
     /// `Mode::Collect`: each setting a row edits, with its label and hint.
     pub described: Vec<(&'static str, String, String)>,
+    /// `Mode::Collect`: each row's link ids, with its label and whether the
+    /// row links to that one destination only.
+    pub linked: Vec<(String, String, bool)>,
     /// A setting changed (the app saves and applies them).
     pub changed: bool,
 }
@@ -405,8 +478,12 @@ impl<'a> Cx<'a> {
             hidden_on_page: false,
             pick: None,
             row_paths: Vec::new(),
+            next_link: String::new(),
+            current_link: String::new(),
+            link_buf: String::new(),
             collected: Vec::new(),
             described: Vec::new(),
+            linked: Vec::new(),
             changed: false,
         }
     }
@@ -492,6 +569,39 @@ impl<'a> Cx<'a> {
         self.next.keywords.push(' ');
         self.next.keywords.push_str(words);
         self
+    }
+
+    /// The next row's "Copy link to setting" id, for a row with no setting
+    /// path of its own to link: one that edits no saved setting (a system
+    /// state, a button: `system.slurl_links`), or one item of a setting
+    /// shared by many rows (`keybinds.Forward`). A stable ASCII identifier
+    /// (`slapp::preference_link`), never translated text; its reset and
+    /// modified dot still come from the row's `Track`.
+    pub fn link_as(&mut self, id: impl std::fmt::Display) -> &mut Self {
+        use std::fmt::Write as _;
+        self.next_link.clear();
+        let _ = write!(self.next_link, "{id}");
+        self
+    }
+
+    /// The link id this row owns, left in `link_buf`: its own (`link_as`),
+    /// or the first of its settings whose link leads to this row. With
+    /// `wanted`, whether the row owns that one.
+    fn row_link(&mut self, t: &dyn Track, label: &str, wanted: Option<&str>) -> bool {
+        if !self.current_link.is_empty() {
+            self.link_buf.clone_from(&self.current_link);
+            return wanted.is_none_or(|w| w == self.link_buf) && owns(&self.link_buf, label, true);
+        }
+        self.row_paths.clear();
+        t.paths(&mut self.row_paths);
+        let sole = self.row_paths.len() == 1;
+        for path in &self.row_paths {
+            link_id(path, &mut self.link_buf);
+            if wanted.is_none_or(|w| w == self.link_buf) && owns(&self.link_buf, label, sole) {
+                return true;
+            }
+        }
+        false
     }
 
     /// The rows of another page's tab that edit `paths`, drawn here as well
@@ -653,6 +763,8 @@ impl<'a> Cx<'a> {
         body: impl FnOnce(&mut egui::Ui, &mut Settings, &mut OptionsUi, &mut OptionsResult) -> bool,
     ) -> bool {
         let next = std::mem::take(&mut self.next);
+        std::mem::swap(&mut self.next_link, &mut self.current_link);
+        self.next_link.clear();
         self.rows_seen += 1;
         let id = self.row_id(label);
         self.last = Some((id, label.to_owned(), next.unfolded));
@@ -676,20 +788,29 @@ impl<'a> Cx<'a> {
                 t.paths(&mut paths);
                 self.described
                     .extend(paths.iter().map(|path| (*path, label.to_owned(), hint.to_owned())));
+                if self.current_link.is_empty() {
+                    let sole = paths.len() == 1;
+                    for path in &paths {
+                        let mut link = String::new();
+                        link_id(path, &mut link);
+                        self.linked.push((link, label.to_owned(), sole));
+                    }
+                } else {
+                    self.linked.push((self.current_link.clone(), label.to_owned(), true));
+                }
                 self.collected.extend(paths.into_iter().map(|p| (self.page, p)));
                 return false;
             }
             Mode::Count => {
                 if !self.hidden_on_page
-                    && self.st.pending_setting.as_deref().is_some_and(|wanted| {
-                        self.row_paths.clear();
-                        t.paths(&mut self.row_paths);
-                        self.row_paths.contains(&wanted) && with_setting_labels(|labels| labels.get(wanted).is_some_and(Option::is_some))
-                    })
+                    && let Some(wanted) = self.st.pending_setting.take()
                 {
-                    self.st.go_to = Some((self.page, self.tab, Some(RowFlash::Link(id))));
-                    self.st.open_parent = self.parent.as_ref().map(|p| p.id);
-                    self.st.pending_setting = None;
+                    if self.row_link(t, label, Some(&wanted)) {
+                        self.st.go_to = Some((self.page, self.tab, Some(RowFlash::Link(id))));
+                        self.st.open_parent = self.parent.as_ref().map(|p| p.id);
+                    } else {
+                        self.st.pending_setting = Some(wanted);
+                    }
                 }
                 if modified {
                     Counts::add(&mut self.counts.modified, self.page);
@@ -1157,25 +1278,15 @@ impl<'a> Cx<'a> {
             self.ui.painter().galley(label_pos, galley.clone(), ink);
         }
         // A section body has no separate label: its control owns this space.
-        let link_path = if section_body || self.hidden_on_page {
-            None
-        } else {
-            self.row_paths.clear();
-            t.paths(&mut self.row_paths);
-            with_setting_labels(|labels| {
-                self.row_paths
-                    .iter()
-                    .copied()
-                    .find(|path| labels.get(*path).is_some_and(Option::is_some))
-            })
-        };
-        if let Some(path) = link_path {
+        let linked = !section_body && !self.hidden_on_page && self.row_link(t, label, None);
+        if linked {
             let label_response = self.ui.interact(label_rect, id.with("label"), Sense::click());
             let label_response = if hint.is_empty() {
                 label_response
             } else {
                 label_response.on_hover_text(hint)
             };
+            let path = &self.link_buf;
             crate::ui::menu::context_menu(&label_response, &p, |ui| {
                 if crate::ui::menu::item(ui, &p, "link-filled", aurora_i18n::tr!("ui-options-copy-setting-link"))
                     && let Some(url) = crate::slapp::preference_link(path)

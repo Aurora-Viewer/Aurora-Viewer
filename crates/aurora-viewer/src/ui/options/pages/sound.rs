@@ -36,6 +36,10 @@ pub(crate) fn noise_choice(ui: &mut egui::Ui, id: &str, value: &mut u8, width: f
     changed
 }
 
+/// The link id of each volume slider, in the order of
+/// `settings::audio_channels` (the sliders share `audio.volume`).
+const VOLUME_LINKS: [&str; 7] = ["main", "interface", "ambient", "sounds", "music", "media", "voice"];
+
 pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
         0 => volumes(cx),
@@ -105,12 +109,13 @@ fn volumes(cx: &mut Cx) {
                 .0
             },
         );
-        cx.row_with(tr!("ui-options-device-list"), "", &Nothing, |ui, _, _, r| {
-            if widgets::flat_button(ui, &p, tr!("ui-options-refresh-list")).clicked() {
-                r.refresh_devices = true;
-            }
-            false
-        });
+        cx.link_as("sound.devices")
+            .row_with(tr!("ui-options-device-list"), "", &Nothing, |ui, _, _, r| {
+                if widgets::flat_button(ui, &p, tr!("ui-options-refresh-list")).clicked() {
+                    r.refresh_devices = true;
+                }
+                false
+            });
     });
     cx.group(tr!("ui-options-volumes"), |cx| {
         for (i, name) in crate::settings::audio_channels().iter().enumerate() {
@@ -127,61 +132,63 @@ fn volumes(cx: &mut Cx) {
                     *s.audio.channel_box(i) = d.audio.channel_on(i);
                 },
             };
-            cx.wide().row(name, "", &t, |ui, s| {
-                let a = &mut s.audio;
-                let mut ch = false;
-                ui.spacing_mut().slider_width = SLIDER_W + 40.0;
-                // this page's own copy of the setting: the sliders follow a
-                // click on the switch below at once
-                let enabled = !a.muted[i] && a.enabled[i];
-                ch |= widgets::volume_slider_with(
-                    ui,
-                    &mut a.volume[i],
-                    widgets::VolumeScale::Gain,
-                    widgets::perceptual_override().unwrap_or(a.perceptual_volume),
-                    enabled,
-                    |s| s.custom_parser(aurora_i18n::parse_number).trailing_fill(true).show_value(false),
-                )
-                .changed();
-                // the percentage in a fixed column, painted from its right
-                // edge: its text never moves the row (a font without even
-                // digits, OpenDyslexic, made " 80 %" wider than "100 %")
-                let font = egui::FontId::proportional(12.0);
-                let percent_width = ui.painter().layout_no_wrap("100 %".to_owned(), font.clone(), p.muted).size().x;
-                let (cell, _) = ui.allocate_exact_size(egui::vec2(percent_width, ui.spacing().interact_size.y), egui::Sense::hover());
-                ui.painter().text(
-                    cell.right_center(),
-                    egui::Align2::RIGHT_CENTER,
-                    format!("{:.0} %", a.volume[i] * 100.0),
-                    font,
-                    p.muted,
-                );
-                let mut on = !a.muted[i];
-                if widgets::switch(ui, &p, &mut on)
-                    .on_hover_text(if on { tr!("common-cut") } else { tr!("ui-options-restore") })
-                    .changed()
-                {
-                    a.muted[i] = !on;
-                    ch = true;
-                }
-                if i > 0 {
-                    let tip = if i == crate::settings::VOICE_CHANNEL {
-                        tr!("ui-options-enable-voice")
+            cx.link_as(format_args!("audio.volume.{}", VOLUME_LINKS[i]))
+                .wide()
+                .row(name, "", &t, |ui, s| {
+                    let a = &mut s.audio;
+                    let mut ch = false;
+                    ui.spacing_mut().slider_width = SLIDER_W + 40.0;
+                    // this page's own copy of the setting: the sliders follow a
+                    // click on the switch below at once
+                    let enabled = !a.muted[i] && a.enabled[i];
+                    ch |= widgets::volume_slider_with(
+                        ui,
+                        &mut a.volume[i],
+                        widgets::VolumeScale::Gain,
+                        widgets::perceptual_override().unwrap_or(a.perceptual_volume),
+                        enabled,
+                        |s| s.custom_parser(aurora_i18n::parse_number).trailing_fill(true).show_value(false),
+                    )
+                    .changed();
+                    // the percentage in a fixed column, painted from its right
+                    // edge: its text never moves the row (a font without even
+                    // digits, OpenDyslexic, made " 80 %" wider than "100 %")
+                    let font = egui::FontId::proportional(12.0);
+                    let percent_width = ui.painter().layout_no_wrap("100 %".to_owned(), font.clone(), p.muted).size().x;
+                    let (cell, _) = ui.allocate_exact_size(egui::vec2(percent_width, ui.spacing().interact_size.y), egui::Sense::hover());
+                    ui.painter().text(
+                        cell.right_center(),
+                        egui::Align2::RIGHT_CENTER,
+                        format!("{:.0} %", a.volume[i] * 100.0),
+                        font,
+                        p.muted,
+                    );
+                    let mut on = !a.muted[i];
+                    if widgets::switch(ui, &p, &mut on)
+                        .on_hover_text(if on { tr!("common-cut") } else { tr!("ui-options-restore") })
+                        .changed()
+                    {
+                        a.muted[i] = !on;
+                        ch = true;
+                    }
+                    if i > 0 {
+                        let tip = if i == crate::settings::VOICE_CHANNEL {
+                            tr!("ui-options-enable-voice")
+                        } else {
+                            tr!("ui-options-enable-this-channel")
+                        };
+                        ch |= widgets::checkbox(ui, &p, a.channel_box(i), "").on_hover_text(tip).changed();
                     } else {
-                        tr!("ui-options-enable-this-channel")
-                    };
-                    ch |= widgets::checkbox(ui, &p, a.channel_box(i), "").on_hover_text(tip).changed();
-                } else {
-                    // the master has no enable box: its room kept, so that
-                    // its slider lines up with the channels' (the row is
-                    // laid out from the right)
-                    ui.scope(|ui| {
-                        ui.set_invisible();
-                        widgets::checkbox(ui, &p, &mut true, "");
-                    });
-                }
-                ch
-            });
+                        // the master has no enable box: its room kept, so that
+                        // its slider lines up with the channels' (the row is
+                        // laid out from the right)
+                        ui.scope(|ui| {
+                            ui.set_invisible();
+                            widgets::checkbox(ui, &p, &mut true, "");
+                        });
+                    }
+                    ch
+                });
         }
         cx.toggle(
             tr!("ui-options-perceptual-volume"),
@@ -418,7 +425,7 @@ fn interface_sounds(cx: &mut Cx) {
         // every sound one by one, behind the cog; the three conversation
         // sounds too, with their asset, as the UI sounds panel lists them
         // (their switch turns their mode above to Never and back)
-        cx.row(
+        cx.link_as("sound.per_sound_choices").row(
             tr!("ui-options-per-sound-choices"),
             tr!("ui-options-per-sound-choices-help"),
             &Nothing,
@@ -443,41 +450,44 @@ fn interface_sounds(cx: &mut Cx) {
                         s.audio.ui.set_uuid(sound, id);
                     },
                 };
-                cx.wide().keywords(e.name).row_with((e.label)(), &hint, &t, |ui, s, st, _| {
-                    let mut on = ui_sound_plays(s, e.sound);
-                    let mut ch = widgets::switch(ui, &p, &mut on).changed();
-                    if ch {
-                        set_ui_sound_plays(s, e.sound, on);
-                    }
-                    let u = &mut s.audio.ui;
-                    let text = st.ui_sound_text.entry(e.name).or_insert_with(|| uuid_text(u.uuid(e.sound)));
-                    let parsed = parse_uuid_text(text);
-                    let edit = ui.add(
-                        egui::TextEdit::singleline(text)
-                            .desired_width(290.0)
-                            .font(egui::TextStyle::Monospace)
-                            .text_color(if parsed.is_some() { p.ink } else { p.danger })
-                            .hint_text(tr!("ui-options-no-sound")),
-                    );
-                    if edit.changed()
-                        && let Some(id) = parse_uuid_text(text)
-                    {
-                        u.set_uuid(e.sound, id);
-                        ch = true;
-                    }
-                    // force_sound: heard even when switched off
-                    if widgets::flat_button(ui, &p, tr!("ui-options-listen")).clicked()
-                        && let Some(id) = u.resolve(e.sound, true)
-                    {
-                        crate::ui::sound_cues::preview(ui.ctx(), id);
-                    }
-                    if u.uuid(e.sound) != e.uuid && widgets::flat_button(ui, &p, tr!("common-default")).clicked() {
-                        u.set_uuid(e.sound, e.uuid);
-                        *text = uuid_text(e.uuid);
-                        ch = true;
-                    }
-                    ch
-                });
+                cx.link_as(format_args!("audio.ui.{}", e.name))
+                    .wide()
+                    .keywords(e.name)
+                    .row_with((e.label)(), &hint, &t, |ui, s, st, _| {
+                        let mut on = ui_sound_plays(s, e.sound);
+                        let mut ch = widgets::switch(ui, &p, &mut on).changed();
+                        if ch {
+                            set_ui_sound_plays(s, e.sound, on);
+                        }
+                        let u = &mut s.audio.ui;
+                        let text = st.ui_sound_text.entry(e.name).or_insert_with(|| uuid_text(u.uuid(e.sound)));
+                        let parsed = parse_uuid_text(text);
+                        let edit = ui.add(
+                            egui::TextEdit::singleline(text)
+                                .desired_width(290.0)
+                                .font(egui::TextStyle::Monospace)
+                                .text_color(if parsed.is_some() { p.ink } else { p.danger })
+                                .hint_text(tr!("ui-options-no-sound")),
+                        );
+                        if edit.changed()
+                            && let Some(id) = parse_uuid_text(text)
+                        {
+                            u.set_uuid(e.sound, id);
+                            ch = true;
+                        }
+                        // force_sound: heard even when switched off
+                        if widgets::flat_button(ui, &p, tr!("ui-options-listen")).clicked()
+                            && let Some(id) = u.resolve(e.sound, true)
+                        {
+                            crate::ui::sound_cues::preview(ui.ctx(), id);
+                        }
+                        if u.uuid(e.sound) != e.uuid && widgets::flat_button(ui, &p, tr!("common-default")).clicked() {
+                            u.set_uuid(e.sound, e.uuid);
+                            *text = uuid_text(e.uuid);
+                            ch = true;
+                        }
+                        ch
+                    });
             }
         });
     });
@@ -542,7 +552,8 @@ fn voice(cx: &mut Cx) {
                 }
             },
         };
-        cx.wide().row_with(
+        // its own link: Shortcuts has a row of this key too
+        cx.link_as("sound.push_to_talk_key").wide().row_with(
             tr!("ui-options-push-to-talk-key"),
             tr!("ui-options-key-or-mouse-button-middle-click-by-default-also"),
             &t,

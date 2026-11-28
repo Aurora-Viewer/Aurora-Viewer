@@ -500,17 +500,22 @@ fn quality(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-presets"), |cx| {
         let p = cx.p;
-        cx.wide().keywords(tr!("ui-options-preset-custom")).row_with(
-            tr!("ui-options-preset-level"),
-            tr!("ui-options-preset-level-help"),
-            // a level writes the page's settings: they are the rows below
+        cx.link_as("graphics.level")
+            .wide()
+            .keywords(tr!("ui-options-preset-custom"))
+            .row_with(
+                tr!("ui-options-preset-level"),
+                tr!("ui-options-preset-level-help"),
+                // a level writes the page's settings: they are the rows below
+                &Nothing,
+                |ui, s, st, _| preset_choice(ui, &p, s, st.ray_tracing),
+            );
+        cx.link_as("graphics.saved_profiles").below().row_with(
+            tr!("graphics-saved-title"),
+            tr!("graphics-saved-help"),
             &Nothing,
-            |ui, s, st, _| preset_choice(ui, &p, s, st.ray_tracing),
+            |ui, s, st, _| super::super::saved_graphics::controls(ui, &p, s, st),
         );
-        cx.below()
-            .row_with(tr!("graphics-saved-title"), tr!("graphics-saved-help"), &Nothing, |ui, s, st, _| {
-                super::super::saved_graphics::controls(ui, &p, s, st)
-            });
     });
     cx.group(tr!("ui-options-distance-and-detail"), |cx| {
         cx.slider(
@@ -1305,7 +1310,7 @@ fn world_look(cx: &mut Cx) {
             &field!(world_look.on),
         );
         let p = cx.p;
-        cx.row_with(
+        cx.link_as("graphics.world_look_filters").row_with(
             tr!("ui-options-world-look-choose"),
             tr!("ui-options-world-look-choose-help"),
             &Nothing,

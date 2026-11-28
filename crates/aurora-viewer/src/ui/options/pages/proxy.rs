@@ -167,7 +167,7 @@ pub fn group(cx: &mut Cx) {
                 },
             );
             if cx.s.proxy.socks_auth == SocksAuth::UserPass {
-                cx.below().row_with(
+                cx.link_as("proxy.credentials").below().row_with(
                     tr!("ui-options-proxy-credentials"),
                     tr!("ui-options-proxy-credentials-help"),
                     &Nothing,

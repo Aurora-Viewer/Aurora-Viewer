@@ -70,12 +70,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     let keys: Vec<String> = cx.s.keybinds.get(a).iter().flatten().map(|b| b.label()).collect();
                     cx.keywords(&keys.join(" "));
                 }
-                cx.wide().row_with(label, "", &t, |ui, s, st, _| {
-                    for slot in 0..2 {
-                        binding_cell(ui, &p, &s.keybinds, st, a, slot);
-                    }
-                    false
-                });
+                // one link per action: the row shares `keybinds` with the others
+                cx.link_as(format_args!("keybinds.{a:?}"))
+                    .wide()
+                    .row_with(label, "", &t, |ui, s, st, _| {
+                        for slot in 0..2 {
+                            binding_cell(ui, &p, &s.keybinds, st, a, slot);
+                        }
+                        false
+                    });
             }
         });
     }

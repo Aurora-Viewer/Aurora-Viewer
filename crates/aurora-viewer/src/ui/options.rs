@@ -1463,8 +1463,80 @@ pub fn describe_settings() -> Vec<(String, String, String)> {
     out
 }
 
-/// Unambiguous link destinations and their labels in the current UI language.
-type SettingLabels = HashMap<String, Option<String>>;
+/// The row a "Copy link to setting" id leads to.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct LinkDest {
+    /// The row's label, in the interface's language.
+    pub label: String,
+    /// The row links to this one destination only.
+    pub sole: bool,
+    /// Several rows have this id: only the one with this label and `sole`
+    /// owns it.
+    pub shared: bool,
+}
+
+impl LinkDest {
+    /// The row an id leads to, from every row that has it (`label`,
+    /// `sole`). One row: that one. Several (one setting shown on two rows):
+    /// the only row that edits that setting alone (Camera position, not
+    /// the preset that moves it with the focus), else the first when they
+    /// all bear the same label (the same row on two pages); else none, the
+    /// link being ambiguous.
+    fn choose(rows: &[(String, bool)]) -> Option<Self> {
+        let pick = |(label, sole): &(String, bool), shared| Self {
+            label: label.clone(),
+            sole: *sole,
+            shared,
+        };
+        match rows {
+            [] => None,
+            [one] => Some(pick(one, false)),
+            [first, rest @ ..] => {
+                let mut sole = rows.iter().filter(|(_, sole)| *sole);
+                match (sole.next(), sole.next()) {
+                    (Some(only), None) => Some(pick(only, true)),
+                    _ if rest.iter().all(|(label, _)| *label == first.0) => Some(pick(first, true)),
+                    _ => None,
+                }
+            }
+        }
+    }
+}
+
+/// Every link destination (`None`: ambiguous), in the current UI language.
+type SettingLabels = HashMap<String, Option<LinkDest>>;
+
+/// Each row's link ids, with its label and whether it links to that one
+/// destination only (`Cx::link_as`, or the paths of its settings). Logged
+/// out and in: the account rows of Privacy show only while logged in, and
+/// their links must lead there then. A row seen in both counts once.
+fn collect_links() -> Vec<(String, String, bool)> {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let d = Settings::default();
+    let mut out: Vec<(String, String, bool)> = Vec::new();
+    let mut seen = HashSet::new();
+    for account in [None, Some(privacy::Account::default())] {
+        let mut s = Settings::default();
+        let mut st = OptionsUi {
+            account,
+            ..Default::default()
+        };
+        let mut r = OptionsResult::default();
+        run_ui(&ctx, egui::RawInput::default(), |ui| {
+            let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Collect, "");
+            for page in Page::ALL {
+                run_page(&mut cx, page, None);
+            }
+            for link in std::mem::take(&mut cx.linked) {
+                if seen.insert(link.clone()) {
+                    out.push(link);
+                }
+            }
+        });
+    }
+    out
+}
 
 fn with_setting_labels<R>(read: impl FnOnce(&SettingLabels) -> R) -> R {
     thread_local! {
@@ -1473,10 +1545,11 @@ fn with_setting_labels<R>(read: impl FnOnce(&SettingLabels) -> R) -> R {
     LABELS.with_borrow_mut(|(cached_language, labels)| {
         let language = aurora_i18n::language();
         if *cached_language != language {
-            labels.clear();
-            for (path, label, _) in describe_settings() {
-                labels.entry(path).and_modify(|entry| *entry = None).or_insert(Some(label));
+            let mut rows: HashMap<String, Vec<(String, bool)>> = HashMap::new();
+            for (id, label, sole) in collect_links() {
+                rows.entry(id).or_default().push((label, sole));
             }
+            *labels = rows.into_iter().map(|(id, rows)| (id, LinkDest::choose(&rows))).collect();
             *cached_language = language;
         }
         read(labels)
@@ -1486,7 +1559,7 @@ fn with_setting_labels<R>(read: impl FnOnce(&SettingLabels) -> R) -> R {
 pub(super) fn setting_link_label(path: &str) -> String {
     let preferences = aurora_i18n::tr!("common-preferences");
     with_setting_labels(|labels| match labels.get(path).and_then(Option::as_ref) {
-        Some(label) => format!("{preferences} › {label}"),
+        Some(dest) => format!("{preferences} › {}", dest.label),
         None => preferences.to_owned(),
     })
 }

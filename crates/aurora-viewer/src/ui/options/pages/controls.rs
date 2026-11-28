@@ -153,12 +153,13 @@ fn friends_only_row(cx: &mut Cx) {
     } else {
         tr!("ui-options-friends-only-keep-login")
     };
-    cx.row_with(tr!("toolbar-command-friends-only"), hint, &Nothing, |ui, _, _, r| {
-        if ui.add_enabled_ui(state.is_some(), |ui| toggle(ui, &p, &mut on)).inner {
-            r.friends_only = Some(on);
-        }
-        false
-    });
+    cx.link_as("controls.friends_only")
+        .row_with(tr!("toolbar-command-friends-only"), hint, &Nothing, |ui, _, _, r| {
+            if ui.add_enabled_ui(state.is_some(), |ui| toggle(ui, &p, &mut on)).inner {
+                r.friends_only = Some(on);
+            }
+            false
+        });
 }
 
 /// "Keep 'Show Friends Only' enabled after teleporting" (FSRenderFriendsOnlyPersistsTP of
@@ -174,10 +175,11 @@ fn friends_only_keep_row(cx: &mut Cx) {
     } else {
         tr!("ui-options-friends-only-keep-login")
     };
-    cx.row_with(tr!("ui-options-friends-only-keep"), hint, &Nothing, |ui, _, _, r| {
-        if ui.add_enabled_ui(state.is_some(), |ui| toggle(ui, &p, &mut kept)).inner {
-            r.friends_only_keep = Some(kept);
-        }
-        false
-    });
+    cx.link_as("controls.friends_only_keep")
+        .row_with(tr!("ui-options-friends-only-keep"), hint, &Nothing, |ui, _, _, r| {
+            if ui.add_enabled_ui(state.is_some(), |ui| toggle(ui, &p, &mut kept)).inner {
+                r.friends_only_keep = Some(kept);
+            }
+            false
+        });
 }

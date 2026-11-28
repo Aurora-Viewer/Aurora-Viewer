@@ -2519,6 +2519,91 @@ fn the_selected_system_font_stays_in_view() {
     assert!(drawn(&texts, "Font 35"), "the list opens on the chosen font");
 }
 
+/// Every "Copy link to setting" destination can be shared and leads to one
+/// row (#5146): a link id must be a valid link, never ambiguous.
+#[test]
+fn every_preference_link_is_valid_and_leads_to_one_row() {
+    let mut ids: HashMap<String, Vec<(String, bool)>> = HashMap::new();
+    for (id, label, sole) in collect_links() {
+        ids.entry(id).or_default().push((label, sole));
+    }
+    for (id, rows) in &ids {
+        assert!(crate::slapp::preference_link(id).is_some(), "{id} is not a valid link");
+        assert!(LinkDest::choose(rows).is_some(), "{id} is ambiguous: {rows:?}");
+    }
+}
+
+#[test]
+fn link_ids_take_indexes_and_stable_keys() {
+    let mut out = String::new();
+    cx::link_id("joystick.mapping[0]", &mut out);
+    assert_eq!(out, "joystick.mapping.0");
+    cx::link_id("gamepad.flycam.gain[5]", &mut out);
+    assert_eq!(out, "gamepad.flycam.gain.5");
+    assert_eq!(cx::LinkPart("Strafe left/right").to_string(), "strafe_left_right");
+    assert_eq!(cx::LinkPart("  Zoom -/+ ").to_string(), "zoom_minus_plus");
+    assert_eq!(cx::LinkPart("Zoom +").to_string(), "zoom_plus");
+    assert_eq!(cx::LinkPart("Push-to-talk").to_string(), "push_to_talk");
+}
+
+#[test]
+fn a_setting_on_two_rows_links_to_the_row_that_edits_it_alone() {
+    let row = |label: &str, sole| (label.to_owned(), sole);
+    // Camera position edits the offset alone; the preset moves it too.
+    let dest = LinkDest::choose(&[row("Preset", false), row("Camera position", true)]).expect("one row");
+    assert_eq!((dest.label.as_str(), dest.sole, dest.shared), ("Camera position", true, true));
+    // The same row on two pages: the first.
+    let dest = LinkDest::choose(&[row("Colored sky ambient", true), row("Colored sky ambient", true)]).expect("one row");
+    assert_eq!(dest.label, "Colored sky ambient");
+    // Two different rows of one setting: no link.
+    assert!(LinkDest::choose(&[row("Main", true), row("Voice", true)]).is_none());
+    assert!(LinkDest::choose(&[row("Only", true)]).is_some_and(|dest| !dest.shared));
+}
+
+/// The rows #4414 could not link: one that edits no saved setting, one of
+/// many sharing a setting, one setting on two rows, an indexed setting.
+#[test]
+fn rows_without_a_path_of_their_own_open_from_their_link() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut settings = Settings::default();
+    let defaults = Settings::default();
+    let mut cases = vec![
+        ("system.backup_save", Page::System),
+        ("privacy.show_in_search", Page::Privacy),
+        ("network.clear_cache", Page::Network),
+        ("keybinds.Forward", Page::Shortcuts),
+        ("audio.volume.music", Page::Sound),
+        ("audio.ui.TeleportOut", Page::Sound),
+        ("game_control.avatar.strafe_left_right", Page::GameControls),
+        ("joystick.mapping.0", Page::Controls),
+        ("camera.camera_offset", Page::Camera),
+    ];
+    if crate::url_scheme::supported() {
+        cases.push(("system.slurl_links", Page::System));
+    }
+    for (id, page) in cases {
+        // logged in: the account rows of Privacy show only then
+        let mut st = OptionsUi {
+            account: Some(privacy::Account::default()),
+            ..Default::default()
+        };
+        let mut result = OptionsResult::default();
+        st.open_setting(id.into());
+        run_ui(&ctx, egui::RawInput::default(), |ui| {
+            count(ui, &p, &mut settings, &defaults, &mut st, &mut result);
+        });
+        assert!(
+            matches!(st.go_to, Some((found, _, Some(RowFlash::Link(_)))) if found == page),
+            "{id}: {:?}",
+            st.go_to.map(|(page, tab, _)| (page, tab))
+        );
+        assert!(!result.setting_unavailable, "{id}");
+        assert!(!result.changed, "{id} changed a value");
+        assert_ne!(setting_link_label(id), aurora_i18n::tr!("common-preferences"), "{id} has no label");
+    }
+}
+
 #[test]
 fn legacy_layout_status_shows_shared_folder_append_rule_and_login_prompt() {
     fn render(s: &mut Settings, st: &mut OptionsUi) -> Vec<String> {
