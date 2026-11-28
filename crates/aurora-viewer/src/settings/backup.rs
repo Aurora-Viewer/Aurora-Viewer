@@ -82,6 +82,7 @@ const ACCOUNT_FILES: &[&str] = &[
     crate::world::hud_lock::FILE,
     crate::world::hover_height::FILE,
     crate::world::tphistory::TELEPORT_HISTORY_FILE,
+    super::autoresponse_account::FILE,
 ];
 
 /// The skin whose files are kept (`ui/skin.rs`), and those files; its icons
@@ -313,6 +314,12 @@ impl Settings {
         self.newer_file = current.newer_file.clone();
         if let Some(account) = current.hover_height_account {
             self.select_hover_account(account);
+        }
+        // the backup's responses are the shared ones; the account logged in
+        // keeps its own, which a backup does not hold
+        if let Some((file, account)) = current.autoresponse_binding() {
+            let shared = self.autoresponse_shared_part();
+            self.bind_autoresponse(file, shared, account);
         }
         self.chat_log_account = current.chat_log_account.clone();
         self.remember_chat_log_account();

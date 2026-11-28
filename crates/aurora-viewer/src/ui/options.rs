@@ -34,6 +34,8 @@ use std::collections::{HashMap, HashSet};
 
 /// The preferences' window (its layout is saved under this id).
 pub const WINDOW: &str = "preferences";
+/// Chat's "Away and replies" tab (`pages::tabs`).
+pub const AWAY_AND_REPLIES_TAB: usize = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Capture {
@@ -763,6 +765,18 @@ impl OptionsUi {
     pub fn open_gifs(&mut self) {
         self.open(Page::Chat, 0);
         self.reveal = Some((Page::Chat, 0, aurora_i18n::tr!("ui-options-gifs-show")));
+    }
+
+    /// Opens Preferences › Chat › Away and replies on the auto-reply texts
+    /// (the Online status menu's "Auto-reply messages…"; it opened the
+    /// Nearby chat tab).
+    pub fn open_auto_replies(&mut self) {
+        self.open(Page::Chat, AWAY_AND_REPLIES_TAB);
+        self.reveal = Some((
+            Page::Chat,
+            AWAY_AND_REPLIES_TAB,
+            aurora_i18n::tr!("ui-options-in-do-not-disturb-mode"),
+        ));
     }
 
     /// Opens the Sound and voice page on one of its parts.

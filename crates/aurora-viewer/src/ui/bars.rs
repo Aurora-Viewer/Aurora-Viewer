@@ -177,8 +177,8 @@ pub enum BarAction {
     TeleportSavedPlace(HistoryItem),
     /// Communicate > Online status changed.
     SetStatus(crate::world::status::StatusModes),
-    /// Open the chat preferences (automatic responses).
-    ChatPrefs,
+    /// Open Preferences on the auto-reply texts.
+    AutoReplyPrefs,
     /// Me > Profile.
     MyProfile,
     /// The toolbar's Profile: our profile, or closed when it is shown
@@ -862,7 +862,7 @@ fn status_menu(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Sta
     });
     menu::separator(ui, p);
     if menu::command(ui, p, "ui-bars-auto-reply-messages").item("settings-filled", aurora_i18n::tr!("ui-bars-auto-reply-messages")) {
-        *action = BarAction::ChatPrefs;
+        *action = BarAction::AutoReplyPrefs;
         return;
     }
     if c {
@@ -986,7 +986,7 @@ fn status_menu_body(ui: &mut egui::Ui, p: &Palette, status: crate::world::status
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-auto-reply-messages")) {
-            sub = BarAction::ChatPrefs;
+            sub = BarAction::AutoReplyPrefs;
         }
         if !matches!(sub, BarAction::None) {
             *action = sub;

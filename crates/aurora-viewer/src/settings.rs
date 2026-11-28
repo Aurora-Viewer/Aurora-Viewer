@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub mod area_search;
+pub mod autoresponse_account;
 pub mod autotune;
 pub mod backup;
 mod chat_log;
@@ -1374,8 +1375,16 @@ pub struct Settings {
     /// The pose stand's lock and last pose (FSPoseStandLock,
     /// FSPoseStandLastSelectedPose).
     pub pose_stand: crate::pose_stand::Settings,
-    /// Automatic responses and the kept online status modes.
+    /// Automatic responses and the kept online status modes. While an
+    /// account is logged in, its own values (autoresponse_account.rs).
     pub autoresponse: crate::world::status::AutoResponse,
+    /// The values of `autoresponse` before per-account responses were given
+    /// to an account's first login (#5024): the next ones take the texts only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) autoresponse_imported: bool,
+    /// The account whose responses `autoresponse` holds, and its file.
+    #[serde(skip)]
+    pub(crate) autoresponse_account: Option<autoresponse_account::Binding>,
     /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
     /// Commands).
     pub chat_commands: crate::cmdline::ChatCommandSettings,
@@ -2829,6 +2838,8 @@ impl Default for Settings {
             poser: Default::default(),
             pose_stand: Default::default(),
             autoresponse: Default::default(),
+            autoresponse_imported: false,
+            autoresponse_account: None,
             chat_commands: Default::default(),
             keywords: Default::default(),
             spelling: Default::default(),
@@ -4074,6 +4085,7 @@ impl Settings {
     /// Back to the defaults ("Reset everything"), keeping the account and
     /// grid used to log in, the start location and the window size.
     pub fn reset_keeping_account(&mut self) {
+        let responses = self.autoresponse_binding();
         let old = std::mem::take(self);
         *self = Settings {
             username: old.username,
@@ -4097,11 +4109,17 @@ impl Settings {
             // Reset this avatar's hover and transcript folder options while keeping other accounts.
             hover_height_accounts: old.hover_height_accounts,
             hover_height_account: old.hover_height_account,
+            autoresponse_imported: old.autoresponse_imported,
             chat_log_accounts: old.chat_log_accounts,
             chat_log_account: old.chat_log_account,
             chat_log_legacy_default: old.chat_log_legacy_default,
             ..Settings::default()
         };
+        // the account logged in keeps its file, its responses and the shared
+        // ones back to the defaults; the other accounts keep theirs
+        if let Some((file, _)) = responses {
+            self.bind_autoresponse(file, Default::default(), Default::default());
+        }
     }
 
     /// "Show recent emojis" of the chat style in use (Preferences > Chat
@@ -4118,6 +4136,7 @@ impl Settings {
     /// the frame thread does not wait for the disk, and a save not started
     /// yet is replaced by the newer one.
     pub fn save(&self) {
+        self.save_autoresponse_account();
         let copy = self.to_saved();
         let path = Self::path();
         crate::saves::replace(path.clone(), move || {
@@ -4151,6 +4170,7 @@ impl Settings {
     pub(crate) fn to_saved(&self) -> Settings {
         let mut copy = self.clone();
         copy.remember_hover_account();
+        copy.shared_autoresponse();
         copy.remember_chat_log_account();
         if let Some(mut held) = copy.photo_held.take() {
             // a setting changed since the last frame is the user's too

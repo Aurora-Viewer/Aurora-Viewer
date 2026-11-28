@@ -3818,6 +3818,7 @@ impl App {
         self.photo_reel_end();
         if !self.demo {
             self.settings.release_hover_account();
+            self.settings.release_autoresponse_account();
             // a folder change still being placed ends with the session, and
             // one the transcript thread dropped is not taken later: the
             // account keeps the folder its files are in
@@ -4680,6 +4681,9 @@ impl App {
                         root,
                     );
                     self.settings.select_hover_account(l.agent_id);
+                    self.settings.select_autoresponse_account(
+                        crate::settings::account_dir(&l.agent_id).join(crate::settings::autoresponse_account::FILE),
+                    );
                     self.settings.save();
                 }
                 self.bridge_runtime = Default::default();
@@ -17343,9 +17347,9 @@ impl App {
                 }
             }
             BarAction::Contacts => self.reveal_contacts(),
-            BarAction::ChatPrefs => {
+            BarAction::AutoReplyPrefs => {
                 ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
-                self.options_ui.open(ui::options::Page::Chat, 0);
+                self.options_ui.open_auto_replies();
             }
             BarAction::VoicePrefs => {
                 ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
