@@ -21023,13 +21023,6 @@ impl App {
                 if let Some((group, minutes)) = ui::chat::snooze::dialog(&ctx, &p, &self.world, &mut self.chat_ui) {
                     Self::snooze_group_chat(&mut self.world, &mut self.chat_ui, group, minutes.saturating_mul(60));
                 }
-                // a link's menu hid the previews of its site
-                if let Some(site) = self.chat_ui.previews.hide_site.take()
-                    && !self.settings.link_previews.hidden_sites.contains(&site)
-                {
-                    self.settings.link_previews.hidden_sites.push(site);
-                    self.settings.save();
-                }
                 // the player's own volume slider moved: the next video
                 // starts there (#848); saved with the settings, like the
                 // volumes of Sound and voice
@@ -21500,6 +21493,12 @@ impl App {
                         }
                         self.route_web_link(url, entry);
                     }
+                }
+                if let Some(site) = ui::chat::site_trust_confirmation(&ctx, &p)
+                    && self.settings.trusted_sites.add(&site)
+                {
+                    crate::link_trust::configure(&self.settings.trusted_sites);
+                    self.settings.save();
                 }
                 ui::media::show(
                     &ctx,

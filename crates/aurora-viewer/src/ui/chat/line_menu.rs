@@ -59,11 +59,18 @@ pub(super) fn message<'l>(
     line_of: impl Fn(u64) -> Option<&'l ChatLine>,
     selected_text: impl Fn(u64) -> Option<String>,
 ) {
-    if response.secondary_clicked()
-        && let Some((seq, line)) = response
-            .interact_pointer_pos()
-            .and_then(|pos| drawn.iter().find(|row| row.rect.contains(pos)))
-            .and_then(|row| line_of(row.seq).map(|line| (row.seq, line)))
+    if !response.secondary_clicked() {
+        return;
+    }
+    let frame = response.ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    // A preview can handle the click even when the transcript received it.
+    if !response.ctx.data(|data| {
+        data.get_temp::<Open>(id)
+            .is_some_and(|menu| data.get_temp::<u64>(menu.popup.with("inline_chat_frame")) == Some(frame))
+    }) && let Some((seq, line)) = response
+        .interact_pointer_pos()
+        .and_then(|pos| drawn.iter().find(|row| row.rect.contains(pos)))
+        .and_then(|row| line_of(row.seq).map(|line| (row.seq, line)))
     {
         open(response, id, line, None, Some(seq), selected_text(seq));
     }
@@ -87,8 +94,11 @@ thread_local! {
 /// Link/preview menus keep their existing actions; their containing message
 /// still owns the reading pause and highlight.
 pub(super) fn inline(response: &Response) {
-    let popup = egui::Popup::default_response_id(response);
-    if egui::Popup::is_id_open(&response.ctx, popup) {
+    inline_popup(&response.ctx, egui::Popup::default_response_id(response));
+}
+
+pub(super) fn inline_popup(ctx: &egui::Context, popup: Id) {
+    if egui::Popup::is_id_open(ctx, popup) {
         INLINE.set(Some(popup));
     }
 }

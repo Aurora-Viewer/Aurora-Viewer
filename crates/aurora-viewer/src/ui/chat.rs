@@ -2908,9 +2908,73 @@ fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str, text: &str, size: f32, em
         super::colors::text(k.chat_urls),
     )));
     select::atom_end(ui, behind, text, r.rect);
+    super::menu::context_menu(&r, p, |ui| {
+        if super::menu::item(ui, p, "copy-filled", aurora_i18n::tr!("ui-chat-preview-copy-link")) {
+            ui.ctx().copy_text(url.to_owned());
+        }
+        site_preview_actions(ui, p, url);
+    });
+    line_menu::inline(&r);
     if r.on_hover_text(url).clicked() {
         open_web_link(ui.ctx(), url);
     }
+}
+
+fn can_offer_site_trust(url: &str) -> bool {
+    matches!(crate::link_trust::classify(url), crate::link_trust::Trust::Unknown) && !crate::link_preview::waits_for_click(url)
+}
+
+#[test]
+fn chat_trust_offer_respects_dangerous_and_simulator_links() {
+    assert!(can_offer_site_trust("https://preview-example.example/image.png"));
+    assert!(!can_offer_site_trust("https://127.0.0.1/image.png"));
+    assert!(!can_offer_site_trust("https://preview-example.example/cap/example"));
+    assert!(!can_offer_site_trust("https://example.com@preview-example.example/image.png"));
+    assert!(!can_offer_site_trust("https://preview-example.example:12043/image.png"));
+}
+
+fn site_preview_actions(ui: &mut egui::Ui, p: &Palette, url: &str) {
+    use aurora_i18n::tr;
+    let url = web_target(url);
+    let Some(site) = crate::link_preview::host(&url).and_then(|host| crate::link_trust::normalize(&host)) else {
+        return;
+    };
+    if can_offer_site_trust(&url) && super::menu::item(ui, p, "shield-filled", &tr!("ui-chat-trust-site", site = site.as_str())) {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique("chat_trust_site"), site.clone()));
+    }
+    if super::menu::item(ui, p, "eye-off", &tr!("ui-chat-preview-hide-site", site = site.as_str())) {
+        super::context::request(ui.ctx(), CtxAction::HideSitePreviews(site));
+    }
+    for (path, label) in [
+        ("trusted_sites", tr!("ui-chat-manage-site-trust")),
+        ("link_previews.load", tr!("ui-chat-manage-site-previews")),
+    ] {
+        if super::menu::item(ui, p, "settings-filled", label) {
+            super::context::request(ui.ctx(), CtxAction::AppLink(crate::slapp::AppLink::Preferences(path.to_owned())));
+        }
+    }
+}
+
+pub(crate) fn site_trust_confirmation(ctx: &egui::Context, p: &Palette) -> Option<String> {
+    use aurora_i18n::tr;
+    let id = egui::Id::unique("chat_trust_site");
+    let site = ctx.data(|data| data.get_temp::<String>(id))?;
+    let mut confirmed = false;
+    let mut cancelled = false;
+    let modal = super::widgets::Modal::new(id).show(ctx, |ui| {
+        ui.set_width(380.0);
+        ui.heading(tr!("ui-chat-trust-site", site = site.as_str()));
+        ui.label(tr!("ui-chat-trust-site-privacy", site = site.as_str()));
+        ui.horizontal(|ui| {
+            cancelled = super::widgets::default_button(super::widgets::flat_button(ui, p, tr!("common-cancel"))).clicked();
+            confirmed = super::widgets::flat_button(ui, p, tr!("ui-chat-trust-site-accept")).clicked();
+        });
+    });
+    if confirmed || cancelled || modal.should_close() {
+        ctx.data_mut(|data| data.remove::<String>(id));
+    }
+    confirmed.then_some(site)
 }
 
 /// An avatar link of a text shown in `scope` (its name, or the text it was
