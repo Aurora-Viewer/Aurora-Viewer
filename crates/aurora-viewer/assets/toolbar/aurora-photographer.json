@@ -85,11 +85,6 @@
         "tooltip": ""
       },
       {
-        "icon": "stack-2-filled",
-        "command": "texture_library",
-        "tooltip": ""
-      },
-      {
         "icon": "Command_Search_Icon",
         "command": "search",
         "tooltip": ""

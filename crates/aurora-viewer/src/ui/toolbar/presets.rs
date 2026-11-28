@@ -220,6 +220,25 @@ mod tests {
         assert!(Preset::from_key("build").is_none());
     }
 
+    /// Like the default bar (`ui::skin`), no built-in interface places the
+    /// texture library (human request, 2026-11-28): skins/default/toolbars.xml
+    /// has no such button, and the saved layouts the interfaces come from
+    /// carried it. Customize still offers it.
+    #[test]
+    fn no_built_in_interface_places_the_texture_library() {
+        let skin = Layout::default();
+        for preset in Preset::ALL {
+            let toolbar = preset.layout(&skin);
+            let on_bars = Bar::ALL.into_iter().flat_map(|bar| toolbar.bar(bar, &skin).to_vec());
+            let in_blocks = toolbar.drawers.values().flat_map(|drawer| drawer.buttons.clone());
+            assert!(
+                on_bars.chain(in_blocks).all(|button| button.command != "texture_library"),
+                "{preset:?}"
+            );
+        }
+        assert!(catalogue::find("texture_library").is_some_and(|command| command.ready));
+    }
+
     #[test]
     fn imports_are_advanced_native_type_actions() {
         let skin = Layout::default();
