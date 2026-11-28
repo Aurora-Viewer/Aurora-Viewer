@@ -431,6 +431,19 @@ struct Undo {
 /// How long "Undo" stays after a reset.
 const UNDO_SECONDS: f64 = 8.0;
 
+/// A Legacy Viewer's folder picked for the transcripts, waiting for the
+/// user's yes to share it (Preferences › Chat › History).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShareOffer {
+    /// The folder of the Legacy Viewer's accounts (what is saved as the
+    /// transcripts' folder).
+    pub root: std::path::PathBuf,
+    /// The account's folder in it.
+    pub folder: String,
+    /// The transcripts already in it.
+    pub count: usize,
+}
+
 #[derive(Default)]
 pub struct OptionsUi {
     saved_graphics: saved_graphics::Editor,
@@ -589,13 +602,24 @@ pub struct OptionsUi {
     /// Folder of the conversation transcripts of the account logged in
     /// (set by the app; none on the login screen).
     pub chat_log_dir: Option<std::path::PathBuf>,
-    /// What the last erasing of the transcripts did (set by the app).
+    /// What the last folder pick, move or erasing of the transcripts did
+    /// (set by the app).
     pub chat_log_status: String,
+    /// True when `chat_log_status` is a refusal, busy notice or error that
+    /// should stand out as a warning callout.
+    pub chat_log_status_warn: bool,
     /// The transcripts are in a folder the user chose (set by the app).
     pub chat_log_custom: bool,
     /// The transcripts are in the Legacy layout, shared with the Legacy
     /// Viewer: no import nor erasing (set by the app).
     pub chat_log_shared: bool,
+    /// When a chosen folder belonged to another account and its parent root
+    /// holds a matching subfolder `(viewer_root, folder_name)` for this
+    /// account, offer switching to it.
+    pub chat_log_switch_offer: Option<(std::path::PathBuf, String)>,
+    /// A Legacy Viewer's folder was picked: whether to share it, asked with
+    /// Share and Cancel until answered (set by the app).
+    pub chat_log_share_offer: Option<ShareOffer>,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
     /// Preferences › Network › Proxy: the credentials being typed and the
@@ -641,6 +665,16 @@ impl OptionsUi {
             self.gpus.clone_from(&from.gpus);
         }
         self.gpu_notice = from.gpu_notice;
+    }
+
+    pub fn set_chat_log_status(&mut self, text: impl Into<String>, warn: bool) {
+        self.chat_log_status = text.into();
+        self.chat_log_status_warn = warn;
+    }
+
+    pub fn clear_chat_log_status(&mut self) {
+        self.chat_log_status.clear();
+        self.chat_log_status_warn = false;
     }
 
     pub fn joystick_capturing(&self) -> bool {
@@ -816,6 +850,12 @@ pub struct OptionsResult {
     /// Choose another folder for the cache or the transcripts, or go back
     /// to the default one (the app asks for the folder and moves the files).
     pub folder: Option<(Folder, FolderChoice)>,
+    /// Switch to the offered matching subfolder found in the rejected
+    /// folder's parent root (`chat_log_switch_offer`).
+    pub accept_chat_log_offer: bool,
+    /// Share the Legacy Viewer's folder of `chat_log_share_offer` (its
+    /// Share button; Cancel only drops the offer).
+    pub share_chat_log: Option<ShareOffer>,
     /// Erase the conversation transcripts of the account (confirmed).
     pub erase_chat_logs: bool,
     /// Clear the conversation log of the account (confirmed,

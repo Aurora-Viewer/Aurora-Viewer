@@ -218,3 +218,63 @@ fn outfit_json_link_descriptions_fit_the_server_limit_on_a_char_boundary() {
     backup.items[0].description = "@1402".into();
     assert!(backup.resolve(&inv, agent).links.iter().any(|link| link.desc == "@1402"));
 }
+
+/// #4865: the worn bridge never goes into a backup, and one an older backup
+/// holds is not imported into the new outfit.
+#[test]
+fn outfit_json_leaves_the_bridge_out() {
+    let (mut inv, agent, _) = fixture();
+    let cof = appearance::cof(&inv).expect("COF");
+    let bridge = Uuid::from_u128(0xB41D);
+    inv.add_items(vec![aurora_net::inventory::InvItem {
+        id: bridge,
+        parent: inv.root,
+        name: "Old bridge".into(),
+        asset_type: 6,
+        inv_type: 6,
+        owner: agent,
+        ..Default::default()
+    }]);
+    let worn = HashMap::from([(bridge, 31u8)]);
+    // a backup from before the fix: the worn bridge (then by any name) in it
+    let old = Backup::capture(&inv, cof, &worn).expect("capture");
+    assert!(old.items.iter().any(|item| item.item_id == bridge));
+    inv.items.get_mut(&bridge).expect("bridge").name = crate::world::bridge::NAME.into();
+    let backup = Backup::capture(&inv, cof, &worn).expect("capture");
+    assert!(!backup.items.iter().any(|item| item.item_id == bridge), "no bridge in a new backup");
+    let (change, _) = appearance::plan(
+        &inv,
+        appearance::Action::ImportJson {
+            backup: Box::new(old.clone()),
+            name: "Imported".into(),
+            partial: false,
+        },
+        &HashMap::new(),
+    )
+    .expect("import");
+    assert!(change.create.is_some());
+    assert!(!change.links.iter().any(|l| l.target == bridge), "not imported into the outfit");
+    // review: neither attached again from the backup (the viewer wears its
+    // own) nor reported missing, even once that bridge is gone
+    let resolved = old.resolve(&inv, agent);
+    assert!(!resolved.links.iter().any(|l| l.target == bridge));
+    assert!(resolved.missing.is_empty(), "not missing");
+    let import = |backup: &Backup| appearance::Action::ImportJson {
+        backup: Box::new(backup.clone()),
+        name: "Imported".into(),
+        partial: false,
+    };
+    let attached = appearance::attachments_for_action(&inv, agent, &import(&old));
+    assert!(!attached.is_empty(), "the other objects are attached");
+    assert!(!attached.iter().any(|request| request.item_id == bridge), "not the bridge");
+    let mut named = old.clone();
+    for item in named.items.iter_mut().filter(|item| item.item_id == bridge) {
+        item.name = crate::world::bridge::NAME.into();
+    }
+    inv.items.remove(&bridge);
+    let resolved = named.resolve(&inv, agent);
+    assert!(resolved.missing.is_empty(), "a bridge since replaced is not missing");
+    assert!(!resolved.links.is_empty());
+    // an ordinary object that is gone still is
+    assert_eq!(old.resolve(&inv, agent).missing.len(), 1);
+}

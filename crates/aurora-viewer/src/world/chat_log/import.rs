@@ -243,11 +243,9 @@ fn resident_name(stem: &str, spelled: &Spellings) -> String {
     if let Some(known) = spelled.get(&base.replacen('_', " ", 1)) {
         return format!("{known}{tail}");
     }
-    let word = |w: &str| !w.is_empty() && w.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
-    let capital = |w: &str| w[..1].to_ascii_uppercase() + &w[1..];
-    match base.split_once('_') {
-        Some((first, last)) if word(first) && word(last) => format!("{} {}{tail}", capital(first), capital(last)),
-        _ => stem.to_owned(),
+    match names::title_from_username(base) {
+        Some(legacy) => format!("{legacy}{tail}"),
+        None => stem.to_owned(),
     }
 }
 
@@ -307,15 +305,11 @@ fn messages(bytes: &[u8]) -> Vec<Message> {
             let key = match store::parse(message, false).into_iter().next() {
                 Some(entry) => {
                     // a line without a date is placed after the one before it
-                    let minute = entry.time.map(|t| unix(t) / 60);
+                    let (sec, key) = store::entry_stamp(&entry);
+                    let minute = sec.map(|s| s / 60);
                     at = minute.unwrap_or(at);
-                    said = minute.map(|minute| (minute, format!("{}\0{}", entry.from, entry.text)));
-                    // the minute, whether the stamp is 12 or 24 hours and has
-                    // seconds; a stamp without a date as it is
-                    match minute {
-                        Some(minute) => format!("{minute}\0{}\0{}", entry.from, entry.text),
-                        None => format!("{}\0{}\0{}", entry.stamp, entry.from, entry.text),
-                    }
+                    said = minute.map(|m| (m, format!("{}\0{}", entry.from, entry.text)));
+                    key
                 }
                 None => {
                     said = None;

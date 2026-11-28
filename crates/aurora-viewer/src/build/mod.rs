@@ -555,7 +555,7 @@ pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) ->
     }
     // LLSelectMgr::selectGetEditMoveLinksetPermissions: the seat the agent is
     // held on under @unsit or @sittp neither moves nor changes.
-    if world.rlva_restrained_seat(idx) {
+    if world.rlva_restrained_seat(idx) || worn_by_other(world, idx) {
         return false;
     }
     use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
@@ -563,6 +563,23 @@ pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) ->
         return false;
     };
     root.update_flags & OBJECT_MOVE != 0 && (!(linked || mode == EditMode::Stretch) || root.update_flags & OBJECT_MODIFY != 0)
+}
+
+/// LLSelectMgr::canUndo / canRedo (indra/newview/llselectmgr.cpp): Undo
+/// needs Modify, or Move on an object that is not permanent
+/// (getFirstUndoEnabledObject); Redo needs Modify (getFirstEditableObject).
+/// Read on the root's flags, as `can_transform` does. Another avatar's
+/// attachment is never undone, whatever its flags (`worn_by_other`).
+pub fn undo_allowed(world: &World, idx: usize, redo: bool) -> bool {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    if worn_by_other(world, idx) {
+        return false;
+    }
+    let root = root_of(world, idx);
+    let Some(flags) = world.objects.get(root).map(|o| o.update_flags) else {
+        return false;
+    };
+    flags & OBJECT_MODIFY != 0 || !redo && flags & OBJECT_MOVE != 0 && !linking::permanent(world, root)
 }
 
 /// A copy of this object can be rezzed: its root has Copy and it is not
@@ -1332,8 +1349,9 @@ pub fn rlva_selectable(world: &World, idx: usize) -> bool {
     world.rlva_can_edit(idx) && (!world.rlva.has("interact") || world.hud_root(idx).is_some())
 }
 
-/// World objects and what our avatar wears, HUDs included; the attachments
-/// of other avatars cannot be edited.
+/// World objects and what avatars wear, our HUDs included. The attachments of
+/// other avatars can be selected to be looked at, never changed
+/// ([`worn_by_other`]).
 pub fn selectable(world: &World, idx: usize) -> bool {
     world.rlva_within_fartouch(idx) && selectable_within(world, idx)
 }
@@ -1363,8 +1381,28 @@ pub fn rlva_keeps_menu_selection(world: &World, idx: usize) -> bool {
     !world.rlva.has("interact") || world.hud_root(idx).is_some()
 }
 
+/// `idx` hangs from an avatar that is not ours. LLSelectNode::allowOperationOnNode
+/// (indra/newview/llselectmgr.cpp): "only owners can move or modify their
+/// attachments, no proxy allowed", whatever rights the simulator reports (a
+/// friend's modify right, a group). `can_transform`, `can_modify`, Align and
+/// Undo / Redo refuse such an object. The manipulators' lock is stricter than
+/// the Legacy Viewer, whose LLManipTranslate::canAffectSelection only reads
+/// the simulator's permMove / permModify. The Contents tab keeps its god
+/// exception (`contents_modifiable`, as LLPanelContents::getState).
+pub fn worn_by_other(world: &World, mut idx: usize) -> bool {
+    for _ in 0..64 {
+        let Some(o) = world.objects.get(idx) else { return false };
+        let Some(parent) = world.objects.parent_of(o) else { return false };
+        if let Some(p) = world.objects.get(parent).filter(|p| p.is_avatar()) {
+            return p.full_id != world.agent_id;
+        }
+        idx = parent;
+    }
+    false
+}
+
 /// An object of a kind that can be selected: a prim or a tree, in the world
-/// or worn by our avatar.
+/// or worn by an avatar.
 fn selectable_kind(world: &World, idx: usize) -> bool {
     let mut i = idx;
     for _ in 0..64 {
@@ -1385,7 +1423,12 @@ fn selectable_kind(world: &World, idx: usize) -> bool {
                 if let Some(parent) = world.objects.get(p)
                     && parent.is_avatar()
                 {
-                    return parent.full_id == world.agent_id;
+                    // Another avatar's attachment is selectable too
+                    // (LLSelectMgr::canSelectObject only refuses avatars); what
+                    // may be changed is `worn_by_other`'s to refuse. Its HUDs
+                    // are never ours to pick (cursorIntersect with a HUD pick
+                    // only takes our own).
+                    return parent.full_id == world.agent_id || !(31..=38).contains(&o.attachment_point());
                 }
                 i = p;
             }
@@ -2376,15 +2419,29 @@ impl BuildTool {
         self.costs_stale();
     }
 
-    /// Ctrl+Z / Ctrl+Y: the simulator's undo history of the selected roots.
-    pub fn undo(&mut self, world: &World, redo: bool) {
-        let units: Vec<usize> = if self.selection_linked {
+    /// What Undo / Redo would send: the selected roots, or the highlighted
+    /// prims with Edit linked parts (SEND_ONLY_ROOTS / SEND_CHILDREN_FIRST).
+    fn undo_units(&self, world: &World) -> Vec<usize> {
+        if self.selection_linked {
             self.highlighted(world).into_iter().map(|(i, _)| i).collect()
         } else {
             self.roots(world)
-        };
+        }
+    }
+
+    /// LLSelectMgr::canUndo / canRedo: one selected object the rule allows
+    /// enables the button.
+    pub fn can_undo(&self, world: &World, redo: bool) -> bool {
+        self.undo_units(world).into_iter().any(|i| undo_allowed(world, i, redo))
+    }
+
+    /// Ctrl+Z / Ctrl+Y: the simulator's undo history of the selected roots.
+    /// Only the objects `undo_allowed` accepts are sent: stricter than
+    /// LLSelectMgr::undo, which sends the whole selection once canUndo holds
+    /// for one of them, so that another avatar's attachment is never sent.
+    pub fn undo(&mut self, world: &World, redo: bool) {
         let mut by_region: HashMap<RegionHandle, Vec<Uuid>> = HashMap::new();
-        for i in units {
+        for i in self.undo_units(world).into_iter().filter(|&i| undo_allowed(world, i, redo)) {
             if let Some(o) = world.objects.get(i) {
                 by_region.entry(o.key.region).or_default().push(o.full_id);
             }

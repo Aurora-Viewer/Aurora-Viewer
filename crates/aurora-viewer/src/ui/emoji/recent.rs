@@ -232,6 +232,14 @@ impl Recent {
         }
     }
 
+    /// The arrow of a field whose row shows under it (the chat block of the
+    /// top bar, `bars::dock::chat_island`): the same click and tooltip, the
+    /// icon turned towards where the row comes.
+    pub fn arrow_under(&self) -> (&'static str, &'static str) {
+        let (_, tip) = self.arrow();
+        (if self.enabled { "chevron-up" } else { "chevron-down" }, tip)
+    }
+
     /// The arrow was clicked.
     pub fn ask_toggle(&mut self) {
         self.toggle = true;
@@ -579,6 +587,9 @@ mod tests {
         assert!(!recent.take_toggle(), "asked once");
         recent.enabled = true;
         assert_eq!(recent.arrow().0, "chevron-down", "shown: a click hides it");
+        // under the field (the top bar), the arrow points the other way
+        assert_eq!((recent.arrow_under().0, recent.arrow_under().1), ("chevron-up", recent.arrow().1));
+        assert_eq!(Recent::demo("").arrow_under().0, "chevron-down");
         assert_ne!(recent.arrow().1, Recent::demo("").arrow().1, "each state says what its click does");
     }
 
