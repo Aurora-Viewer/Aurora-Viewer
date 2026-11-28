@@ -20,7 +20,7 @@ routine follows:
 | 8 | step 0 (the follow-up), step 5 (the human's validation), step 9 (the merge) |
 | 9 | labels, the description's template, `Closes` / `Refs` (steps 3, 5) |
 | 10 | commits and comments in your human's name, "Legacy Viewer", no AI mention (steps 6, 7) |
-| 11 | the review, its order and its comment (steps 2 to 7) |
+| 11 | the review, its order (the code read once CI is green) and its comment (steps 2 to 7) |
 | 12 | the captures (step 5) |
 | 14 | fresh data, what is said to your human (steps 0, 10) |
 | 15 | the issues, their reply and their Status (step 8) |
@@ -131,9 +131,9 @@ The PRs whose last review is your human's, which every queue leaves out:
   - `head_reviewed: false`: the head is not the one the review names (a
     push since, a merge of `main`, or a review that names no head). Claim it
     (`-Claim <n>`) and re-review what changed since the head named, steps 3
-    to 8. A merge of `main` is read with `git -C <W> show --remerge-diff
-    <merge>`: it brings `main` and the resolution of its conflicts, nothing
-    else.
+    to 8. Once its CI is green, a merge of `main` is read with `git -C <W>
+    show --remerge-diff <merge>`: it brings `main` and the resolution of
+    its conflicts, nothing else.
   - `conflict: true`: no CI can test it against `main`; step 3's conflict
     (step 6, fix it or ask the author).
   - `ci`: `Approval`, its approval joins step 3's question; `Run` or
@@ -186,7 +186,7 @@ A refused claim (another maintainer took it since): say so and offer the
 next entry. Never remove another maintainer's assignment, never take a PR
 the queue left out.
 
-## 3. Diff and conflicts, before any CI
+## 3. Conflicts and files, before any CI
 
 For each PR claimed, before its CI is asked for:
 
@@ -217,43 +217,22 @@ For each PR claimed, before its CI is asked for:
   local merge, which nobody else has. A merge that stops on conflicts
   names them (`git -C <W> diff --name-only --diff-filter=U`): a finding of
   step 6.
-- **The diff**, read in full: `git -C <W> diff origin/main...FETCH_HEAD`
-  (and, for a re-review, from the head the last review named). Once you
-  fetch anything else, `FETCH_HEAD` names that: use the PR's head by its
-  sha from then on (`gh pr view <n> --json headRefOid`). A PR rebased since
-  the last review is read with `git -C <W> range-diff <old base>..<old
-  head> <new base>..<new head>` (each base: its `merge-base` with
-  `origin/main`): the commits it shows changed, and those not reviewed yet,
-  are read in full. Look first
-  at what CI and a local build would run: anything under `.github/`,
-  `scripts/`, `.cargo/` or `packaging/`, a `Cargo.toml`, `Cargo.lock`,
-  `build.rs` or `rust-toolchain.toml`, and what the tests and build scripts
-  execute. Then the rest, as AGENTS.md section 11 says, each rule where it
-  is written:
-  - Legacy Viewer fidelity, against the sources in `../phoenix-firestorm`
-    (section 2); a visible difference only when justified, and noted;
-  - creators' permissions through the shared helpers, and no data of our
-    own in shared places (section 2);
-  - credits in NOTICE.md for ported code (section 2), and
-    THIRD-PARTY-LICENSES.md regenerated when `Cargo.lock` changes
-    (section 5);
-  - code quality (section 5): no `unwrap`/`expect` on external data, a
-    `// SAFETY:` comment on any `unsafe`, nothing heavy on the frame;
-  - interface text through `tr!`, with its English, French and Japanese,
-    and `en-GB` / `en-AU` overrides for American spellings (section 1,
-    rule 6); the interface rules (section 7);
-  - "Legacy Viewer" in new text, no AI mention (section 10); no secret
-    or personal data (section 1, rule 2);
-  - docs: README, ARCHITECTURE.md, TASKS.md, docs/TESTING.md for a new
-    `AURORA_*` variable (sections 4, 5, 6).
-- **A conflict, or findings in the diff**: step 6 first (fix it or ask the
-  author). A conflict means no CI can test the PR against `main`: its CI
-  is not asked for while it stands.
+- **Its files**, by name only (AGENTS.md section 11: the code is not read
+  before its CI is green): `git -C <W> diff --name-only
+  origin/main...FETCH_HEAD`. What CI and a local build would run is
+  named in the CI question below: anything under `.github/`, `scripts/`,
+  `.cargo/` or `packaging/`, a `Cargo.toml`, `Cargo.lock`, `build.rs` or
+  `rust-toolchain.toml`.
+- **A conflict**: no CI can test the PR against `main`, so its CI is not
+  asked for while it stands: step 6 first. Before CI, a fix of yours is
+  offered only for a conflict outside the code (`TASKS.md`, docs), whose
+  resolution reads no code; a conflict in code goes to its author.
 - **CI waits for "Approve and run"** (note `CI waits for Approve and run`,
   or no run at all on the head): your human approves it (AGENTS.md section
   11). Ask once for every PR claimed, in one dialog, naming any that
-  changes the files above and what you read in them, and saying that the
-  same code then builds and runs on this PC too (`check.ps1`, the demo).
+  changes the files above (by name: their content waits for green CI),
+  and saying that the same code then builds and runs on this PC too
+  (`check.ps1`, the demo).
   List the runs of the head, not `gh pr checks`, which can show only the
   description check passed while the real CI never ran:
 
@@ -267,7 +246,7 @@ For each PR claimed, before its CI is asked for:
   maintainer pushed may run at once (a branch of this repository) or wait
   for "Approve and run" all the same (a fork): list its runs.
 
-## 4. Wait for CI, in the turn
+## 4. Wait for CI in the turn, then read the diff
 
 ```
 gh run watch <id> --repo Aurora-Viewer/Aurora-Viewer --exit-status
@@ -281,7 +260,7 @@ Give each command the longest timeout your tool allows (Claude Code:
 600000 ms) and run it again while it is still going; with several PRs, one
 after the other. Meanwhile, start step 5's `check.ps1`.
 
-- **Green**: step 5.
+- **Green**: the diff (below), then step 5.
 - **Red**: `gh run view <id> --log-failed`. The PR's failure: a finding of
   step 6. Not the PR's (a runner lost, a job red on `main` too): rerun it
   (`gh run rerun <id> --failed`) and wait again.
@@ -289,6 +268,35 @@ after the other. Meanwhile, start step 5's `check.ps1`.
 Approved runs test the merge with `main` as it was when they started: a PR
 far behind can be green and still break on today's `main`. Step 5 is what
 catches it.
+
+**Then the diff**, once CI is green (AGENTS.md section 11), read in full:
+`git -C <W> diff origin/main...FETCH_HEAD` (and, for a re-review, from the head the last review named). Once you
+fetch anything else, `FETCH_HEAD` names that: use the PR's head by its
+sha from then on (`gh pr view <n> --json headRefOid`). A PR rebased since
+the last review is read with `git -C <W> range-diff <old base>..<old
+head> <new base>..<new head>` (each base: its `merge-base` with
+`origin/main`): the commits it shows changed, and those not reviewed yet,
+are read in full. Look first at what the tests and build scripts execute,
+then the rest, as AGENTS.md section 11 says, each rule where it is
+written:
+- Legacy Viewer fidelity, against the sources in `../phoenix-firestorm`
+  (section 2); a visible difference only when justified, and noted;
+- creators' permissions through the shared helpers, and no data of our
+  own in shared places (section 2);
+- credits in NOTICE.md for ported code (section 2), and
+  THIRD-PARTY-LICENSES.md regenerated when `Cargo.lock` changes
+  (section 5);
+- code quality (section 5): no `unwrap`/`expect` on external data, a
+  `// SAFETY:` comment on any `unsafe`, nothing heavy on the frame;
+- interface text through `tr!`, with its English, French and Japanese,
+  and `en-GB` / `en-AU` overrides for American spellings (section 1,
+  rule 6); the interface rules (section 7);
+- "Legacy Viewer" in new text, no AI mention (section 10); no secret
+  or personal data (section 1, rule 2);
+- docs: README, ARCHITECTURE.md, TASKS.md, docs/TESTING.md for a new
+  `AURORA_*` variable (sections 4, 5, 6).
+
+A finding is one of step 6 (fix it or ask the author), before step 5.
 
 ## 5. check.ps1, the demo, the human's validation
 

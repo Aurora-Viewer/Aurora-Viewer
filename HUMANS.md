@@ -140,8 +140,9 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
     on you first, then offers you a selection from the top of the queue
     and claims only what you pick. For each PR it makes a review worktree
     with `new-task.ps1` (the PR's head with the latest main merged in),
-    reads the diff and checks the conflicts before asking you to approve
-    the outside CI, waits for that CI, runs `check.ps1` there, runs the
+    checks its conflicts and the files it changes before asking you to
+    approve the outside CI, waits for that CI, reads the code only then,
+    runs `check.ps1` there, runs the
     demo scenarios the PR touches before and after, and, as for its own
     tasks, launches the viewer for you to validate every change that can
     be seen (in demo, or on the grid where you log in), telling you what to

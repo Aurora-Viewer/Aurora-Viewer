@@ -828,14 +828,16 @@ follows the steps below; on Linux the scripts run as `pwsh
    - The queue leaves out drafts, bots, `on-hold`, `waiting-for-slot`,
      `needs-description`, the merge queue, red CI, PRs waiting on their
      author or on a team decision, and approved ones.
-3. **Diff and conflicts before any CI**: in a review worktree made by
+3. **Conflicts and files before any CI**: in a review worktree made by
    `new-task.ps1` (`-Name review-<n>`), the PR's head with the latest
-   `main` merged into it; read the whole diff there, what CI would run
-   first (`.github/`, scripts, build files). A conflict gets no CI: GitHub
-   cannot build the PR's merge.
+   `main` merged into it, for its conflicts, and the names of the files it
+   changes, for what CI would run (`.github/`, scripts, build files); its
+   code is read once its CI is green (below). A conflict gets no CI:
+   GitHub cannot build the PR's merge.
 4. **CI**, then the wait for it in the same turn, without handing back
-   (below for an outside contributor's "Approve and run"). Never end a
-   turn on "I will review it once CI is green": release the claim instead.
+   (below for an outside contributor's "Approve and run"); then the diff,
+   read in full. Never end a turn on "I will review it once CI is green":
+   release the claim instead.
 5. **Tested as your own task is**, in the review worktree: `check.ps1`
    (approved runs test the merge with `main` as it was when they
    started); the demo scenarios the PR touches and those of the
@@ -852,7 +854,9 @@ follows the steps below; on Linux the scripts run as `pwsh
    author's branch (when you may push to it: a branch of this repository,
    or a fork that allows maintainers' pushes; and the fix is small and
    sure: merge `main`, fix, `check.ps1`, push, wait for green) or post the
-   `## Changes requested`. Rule 3 keeps you off others' work in progress:
+   `## Changes requested`. Before its CI is green, the only fix of yours
+   is a conflict outside the code (`TASKS.md`, docs). Rule 3 keeps you off
+   others' work in progress:
    only your human's choice, PR by PR and fix by fix, opens the author's
    branch or description to you, and the review says what you changed.
    In `TASKS.md`, a conflict keeps both sides as written, and only the
@@ -871,11 +875,9 @@ The review, of your own PR or of someone else's, is posted as a comment
 the one of the PR description) is a draft in `.scratch/`, never committed:
 the review lives in the PR comment, not in the repository. **Someone
 else's PR** is reviewed only once its description is complete (no
-`needs-description` label), and gets its verdict only once its PR CI is
-green: an outside contributor's CI waits for a maintainer's "Approve and
-run", so ask your human to approve it, once you have read its diff and
-checked its conflicts with `main` (step 3 above), naming anything it
-changes that CI or a local build runs. When you ask the
+`needs-description` label) and its PR CI is green: an outside
+contributor's CI waits for a maintainer's "Approve and run", so ask your
+human to approve it, and do not read the code before. When you ask the
 author of someone else's PR for changes,
 open that comment with `## Changes requested`: the PR tracking of
 `aurora-tools.cmd` lists the PR as waiting on its author until a new
