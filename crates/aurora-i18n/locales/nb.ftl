@@ -4475,6 +4475,7 @@ ui-appearance-portrait-current = Nåværende bilde
 ui-appearance-portrait-current-replaced = Det erstattes når du bruker det nye fotoet.
 ui-appearance-portrait-framing = Innramming
 ui-appearance-portrait-body = Hel kropp
+ui-appearance-portrait-framing-three-quarter = Tre kvart
 ui-appearance-portrait-bust = Byste
 ui-appearance-portrait-face = Ansikt
 ui-appearance-portrait-pose = Positur

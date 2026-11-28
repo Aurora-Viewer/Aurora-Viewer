@@ -4476,6 +4476,7 @@ ui-appearance-portrait-current = Geçerli resim
 ui-appearance-portrait-current-replaced = Yeni fotoğrafı kullandığınızda değiştirilir.
 ui-appearance-portrait-framing = Çerçeveleme
 ui-appearance-portrait-body = Tam vücut
+ui-appearance-portrait-framing-three-quarter = Üç çeyrek
 ui-appearance-portrait-bust = Büst
 ui-appearance-portrait-face = Yüz
 ui-appearance-portrait-pose = Poz

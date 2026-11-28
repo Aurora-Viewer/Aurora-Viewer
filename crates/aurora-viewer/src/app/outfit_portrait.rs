@@ -272,6 +272,7 @@ impl App {
             neck: at("mNeck")?,
             chest: at("mChest")?,
             pelvis: at("mPelvis")?,
+            thighs: portrait::THIGHS.map(|(hip, knee)| at(hip).zip(at(knee))),
             feet: portrait::FEET.iter().filter_map(|n| at(n)).collect(),
             arms: portrait::ARMS.iter().filter_map(|n| at(n)).collect(),
             facing,
@@ -731,10 +732,11 @@ impl App {
                 };
                 log::info!("demo: outfit portrait ({mode})");
                 self.open_outfit_portrait(outfit, kind);
-                // `portrait-bust`, `portrait-face`, `portrait-profile`:
+                // `portrait-three-quarter`, `portrait-bust`, `portrait-face`, `portrait-profile`:
                 // that framing or angle
                 if let Some(s) = &mut self.outfit_portrait {
                     match mode {
+                        "portrait-three-quarter" => s.settings.framing = portrait::Framing::ThreeQuarter,
                         "portrait-bust" => s.settings.framing = portrait::Framing::Bust,
                         "portrait-face" => s.settings.framing = portrait::Framing::Face,
                         "portrait-profile" => s.settings.angle = portrait::Angle::Profile,

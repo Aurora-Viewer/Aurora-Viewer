@@ -4468,6 +4468,7 @@ ui-appearance-portrait-current = 当前缩略图
 ui-appearance-portrait-current-replaced = 使用新照片后它会被替换。
 ui-appearance-portrait-framing = 取景
 ui-appearance-portrait-body = 全身
+ui-appearance-portrait-framing-three-quarter = 四分之三身
 ui-appearance-portrait-bust = 半身
 ui-appearance-portrait-face = 面部
 ui-appearance-portrait-pose = 姿势
