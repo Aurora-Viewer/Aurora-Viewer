@@ -51,6 +51,105 @@ fn an_open_folder_whose_read_failed_waits_before_it_is_asked_again() {
 }
 
 #[test]
+fn shown_folder_retries_keep_the_background_owner_and_the_open_view_pause() {
+    let mut inv = fixture();
+    let root = inv.root;
+    let now = std::time::Instant::now();
+    inv.folders.get_mut(&root).expect("root").state = FetchState::Fetching;
+    inv.failed_at_time(&[root], now);
+    assert_eq!(inv.folders[&root].state, FetchState::Failed);
+    inv.request_shown(root, now + SHOWN_RETRY / 2);
+    assert!(inv.queue.is_empty(), "no retry each frame before the pause");
+    inv.request_shown(root, now + SHOWN_RETRY);
+    inv.request_shown(root, now + SHOWN_RETRY);
+    assert_eq!(inv.queue, [(root, false)], "one read after the pause");
+    assert_eq!(inv.folders[&root].state, FetchState::Fetching);
+    inv.queue.clear();
+
+    inv.failed_at_time(&[root], now);
+    inv.retrying_folders.insert(root);
+    assert!(!inv.shown_needs_fetch(root, now + SHOWN_RETRY * 100));
+    inv.request_shown(root, now + SHOWN_RETRY * 100);
+    inv.retry(root);
+    assert!(inv.queue.is_empty(), "neither open views nor clicks steal a background retry");
+    assert_eq!(inv.folders[&root].state, FetchState::Failed);
+    inv.retrying_folders.remove(&root);
+    inv.too_big.insert(root);
+    assert!(!inv.shown_needs_fetch(root, now + SHOWN_RETRY * 100));
+    inv.request_shown(root, now + SHOWN_RETRY * 100);
+    assert!(inv.queue.is_empty(), "an over-limit folder is not polled");
+
+    inv.too_big.remove(&root);
+    inv.request_shown(root, now + SHOWN_RETRY * 100);
+    assert_eq!(inv.queue, [(root, false)], "the view resumes once recovery releases ownership");
+}
+
+#[test]
+fn explicit_folder_open_retries_without_waiting_for_the_view_poll() {
+    let mut inv = fixture();
+    let root = inv.root;
+    inv.folders.get_mut(&root).expect("root").state = FetchState::Fetching;
+    inv.failed_at_time(&[root], std::time::Instant::now());
+    assert_eq!(inv.folders[&root].state, FetchState::Failed);
+    inv.request(root);
+    assert!(inv.queue.is_empty(), "ordinary automatic demand does not restart failures");
+    inv.retrying_folders.insert(root);
+    inv.open_folder(root);
+    inv.open_folder(root);
+    assert_eq!(inv.queue, [(root, false)], "an explicit open keeps main's immediate retry");
+    assert!(inv.retrying_folders.contains(&root), "the walker reconciles the interactive read");
+}
+
+#[test]
+fn only_an_accepted_snapshot_can_acknowledge_a_previously_unknown_item() {
+    let mut inv = fixture();
+    let root = inv.root;
+    let known = id(987_654);
+    let unknown = id(987_655);
+    inv.add_items(vec![InvItem {
+        id: known,
+        parent: root,
+        ..Default::default()
+    }]);
+    let version = inv.folders[&root].info.version;
+    let snapshot = |version| FolderContents {
+        folder_id: root,
+        owner_id: Uuid::nil(),
+        version,
+        folders: vec![],
+        items: [known, unknown]
+            .into_iter()
+            .map(|id| InvItem {
+                id,
+                parent: root,
+                ..Default::default()
+            })
+            .collect(),
+    };
+    let refetches = |inv: &Inventory| inv.queue.iter().filter(|(id, _)| *id == root).count();
+    assert_eq!(inv.apply_snapshots(vec![snapshot(version - 1)], true), vec![root]);
+    assert!(
+        inv.take_accepted_snapshot_items().is_empty(),
+        "a rejected snapshot acknowledges nothing"
+    );
+    assert!(inv.items.contains_key(&known));
+    assert_eq!(inv.folders[&root].state, FetchState::Fetching);
+    assert_eq!(refetches(&inv), 1, "the stale folder is read again");
+    // The refetch's answer carries the server's version, even below the
+    // local one (AISUpdate::parseCategory): taken, and not read again, or a
+    // folder whose local version ran ahead would be read forever.
+    assert!(inv.apply_snapshots(vec![snapshot(version - 1)], true).is_empty());
+    assert_eq!(inv.folders[&root].state, FetchState::Fetched);
+    assert_eq!(inv.folders[&root].info.version, version - 1);
+    assert_eq!(refetches(&inv), 1, "no second refetch");
+    assert_eq!(
+        inv.take_accepted_snapshot_items(),
+        vec![unknown],
+        "an accepted snapshot cannot cancel an explicit refresh"
+    );
+}
+
+#[test]
 fn multiple_inventory_favorites_keep_independent_flags_and_batch_originals() {
     let mut inv = fixture();
     let mut selected = vec![id(8000), id(8001)];
@@ -1817,6 +1916,24 @@ fn an_answer_frees_only_its_own_kind_of_read() {
     assert!(again.is_empty());
 }
 
+#[test]
+fn a_coalesced_failure_releases_both_claims_and_spends_one_attempt() {
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let id = Uuid::from_u128(77);
+    let now = std::time::Instant::now();
+    for attachment in [false, true] {
+        world.inventory.claim_item_reads(&mut vec![id], attachment, now);
+    }
+    world.apply(aurora_net::NetEvent::InventoryItemsFailed {
+        items: vec![id],
+        attachment: false,
+        coalesced: true,
+    });
+    assert!(!world.inventory.item_reading(id, false, now));
+    assert!(!world.inventory.item_reading(id, true, now));
+    assert_eq!(world.inventory.item_failures[&id], 1);
+}
+
 /// The later chunks of a large item read are claimed for as long as the
 /// chunks before them can take: never asked again while still queued.
 #[test]
@@ -1837,7 +1954,7 @@ fn a_large_item_reads_later_chunks_keep_their_claim() {
 }
 
 /// An unreadable item is given up and read again a few rounds a session,
-/// then stays a broken link.
+/// then stays unreadable without being marked broken.
 #[test]
 fn an_unreadable_item_is_read_again_only_a_few_rounds() {
     let mut inv = Inventory::default();
@@ -1846,17 +1963,19 @@ fn an_unreadable_item_is_read_again_only_a_few_rounds() {
         for _ in 0..ITEM_FETCH_ATTEMPTS {
             inv.items_failed(&[busy]);
         }
-        assert!(inv.broken(&busy));
+        assert!(inv.read_exhausted(&busy));
+        assert!(!inv.broken(&busy));
         if round == ITEM_GIVE_UP_ROUNDS {
-            assert!(!inv.gave_up_at.contains_key(&busy), "the last round keeps it broken");
+            assert!(!inv.gave_up_at.contains_key(&busy), "the last round stays exhausted");
             break;
         }
         *inv.gave_up_at.get_mut(&busy).expect("given up") -= ITEM_GIVE_UP;
         inv.expire_given_up(std::time::Instant::now());
-        assert!(!inv.broken(&busy), "round {round}: read again");
+        assert!(!inv.read_exhausted(&busy), "round {round}: read again");
     }
     inv.expire_given_up(std::time::Instant::now() + ITEM_GIVE_UP * 2);
-    assert!(inv.broken(&busy));
+    assert!(inv.read_exhausted(&busy));
+    assert!(!inv.broken(&busy));
     assert_eq!(inv.unreadable_items(), 1);
 }
 

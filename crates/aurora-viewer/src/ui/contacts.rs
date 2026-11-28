@@ -374,7 +374,7 @@ impl ContactsUi {
         self.ask_new_set_for(Vec::new());
     }
 
-    /// "New contact setâ€¦" of a resident's menu: the new set's name asked
+    /// "New contact set…" of a resident's menu: the new set's name asked
     /// (AddNewContactSet), then these residents added to it.
     pub fn ask_new_set_for(&mut self, ids: Vec<Uuid>) {
         self.new_set_members = ids;
@@ -787,7 +787,7 @@ pub fn panel(
     actions
 }
 
-/// The torn-off Contacts window (floater_fs_contacts.xml, 396 Ã— 390); its
+/// The torn-off Contacts window (floater_fs_contacts.xml, 396 × 390); its
 /// title bar button docks it back into Conversations. It shows what the
 /// docked tab shows (#961): People's friends tab in Aurora's look
 /// (`friends`, the same pane state as the docked tab, so the filter,
@@ -850,8 +850,8 @@ const PICKER_ID: &str = "contacts_avatar_picker";
 fn picked(world: &mut World, st: &mut ContactsUi, what: PickFor, ids: Vec<Uuid>) {
     match what {
         PickFor::Friend => {
-            // onAvatarPicked â†’ requestFriendshipDialog; Firestorm's picker
-            // refuses friends (isItemsFreeOfFriends), the shared one does not
+            // onAvatarPicked → requestFriendshipDialog; the Legacy Viewer's
+            // picker refuses friends (isItemsFreeOfFriends), the shared one does not
             match ids.iter().find(|id| **id != world.agent_id && !world.social.is_friend(id)) {
                 Some(to) => {
                     st.dialog = Some(Dialog::Friendship {
@@ -906,7 +906,7 @@ fn friend_rows(world: &World, settings: &ContactsSettings, filter: &str) -> Vec<
                     full_name(n, &o, settings.full_name_display_first),
                 ),
                 None => {
-                    let legacy = world.social.names.get(&f.id).cloned().unwrap_or_else(|| "â€¦".into());
+                    let legacy = world.social.names.get(&f.id).cloned().unwrap_or_else(|| "…".into());
                     (legacy.clone(), legacy.clone(), legacy)
                 }
             };
@@ -1862,7 +1862,7 @@ fn sets_tab(
             .get_in(NameScope::Roster, id)
             .map(|n| n.complete(&o))
             .or_else(|| social.names.get(id).cloned())
-            .unwrap_or_else(|| "â€¦".into())
+            .unwrap_or_else(|| "…".into())
     };
     let online = |id: &Uuid| social.friends.iter().any(|f| f.id == *id && f.online);
     let count = members.len();
@@ -2384,7 +2384,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                         .hint_text(hint.to_owned()),
                 )
                 .on_hover_text(aurora_i18n::tr!("ui-contacts-enter-to-confirm"));
-            // Enter while the field has focus (or just gave it up) confirms â€”
+            // Enter while the field has focus (or just gave it up) confirms —
             // same pattern as script search. Relying on lost_focus alone missed
             // presses that left the field focused, so Send never ran.
             if (r.has_focus() || r.lost_focus()) && widgets::enter_pressed(ui) {
@@ -2528,6 +2528,97 @@ mod tests {
             rights_after(all, rights::MAP_LOCATION, false),
             rights::ONLINE_STATUS | rights::MODIFY_OBJECTS
         );
+    }
+
+    /// Clicks the friend Map button (`friend_buttons`, main's rule from
+    /// #3429) with `sel` selected, and returns the context requests it made:
+    /// a disabled button makes none.
+    fn click_friend_map(world: &World, sel: &[Uuid]) -> Vec<CtxAction> {
+        use crate::ui::widgets::elide_tests::Frames;
+        use egui::{Event, PointerButton};
+
+        let mut st = ContactsUi {
+            friends_sel: sel.to_vec(),
+            ..Default::default()
+        };
+        let mut frames = Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let draw = |ui: &mut egui::Ui, st: &mut ContactsUi| {
+            friend_buttons(ui, &p, world, st, &mut Vec::new());
+        };
+        let labels = frames.run(Vec::new(), |ui| draw(ui, &mut st));
+        let point = labels
+            .iter()
+            .find(|text| text.source == aurora_i18n::tr!("ui-contacts-map"))
+            .expect("map button label is drawn")
+            .rect
+            .center();
+        for pressed in [true, false] {
+            frames.run(
+                vec![
+                    Event::PointerMoved(point),
+                    Event::PointerButton {
+                        pos: point,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                |ui| draw(ui, &mut st),
+            );
+        }
+        context::take_requests(&frames.ctx)
+    }
+
+    fn mappable_friend(world: &mut World, friend: Uuid) {
+        world.social.friends.push(crate::world::social::Friend {
+            id: friend,
+            online: true,
+            rights_given: 0,
+            rights_has: rights::MAP_LOCATION,
+        });
+    }
+
+    #[test]
+    fn friend_map_button_follows_received_map_right() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (friend, other) = (id(2), id(3));
+        mappable_friend(&mut world, friend);
+        let enabled = |world: &World, sel: &[Uuid]| !click_friend_map(world, sel).is_empty();
+        assert!(enabled(&world, &[friend]));
+        assert!(!enabled(&world, &[friend, other]), "one friend at a time");
+
+        world.social.friends[0].online = false;
+        assert!(!enabled(&world, &[friend]), "an offline friend has no position");
+        world.social.friends[0].online = true;
+        world.social.friends[0].rights_has = 0;
+        world.social.friends[0].rights_given = rights::MAP_LOCATION;
+        assert!(!enabled(&world, &[friend]), "only rights received from the friend count");
+
+        world.social.friends[0].rights_has = rights::MAP_LOCATION;
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Controller".into(),
+            source_id: id(4),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@showworldmap=n".into(),
+            region: None,
+        }));
+        assert!(world.rlva.has("showworldmap"));
+        assert!(!enabled(&world, &[friend]), "@showworldmap hides the map");
+    }
+
+    #[test]
+    fn clicking_the_friend_map_button_requests_map_tracking() {
+        let (friend, mut world) = (id(2), World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load())));
+        mappable_friend(&mut world, friend);
+        assert!(matches!(
+            click_friend_map(&world, &[friend]).as_slice(),
+            [CtxAction::ShowOnMap(id)] if *id == friend
+        ));
     }
 
     #[test]

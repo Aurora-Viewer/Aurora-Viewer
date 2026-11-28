@@ -287,7 +287,7 @@ impl Editor {
                 }
             };
             pose.locks.remove(&bone);
-            together::follow(rig, &before, pose, bone, &followers, change);
+            together::follow(rig, &before, pose, bone, &followers, change, false);
             if self.symmetry {
                 for changed in std::iter::once(bone).chain(followers.iter().copied()) {
                     if let Some(other) = self.mirrors.counterpart(changed)
@@ -444,13 +444,20 @@ impl Editor {
                 self.poser.scale_gizmo.cancel();
             }
             ui.label(
-                egui::RichText::new(aurora_i18n::text(
-                    ["poser-hint-rotation", "poser-hint-position", "poser-hint-scale"][self.poser.transform.min(2)],
-                ))
+                egui::RichText::new(aurora_i18n::text(match self.poser.transform.min(2) {
+                    0 => "poser-hint-rotation",
+                    1 if self.poser.move_joint_only => "poser-hint-position-only",
+                    1 => "poser-hint-position",
+                    _ => "poser-hint-scale",
+                }))
                 .size(12.0)
                 .color(p.muted),
             );
         });
+        if self.poser.transform == 1 {
+            widgets::switch_labeled(ui, p, &mut self.poser.move_joint_only, aurora_i18n::tr!("poser-move-joint-only"))
+                .on_hover_text(aurora_i18n::text("poser-move-joint-only-hint"));
+        }
         ui.add_space(6.0);
         let Some(session) = self.poser.sessions.get(&self.poser.subject) else {
             return;
@@ -524,9 +531,12 @@ impl Editor {
                 ui.allocate_ui_with_layout(egui::vec2(TRACKBALL, 30.0), egui::Layout::top_down(egui::Align::Center), |ui| {
                     ui.set_width(TRACKBALL);
                     ui.label(
-                        egui::RichText::new(aurora_i18n::text(
-                            ["poser-ball-rotation", "poser-ball-position", "poser-ball-scale"][self.poser.transform.min(2)],
-                        ))
+                        egui::RichText::new(aurora_i18n::text(match self.poser.transform.min(2) {
+                            0 => "poser-ball-rotation",
+                            1 if self.poser.move_joint_only => "poser-ball-position-only",
+                            1 => "poser-ball-position",
+                            _ => "poser-ball-scale",
+                        }))
                         .size(11.0)
                         .color(p.muted_dim),
                     );

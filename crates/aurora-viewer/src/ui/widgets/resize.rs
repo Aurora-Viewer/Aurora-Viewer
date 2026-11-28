@@ -103,18 +103,25 @@ impl Edge {
         }
     }
 
-    /// The edges a window resized in height only offers: the top and the
-    /// bottom, along the whole width (no corner).
-    fn moves_height_only(self) -> bool {
-        matches!(self, Self::Top | Self::Bottom)
+    /// Whether a window resized along `axes` offers this edge: in height
+    /// only the top and the bottom, in width only the left and the right,
+    /// each along its whole side (no corner).
+    fn offered(self, axes: Axes) -> bool {
+        match axes {
+            Axes::Both => true,
+            Axes::Height => matches!(self, Self::Top | Self::Bottom),
+            Axes::Width => matches!(self, Self::Left | Self::Right),
+        }
     }
 
     /// Where this edge of the window `rect` (its outline) is grabbed; along
     /// the whole side for a window resized in height only.
-    fn hit_rect_of(self, rect: Rect, height_only: bool) -> Rect {
-        match self {
-            Self::Top if height_only => Rect::from_x_y_ranges(rect.x_range(), rect.top() - SIDE_OUT..=rect.top() + SIDE_IN),
-            Self::Bottom if height_only => Rect::from_x_y_ranges(rect.x_range(), rect.bottom() - SIDE_IN..=rect.bottom() + SIDE_OUT),
+    fn hit_rect_of(self, rect: Rect, axes: Axes) -> Rect {
+        match (self, axes) {
+            (Self::Top, Axes::Height) => Rect::from_x_y_ranges(rect.x_range(), rect.top() - SIDE_OUT..=rect.top() + SIDE_IN),
+            (Self::Bottom, Axes::Height) => Rect::from_x_y_ranges(rect.x_range(), rect.bottom() - SIDE_IN..=rect.bottom() + SIDE_OUT),
+            (Self::Left, Axes::Width) => Rect::from_x_y_ranges(rect.left() - SIDE_OUT..=rect.left() + SIDE_IN, rect.y_range()),
+            (Self::Right, Axes::Width) => Rect::from_x_y_ranges(rect.right() - SIDE_IN..=rect.right() + SIDE_OUT, rect.y_range()),
             _ => self.hit_rect(rect),
         }
     }
@@ -306,12 +313,23 @@ fn aspect_rect(start: Rect, rect: Rect, edge: Edge, ratio: f32, chrome: Vec2, mi
 /// `violet_light` meanwhile (as egui's own windows light theirs,
 /// `paint_frame_interaction`), both faded in and out.
 pub(super) fn handles(ctx: &Context, p: &Palette, response: &egui::Response) {
-    handles_of(ctx, p, response, false);
+    handles_of(ctx, p, response, Axes::Both);
 }
 
-/// [`handles`]; `height_only`: the top and bottom edges alone, without the
-/// corner's mark (a window whose width is set by what it lines up with).
-pub(super) fn handles_of(ctx: &Context, p: &Palette, response: &egui::Response, height_only: bool) {
+/// What a window's edges resize.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Axes {
+    Both,
+    /// The top and bottom edges alone, without the corner's mark (a window
+    /// whose width is set by what it lines up with).
+    Height,
+    /// The left and right edges alone, without the corner's mark (a window
+    /// whose height follows its content).
+    Width,
+}
+
+/// [`handles`], resizing along `axes`.
+pub(super) fn handles_of(ctx: &Context, p: &Palette, response: &egui::Response, axes: Axes) {
     let window = response.layer_id.id;
     let mut ui = Ui::new(
         ctx.clone(),
@@ -321,10 +339,10 @@ pub(super) fn handles_of(ctx: &Context, p: &Palette, response: &egui::Response, 
     ui.set_clip_rect(ctx.content_rect());
     ui.set_min_size(response.rect.size());
     let (mut hovered, mut dragged, mut corner) = ([false; 4], [false; 4], false);
-    for edge in Edge::ALL.into_iter().filter(|edge| !height_only || edge.moves_height_only()) {
+    for edge in Edge::ALL.into_iter().filter(|edge| edge.offered(axes)) {
         let response = ui
             .interact_opt(
-                edge.hit_rect_of(response.rect, height_only),
+                edge.hit_rect_of(response.rect, axes),
                 edge.id(window),
                 Sense::DRAG,
                 egui::InteractOptions { move_to_top: true },
@@ -359,7 +377,7 @@ pub(super) fn handles_of(ctx: &Context, p: &Palette, response: &egui::Response, 
     let lit = std::array::from_fn(|side| strength * ctx.animate_bool(window.with(("floater_edge_lit", side)), lit[side]));
     let painter = ui.painter();
     outline(painter, p, response.rect, lit);
-    if !height_only {
+    if axes == Axes::Both {
         corner_arc(
             painter,
             p,

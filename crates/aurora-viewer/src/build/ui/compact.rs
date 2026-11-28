@@ -11,17 +11,15 @@ use glam::Vec3;
 
 pub(super) const ACTION_GAP: f32 = 4.0;
 
-pub(super) fn window_heading(tool: &BuildTool) -> (&'static str, &'static str) {
-    if tool.tool == Tool::Edit {
-        ("box", aurora_i18n::tr!("build-workspace-title"))
-    } else {
-        match tool.tool {
-            Tool::Focus => ("zoom-filled", aurora_i18n::tr!("build-compact-camera")),
-            Tool::Grab => ("hand-grab", aurora_i18n::tr!("build-compact-grab")),
-            Tool::Create => ("wand", aurora_i18n::tr!("build-compact-create")),
-            Tool::Land => ("mountain-filled", aurora_i18n::tr!("build-compact-land")),
-            Tool::Edit => unreachable!(),
-        }
+/// The icon and title of the main window (Edit), or of a tool's own
+/// window (tool_windows.rs).
+pub(super) fn window_heading(tool: Tool) -> (&'static str, &'static str) {
+    match tool {
+        Tool::Edit => ("box", aurora_i18n::tr!("build-workspace-title")),
+        Tool::Focus => ("zoom-filled", aurora_i18n::tr!("build-compact-camera")),
+        Tool::Grab => ("hand-grab", aurora_i18n::tr!("build-compact-grab")),
+        Tool::Create => ("wand", aurora_i18n::tr!("build-compact-create")),
+        Tool::Land => ("mountain-filled", aurora_i18n::tr!("build-compact-land")),
     }
 }
 
@@ -90,7 +88,7 @@ pub(super) fn actions(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
     });
 }
 
-fn glyph(ui: &egui::Ui, rect: egui::Rect, name: &str, color: egui::Color32) {
+pub(super) fn glyph(ui: &egui::Ui, rect: egui::Rect, name: &str, color: egui::Color32) {
     if let Some(t) = icons::global(name) {
         ui.painter().image(
             t.id(),
@@ -415,7 +413,9 @@ pub(super) fn action_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, w
         (false, "arrow-back-up", aurora_i18n::tr!("build-compact-undo")),
         (true, "arrow-forward-up", aurora_i18n::tr!("build-compact-redo")),
     ] {
-        if icon_button_sized(ui, p, icon, title, selected, Vec2::splat(crate::ui::widgets::TEXT_BUTTON_HEIGHT)).clicked() {
+        // LLSelectMgr::canUndo / canRedo grey the buttons out
+        let enabled = tool.can_undo(world, redo);
+        if icon_button_sized(ui, p, icon, title, enabled, Vec2::splat(crate::ui::widgets::TEXT_BUTTON_HEIGHT)).clicked() {
             tool.undo(world, redo);
         }
     }
@@ -501,7 +501,8 @@ fn navigation_height(tool: &BuildTool, s: &BuildSettings, tools: bool) -> f32 {
 
 fn shared_heights(tool: &BuildTool, s: &BuildSettings) -> (f32, f32) {
     use crate::build::layout::{FooterRow, Item};
-    let shared = matches!(tool.tool, Tool::Edit | Tool::Create);
+    // the main window is the Edit tool's: its shared controls always show
+    let shared = true;
     let footer = tool.ui.layout.footer_height.unwrap_or_else(|| {
         // Count packed rows until measurement, so a saved window does not
         // grow on restore just because it contains two columns of options.
@@ -630,7 +631,7 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
     let size = ui.available_size().max(egui::vec2(1.0, 1.0));
     let rect = ui.allocate_exact_size(size, egui::Sense::hover()).0;
-    let shared = matches!(tool.tool, Tool::Edit | Tool::Create);
+    let shared = true;
     let (_, desired_values) = shared_heights(tool, s);
     let sections_height = navigation_height(tool, s, false);
     let tools_height = navigation_height(tool, s, true);
@@ -708,8 +709,7 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         if !sectionless {
             section_column(&mut main, p, tool, world, s, mods, env, tab, (area.height() - 16.0).max(1.0));
         }
-        if tool.tool == Tool::Edit
-            && !detach::tab_detached(s, tab)
+        if !detach::tab_detached(s, tab)
             && let Some(block) = crate::build::layout::Block::of_tab(tab)
         {
             detach::source(ui, p, tool, s, block, "content", area);
@@ -748,8 +748,8 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
 }
 
-/// The section `tab` scrolled in its column of the build window, or the
-/// panel of the tool in use, at most `height` tall.
+/// The section `tab` scrolled in its column of the build window, at most
+/// `height` tall.
 #[allow(clippy::too_many_arguments)]
 fn section_column(
     ui: &mut egui::Ui,
@@ -769,32 +769,72 @@ fn section_column(
         // and widen again on every frame (#1092).
         let width = crate::ui::widgets::scrolled_width(ui).max(1.0);
         egui::ScrollArea::vertical()
-            .id_salt(("c3_section", tool.tool as u8, tab))
+            .id_salt(("c3_section", tab))
             .max_height(height)
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.set_max_width(width);
-                if tool.tool == Tool::Edit {
-                    if detach::tab_detached(s, tab) {
-                        // Every section is in a window of its own.
-                    } else if !tool.selection.is_empty() || matches!(tab, 3 | 5) {
-                        section_tab(ui, p, tool, world, s, mods, env, tab);
-                    }
-                } else {
-                    match tool.tool {
-                        Tool::Focus => tools::focus_panel(ui, p, tool, mods, env),
-                        Tool::Grab => tools::grab_panel(ui, p, tool, mods),
-                        Tool::Create => tools::create_panel(ui, p, s),
-                        Tool::Land => {
-                            tools::land_panel(ui, p, tool, world, s);
-                            tools::parcel_panel(ui, p, tool, world, s, env.property_lines);
-                        }
-                        Tool::Edit => {}
-                    }
-                    common::small(ui, p, tools::status_text(tool, s, mods));
+                if detach::tab_detached(s, tab) {
+                    // Every section is in a window of its own.
+                } else if !tool.selection.is_empty() || matches!(tab, 3 | 5) {
+                    section_tab(ui, p, tool, world, s, mods, env, tab);
                 }
             });
     });
+}
+
+/// The panel of `which` (Camera, Move, Create, Land) and the line of what
+/// it does, in the tool's own window (tool_windows.rs).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn tool_panel(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    s: &mut BuildSettings,
+    mods: Mods,
+    env: &mut Env,
+    which: Tool,
+) {
+    match which {
+        Tool::Focus => tools::focus_panel(ui, p, tool, mods, env),
+        Tool::Grab => tools::grab_panel(ui, p, tool, mods),
+        Tool::Create => {
+            // only a shape picked makes Create the tool in use again, with
+            // its shape under the pointer in the world; the shape already
+            // chosen, clicked while in use, ends it (human requests,
+            // 2026-11-24)
+            let active = tool.tool == Tool::Create;
+            if tool.shape_capture && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                tool.shape_capture = false;
+            }
+            match tools::create_panel(ui, p, s, active, tool.capturing_shape()) {
+                Some(tools::CreateClick::Shape { again: true }) if active => tool.deactivate_create(),
+                Some(tools::CreateClick::Shape { .. }) => {
+                    tool.shape_capture = false;
+                    tool.activate(Tool::Create);
+                }
+                // the picker's button arms or puts down the picker; the tool
+                // in use stays (a shape captured makes Create in use)
+                Some(tools::CreateClick::Capture) => tool.shape_capture = !tool.shape_capture,
+                Some(tools::CreateClick::KeepCreating) if !active => {
+                    tool.shape_capture = false;
+                    tool.activate(Tool::Create);
+                }
+                Some(tools::CreateClick::KeepCreating) | None => {}
+            }
+        }
+        Tool::Land => {
+            tools::land_panel(ui, p, tool, world, s);
+            tools::parcel_panel(ui, p, tool, world, s, env.property_lines);
+        }
+        Tool::Edit => {}
+    }
+    // the line says what the tool in use does: this one's when it is;
+    // the Create window has none (the human's request, 2026-11-24)
+    if tool.tool == which && which != Tool::Create {
+        common::small(ui, p, tools::status_text(tool, s, mods));
+    }
 }
 
 /// The section of `tab`, in the build window or in a window of its own:

@@ -100,6 +100,11 @@ impl World {
         let mut seen = HashSet::new();
         for item in items {
             let temporary = self.rlva_temporary_attachment(item).is_some();
+            // removeItemsFromAvatar skips the viewer's bridge on every path,
+            // a COF that is still loading included (`remove_links`)
+            if !temporary && super::bridge::own_bridge(&self.inventory, item) {
+                continue;
+            }
             if (temporary || allow_recovery && (incomplete || !self.inventory.items.contains_key(&item)))
                 && let Some(command) = self.attachment_detach_command(item)
             {
@@ -162,7 +167,11 @@ impl World {
             // inventory never uses up the attempts)
             // (nor a given-up original: `send_from` would drop its read, and
             // an attempt never sent must not be spent)
-            if self.inventory.items.contains_key(id) || self.inventory.item_reading(*id, true, now) || self.inventory.broken(id) {
+            if self.inventory.items.contains_key(id)
+                || self.inventory.item_reading(*id, true, now)
+                || self.inventory.broken(id)
+                || self.inventory.read_exhausted(id)
+            {
                 continue;
             }
             let round = self.inventory.give_up_rounds.get(id).copied().unwrap_or(0);
@@ -526,9 +535,11 @@ mod tests {
             world.apply(NetEvent::InventoryItemsFailed {
                 items: vec![item.id],
                 attachment: true,
+                coalesced: false,
             });
         }
-        assert!(world.inventory.broken(&item.id));
+        assert!(world.inventory.read_exhausted(&item.id));
+        assert!(!world.inventory.broken(&item.id));
         assert!(world.update_attachment_inventory(now + RETRY_GAP * 10, true).is_empty());
         let at = world.inventory.gave_up_at.get_mut(&item.id).expect("given up");
         *at -= crate::world::inventory::ITEM_GIVE_UP;
@@ -547,6 +558,7 @@ mod tests {
             world.apply(NetEvent::InventoryItemsFailed {
                 items: vec![item.id],
                 attachment: true,
+                coalesced: false,
             });
             assert!(
                 world
@@ -988,6 +1000,7 @@ mod tests {
             world.apply(NetEvent::InventoryItemsFailed {
                 items: vec![item.id],
                 attachment: true,
+                coalesced: false,
             });
         }
         assert!(
@@ -1010,6 +1023,29 @@ mod tests {
         });
         assert!(world.worn_attachment(&item.id).is_none());
         assert!(!world.inventory.items.contains_key(&item.id), "never fabricate an inventory record");
+    }
+
+    /// #4865, review: the direct detach of a COF still loading skips the
+    /// bridge, as removeItemsFromAvatar does on every path.
+    #[test]
+    fn attachment_recovery_leaves_the_bridge_worn() {
+        let (mut world, object, _missing) = fixture();
+        let bridge = Uuid::from_u128(717);
+        let agent = world.agent_id;
+        appearance::seed_bridge(&mut world.inventory, agent, bridge);
+        let mut worn = object.clone();
+        worn.full_id = Uuid::from_u128(90_040);
+        worn.local_id += 1;
+        worn.name_values = format!("AttachItemID STRING RW SV {bridge}");
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![worn],
+        });
+        let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(bridge), true);
+        assert!(commands.is_empty() && remaining.is_none(), "{commands:?} {remaining:?}");
+        let earrings = Uuid::from_u128(718);
+        let (_, remaining) = world.recover_attachment_removal(appearance::Action::RemoveItems(vec![bridge, earrings]), true);
+        assert!(matches!(remaining, Some(appearance::Action::RemoveItems(items)) if items == [earrings]));
     }
 
     #[test]
@@ -1214,7 +1250,10 @@ mod tests {
         let objects = item.parent;
         let lost = with_lost_folder(&mut world, &item);
         item.parent = Uuid::nil();
-        world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+        world.apply(NetEvent::AttachmentInventoryItems {
+            items: vec![item.clone()],
+            coalesced: false,
+        });
         assert_eq!(world.inventory.items[&item.id].parent, objects);
         assert!(world.inventory.folders[&objects].items.contains(&item.id));
         assert!(!world.inventory.folders[&lost].items.contains(&item.id));
@@ -1242,7 +1281,10 @@ mod tests {
         let old = item.parent;
         let lost = with_lost_folder(&mut world, &item);
         item.parent = Uuid::nil();
-        world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+        world.apply(NetEvent::AttachmentInventoryItems {
+            items: vec![item.clone()],
+            coalesced: false,
+        });
         assert_eq!(world.inventory.items[&item.id].parent, old);
         assert!(world.inventory.folders[&lost].items.is_empty());
         let locked = Uuid::from_u128(90_083);
@@ -1316,7 +1358,10 @@ mod tests {
                 folders: Vec::new(),
                 items: vec![item.clone()],
             };
-            let readback = NetEvent::AttachmentInventoryItems(vec![item.clone()]);
+            let readback = NetEvent::AttachmentInventoryItems {
+                items: vec![item.clone()],
+                coalesced: false,
+            };
             for event in if notification_first {
                 [notification, readback]
             } else {
@@ -1367,7 +1412,10 @@ mod tests {
             }
             assert!(world.worn_attachment(&item.id).is_none());
             item.parent = Uuid::nil();
-            world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+            world.apply(NetEvent::AttachmentInventoryItems {
+                items: vec![item.clone()],
+                coalesced: false,
+            });
             assert_eq!(world.inventory.items[&item.id].parent, objects);
             assert!(!world.inventory.folders[&lost].items.contains(&item.id));
             assert!(

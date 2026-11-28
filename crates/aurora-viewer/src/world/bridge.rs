@@ -118,20 +118,31 @@ fn legacy_bridge_name(name: &str) -> bool {
 /// wears on `point` (FSLSLBridge::isBridgeValid and getAttachedID, used by
 /// RlvHandler::onGetAttach and RlvForceWear::isForceDetachable).
 pub(crate) fn viewer_bridge(world: &World, item: Uuid, point: u8) -> bool {
-    let inv = &world.inventory;
-    point == POINT
-        && inv.items.get(&item).is_some_and(|entry| {
-            let folder = if entry.name == NAME {
-                FOLDER
-            } else if legacy_bridge_name(&entry.name) {
-                "#Firestorm"
-            } else {
-                return false;
-            };
-            entry.owner == world.agent_id
-                && entry.asset_type == 6
-                && root_folder(inv, folder).is_some_and(|folder| super::inventory::actions::under(inv, item, folder))
-        })
+    point == POINT && bridge_item(&world.inventory, world.agent_id, item, true)
+}
+
+/// Aurora's own bridge item, by the rule of [`viewer_bridge`]: the outfit
+/// actions keep it worn and linked in the COF, as LLAppearanceMgr keeps
+/// `FSLSLBridge::getBridge` (updateCOF, removeItemsFromAvatar and
+/// updateIsDirty, indra/newview/llappearancemgr.cpp). A bridge the Legacy
+/// Viewer left worn is not this viewer's: an outfit change may take it off.
+pub(crate) fn own_bridge(inv: &super::inventory::Inventory, item: Uuid) -> bool {
+    bridge_item(inv, inv.owner, item, false)
+}
+
+fn bridge_item(inv: &super::inventory::Inventory, agent: Uuid, item: Uuid, legacy: bool) -> bool {
+    inv.items.get(&item).is_some_and(|entry| {
+        let folder = if entry.name == NAME {
+            FOLDER
+        } else if legacy && legacy_bridge_name(&entry.name) {
+            "#Firestorm"
+        } else {
+            return false;
+        };
+        entry.owner == agent
+            && entry.asset_type == 6
+            && root_folder(inv, folder).is_some_and(|folder| super::inventory::actions::under(inv, item, folder))
+    })
 }
 
 pub(crate) fn private_channel(key: Uuid) -> i32 {
