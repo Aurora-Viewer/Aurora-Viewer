@@ -531,6 +531,7 @@ pub struct World {
     /// before its object, and the scene merges them when it builds the faces.
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     pub chat: VecDeque<ChatLine>,
+    pub chat_translation: crate::chat_translation::Nearby,
     /// The origin of each object's chat line (its object and the line's
     /// time), as the Legacy Viewer links each line to its own `objectim`
     /// SLURL; bounded by chat history.
@@ -1124,6 +1125,7 @@ impl World {
             motion_tick: Instant::now(),
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
+            chat_translation: Default::default(),
             chat_objects: HashMap::new(),
             bubble_chat: Default::default(),
             chat_clock: Default::default(),
@@ -2554,6 +2556,45 @@ impl World {
         }
         self.nearby_push(line);
         self.chat_unread += 1;
+    }
+
+    pub fn can_translate_conversation(&self, conversation: Option<Uuid>) -> bool {
+        conversation.is_none_or(|id| self.private_peer(id).is_some() && !self.calls.conferences.contains_key(&id))
+    }
+
+    pub fn translation_text<'a>(&self, conversation: Option<Uuid>, line: &'a ChatLine) -> Option<&'a str> {
+        if line.origin != Origin::Live || line.blocked || line.source.is_nil() || line.source == self.agent_id {
+            return None;
+        }
+        match (conversation, line.kind) {
+            (None, ChatKind::Local(ChatType::Whisper | ChatType::Normal | ChatType::Shout)) => (),
+            (Some(id), ChatKind::Im) if line.source == id && self.can_translate_conversation(conversation) => (),
+            _ => return None,
+        }
+        crate::chat_translation::eligible_body(&line.text)
+    }
+
+    pub fn translate_chat_line(&mut self, conversation: Option<Uuid>, token: u64, seq: u64, demo: bool) {
+        let (lines, clock) = match conversation {
+            None => (&self.chat, self.chat_clock),
+            Some(id) => {
+                let Some(session) = self.social.ims.iter().find(|s| s.other == id) else {
+                    return;
+                };
+                (&session.lines, session.clock)
+            }
+        };
+        if clock.token == token
+            && let Some(index) = seq.checked_sub(clock.first)
+            && let Some(line) = lines.get(index as usize)
+            && self.translation_text(conversation, line).is_some()
+        {
+            if demo && line.text == crate::chat_translation::DEMO_ORIGINAL {
+                self.chat_translation.demo_line(token, seq);
+            } else if !demo {
+                self.chat_translation.offer(token, seq, &line.text, true);
+            }
+        }
     }
 
     /// A line of this kind counts as unread and may alert (keyword sound,
@@ -5521,6 +5562,7 @@ impl World {
             && c.region
                 .and_then(|h| self.region_offset(h))
                 .is_some_and(|offset| radar::beyond_say_range(c.position, offset, self.agent.position, radar::chat_ranges().say));
+        let translate = !c.source_id.is_nil() && matches!(kind, ChatKind::Local(ChatType::Whisper | ChatType::Normal | ChatType::Shout));
         self.push_chat(ChatLine {
             time,
             from,
@@ -5533,6 +5575,13 @@ impl World {
             speaker,
             private_history: false,
         });
+        if translate
+            && self.chat_translation.automatic_nearby()
+            && let Some(line) = self.chat.back()
+        {
+            let seq = self.chat_clock.first + self.chat.len() as u64 - 1;
+            self.chat_translation.offer(self.chat_clock.token, seq, &line.text, false);
+        }
     }
 
     fn on_im(&mut self, mut im: InstantMessage) {

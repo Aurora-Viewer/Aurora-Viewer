@@ -663,6 +663,22 @@ impl App {
 
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
+            CtxAction::OpenChatTranslation => {
+                self.options_ui.open_chat_translation();
+                ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+            }
+            CtxAction::EnableChatTranslation(enabled) => {
+                self.settings.chat_translation.enabled = enabled;
+                self.settings.save();
+            }
+            CtxAction::AutoTranslateNearby(automatic) => {
+                self.settings.chat_translation.automatic_nearby = automatic;
+                self.settings.save();
+            }
+            CtxAction::TranslateChatLine { conversation, token, seq } => {
+                let demo = self.demo && std::env::var_os("AURORA_DEMO_CHAT_TRANSLATION").is_some();
+                self.world.translate_chat_line(conversation, token, seq, demo);
+            }
             CtxAction::ObjectProfile(id) => self.open_object_profile(id),
             CtxAction::FindInInventory(id) => self.show_rezzed_in_inventory(id),
             CtxAction::SaveAs(id, format) => self.open_object_export(id, format),

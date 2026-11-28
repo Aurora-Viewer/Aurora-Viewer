@@ -1586,6 +1586,8 @@ pub struct Settings {
     /// The GIF button of the Conversations field and its picker
     /// (Preferences › Chat; `gif_search.rs`).
     pub gifs: crate::gif_search::Settings,
+    /// Opt-in nearby chat translation (Preferences › Chat).
+    pub chat_translation: crate::chat_translation::Settings,
     /// The Legacy Viewer's conversation options of Preferences › Chat: tab
     /// order and names, moderators, "(You)", brackets, history fade, opening
     /// on offline messages (`ui/chat/conversation_options.rs`).
@@ -2903,6 +2905,7 @@ impl Default for Settings {
             chat_column_collapsed: false,
             link_previews: Default::default(),
             gifs: Default::default(),
+            chat_translation: Default::default(),
             conversation_options: Default::default(),
             notifications_style: NotificationsStyle::Aurora,
             world_map_style: WorldMapStyle::Aurora,

@@ -192,6 +192,16 @@ pub(super) fn show(
                             gif_btn = Some(b.rect);
                             super::gif_picker::button(&b, p, st);
                         }
+                        if world.can_translate_conversation(st.selected) {
+                            let button = box_button(
+                                ui,
+                                p,
+                                "language",
+                                aurora_i18n::tr!("ui-chat-translation-menu"),
+                                st.translation.enabled,
+                            );
+                            super::translation::toolbar_menu(&button, p, &st.translation, world.chat_translation.characters());
+                        }
                         // narrow, only its icon. An IM has no attach button:
                         // inventory is given by dropping it on the
                         // conversation, which says so during the drag (#627)
@@ -447,7 +457,13 @@ fn box_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, active: boo
         ui.painter(),
         icon,
         egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(19.0)),
-        if active || resp.hovered() { p.ink } else { p.muted },
+        if icon == "language" {
+            p.indigo_light
+        } else if active || resp.hovered() {
+            p.ink
+        } else {
+            p.muted
+        },
     );
     resp.on_hover_text(tip)
 }

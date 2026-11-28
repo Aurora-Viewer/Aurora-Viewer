@@ -538,6 +538,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
 
 /// Brand SVGs (white wolf silhouette of assets/branding/), drawn untinted or tinted.
 const BRAND_SVGS: &[(&str, &[u8])] = &[("wolf", include_bytes!("../../../../assets/branding/aurora-logo-white.svg"))];
+const TRANSLATION_SVG: (&str, &[u8]) = ("language", include_bytes!("../../../../assets/tabler-icons/outline/language.svg"));
 
 /// Raster images kept as PNG (brand logo).
 const PNGS: &[(&str, &[u8])] = &[("phoenix_18", include_bytes!("../../assets/icons/phoenix_18.png"))];
@@ -822,6 +823,7 @@ pub(crate) fn embedded(name: &str) -> bool {
         .iter()
         .chain(FILLED)
         .chain(INVENTORY_LINKS)
+        .chain(std::iter::once(&TRANSLATION_SVG))
         .chain(BRAND_SVGS)
         .chain(PNGS)
         .any(|(n, _)| *n == name)
@@ -977,7 +979,7 @@ impl Icons {
         let mut map: HashMap<String, egui::TextureHandle> = HashMap::new();
         let opts = egui::TextureOptions::LINEAR;
         let mut sources: HashMap<String, Source> = HashMap::new();
-        for (name, bytes) in OUTLINE.iter().chain(FILLED) {
+        for (name, bytes) in OUTLINE.iter().chain(FILLED).chain(std::iter::once(&TRANSLATION_SVG)) {
             sources.insert((*name).to_owned(), Source::Svg(Cow::Borrowed(*bytes)));
             match rasterize_svg(bytes, RASTER_PX) {
                 Some(ci) => {

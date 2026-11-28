@@ -11371,6 +11371,9 @@ impl App {
         // ---- network events (time-boxed)
         let t_ev = Instant::now();
         self.world.events_this_frame = 0;
+        self.world
+            .chat_translation
+            .configure((!self.demo).then_some(&self.settings.chat_translation), self.net.runtime());
         self.sync_script_debug();
         self.world.received_items.enabled = self.settings.sort_received_items;
         // FSMarkObjects, before the frame's events: the first lines after
@@ -11449,6 +11452,7 @@ impl App {
             self.world.notify_deliveries(&deliveries);
         }
         self.world.poll_transcripts();
+        self.world.chat_translation.poll();
         self.poll_chat_import();
         self.poll_legacy_lists();
         self.update_hover_height();
@@ -20718,6 +20722,10 @@ impl App {
                 // the GIF picker of the fields (#932): made here in the demo's
                 // GIF scenarios, the real settings and keys otherwise
                 self.chat_ui.gifs.settings.clone_from(&self.settings.gifs);
+                self.chat_ui.translation.update(&self.settings.chat_translation);
+                if self.demo && std::env::var_os("AURORA_DEMO_CHAT_TRANSLATION").is_some() {
+                    self.chat_ui.translation.offline_demo();
+                }
                 self.chat_ui.gifs.demo = self.demo && crate::demo::gifs_scenario().is_some_and(crate::demo::Gifs::made_here);
                 let volume = self.media_volume();
                 self.chat_ui.previews.web = self.chat_ui.previews.playing().then(|| ui::chat::previews::WebEnv {
@@ -24135,6 +24143,45 @@ impl ApplicationHandler for App {
             }
             if crate::demo::parcel_env::mode().is_some() {
                 crate::demo::parcel_visibility::install(&mut self.world, &mut self.settings, "off");
+            }
+            if let Ok(mode) = std::env::var("AURORA_DEMO_CHAT_TRANSLATION") {
+                let private = mode == "private";
+                let original = crate::chat_translation::DEMO_ORIGINAL;
+                if private {
+                    self.world.apply(NetEvent::InstantMessage(aurora_net::InstantMessage {
+                        from_agent_id: crate::demo::DEMO_NOVA,
+                        from_name: "Nova Demo".into(),
+                        to_agent_id: self.world.agent_id,
+                        dialog: 0,
+                        session_id: uuid::Uuid::nil(),
+                        message: original.into(),
+                        offline: false,
+                        from_group: false,
+                        binary_bucket: Vec::new(),
+                        timestamp: 0,
+                    }));
+                    self.chat_ui.open(crate::demo::DEMO_NOVA);
+                } else {
+                    self.world.apply(NetEvent::Chat(aurora_net::ChatMessage {
+                        from_name: "Nova Demo".into(),
+                        source_id: crate::demo::DEMO_NOVA,
+                        owner_id: uuid::Uuid::nil(),
+                        source_type: aurora_net::ChatSourceType::Agent,
+                        chat_type: aurora_net::ChatType::Normal,
+                        region: self.world.main_region,
+                        position: self.world.agent.position,
+                        message: original.into(),
+                    }));
+                    let clock = self.world.chat_clock;
+                    if mode != "manual" && self.world.chat.back().is_some_and(|line| line.source == crate::demo::DEMO_NOVA) {
+                        self.world
+                            .chat_translation
+                            .demo_line(clock.token, clock.first + self.world.chat.len() as u64 - 1);
+                    }
+                    self.chat_ui.selected = None;
+                    self.chat_ui.demo_dock_nearby();
+                }
+                self.panels.chat = true;
             }
             // AURORA_DEMO_APPLINKS: a link of each `secondlife:///app/...`
             // command, in a conversation and in the bubbles

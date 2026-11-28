@@ -25,6 +25,7 @@ mod cache;
 mod cache_key;
 mod cache_location;
 mod camera;
+mod chat_translation;
 mod cli;
 mod cmdline;
 mod colorblind;
