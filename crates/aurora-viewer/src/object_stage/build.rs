@@ -898,6 +898,13 @@ impl Steady {
         Steady { frame, body }
     }
 
+    /// Move `t` (0 to 1) of the way to `to`: a new pose framed again without
+    /// a cut.
+    pub fn ease_to(&mut self, to: &Steady, t: f32) {
+        self.frame = self.frame.mix(to.frame, t);
+        self.body += (to.body - self.body) * t;
+    }
+
     /// What is shown now is of another size (more of it has arrived).
     pub fn outgrown(&self, bounds: &Bounds) -> bool {
         let now = Frame::of(*bounds).radius;

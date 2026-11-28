@@ -19,7 +19,7 @@ const SET_ROW: f32 = 46.0;
 const SET_GAP: f32 = 4.0;
 const USE_W: f32 = 40.0;
 /// The tiles that make a set.
-const TILE_H: f32 = 64.0;
+const TILE_H: f32 = 86.0;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show(
@@ -320,6 +320,8 @@ fn sets_panel(
 ) {
     let busy = state.busy() || catalog.loading;
     let open = state.edited(catalog, account).map(|s| s.id);
+    // (a bar over the panel, not beside it: the lines keep their width)
+    ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
     egui::ScrollArea::vertical()
         .id_salt("ao_sets")
         .auto_shrink([false, false])
@@ -579,8 +581,8 @@ fn create_tiles(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut AoU
     }
 }
 
-/// A tile: its icon in a disc, its name, what it makes; lit under the
-/// pointer.
+/// A tile: its icon in a disc, its name, what it makes (on two lines when
+/// it needs them); lit under the pointer.
 fn tile(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, title: &str, line: &str) -> egui::Response {
     let response = ui.interact(rect, ui.scope_id().with(("ao_tile", icon)), egui::Sense::click());
     let enabled = ui.is_enabled();
@@ -604,24 +606,20 @@ fn tile(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, title: &st
     };
     widgets::paint_glyph(ui.painter(), icon, disc, 13.0, glyph);
     let room = rect.width() - 20.0;
+    let x = rect.left() + 10.0;
     let title_font = egui::FontId::new(12.5, super::super::fonts::semibold(ui.ctx()));
     let ink = if enabled { p.ink } else { p.muted };
-    widgets::paint_elided(
-        ui,
-        title,
-        egui::pos2(rect.left() + 10.0, rect.bottom() - 26.0),
-        room,
-        title_font,
-        ink,
-    );
-    widgets::paint_elided(
-        ui,
-        line,
-        egui::pos2(rect.left() + 10.0, rect.bottom() - 11.0),
-        room,
-        egui::FontId::proportional(11.0),
-        p.muted,
-    );
+    widgets::paint_elided(ui, title, egui::pos2(x, rect.top() + 49.0), room, title_font, ink);
+    let mut job =
+        egui::text::LayoutJob::single_section(line.to_owned(), egui::TextFormat::simple(egui::FontId::proportional(11.0), p.muted));
+    job.wrap = egui::text::TextWrapping {
+        max_width: room,
+        max_rows: 2,
+        break_anywhere: false,
+        overflow_character: Some('…'),
+    };
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(egui::pos2(x, rect.top() + 58.0), galley, p.muted);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, title));
     response
 }
@@ -648,7 +646,14 @@ fn more_ways(ui: &mut egui::Ui, p: &Palette, state: &mut AoUi, busy: bool, out: 
 
 /// One row of the grouped list: its icon, its name, a chevron.
 fn way(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, enabled: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), egui::Sense::click());
+    // its name wraps rather than being cut
+    let width = ui.available_width();
+    let ink = if enabled { p.ink } else { p.muted };
+    let text = ui
+        .painter()
+        .layout(label.to_owned(), egui::FontId::proportional(12.5), ink, width - 52.0);
+    let height = (text.size().y + 18.0).max(34.0);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::click());
     let hot = response.hovered() && enabled;
     if hot {
         ui.painter()
@@ -663,15 +668,8 @@ fn way(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, enabled: bool) -
         p.violet_pale
     };
     widgets::paint_glyph(ui.painter(), icon, egui::pos2(rect.left() + 14.0, y), 14.0, tint);
-    let ink = if enabled { p.ink } else { p.muted };
-    widgets::paint_elided(
-        ui,
-        label,
-        egui::pos2(rect.left() + 30.0, y),
-        rect.width() - 52.0,
-        egui::FontId::proportional(12.5),
-        ink,
-    );
+    ui.painter()
+        .galley(egui::pos2(rect.left() + 30.0, y - text.size().y / 2.0), text, ink);
     let chevron = if hot { p.ink } else { p.muted_dim };
     widgets::paint_glyph(ui.painter(), "chevron-right", egui::pos2(rect.right() - 14.0, y), 13.0, chevron);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));

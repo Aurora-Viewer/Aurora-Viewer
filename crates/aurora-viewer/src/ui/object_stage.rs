@@ -103,6 +103,8 @@ pub struct StageUi {
     /// The bones drawn last, and what they frame.
     bones: Arc<[Mat4]>,
     steady: Option<Steady>,
+    /// Seconds left gliding to a new pose's framing (`reframe`).
+    settle: f32,
     /// How far the item alone has come to the middle (0 to 1).
     near: f32,
     camera: Camera,
@@ -150,6 +152,7 @@ impl Default for StageUi {
             toggled: None,
             bones: Arc::from([]),
             steady: None,
+            settle: 0.0,
             near: 0.0,
             camera: CAMERA,
             alone: None,
@@ -167,7 +170,7 @@ impl StageUi {
     /// What is shown changed its pose (the AO preview's next entry): framed
     /// again, standing on the floor, rather than followed from the last one.
     pub fn reframe(&mut self) {
-        self.steady = None;
+        self.settle = SETTLE;
     }
 
     /// The accent, as it reads over the ground.
@@ -501,7 +504,15 @@ impl StageUi {
         let anchored = match &self.joints {
             Some(joints) if self.worn && !self.single => {
                 let (bounds, body) = (model.bounds(&self.bones), model.body(joints));
+                let settling = self.settle > 0.0;
+                self.settle = (self.settle - dt).max(0.0);
                 let steady = match &mut self.steady {
+                    // a new pose: glide to its own framing, its floor under
+                    // its feet, rather than cut to it or keep the last one's
+                    Some(steady) if settling => {
+                        steady.ease_to(&Steady::of(&bounds, body), 1.0 - (-dt * 5.0).exp());
+                        *steady
+                    }
                     Some(steady) if !steady.outgrown(&bounds) || self.framed.is_some() => {
                         steady.follow(&bounds, body, 1.0 - (-dt * 0.9).exp());
                         *steady
@@ -873,6 +884,10 @@ impl Camera {
 
 /// The darker and the lighter of the theme's text and ground: a light ground
 /// and its text, in any theme.
+/// How long the view glides to a new pose's framing (`StageUi::reframe`):
+/// the pose's ease in, then the framing settling on it.
+const SETTLE: f32 = 1.2;
+
 /// How wide an upright figure frames, as a share of the sphere around it
 /// (`StageUi::upright`): arms at its sides, turned any way.
 const UPRIGHT_WIDTH: f32 = 0.5;

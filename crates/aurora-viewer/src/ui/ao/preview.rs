@@ -17,9 +17,6 @@ const LAYER: f32 = 16.0;
 const SEGMENTS: f32 = 12.0;
 /// How far above the caption the fade to the stage's ground starts.
 const FADE: f32 = 36.0;
-/// How long the stage is framed afresh after the previewed animations
-/// change: their ease in, and the pose settling.
-const REFRAME_FOR: std::time::Duration = std::time::Duration::from_millis(900);
 /// How blurred the picture's bottom row is under the fade: each step halves
 /// it (`aurora_render::preview::Veil`).
 const VEIL_DEPTH: f32 = 4.0;
@@ -33,10 +30,8 @@ pub(super) struct Preview {
     layer: Option<(Uuid, usize)>,
     /// The stage was drawn this frame (taken by the app, `AoUi::take_stage`).
     shown: bool,
-    /// The animations the stage was framed for, and when they changed
-    /// (`AoUi::preview_changed`).
+    /// The animations the stage was framed for (`AoUi::preview_changed`).
     framed: Vec<Uuid>,
-    framed_at: Option<std::time::Instant>,
 }
 
 impl Preview {
@@ -62,17 +57,14 @@ impl Preview {
 }
 
 impl AoUi {
-    /// Whether the stage is to be framed again: the previewed animations
-    /// changed, and for a moment after, while the new pose blends in from
-    /// the last (framed on the first frame, a jump's raised feet would set
-    /// the floor).
+    /// Whether the previewed animations changed since the last call: the
+    /// stage then glides to the new pose's framing (`StageUi::reframe`).
     pub fn preview_changed(&mut self, assets: &[Uuid]) -> bool {
-        let now = std::time::Instant::now();
-        if self.preview.framed != assets {
+        let changed = self.preview.framed != assets;
+        if changed {
             self.preview.framed = assets.to_vec();
-            self.preview.framed_at = Some(now);
         }
-        self.preview.framed_at.is_some_and(|at| now.duration_since(at) < REFRAME_FOR)
+        changed
     }
 
     /// Whether the window drew its stage this frame: the app keeps the
