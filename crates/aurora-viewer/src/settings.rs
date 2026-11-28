@@ -899,6 +899,9 @@ pub struct Settings {
     /// box "Do not show again" of the confirmation turns it off). Firestorm
     /// keeps one "ignore" per notification: one setting here for the three.
     pub confirm_teleports: bool,
+    /// Ask before quitting the viewer. Unsaved-work protections remain
+    /// active regardless of this preference.
+    pub confirm_quit: bool,
     /// Ask before a Hypergrid teleport that leaves worn items behind: with
     /// OpenSim's suitcase, another grid loads only what is in My Suitcase
     /// (`world::suitcase`). Not a Legacy Viewer setting; its box "Do not
@@ -2655,6 +2658,7 @@ impl Default for Settings {
             landmarks_by_date: true,
             tp_history_zone: HistoryZone::Slt,
             confirm_teleports: true,
+            confirm_quit: true,
             warn_hypergrid_suitcase: true,
             confirm_no_transfer_settings: true,
             confirm_object_bonus: true,
@@ -6724,6 +6728,24 @@ mod tests {
             ..Settings::default()
         };
         assert!(on.sanitized().sim_version_alert);
+    }
+
+    #[test]
+    fn quit_confirmation_defaults_to_on_and_preserves_an_explicit_choice() {
+        assert!(Settings::default().sanitized().confirm_quit);
+
+        let mut earlier = serde_json::to_value(Settings::default()).unwrap();
+        earlier.as_object_mut().unwrap().remove("confirm_quit");
+        let restored: Settings = serde_json::from_value(earlier).unwrap();
+        assert!(restored.sanitized().confirm_quit);
+
+        let disabled = Settings {
+            confirm_quit: false,
+            ..Settings::default()
+        };
+        let saved = serde_json::to_value(&disabled).unwrap();
+        let restored: Settings = serde_json::from_value(saved).unwrap();
+        assert!(!restored.sanitized().confirm_quit);
     }
 
     #[test]

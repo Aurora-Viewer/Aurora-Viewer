@@ -73,6 +73,11 @@ pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-before-acting"), |cx| {
         cx.toggle(
+            tr!("ui-options-confirm-quit"),
+            tr!("ui-options-confirm-quit-help"),
+            &field!(confirm_quit),
+        );
+        cx.toggle(
             tr!("ui-options-confirm-teleports"),
             tr!("ui-options-ask-before-teleporting-to-a-landmark-a-history-entry"),
             &field!(confirm_teleports),
