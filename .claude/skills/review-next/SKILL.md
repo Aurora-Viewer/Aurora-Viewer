@@ -230,6 +230,12 @@ For each PR claimed, before its CI is asked for:
   The message names the author's branch, not the worktree's: it may be
   pushed to them (step 6).
 
+  `new-task.ps1` refuses a folder that exists. A `review-<n>` already
+  there is either another session's review in progress (its viewer or
+  build running, a session of your human's on it): leave it and tell your
+  human; or one left behind: end it as step 7 says (nothing lost first),
+  then make it again.
+
   The PR's head is `FETCH_HEAD` (`git -C <W> rev-parse FETCH_HEAD`), the
   same as `gh pr view <n> --json headRefOid`; the worktree's `HEAD` is the
   local merge, which nobody else has. A merge that stops on conflicts
@@ -524,7 +530,8 @@ gh pr comment <n> --repo Aurora-Viewer/Aurora-Viewer --body-file <W>/.scratch/re
 
 **Ending the review worktree**, once nothing more can happen in it: after
 the merge's outcome for a ✅ (step 8: a PR that leaves the queue comes back
-to step 6 in it), right after posting otherwise. `end-task.ps1` looks for
+to step 6 in it) or your human's "Not yet" (step 1 makes a new one when the
+merge comes back), right after posting otherwise. `end-task.ps1` looks for
 a merged PR of the worktree's own branch, which a review never has, so it
 takes `-Force`; first check that nothing you made is lost:
 `git -C <W> status --porcelain` empty, and each commit you chose to push
@@ -541,8 +548,9 @@ pwsh ./scripts/end-task.ps1 -Name review-<n> -Force
 ## 8. Offer the merge
 
 Every PR reviewed ✅ in this turn goes in one end-of-turn question with
-buttons ("Merge #4267 and #2297?": "Merge them" / "Not yet"); the merges of
-step 1 were asked in its dialog. Merging someone else's PR needs your
+buttons ("Merge #4267 and #2297?": "Merge them" / "Not yet"). A PR of
+step 1 has its merge asked in a dialog of its own, once it is tested again
+on today's `main` (step 1), never before. Merging someone else's PR needs your
 human's yes (AGENTS.md section 1, rule 5): never without it, never only in
 prose. On their yes, for each PR:
 

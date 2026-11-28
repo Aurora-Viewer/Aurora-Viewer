@@ -789,9 +789,9 @@ the review again. If a problem is beyond you (design conflict with another
 task, product choice, regression you cannot solve), **do not improvise**:
 explain it to the human and propose 2–3 solutions.
 
-**Someone else's PRs come from the review queue**, never from a PR picked
-by hand: several maintainers review at once, and the queue keeps them off
-each other's PRs. The Claude Code routine `.claude/skills/review-next`
+**Someone else's PRs come from the review queue**, which your human picks
+from (step 2 below): several maintainers review at once, and the queue and
+its claims keep them off each other's PRs. The Claude Code routine `.claude/skills/review-next`
 follows the steps below; on Linux the scripts run as `pwsh
 ./scripts/<script>.ps1`. Dependabot's PRs are not in the queue: section 13
 says how they are handled.
@@ -846,7 +846,7 @@ says how they are handled.
    (approved runs test the merge with `main` as it was when they
    started); the demo scenarios the PR touches and those of the
    neighbouring features, before and after on screenshots (section 4, and
-   step 3 of the list above); and whenever the change can be seen in the
+   step 3 of your own PR's review above); and whenever the change can be seen in the
    viewer, your human's validation (section 8, step 5: the viewer launched
    for them in demo or normal mode, what to test, where and what they
    should see, their answer awaited; on the grid, they log in). Never
@@ -862,20 +862,22 @@ says how they are handled.
    to it: a branch of this repository, or a fork that allows maintainers'
    pushes; and the fix is small and sure) or post the `## Changes
    requested`. A fix of yours is checked with `check.ps1` on the PR merged
-   with the latest `main` (a conflict resolved before CI excepted: nothing
-   of the PR runs before its CI is green, so its CI and step 5 test it),
-   then pushed without a merge of `main` unless it needs one (a conflict, a fix that only works on today's `main`): as for
-   your own PR (step 1 above), no merge of `main` nobody needs. Rule 3
-   keeps you off others' work in progress:
-   only your human's choice, PR by PR and fix by fix, opens the author's
+   with the latest `main`, except a change to docs alone, and a conflict
+   resolved before CI (nothing of the PR runs before its CI is green, so
+   its CI and step 5 test it). It is pushed without a merge of `main`
+   unless it needs one (a conflict, a fix that only works on today's
+   `main`): as for your own PR (step 1 of your own PR's review, above), no
+   merge of `main` nobody needs. Rule 3 keeps you off others' work in
+   progress: only your human's choice, PR by PR and fix by fix, opens the author's
    branch or description to you, and the review says what you changed.
    In `TASKS.md`, a conflict keeps both sides as written, and only the
    PR's own line changes, as its own question (section 6).
 7. **Post the review yourself** (below), naming the PR's head it read
-   (never the worktree's local merge). End the review worktree
-   (`end-task.ps1 -Name review-<n> -Force`, once every commit you pushed
-   is in the PR) after the merge's outcome, or right after posting when
-   there is nothing to merge.
+   (its `Reviewed head:` line; never the worktree's local merge). End the
+   review worktree (`end-task.ps1 -Name review-<n> -Force`, once every
+   commit you pushed is in the PR) after the merge's outcome or your
+   human's "not yet", or right after posting when there is nothing to
+   merge.
 8. **The merge** of a ✅ PR is a question your human answers (rule 5),
    then `merge-pr.ps1`; once merged, a confirmation comment on every issue
    it closes or names, and their Status (`issue-board.ps1`; section 15,
@@ -900,6 +902,8 @@ them):
 ## Review
 
 **Verdict: ✅ ready to merge** (or ⚠️ needs a decision / ❌ blocked)
+
+Reviewed head: `<sha>` (someone else's PR: the head you read, which an approval counts for)
 
 | Check | Result |
 |---|---|

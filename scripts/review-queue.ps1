@@ -52,6 +52,9 @@ param(
 . "$PSScriptRoot/common.ps1"
 . "$PSScriptRoot/tools/review-queue.ps1"
 $ErrorActionPreference = 'Stop'
+# gh writes UTF-8; the console decodes it with its OEM code page by default,
+# which garbles the verdicts' marks (Verdict: ✅) the rules read
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 $repo = Get-MainRepo $PSScriptRoot
 if (-not $repo) { throw 'No remote names the main repository on GitHub.' }
