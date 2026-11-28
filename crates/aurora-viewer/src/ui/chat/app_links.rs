@@ -171,7 +171,26 @@ fn written(url: &str, link: &AppLink) -> String {
             "ui-chat-applink-show-map-for",
             place = format!("{region} ({},{},{})", pos.x as i32, pos.y as i32, pos.z as i32)
         ),
+        // "Preferences › search “…”", like a setting link's "Preferences ›
+        // <setting>" (`setting_link_label`); the query comes from the
+        // address, so the text's RLVa wording applies to it (`label`)
+        AppLink::PreferencesSearch(query) => format!(
+            "{} › {}",
+            aurora_i18n::tr!("common-preferences"),
+            aurora_i18n::tr!("ui-chat-applink-preferences-search", query = shown_query(query))
+        ),
         _ => unescape(url),
+    }
+}
+
+/// The characters of a search a link's label shows; the field gets it whole.
+const SHOWN_QUERY: usize = 40;
+
+/// A search as a label shows it: cut to `SHOWN_QUERY` characters, with "…".
+fn shown_query(query: &str) -> String {
+    match query.char_indices().nth(SHOWN_QUERY) {
+        Some((end, _)) => format!("{}…", query[..end].trim_end()),
+        None => query.to_owned(),
     }
 }
 
@@ -203,6 +222,7 @@ pub(super) fn tooltip(link: &AppLink) -> &'static str {
         AppLink::Chat { .. } => aurora_i18n::tr!("ui-chat-applink-chat-tip"),
         AppLink::Search { .. } | AppLink::AreaSearch(_) => aurora_i18n::tr!("ui-chat-applink-search-tip"),
         AppLink::Preferences(_) => aurora_i18n::tr!("ui-chat-applink-preferences-tip"),
+        AppLink::PreferencesSearch(_) => aurora_i18n::tr!("ui-chat-applink-preferences-search-tip"),
         AppLink::Blocked(_) => aurora_i18n::tr!("ui-chat-applink-blocked-tip"),
         AppLink::Unsupported => aurora_i18n::tr!("ui-chat-applink-unsupported-tip"),
     }
@@ -508,6 +528,49 @@ mod tests {
             let label = super::label(&world, typed, &mut HashSet::new(), url, &link);
             assert!(label.contains(shown), "{label}");
         }
+    }
+
+    #[test]
+    fn a_preferences_search_link_shows_its_search_and_what_a_click_does() {
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let shown = |url: &str| {
+            let link = crate::slapp::parse(url).expect("app link");
+            let text = label(
+                &world,
+                crate::world::names::NameScope::World.into(),
+                &mut HashSet::new(),
+                url,
+                &link,
+            );
+            (text, tooltip(&link))
+        };
+        let preferences = aurora_i18n::tr!("common-preferences");
+        let (text, tip) = shown("secondlife:///app/openfloater/preferences?search=%23%20of%20lines");
+        assert_eq!(
+            text,
+            format!(
+                "{preferences} › {}",
+                aurora_i18n::tr!("ui-chat-applink-preferences-search", query = "# of lines")
+            )
+        );
+        assert!(!text.contains("secondlife:"), "{text}");
+        assert_eq!(tip, aurora_i18n::tr!("ui-chat-applink-preferences-search-tip"));
+        // a setting link keeps its own label and tooltip (#4414)
+        let (_, tip) = shown("secondlife:///app/preferences/chat_timestamps_nearby");
+        assert_eq!(tip, aurora_i18n::tr!("ui-chat-applink-preferences-tip"));
+        // a long search is cut in the label only
+        let long = format!("{} tail", "a".repeat(60));
+        let url = crate::slapp::preferences_search_link(&long).expect("a search");
+        let (text, _) = shown(&url);
+        let cut = format!("{}…", "a".repeat(SHOWN_QUERY));
+        assert_eq!(
+            text,
+            format!(
+                "{preferences} › {}",
+                aurora_i18n::tr!("ui-chat-applink-preferences-search", query = cut)
+            )
+        );
+        assert_eq!(crate::slapp::parse(&url), Some(AppLink::PreferencesSearch(long)));
     }
 
     #[test]

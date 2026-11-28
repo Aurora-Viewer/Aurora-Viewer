@@ -21,7 +21,9 @@
 //!   single line, character limit); a suggestion selects its word and is
 //!   pasted over it (LLLineEditor::replaceWithSuggestion);
 //! - a field with a right-click menu of its own (script editor, notecards)
-//!   keeps it.
+//!   keeps it;
+//! - a field may add one entry of its own under Select All, which copies a
+//!   text it gives (`copy_entry`: the Preferences search as a link).
 
 use crate::theme::Palette;
 use egui::text::CCursorRange;
@@ -110,6 +112,41 @@ fn events(entry: Entry, clipboard: Option<String>) -> Vec<Event> {
     }
 }
 
+/// A field's own entry under the text entries, given for one frame
+/// (`copy_entry`): its icon, its label and the text it copies (None:
+/// greyed out).
+#[derive(Clone)]
+struct CopyEntry {
+    icon: &'static str,
+    label: &'static str,
+    text: Option<String>,
+    frame: u64,
+}
+
+fn copy_entry_id(field: Id) -> Id {
+    Id::unique("text_menu_copy_entry").with(field)
+}
+
+/// Adds to the right-click menu of `field` an entry that copies `text`,
+/// greyed out while it is None. Given again each frame the field is drawn,
+/// so the entry always copies what the field holds now.
+pub(crate) fn copy_entry(ctx: &Context, field: Id, icon: &'static str, label: &'static str, text: Option<String>) {
+    let frame = copy_entry_frame(ctx);
+    ctx.data_mut(|d| d.insert_temp(copy_entry_id(field), CopyEntry { icon, label, text, frame }));
+}
+
+/// The entry `field` gave this frame: a field no longer drawn gives none.
+fn field_copy_entry(ctx: &Context, field: Id) -> Option<CopyEntry> {
+    ctx.data(|d| d.get_temp::<CopyEntry>(copy_entry_id(field)))
+        .filter(|entry| entry.frame == copy_entry_frame(ctx))
+}
+
+/// The viewer's own window's frame, also for a field in a window drawn
+/// outside it, whose pass shares those numbers (outside.rs).
+fn copy_entry_frame(ctx: &Context) -> u64 {
+    ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)
+}
+
 /// The misspelled word under the right click: its characters and itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Misspelled {
@@ -141,6 +178,14 @@ struct Open {
 fn demo_wanted() -> bool {
     static WANTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *WANTED.get_or_init(|| std::env::var_os("AURORA_DEMO_TEXT_MENU").is_some())
+}
+
+/// `AURORA_DEMO_TEXT_MENU=focused`: the menu opens over the field that has
+/// the keyboard then (a window's own field, such as the Preferences search
+/// of `AURORA_DEMO_OPTIONS`), nothing typed into the chat bar.
+fn demo_focused() -> bool {
+    static FOCUSED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FOCUSED.get_or_init(|| std::env::var("AURORA_DEMO_TEXT_MENU").is_ok_and(|mode| mode.trim() == "focused"))
 }
 
 /// `AURORA_DEMO_SPELLING`: the app fills the chat bar and gives it the
@@ -228,6 +273,7 @@ impl TextMenu {
         if let Some(frame) = demo_frame.filter(|_| demo_wanted()) {
             let chat = Id::unique("nearby_chat_input");
             match frame {
+                DEMO_FOCUS | DEMO_TYPE if demo_focused() => {}
                 DEMO_FOCUS => ctx.memory_mut(|m| m.request_focus(chat)),
                 DEMO_TYPE => {
                     raw.events.push(Event::Text("Hello from the demo".into()));
@@ -260,7 +306,11 @@ impl TextMenu {
         let clicked = ctx.input(|i| i.pointer.secondary_clicked().then(|| i.pointer.interact_pos()).flatten());
         let demo = std::mem::take(&mut self.demo_open)
             .then(|| {
-                let field = Id::unique("nearby_chat_input");
+                let field = if demo_focused() {
+                    focused?
+                } else {
+                    Id::unique("nearby_chat_input")
+                };
                 ctx.read_response(field).map(|r| (field, r.rect.center()))
             })
             .flatten();
@@ -301,6 +351,7 @@ impl TextMenu {
         if matches!(suggestions, Some(None)) {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
+        let own = field_copy_entry(ctx, field);
         let mut keep = true;
         let mut chosen = None;
         let mut done = false;
@@ -336,6 +387,15 @@ impl TextMenu {
             for (entry, icon) in ENTRIES {
                 if super::menu::item_if(ui, p, icon, label(entry), enabled(entry, can, clipboard)) {
                     chosen = Some(Pending::Entry(entry));
+                }
+            }
+            if let Some(own) = &own {
+                super::menu::separator(ui, p);
+                if super::menu::item_if(ui, p, own.icon, own.label, own.text.is_some())
+                    && let Some(text) = &own.text
+                {
+                    ui.ctx().copy_text(text.clone());
+                    done = true;
                 }
             }
         });

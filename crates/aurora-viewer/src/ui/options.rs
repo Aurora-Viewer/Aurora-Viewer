@@ -745,6 +745,25 @@ impl OptionsUi {
         self.go_to = None;
     }
 
+    /// Follow a Preferences search link (`AppLink::PreferencesSearch`): the
+    /// query goes into the search field and runs as if typed there, as
+    /// LLFloaterPreference::onOpen sets its filter and runs
+    /// onUpdateFilterTerm (indra/newview/llfloaterpreference.cpp). Nothing
+    /// is changed: a search only shows rows.
+    pub fn open_search(&mut self, query: String) {
+        self.query = query;
+        // what a change typed in the field does (`sidebar`)
+        self.modified_view = false;
+        self.cancel_capture();
+        // a setting link or a row asked before must not take the search back
+        self.pending_setting = None;
+        self.reveal = None;
+        self.go_to = None;
+        self.open_parent = None;
+        self.count_stale = true;
+        self.focus_search = true;
+    }
+
     /// Opens the Chat page on the YouTube player's settings (a player's
     /// cog, #848).
     pub fn open_videos(&mut self) {
@@ -1998,7 +2017,24 @@ fn sidebar(
     ui.add_space(12.0);
     let width = ui.available_width();
     ui.horizontal(|ui| {
-        let field = super::widgets::clearable_search_box(ui, p, &mut st.query, aurora_i18n::tr!("ui-options-search-settings"), width);
+        // "Copy search as link" twice: a link icon in the field, before its
+        // clear "x" and shown like it while there is a search, and an entry
+        // of its right-click menu (below)
+        let copy = aurora_i18n::tr!("ui-options-copy-search-link");
+        let (field, copy_clicked) = super::widgets::clearable_search_box_with(
+            ui,
+            p,
+            &mut st.query,
+            aurora_i18n::tr!("ui-options-search-settings"),
+            width,
+            "link",
+            copy,
+        );
+        if copy_clicked && let Some(link) = crate::slapp::preferences_search_link(&st.query) {
+            ui.ctx().copy_text(link);
+            // the field keeps the keyboard, as after its "x"
+            field.request_focus();
+        }
         if st.focus_search && !ui.is_sizing_pass() && ui.is_enabled() {
             st.focus_search = false;
             field.request_focus();
@@ -2010,6 +2046,17 @@ fn sidebar(
         if field.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             st.query.clear();
         }
+        // "Copy search as link" in the field's right-click menu: the
+        // Legacy Viewer's copy_search_slurl_btn (LLFloaterPreference::
+        // onCopySearch), the search in its link form, which opens it again
+        // in both viewers; greyed while there is no search
+        super::text_menu::copy_entry(
+            ui.ctx(),
+            field.id,
+            "link-filled",
+            copy,
+            crate::slapp::preferences_search_link(&st.query),
+        );
     });
     ui.add_space(6.0);
     let searching = !st.query.trim().is_empty();

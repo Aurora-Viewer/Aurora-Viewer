@@ -7005,6 +7005,24 @@ mod tests {
         assert!(matches!(segments(&im)[0], Seg::App(_, crate::slapp::AppLink::Agent { .. })));
     }
 
+    /// A Preferences search copied, pasted in a sentence: the chat finds the
+    /// whole link, and it opens the search that was copied.
+    #[test]
+    fn a_copied_preferences_search_survives_the_chat() {
+        for query in ["# of lines", "draw distance?", "v1.", "café (crème)", "\"x\" 'y'", "a&b=c"] {
+            let url = crate::slapp::preferences_search_link(query).expect("a search");
+            for (before, after) in [("", ""), ("see ", "."), ("(", ")"), ("look: ", "!")] {
+                let t = format!("{before}{url}{after}");
+                let segs = segments(&t);
+                let found = segs.iter().find_map(|s| match s {
+                    Seg::App(link, crate::slapp::AppLink::PreferencesSearch(q)) => Some((*link, q.as_str())),
+                    _ => None,
+                });
+                assert_eq!(found, Some((url.as_str(), query)), "{t}");
+            }
+        }
+    }
+
     #[test]
     fn a_link_verb_ends_at_its_word() {
         // an object's "secondlife:///app/agent/<id>/about's follower" (LLUrlEntryAgent)

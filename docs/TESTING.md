@@ -1147,7 +1147,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_AVATAR_ALIGN=nearest\|full\|mini` | Face nearest avatar and the Compass window turn the avatar (see Details) |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
-| `AURORA_DEMO_TEXT_MENU=1` | Right-click menu of a text field (Cut, Copy, Paste…) |
+| `AURORA_DEMO_TEXT_MENU=1\|focused` | Right-click menu of a text field (Cut, Copy, Paste…) |
 | `AURORA_DEMO_MENU_SEARCH=<query>` | Wolf menu filtered by its search field |
 | `AURORA_DEMO_POINTER=<points>` | Moves, clicks or holds the pointer over the interface |
 | `AURORA_DEMO_HOVER=1` or `"x,y"` | Cursor swept, or resting on a pixel, on hover |
@@ -1927,7 +1927,11 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_TEXT_MENU=1`**: the chat bar takes the focus at frame 700,
   gets a line typed and selected at frame 703, and the text fields'
   right-click menu opens over it at frame 706 (capture at frame 780 with
-  `AURORA_FPS_LIMIT=60`). Cut, Copy, Delete and Select All are enabled,
+  `AURORA_FPS_LIMIT=60`). `AURORA_DEMO_TEXT_MENU=focused` types nothing
+  and opens the menu at frame 706 over the field that has the keyboard,
+  for example with `AURORA_DEMO_OPTIONS=graphics:search=volume` the
+  Preferences search, whose menu ends with "Copy search as link".
+  Cut, Copy, Delete and Select All are enabled,
   Paste only with text in the clipboard. By hand: right click in any text
   field; a right click inside the selection keeps it, elsewhere it moves
   the cursor; a password field never offers Cut or Copy, a read-only one
@@ -10433,16 +10437,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   an inventory item, two experiences (the region's treasure hunt by its
   name; the experience of `AURORA_DEMO_EXPERIENCE`, "unknown" without that
   scenario), a classified and an event (their address, as in the Legacy
-  Viewer), the map, a chat on channel 42, a search, a resident's IM, the
-  same resident's profile glued to the sentence ("…/about's hat": the
+  Viewer), the map, a chat on channel 42, a search, a Preferences search
+  (`openfloater/preferences?search=draw%20distance`: Preferences open with
+  "draw distance" in their search field, no setting changed), a resident's
+  IM, the same resident's profile glued to the sentence ("…/about's hat": the
   name, then "'s hat" as text), a folder to wear and an unknown command. Each opens what the Legacy Viewer
   opens on a click (group profile, place profile, remote object
   inspector, inventory, experience profile, the classified or the event
   alone in Search, the map); the folder to wear is refused (a notice), as
   is the unknown command. With a command name instead of `1` (`group`,
   `parcel`, `objectim`, `inventory`, `experience`, `classified`, `event`,
-  `worldmap`, `chat`, `search`, `agent`, `wear_folder`, `frobnicate`) its
-  first link is clicked once the scene is set, for a capture. Also accepts
+  `worldmap`, `chat`, `search`, `openfloater`, `agent`, `wear_folder`,
+  `frobnicate`) its first link is clicked once the scene is set, for a capture. Also accepts
   `profile`, `pay`, `report` and `inventory-show`, and `unmute` / `unblock`:
   the resident Violet Wolf, or the sign that says the links in the chat
   console, is blocked first, then its `unmute` or `unblock` link is clicked;

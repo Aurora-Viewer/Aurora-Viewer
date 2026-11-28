@@ -60,7 +60,7 @@ impl Action {
             AppLink::WorldMap { .. } => Self::Map,
             AppLink::Chat { .. } => Self::Channel,
             AppLink::Search { .. } | AppLink::AreaSearch(_) => Self::Search,
-            AppLink::Preferences(_) => Self::Preferences,
+            AppLink::Preferences(_) | AppLink::PreferencesSearch(_) => Self::Preferences,
             AppLink::Blocked(_) => Self::Blocked,
             AppLink::Unsupported => Self::Unsupported,
         }
