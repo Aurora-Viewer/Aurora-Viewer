@@ -847,11 +847,16 @@ follows the steps below; on Linux the scripts run as `pwsh
    skipped: a validation they cannot do yet leaves a ⚠️ verdict until it
    is done.
 6. **Whatever the author has to change** (a conflict, a test broken on the
-   merge with `main`, a finding, a failing test): ask your human whether
-   you fix it yourself on the author's branch (when you may push to it: a
-   branch of this repository, or a fork that allows maintainers' pushes;
-   and the fix is small and sure: merge `main`, fix, `check.ps1`, push,
-   wait for green) or post the `## Changes requested`.
+   merge with `main`, a finding, a failing test, the issue line of its
+   description): ask your human whether you fix it yourself on the
+   author's branch (when you may push to it: a branch of this repository,
+   or a fork that allows maintainers' pushes; and the fix is small and
+   sure: merge `main`, fix, `check.ps1`, push, wait for green) or post the
+   `## Changes requested`. Rule 3 keeps you off others' work in progress:
+   only your human's choice, PR by PR and fix by fix, opens the author's
+   branch or description to you, and the review says what you changed.
+   In `TASKS.md`, a conflict keeps both sides as written, and only the
+   PR's own line changes, as its own question (section 6).
 7. **Post the review yourself** (below), naming the PR's head it read
    (never the worktree's local merge), then end the review worktree
    (`end-task.ps1 -Name review-<n> -Force`, once nothing is left to

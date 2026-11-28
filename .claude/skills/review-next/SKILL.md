@@ -46,11 +46,18 @@ scripts, as they are:
 - **Your session** runs in the main repository or your own task's
   worktree. The repository's scripts that read GitHub run from there:
   `pwsh ./scripts/<script>.ps1 …` on Linux and macOS (the form the "Claude
-  permissions" rules allow), `./scripts/<script>.ps1 …` on Windows. Run
-  each `gh` and script command alone, with no `cd` or `;` around it.
+  permissions" rules allow), `./scripts/<script>.ps1 …` on Windows.
+  **One command per call** (AGENTS.md section 8, step 9): each `gh` and
+  script command alone, with no `cd`, `;`, `&&`, variable, loop or shell
+  function around it, so that it matches the permission rules. Several PRs
+  or runs: the same command again, once for each.
 - **The review worktree** is `<W>`: the absolute path `new-task.ps1`
   prints ("folder …", `…/work/review-<n>`). Name it in full in every
   command; a relative `../work/…` only works from the main repository.
+  Everything about a PR's code happens there, reads included: no fetch,
+  `merge-tree`, checkout or build in the main repository (AGENTS.md
+  section 3). Before the worktree exists, what you know of a PR comes from
+  GitHub (`gh pr view`, the queue's notes).
   - git: `git -C <W> …`.
   - What has to build or run there (`check.ps1`, the viewer): Linux and
     macOS `pwsh -NoProfile -WorkingDirectory <W> -File ./scripts/check.ps1`
@@ -91,9 +98,19 @@ shows. Rewrite the list when a pick or an answer changes what is left.
 
 ## 0. Follow-up first
 
-Once per session, before anything else: AGENTS.md section 8, step 0 (merged
-task folders through `end-task.ps1`, your human's own PRs without a review,
-the issues). Your human's own PRs come before anyone else's. Work from fresh
+Once per session, before anything else, AGENTS.md section 8, step 0, all
+three parts:
+
+- **housekeeping**: the task folders of `work/` whose PR is merged, through
+  `end-task.ps1`;
+- **your human's own PRs** (`gh pr list --author "@me"`): one without a
+  review, with red CI or out of the merge queue comes before anyone else's;
+- **the issues**: the open ones (`gh issue list`) and the new comments on
+  those linked to your human's tasks and to the PRs reviewed in earlier
+  sessions (`gh issue view <i> --json comments`), answered as section 15
+  says.
+
+ Work from fresh
 data (section 14): `git fetch origin` first, and GitHub read again rather
 than remembered.
 
@@ -367,13 +384,20 @@ so.
 
 Anything the author has to change (a conflict, a test or `check.ps1` broken
 on the merge with `main`, a finding of the diff, a demo or a validation
-that fails) goes to your human in a dialog, before anything is posted:
+that fails, the issue line of its description) goes to your human in a
+dialog, before anything is posted, one fix per question. AGENTS.md rule 3
+keeps you off others' work in progress: only that choice opens the
+author's branch or description to you.
 
 - **Fix it yourself**, offered only when you may push to the PR's branch
   (`gh pr view <n> --json isCrossRepository,maintainerCanModify,headRefName,headRepositoryOwner,headRepository`:
   a branch of this repository, or a fork that allows maintainers' pushes)
   and the fix is small and sure (a merge of `main` and its conflicts, a
-  field a test of `main` lacks, a TASKS.md line, a typo). In the review
+  field a test of `main` lacks, a typo). TASKS.md: in a conflict, keep
+  both sides as they are written; a change to the PR's own line (its
+  status, a sub-line) is a fix of its own, asked by itself, and never a
+  line of another task (AGENTS.md section 6, "Do not rewrite the lines of
+  other tasks"). In the review
   worktree: resolve, commit (in your human's name, an English message in
   the imperative, no AI mention: AGENTS.md section 10), then `check.ps1`
   again: after every change
@@ -386,6 +410,9 @@ that fails) goes to your human in a dialog, before anything is posted:
 
   The pushed head is now the PR's: step 4 on it, and the review names it
   and says what the maintainer pushed.
+  The description (`Closes` → `Refs`, section 9) changes with `gh pr view
+  <n> --json body`, the line edited in a file of `<W>/.scratch/`, then
+  `gh pr edit <n> --body-file …`: a change to docs alone, no `check.ps1`.
 - **Ask the author**: a `## Changes requested` (step 7) with every point;
   for a conflict, the files, and a request to say so in a comment once it
   is pushed (a merge of `main` alone does not bring the PR back to the
@@ -410,9 +437,15 @@ gh pr comment <n> --repo Aurora-Viewer/Aurora-Viewer --body-file <W>/.scratch/re
   `<first 9 characters of FETCH_HEAD>` `` (or of the head you pushed),
   never the worktree's local merge: the queue offers the merge of that
   head only.
-- The check table of AGENTS.md section 11, filled from what you ran: the
-  conflict check, CI, `check.ps1`, the demo with its captures, your
-  human's validation (date, demo or grid, what they saw).
+- The check table of AGENTS.md section 11, every row it lists (no
+  conflict with main, PR CI, demo scenarios before / after, non-regression
+  of neighbouring features, Legacy Viewer fidelity, creators' permissions,
+  no data of our own in shared places, credits, secrets / personal data,
+  docs), plus `check.ps1` and your human's validation (date, demo or grid,
+  what they saw). Each row says what you checked on this head; a row a
+  re-review did not need to read again says "unchanged since `<head>`,
+  review of <date>", never "everything else as before" for several rows
+  at once.
 - Posting it ends the claim: nothing to release.
 
 Then end the review worktree. `end-task.ps1` looks for a merged PR of the
