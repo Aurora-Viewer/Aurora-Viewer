@@ -55,11 +55,79 @@ pub(super) fn over_threshold(press: egui::Pos2, pointer: egui::Pos2) -> bool {
 #[derive(Default)]
 struct PressLatch {
     dragged: bool,
+    inventory_press: Option<egui::Pos2>,
+    deferred_release: Option<Vec<egui::Event>>,
+    later_input: Vec<egui::Event>,
 }
 
 impl egui::Plugin for PressLatch {
     fn debug_name(&self) -> &'static str {
         "InventoryDragPress"
+    }
+
+    fn input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        if input.viewport_id != egui::ViewportId::ROOT {
+            return;
+        }
+        if let Some(release) = self.deferred_release.take() {
+            self.later_input.append(&mut input.events);
+            input.events = release;
+            if !self.later_input.is_empty() {
+                ctx.request_repaint();
+            }
+            return;
+        }
+        if !self.later_input.is_empty() {
+            self.later_input.append(&mut input.events);
+            input.events = std::mem::take(&mut self.later_input);
+        }
+        let Some(origin) = self.inventory_press else {
+            return;
+        };
+        if !input.focused
+            || input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::PointerGone
+                        | egui::Event::WindowFocused(false)
+                        | egui::Event::Key {
+                            key: egui::Key::Escape,
+                            pressed: true,
+                            ..
+                        }
+                )
+            })
+        {
+            self.inventory_press = None;
+            return;
+        }
+        let Some((release, pressed, modifiers)) = input.events.iter().enumerate().find_map(|(index, event)| match event {
+            egui::Event::PointerButton {
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers,
+                ..
+            } => Some((index, *pressed, *modifiers)),
+            _ => None,
+        }) else {
+            return;
+        };
+        self.inventory_press = None;
+        if let Some(motion) = (!pressed).then(|| &input.events[..release]).and_then(|events| {
+            events
+                .iter()
+                .position(|event| matches!(event, egui::Event::PointerMoved(pos) if over_threshold(origin, *pos)))
+        }) {
+            // Give the source one pass with the button still held. Deliver
+            // the actual release position and modifiers before newer input
+            // can change the target or turn a copy into a move.
+            self.later_input = input.events.split_off(release + 1);
+            let mut events = input.events.split_off(motion + 1);
+            events.insert(events.len() - 1, egui::Event::ModifiersChanged(modifiers));
+            self.deferred_release = Some(events);
+            log::debug!("inventory drag: process batched motion before primary release");
+            ctx.request_repaint();
+        }
     }
 
     fn on_begin_pass(&mut self, ui: &mut egui::Ui) {
@@ -105,7 +173,9 @@ fn begins_by(ui: &egui::Ui, r: &egui::Response, button: egui::PointerButton) -> 
                     .is_some_and(|(press, pointer)| over_threshold(press, pointer))
         });
     if begins {
-        latch.lock().dragged = true;
+        let mut latch = latch.lock();
+        latch.dragged = true;
+        latch.inventory_press = None;
     }
     begins
 }
@@ -120,6 +190,12 @@ pub(super) fn dragged_this_press(ctx: &egui::Context) -> bool {
 
 pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, st: &mut InventoryUi) {
     record_row(ui.ctx(), st.ui_id, id, r.rect);
+    if ui.ctx().viewport_id() == egui::ViewportId::ROOT
+        && r.is_pointer_button_down_on()
+        && let Some(origin) = ui.input(|i| i.pointer.primary_pressed().then(|| i.pointer.press_origin()).flatten())
+    {
+        latch(ui.ctx()).lock().inventory_press = Some(origin);
+    }
     let right = if begins(ui, r) {
         false
     } else if begins_by(ui, r, egui::PointerButton::Secondary) {
@@ -700,6 +776,75 @@ pub(super) fn record_row(ctx: &egui::Context, editor: Uuid, id: Uuid, rect: egui
 pub(crate) mod demo;
 #[path = "drag_navigation.rs"]
 pub(crate) mod navigation;
+
+#[cfg(test)]
+mod fast_drag_tests {
+    use super::*;
+    use egui::{Event, PointerButton, RawInput};
+
+    #[test]
+    fn inventory_drag_delivers_batched_motion_and_release_to_an_earlier_target() {
+        let ctx = egui::Context::default();
+        let item = Uuid::from_u128(1);
+        let mut st = InventoryUi::default();
+        let row = egui::Rect::from_min_max(egui::pos2(20.0, 20.0), egui::pos2(200.0, 80.0));
+        let target = egui::Rect::from_min_max(egui::pos2(250.0, 20.0), egui::pos2(440.0, 80.0));
+        let start = row.center();
+        let end = target.center();
+        let button = |pos, pressed, modifiers| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers,
+        };
+        let mut dropped = Vec::new();
+        let mut clicks = 0;
+        for events in [
+            vec![],
+            vec![Event::PointerMoved(start), button(start, true, egui::Modifiers::NONE)],
+            vec![
+                Event::PointerMoved(end),
+                button(end, false, egui::Modifiers::CTRL),
+                Event::PointerMoved(start),
+            ],
+            vec![Event::PointerMoved(end + egui::vec2(0.0, 150.0))],
+            vec![],
+            vec![Event::PointerMoved(start), button(start, true, egui::Modifiers::NONE)],
+            vec![
+                Event::PointerMoved(start + egui::vec2(1.0, 0.0)),
+                button(start, false, egui::Modifiers::NONE),
+            ],
+            vec![],
+        ] {
+            ctx.run_ui(
+                RawInput {
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    // Conversations can process the release before Inventory
+                    // draws its source row during the same UI pass.
+                    if ui.rect_contains_pointer(target)
+                        && ui.input(|i| i.pointer.primary_released())
+                        && let Some(cargo) = Cargo::carried(ui.ctx())
+                    {
+                        dropped.extend_from_slice(cargo.ids());
+                        assert!(ui.input(|i| i.modifiers.ctrl), "the drop keeps its release modifiers");
+                        egui::DragAndDrop::clear_payload(ui.ctx());
+                    }
+                    let response = ui.interact(row, egui::Id::unique("inventory test row"), egui::Sense::click_and_drag());
+                    source(ui, &response, item, false, &mut st);
+                    clicks += usize::from(response.clicked());
+                },
+            )
+            .textures_delta
+            .clear();
+        }
+        assert_eq!(dropped, [item]);
+        assert_eq!(clicks, 1, "a below-threshold release still clicks normally");
+    }
+}
 
 #[cfg(test)]
 mod right_button_tests {
