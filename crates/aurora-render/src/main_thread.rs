@@ -1732,7 +1732,11 @@ impl Renderer {
             // a film's frame next, sent and not waited for (film_readback.rs)
             None => match self.film_request.take() {
                 Some(film) => {
-                    self.films_sent += 1;
+                    // (a sub-frame before a shutter's last is answered by
+                    // nothing: the last carries the frame)
+                    if film.shutter.is_none_or(|s| s.last()) {
+                        self.films_sent += 1;
+                    }
                     let spec = film.size.map(|(width, height)| crate::SnapshotSpec {
                         width,
                         height,
@@ -1741,7 +1745,7 @@ impl Renderer {
                         photo: (width, height),
                         cube: None,
                     });
-                    Some(crate::packet::Capture::Film(film.tag, spec))
+                    Some(crate::packet::Capture::Film(film.tag, spec, film.shutter))
                 }
                 None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
             },

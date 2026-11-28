@@ -1115,6 +1115,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
+| `AURORA_DEMO_DIRECTOR_SHUTTER=<degrees>` | With `AURORA_DEMO_DIRECTOR`, the Director's motion blur on at that shutter angle (1 to 720), its render with a true shutter (see Details) |
 | `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha\|orbit\|capture\|anim\|montage\|titles\|render` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, a second of the track recorded, the track replaced by an orbit shot round the avatar, a path flown by hand made keyframes, keyframes with an animation, a lens and a time of day, a montage of two shots, fades and titles played, or a second rendered as PNG images (see Details) |
 | `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
 | `AURORA_DIRECTOR_FFMPEG=pack` | The Director looks for no ffmpeg but the project's pack, to try its download on a computer that has ffmpeg (see Details) |
@@ -1285,7 +1286,13 @@ when unfocused") is ignored during a screenshot.
   `Aurora_00024.png` in a new `Aurora_<date>` folder of `<Videos>/Aurora
   Viewer`, the first black, the title in the middle, the last black,
   whatever the window's size; the Output section shows the progress
-  meanwhile.
+  meanwhile. With `AURORA_DEMO_DIRECTOR_SHUTTER=<degrees>` (1 to 720) the
+  Director's motion blur is on at that shutter: its live view and live
+  films blur along the motion vectors, and `render` draws each frame as
+  sub-frames over the time the shutter stays open, averaged (the log adds
+  `shutter open 20.8 ms in 12 sub-frames` at 180°, 24 a second); the
+  orbiting camera and the walking avatars leave smooth streaks, with no
+  doubled images, and the render takes as many times longer.
 - **`AURORA_DEMO_CROSSHAIR=dot|cross|circle|legacy|off|image:<file>`**: the crosshair of
   Preferences › Camera › Mouselook › Crosshair in that shape for the
   session, nothing saved (`cross` and `circle` with their centre dot; `off`:
@@ -4673,7 +4680,7 @@ Movement presentation validation (2026-10-19): final `scripts/check.ps1` green, 
 
 Passage / water-walk validation (2026-10-18): full `scripts/check.ps1` green, 3,573 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. Built the default dev viewer and inspected `.scratch/ao-passage-layout-fr.png`, `ao-passage-layout-rebound-fr.png` and `ao-passage-layout-small-en.png`, compared with `ao-passage-layout-before-fr.png`. Both switches align beneath the run/flight boosts, concise passage text fits its column, default/rebound hints remain current, and swimming controls remain accessible at both viewport sizes. Last-five before/after FR medians: 60 FPS, UI 0.72/0.69 ms and GPU 2.04/2.09 ms; shared desktop load varies, so these are regression observations. Owned logs contain zero errors/panics and only the same synthetic missing-outfit warning. Human acceptance remains required before PR.
 
-Other existing AO modes: interface, interface-group, interface-track, interface-combine, interface-swim, interface-swim-missing, folder-names, folder-names-wait, 1, transitions, off, movement, movement-rebound, swim, swim-missing, firestorm, firestorm-wait, migrate, migrate-done, migrate-swim, migrate-alchemy, migrate-alchemy-done, empty, design-current, design-tabs, design-movement, design-section, design-swim.
+Other existing AO modes: interface, interface-group, interface-track, interface-combine, interface-swim, interface-swim-missing, folder-names, folder-names-wait, 1, transitions, off, movement, movement-rebound, swim, swim-missing, firestorm, firestorm-wait, migrate, migrate-done, migrate-swim, migrate-alchemy, migrate-alchemy-done, empty, unavailable, design-current, design-tabs, design-movement, design-section, design-swim.
 
 
 - **`AURORA_DEMO_PELVIS_CONSTRAINT=1`**: the plaza's avatars that play the
@@ -4730,6 +4737,7 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   animesh alike. Slow Motion Animations slows only our avatar (0.2), the
   others keep the global speed. Nothing is saved: a restart is back at 1.0.
 - **`AURORA_DEMO_AO=interface|interface-group|interface-track|interface-combine|interface-swim|interface-swim-missing`**: approved native AO interface. `interface` has six synthetic standing entries; `interface-group` opens a simultaneous group, `interface-track` an independent cycle, `interface-combine` its guided creation dialog, and `interface-swim` one selected swimming slot with all eight resolved. `interface-swim-missing` removes Floating from that fixture: its state row must show an amber warning triangle, assigned required states a green check, and optional states no marker. The detail pane, compact AO panel and Movement gate share the triangle and missing-animation message; tooltips distinguish missing and assigned required states. No optional-slot counter remains. Test FR/EN, state navigation, single-click selection, row drag insertion/reload, creation from checked main entries, group-member add/remove/order, track cycle isolation, rename and dissociation. Inventory operations use the normal mutation/acknowledgement path against the offline simulator. Examples never seed a user's inventory; all shared theme/font/widget files remain unchanged.
+- **`AURORA_DEMO_AO=unavailable`**: seeds a native AO, then at frame 360 applies the same in-place rename OpenSim sends on a Hypergrid teleport (`#Aurora` becomes `#Aurora (Unavailable)`, version −1). The AO window must still list its set. Inventory opens beside it on that renamed folder. Offline only; a reload while the folder is renamed finds no sets. The Legacy Viewer would make a second `#Firestorm` and `#AO` there; Aurora deliberately makes no twin `#Aurora`.
 - **`AURORA_DEMO_AO=folder-names`**: seeds an existing native AO (including all eight swimming slots) and an empty bridge directory under their previous `AO` / `Bridge` names. The real acknowledged startup edits must rename both to `#Aurora/Aurora AO` and `#Aurora/Aurora Bridge`; the AO selection and links remain unchanged. Opens the real inventory beside the AO after frame 360 with both sibling folders visible; capture at 1050 after bridge provisioning. Regression tests additionally cover an already worn current bridge retaining its folder/item/object identity and valid handshake without another copy/upload/detach, new-name precedence, pending/failed acknowledgements, an authoritative empty old AO and old interrupted-import protection. Human grid validation: confirm the two existing folders are renamed on login, the selected set and animations still work, and a second login creates no duplicate folder or legacy AO import.
 - **`AURORA_DEMO_AO=folder-names-wait`**: uses the same cached old native folders but withholds both inventory services until frame 720. Capture at 450: `AO` and `Bridge` are unchanged, the selected set still works and no metadata edit is sent. Capture at 1200: both folders have their new names and the bridge reaches Ready after its five-second inventory save. The factory must wait beyond its normal timeout if services are delayed, rename an already worn controller without replacing its identities, and still time out a request that was actually sent. The readiness gate is shared with AO startup; running/ready bridge commands continue independently of inventory availability. Offline only.
 - **`AURORA_DEMO_AO=1`**: opens the AO manager, with two standing poses in
@@ -4988,6 +4996,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_FOG_COLOUR=sky\|<r>,<g>,<b>` | The fog's colour (the sky's light, or its own in sRGB 0..1) until the Aurora Weather window is used |
 | `AURORA_DEMO_FOG=sunset\|neon\|indoor\|underwater\|shelter\|aerial\|ground` | Fog under a fixed sky with props and a placed camera |
 | `AURORA_DEMO_FOG_SWING=<degrees>` | The fog scene's camera swings side to side, through its view at full speed every 100 frames |
+| `AURORA_SUN_RAYS=<0..1>\|off` | The sun's and the moon's shafts at this strength, or none, whatever Preferences say (see Details) |
 
 ### Details
 
@@ -5026,6 +5035,17 @@ both open states and the selection count. Capture at frame 620.
   meet without a seam; under the height fog, a room under a roof stays
   clear (the shelter map, three taps along each view).
 
+- **Sun and moon rays (`AURORA_SUN_RAYS`)**: Preferences › Graphics ›
+  "Sun and moon rays" for this launch only: `<0..1>` their strength, `off`
+  (or `0`) none. A post process (`sun_shafts.rs`): the sky around the sun
+  (the moon at night) streaked from it across the image, cut by what
+  stands in front; nothing behind the camera, fading as the light leaves
+  the view's axis and as it sets; none in debug views, cut-out photos and
+  photos drawn in tiles. Compare `AURORA_DEMO_FOG=sunset AURORA_FOG=off
+  AURORA_SUN_RAYS=0.7` (dark streaks behind the posts and the torus in the
+  low sun's light, the ground beside them as without) against
+  `AURORA_SUN_RAYS=off`. `AURORA_PROFILE=1` counts their GPU time in
+  `g_bloom`.
 - **Weather (`AURORA_RAIN`, `AURORA_SNOW*`, `AURORA_THUNDER_*`)**: the
   weather of the Aurora Weather window is drawn for
   this viewer only. `AURORA_RAIN=<0..1>` sets the rain (0 none, 1 a
@@ -6626,6 +6646,10 @@ append `-edit` for its edit controls or use `chat-drawer-left|chat-drawer-top` f
 an open drawer. Check the draft, Enter/Escape, multiline growth, emoji picker and
 width handle in both bar styles. The first bottom chat block must stay inside the
 same bar and edit region as later blocks, with the same glass and block controls.
+With `AURORA_DEMO_RECENT_EMOJIS=1`, the chat block's island alone stands out of its
+bar's row: over the dock's with `chat-bottom` (the row over the field), under the
+top bar's with `chat-top` (the row under the field, the arrow turned the other way).
+The bar, its other islands and the side bars keep their place and their height.
 
 `AURORA_DEMO_TOOLBAR=chrome|appearance|menu-layout|address|top-drag` exercises the shared
 main-menu catalogue and all four edges without changing saved toolbar settings.
@@ -9595,12 +9619,16 @@ failure. Grid validation and any paid upload are performed by the human.
   the emoji at the caret; a message sent moves its emojis to the front.
   Unset, the row takes no room until a first emoji is sent. Set, the row
   shows even though Preferences › Chat › Show recent emojis is off by
-  default. The Legacy bars
+  default, and the arrow before the emoji buttons (the chat bar's, the
+  Conversations composers') hides and shows it for the run: down while the
+  row is shown, up while it is hidden. Unset, the arrow turns the
+  Preferences switch itself, which is saved. The Legacy bars
   (`AURORA_DEMO_BARS=legacy`) have no emojis in their field, so no row.
-- **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites, turned on for
-  the run whatever Preferences › Chat › Favorite emojis says: first in the row with a small star, and the emoji picker opening on their
+- **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites of the run:
+  first in the row with a small star, and the emoji picker opening on their
   tab (with `AURORA_DEMO_BARS=emoji`). The right-click menu of an emoji in
-  the row or the picker adds or removes one. Nothing is saved.
+  the row or the picker adds or removes one, and holds nothing else, in
+  the chat bar too. Nothing is saved.
 - **`AURORA_DEMO_EMOJI_CODES=<text>`**: the Conversations window open, its
   input holding `<text>` with the keyboard and the caret at the end
   (`ui/emoji/codes.rs`). With `hi :hea`, the list of suggestions opens
@@ -10057,7 +10085,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   show it: capture consecutive frames across a departure
   (`AURORA_FPS_LIMIT=60`, `AURORA_CAPTURE_FRAMES` listing every frame from
   about 23 s to 31 s after the arrival) and compare the lines' bottom frame
-  by frame.
+  by frame. The lines follow the chat bar: with
+  `AURORA_DEMO_TOOLBAR=chat-top`, `chat-left` or `chat-right` they hang
+  under the chat field, from its left, or ending on its right at the right
+  of the screen; in a short window (`AURORA_WINDOW_SIZE=1100,520`) the
+  oldest are cut under the top bar instead of leaving the screen.
 
 - **`AURORA_DEMO_MUTED_CHAT=aurora|compact|bubbles|legacy|lines[:hidden|collapsed|greyed]`**:
   the demo's blocked resident, Violet Wolf (on the demo block list), talks
@@ -10724,10 +10756,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1536 the position too, with `rights` the forbidden rights are named at
   1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
   the bell's red counter.
-- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite|lost`**: Contacts
+- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite|lost|sheet|collapsed|groups-sheet|groups-collapsed`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
-  picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). In Aurora's look of People, `groups` opens the Groups pill of the Contacts tab, and the filter fills its search. The detached window has the look of the tab it
+  picker of "Add...". `sheet` opens Friends in a Conversations window
+  wide enough for the contact sheet (900 × 560), its collapse button at the
+  right of the sheet's head; `collapsed` opens the same window with the
+  sheet collapsed: the list takes the whole pane and the expand button ends
+  its toolbar, in the same place. `groups-sheet` and `groups-collapsed` do
+  the same under the Groups pill, whose group sheet the same button
+  collapses. Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). In Aurora's look of People, `groups` opens the Groups pill of the Contacts tab, and the filter fills its search. The detached window has the look of the tab it
   left (#961): People's friends tab in Aurora's look of People with the
   Aurora or Compact conversation style, the contact list otherwise (add
   `AURORA_DEMO_PEOPLE=legacy` to see it). These modes enable the optional Contacts entry for
@@ -10795,7 +10833,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `other-grid` the warning of a grid whose folders cannot be told apart. The
   four lists are in memory during the run; no transcript is written or
   removed.
-- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service[:skew|self]|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service[:skew|self]|restore[:slow]|import[:run|again|login|same|none]|shared[:on[:log]]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
   `config\demo\accounts\<demo account uuid>\chat_logs\demo\`, never in
@@ -10866,21 +10904,29 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     image, before any join/history request; their ordinary group history
     and participants arrive only after the reply. Closing or snoozing a
     displayed group before frame 1100 must prevent its automatic rejoin.
-  - `shared`: the Legacy layout (Preferences › Chat, "Share the Legacy
-    Viewer's folder"). A synthetic Legacy Viewer folder,
+  - `shared`: sharing the Legacy Viewer's folder (Preferences › Chat ›
+    History). A synthetic Legacy Viewer folder,
     `chat_logs\demo-legacy-viewer\<first_last>.demo\`, rewritten at each
     launch, holds Nova's conversation three days ago and a
-    `conversation.log` of its own; it is chosen as the transcripts folder
-    for this run only (never saved in the demo's settings). Preferences ›
-    Chat opens on History. Turn the option on: the folder shown becomes
-    `…\demo-legacy-viewer\<first_last>.demo`, Erase and Import are
-    greyed, and the next message from Nova is added to the end of the
-    Legacy Viewer's `Nova Example.txt` (its four lines left as written,
-    `conversation.log` untouched). Off again: back to the Aurora layout,
-    nothing moved. `shared:on`: the option on from the start, Nova's
-    conversation showing the Legacy Viewer's four lines in grey, then the
-    new message. The option is saved like any setting; without a chosen
-    folder it does nothing.
+    `conversation.log` of its own (entries for Nova and Tess); it is
+    picked as the transcripts folder for this run only (never saved in
+    the demo's settings). Preferences › Chat opens on History with the
+    question under Account folder: "Existing chat log found in
+    <first_last>.demo (2 files) — share it with the Legacy Viewer?", a
+    violet Share button and a plain Cancel one. Cancel: the notice goes,
+    the folder stays Aurora's own and nothing is moved or shared. Share:
+    the folder shown becomes `…\demo-legacy-viewer\<first_last>.demo`
+    with "Sharing <first_last>.demo with the Legacy Viewer" and the
+    append-only rule under it, Erase, Import and "Clear conversation
+    log…" are greyed, and the next message from Nova is added to the end
+    of the Legacy Viewer's `Nova Example.txt` (its four lines left as
+    written, `conversation.log` untouched). "Default folder" stops
+    sharing, nothing moved. `shared:on`: Share answered from the start,
+    Nova's conversation showing the Legacy Viewer's four lines in grey,
+    then the new message. `shared:on:log` also opens Communicate ›
+    Conversation log…, which lists the Legacy Viewer's entries (Nova,
+    Tess) read from its `conversation.log`; the entries of this session
+    are listed until the logout and never written there.
   - `im`: a conversation with Nova whose file contains two past
     days. What to see: these lines in grey, with their senders' profile
     pictures dimmed (this scenario gives Nova and us one), with a date

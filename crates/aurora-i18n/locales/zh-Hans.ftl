@@ -3278,8 +3278,6 @@ ui-options-show-chat-channel-hint = 在附近聊天输入框与底部聊天栏�
 ui-options-show-recent-emojis = 显示最近使用的表情
 ui-options-show-recent-emojis-hint = 最近使用的表情会显示在聊天输入框上方，发送过一次后出现。点击即可加入消息。
 ui-options-show-recent-emojis-legacy = 显示最近使用的表情（旧版样式）
-ui-options-favorite-emojis = 收藏的表情
-ui-options-favorite-emojis-hint = 在表情选择器或最近行中右键某个表情即可收藏：收藏会排在该行最前，并在表情选择器中有单独标签页。
 ui-options-script-errors = 脚本错误
 ui-options-script-errors-in-chat = 在附近聊天中显示脚本错误
 ui-options-script-errors-in-chat-hint = 您物件的脚本错误会以红色带警告标志显示在附近聊天中，脚本调试窗口会保留它们而不弹出。关闭后，每条错误都会打开该窗口。只有您能看到。
@@ -10876,8 +10874,6 @@ ui-options-chat-logs-dated-help = 每个对话每月一个文件（name-2026-10�
 ui-options-chat-logs-note = 这些文件为纯文本，任何能使用本机的人都能读取。它们留在此机器上，按账号与服务器分开存放，且绝不会附加到问题报告中。
 ui-options-chat-logs-open = 打开文件夹
 ui-options-chat-logs-folder-help = 本账号的文件将移至新文件夹。
-ui-options-chat-logs-legacy-layout = 共用传统查看器的聊天记录文件夹
-ui-options-chat-logs-legacy-layout-help = 在所选文件夹下按传统查看器的目录结构（名_姓）保存当前账号的聊天记录文件，使两个查看器能够读取并追加写入同一份历史记录。请在上方选择传统查看器的聊天记录文件夹。Aurora 仅会向其中追加新内容，不会移动、导入或删除任何现有文件；关闭此选项后将恢复使用 Aurora 自己的记录文件。请确保两个查看器中的“按日期分文件”设置保持一致。仅适用于 Second Life，默认关闭。
 ui-options-chat-logs-moved = { $count ->
     [one] 已移动 { $count } 个文件。
    *[other] 已移动 { $count } 个文件。

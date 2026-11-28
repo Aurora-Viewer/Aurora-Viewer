@@ -3312,8 +3312,6 @@ ui-options-show-chat-channel-hint = Zeigt die Kanalauswahl (/0) in den Eingaben 
 ui-options-show-recent-emojis = Zuletzt verwendete Emojis anzeigen
 ui-options-show-recent-emojis-hint = Ihre zuletzt verwendeten Emojis werden als Zeile über den Chatfeldern angezeigt, sobald Sie eines gesendet haben. Klicken Sie auf eines, um es Ihrer Nachricht hinzuzufügen.
 ui-options-show-recent-emojis-legacy = Zuletzt verwendete Emojis anzeigen (Legacy-Stil)
-ui-options-favorite-emojis = Lieblings-Emojis
-ui-options-favorite-emojis-hint = Klicken Sie mit der rechten Maustaste auf ein Emoji in der Auswahl oder in der Zeile der zuletzt verwendeten, um es als Favorit zu behalten: Favoriten stehen in dieser Zeile an erster Stelle und haben eine eigene Registerkarte in der Auswahl.
 ui-options-script-errors = Skriptfehler
 ui-options-script-errors-in-chat = Skriptfehler im Chat in der Nähe anzeigen
 ui-options-script-errors-in-chat-hint = Die Skriptfehler Ihrer Objekte werden im Chat in der Nähe in Rot mit einem Warnzeichen angezeigt und bleiben im Skript-Debug-Fenster erhalten, ohne dass es sich öffnet. Aus: Bei jedem Fehler öffnet sich das Fenster. Nur Sie sehen sie.
@@ -10991,8 +10989,6 @@ ui-options-chat-logs-dated-help = Eine Datei pro Monat für jede Unterhaltung (N
 ui-options-chat-logs-note = Bei diesen Dateien handelt es sich um reine Textdateien, die von jedem gelesen werden können, der diesen Computer verwenden kann. Sie verbleiben auf diesem Computer, getrennt für jedes Konto und jedes Grid, und werden niemals an einen Fehlerbericht angehängt.
 ui-options-chat-logs-open = Ordner öffnen
 ui-options-chat-logs-folder-help = Die Dateien dieses Kontos werden in den neuen Ordner verschoben.
-ui-options-chat-logs-legacy-layout = Ordner des Legacy Viewers gemeinsam nutzen
-ui-options-chat-logs-legacy-layout-help = Speichert die Dateien dieses Kontos im Format des Legacy Viewers (vorname_nachname) unter dem gewählten Ordner. So können beide Viewer denselben Verlauf lesen und ergänzen. Wählen Sie oben den Protokollordner des Legacy Viewers. Aurora fügt dort nur Zeilen hinzu: Nichts wird verschoben, importiert oder gelöscht. Beim Ausschalten werden wieder Auroras eigene Dateien verwendet. Wählen Sie in beiden Viewern dieselbe Einstellung für „Datierte Dateien“. Nur für Second Life. Standardmäßig ausgeschaltet.
 ui-options-chat-logs-moved =
     { $count ->
         [one] { $count } Datei verschoben.

@@ -1493,7 +1493,8 @@ const GPU_SHADOW_PARTS: [&[(u32, u32)]; 5] = [
 /// After the prepass of the multisampled depth, which opens the scene
 /// encoder (written right after `MARK_SCENE_BEGIN` without MSAA).
 const MARK_DEPTH_MSAA_END: u32 = 20;
-/// Around the bloom levels (bloom.rs), after the glow; part of the post.
+/// Around the sun shafts (sun_shafts.rs) and the bloom levels (bloom.rs),
+/// after the glow; part of the post.
 const MARK_BLOOM_BEGIN: u32 = 21;
 const MARK_BLOOM_END: u32 = 22;
 /// The depth prepasses on their own, both counted in the first element:
@@ -2128,6 +2129,13 @@ pub(crate) struct Backend {
     equirect_reads: crate::equirect::Readbacks,
     /// The Director's film frames on their way back (film_readback.rs).
     film_reads: crate::film_readback::FilmReads,
+    /// The Director's shutter (shutter.rs), made the first time a render
+    /// uses it.
+    shutter: Option<crate::shutter::ShutterAccum>,
+    /// This frame's sub-frame of an offline frame with a shutter.
+    shutter_now: Option<crate::Shutter>,
+    /// Frames drawn since the last film frame (`SHUTTER_KEPT_FRAMES`).
+    shutter_idle: u32,
     /// The six faces of a 360° capture are drawn one after the other: the
     /// snapshot size stays (the render targets are made once, not twice per
     /// face) from the first face to the frame after the last.
@@ -2262,6 +2270,8 @@ pub(crate) struct Backend {
     blur_motion: Option<((u32, u32), wgpu::TextureView)>,
     /// This frame draws the motion blur (`motion_blur_wanted`).
     blur_now: bool,
+    /// The sun's and the moon's shafts, made the first time they are on.
+    sun_shafts: Option<crate::sun_shafts::SunShafts>,
     /// The photo's look, made the first time one is on.
     looks: Option<crate::looks::Looks>,
     /// The photo filters' catalogue pictures, while the catalogue asks for
@@ -3565,6 +3575,33 @@ fn motion_blur_targets(
     true
 }
 
+/// Frames without a film frame after which the shutter's sum is let go.
+const SHUTTER_KEPT_FRAMES: u32 = 600;
+
+/// The shutter's sum for `size` is made, checked: false while refused or
+/// waiting (the frame is its last sub-frame alone).
+fn shutter_target(
+    oom: &mut crate::gpu_alloc::Refusals,
+    accum: &mut Option<crate::shutter::ShutterAccum>,
+    device: &wgpu::Device,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let a = accum.get_or_insert_with(|| crate::shutter::ShutterAccum::new(device));
+    if a.has_target(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || a.ensure_target(device, size));
+    if first_use(oom, "shutter", false, refused && !lost) {
+        a.release();
+        return false;
+    }
+    true
+}
+
 /// The depth of field's targets for `size` are made, checked: false while
 /// refused or waiting (the frame goes without the effect).
 fn dof_targets(
@@ -3585,6 +3622,32 @@ fn dof_targets(
     let (_, refused) = crate::gpu_alloc::scoped(device, || d.ensure_targets(device, size, HDR_FORMAT, post));
     if first_use(oom, "depth of field", false, refused && !lost) {
         d.release();
+        return false;
+    }
+    true
+}
+
+/// The sun shafts' targets for `size` (sun_shafts.rs), made on first use
+/// and checked as the depth of field's: refused by a full video memory, the
+/// frame goes without them.
+fn shafts_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    shafts: &mut Option<crate::sun_shafts::SunShafts>,
+    device: &wgpu::Device,
+    post: &crate::dof::PostInputs,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let s = shafts.get_or_insert_with(|| crate::sun_shafts::SunShafts::new(device, post.layout, HDR_FORMAT));
+    if s.has_targets(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || s.ensure_targets(device, size, HDR_FORMAT, post));
+    if first_use(oom, "sun shafts", false, refused && !lost) {
+        s.release();
         return false;
     }
     true
@@ -5008,6 +5071,9 @@ impl Backend {
             cube: None,
             equirect_reads: Default::default(),
             film_reads: Default::default(),
+            shutter: None,
+            shutter_now: None,
+            shutter_idle: 0,
             cube_hold: false,
             cube_keep: false,
             cube_step: None,
@@ -5086,6 +5152,7 @@ impl Backend {
             motion_blur: None,
             blur_motion: None,
             blur_now: false,
+            sun_shafts: None,
             looks: None,
             look_thumbs: None,
             rlva_spheres: None,
@@ -7715,6 +7782,9 @@ impl Backend {
             blur.release();
         }
         self.blur_motion = None;
+        if let Some(accum) = &mut self.shutter {
+            accum.release();
+        }
         if let Some(looks) = &mut self.looks {
             looks.release();
         }
@@ -8772,7 +8842,21 @@ impl Backend {
         // (a film frame drawn at its size is no photo: its pixels come back
         // in `films`, a later frame's result once the GPU is done)
         let film = self.film_reads.end_frame();
-        let snapshot = self.end_snapshot() && !cube_face && !film;
+        // (nor is a sub-frame of a shutter: nothing answers it)
+        let sub_frame = self.shutter_now.take().is_some_and(|s| !s.last());
+        let snapshot = self.end_snapshot() && !cube_face && !film && !sub_frame;
+        // the shutter's sum goes some frames after the last render's
+        // (the window's own frames come between a render's sub-frames)
+        self.shutter_idle = if film || sub_frame {
+            0
+        } else {
+            self.shutter_idle.saturating_add(1)
+        };
+        if self.shutter_idle > SHUTTER_KEPT_FRAMES
+            && let Some(accum) = &mut self.shutter
+        {
+            accum.release();
+        }
         if self.film_reads.busy() {
             self.lost.poll(&self.device);
         }
@@ -9462,10 +9546,16 @@ impl Backend {
             rt: rt_faces,
         } = packet;
         let external_output = output.is_some();
+        // (a sub-frame before its shutter's last carries no film frame:
+        // only the last is read back, shutter.rs)
         self.film_reads.begin(match wanted {
-            Some(Capture::Film(tag, _)) => Some(tag),
+            Some(Capture::Film(tag, _, shutter)) if shutter.is_none_or(|s| s.last()) => Some(tag),
             _ => None,
         });
+        self.shutter_now = match wanted {
+            Some(Capture::Film(_, Some(_), Some(shutter))) => Some(shutter),
+            _ => None,
+        };
         self.motion_cut |= motion_cut;
         self.shift_weather(world_shift);
         let mut stats = RenderStats::default();
@@ -9546,7 +9636,7 @@ impl Backend {
             self.rebuild_targets();
         }
         let snapshot = match wanted {
-            Some(Capture::Snapshot(s) | Capture::Film(_, Some(s))) if s.width > 0 && s.height > 0 => Some(s),
+            Some(Capture::Snapshot(s) | Capture::Film(_, Some(s), _)) if s.width > 0 && s.height > 0 => Some(s),
             _ => None,
         };
         if let Some(s) = snapshot {
@@ -13712,9 +13802,38 @@ impl Backend {
         if glow_on {
             self.glow.encode(&mut encoder, post_bg);
         }
-        // ---- bloom, from the image the post pass reads (after the glow,
-        // which it leaves as it is)
         mark(&mut encoder, MARK_BLOOM_BEGIN);
+        // ---- the sun's and the moon's shafts (sun_shafts.rs), into the
+        // image the bloom and the tone mapping read (after the exposure,
+        // which their mask is measured with, and the glow of faces, which
+        // they leave as it is; timed with the bloom). None under a debug
+        // view (it replaces the image), on a cut-out photo (its empty
+        // background is no sky) or a photo drawn in tiles (each tile's
+        // streaks would end at its seams); kept ready while the light is
+        // merely out of view.
+        let shafts = crate::sun_shafts::strength(f.sun_rays);
+        let debug_view = f.debug_glow || f.debug.shadows || f.debug.ambient_occlusion;
+        if shafts > 0.0 && !debug_view && !f.cutout && f.photo_tile == Mat4::IDENTITY {
+            let post = crate::dof::PostInputs {
+                layout: &self.post_layout,
+                sampler: &self.post_sampler,
+                buffer: &self.post_buffer,
+                glow: &self.glow.views[1],
+            };
+            let ready = shafts_targets(&mut self.oom, &mut self.sun_shafts, &self.device, &post, post_size, self.lost.get());
+            let forward = crate::light_tiles::view_forward(f.view);
+            if ready
+                && let Some(sun) = crate::sun_shafts::sun_on_image(unjittered_vp, forward, f.sun_dir, f.sun_visible)
+                && let Some(s) = &self.sun_shafts
+                && let Some(bg) = s.encode(&self.device, &self.queue, &mut encoder, post_bg, post_depth, sun, shafts * sun.fade)
+            {
+                post_bg = bg;
+            }
+        } else if let Some(s) = &mut self.sun_shafts {
+            s.release();
+        }
+        // ---- bloom, from the image the post pass reads (after the glow,
+        // which it leaves as it is; the shafts included)
         if bloom > 0.0 {
             self.bloom.encode(&mut encoder, post_bg);
         }
@@ -14229,7 +14348,7 @@ impl Backend {
         if wanted == Some(Capture::Scene) {
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             capture = self.encode_capture(&mut encoder, source, false);
-        } else if matches!(wanted, Some(Capture::Film(_, None))) && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
+        } else if matches!(wanted, Some(Capture::Film(_, None, _))) && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
             // a live film's frame: the same view, read back without a wait
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             let bgra = matches!(
@@ -14362,6 +14481,27 @@ impl Backend {
             }
             if let Some(cube) = &mut self.cube {
                 cube.add_face(&mut encoder, surface_tex.texture(), step);
+            }
+        } else if let (Some(_), Some(shutter)) = (snapshot, self.shutter_now) {
+            // a sub-frame of an offline frame with a shutter: added to the
+            // sum; the last writes the average and is read back as below
+            let texture = surface_tex.texture();
+            if shutter_target(
+                &mut self.oom,
+                &mut self.shutter,
+                &self.device,
+                (texture.width(), texture.height()),
+                self.lost.get(),
+            ) {
+                let accum = self.shutter.as_mut().expect("made by shutter_target");
+                accum.encode(&self.device, &self.queue, &mut encoder, texture, shutter);
+            }
+            if shutter.last() {
+                let bgra = matches!(
+                    texture.format(),
+                    wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+                );
+                self.film_reads.encode(&self.device, &mut encoder, texture, bgra, f.cutout);
             }
         } else if snapshot.is_some() && self.film_reads.carried() {
             // an offline render's frame, drawn at its size: read back

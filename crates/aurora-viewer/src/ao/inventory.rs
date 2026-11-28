@@ -218,6 +218,10 @@ impl Source {
 #[derive(Default)]
 pub struct Catalog {
     pub root: Option<Uuid>,
+    /// `#Aurora`, or the Legacy Viewer's brand folder, from the last load.
+    /// OpenSim's Hypergrid rename keeps this id and its parent and only
+    /// changes the name. Alchemy has no brand folder.
+    brand: Option<Uuid>,
     pub sets: Vec<Set>,
     pub loading: bool,
     pub failed: bool,
@@ -242,6 +246,12 @@ pub fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
 }
 
 fn native_root(inv: &Inventory, brand: Uuid) -> Option<Uuid> {
+    named_native_root(inv, brand).or_else(|| child(inv, brand, OLD_FOLDER))
+}
+
+/// The `Aurora AO` folder under `brand`; of duplicates, the one with the most
+/// sets (the other is offered for a merge by `recoveries`).
+fn named_native_root(inv: &Inventory, brand: Uuid) -> Option<Uuid> {
     let mut roots: Vec<_> = inv
         .folders
         .get(&brand)
@@ -255,7 +265,7 @@ fn native_root(inv: &Inventory, brand: Uuid) -> Option<Uuid> {
         })
         .collect();
     roots.sort_by_key(|(children, id)| (std::cmp::Reverse(*children), *id));
-    roots.first().map(|(_, id)| *id).or_else(|| child(inv, brand, OLD_FOLDER))
+    roots.first().map(|(_, id)| *id)
 }
 
 /// Inventory names include Aurora's ordering and option suffixes in the same
@@ -267,6 +277,21 @@ pub(super) fn encoded_name(base: &str, suffix: &str) -> String {
         end -= 1;
     }
     format!("{}{suffix}", &base[..end])
+}
+
+/// A folder already loaded, still under `parent`. The name may have changed.
+/// AOEngine::tick (aoengine.cpp) looks the brand and `#AO` up by name only
+/// while nothing is loaded, then keeps `mAOFolder`. AOEngine::reload clears
+/// that id and looks the names up again. The parent must still list it: a
+/// snapshot of the parent replaces its children but keeps the record of a
+/// folder deleted elsewhere, with its old parent.
+fn still_there(inv: &Inventory, id: Option<Uuid>, parent: Uuid) -> Option<Uuid> {
+    id.filter(|id| {
+        inv.folders
+            .get(id)
+            .is_some_and(|folder| !folder.library && folder.info.parent == parent)
+            && inv.folders.get(&parent).is_some_and(|p| p.children.contains(id))
+    })
 }
 
 fn fetch(inv: &mut Inventory, id: Uuid, waiting: &mut Vec<(Uuid, FetchState)>, failed: &mut bool) -> bool {
@@ -363,37 +388,60 @@ impl Catalog {
         self.missing.clear();
         self.loading = !fetch(inv, inv.root, &mut self.waiting, &mut self.failed);
         // The brand folder must be fetched before its AO child can be found.
-        let brand = match source {
+        // A Hypergrid teleport renames it in place. Keep the loaded id; look
+        // up by name only when nothing is known, or after reload forgot it.
+        let brand_name = match source {
             Source::Native => Some("#Aurora"),
             Source::Legacy => Some("#Firestorm"),
             Source::Alchemy => None,
         };
-        if let Some(name) = brand {
-            let Some(fs) = child(inv, inv.root, name) else {
+        let brand = if let Some(name) = brand_name {
+            let Some(id) = still_there(inv, self.brand, inv.root).or_else(|| child(inv, inv.root, name)) else {
+                self.brand = None;
                 self.root = None;
                 self.sets.clear();
                 return;
             };
-            self.loading |= !fetch(inv, fs, &mut self.waiting, &mut self.failed);
+            self.brand = Some(id);
+            self.loading |= !fetch(inv, id, &mut self.waiting, &mut self.failed);
+            // Every `Aurora AO` is read, so native_root can choose the one
+            // with sets and `recoveries` can offer the other for a merge.
             if source == Source::Native {
                 let roots: Vec<_> = inv
                     .folders
-                    .get(&fs)
+                    .get(&id)
                     .into_iter()
                     .flat_map(|f| f.children.iter())
                     .copied()
-                    .filter(|id| {
+                    .filter(|child| {
                         inv.folders
-                            .get(id)
-                            .is_some_and(|f| !f.library && f.info.parent == fs && f.info.name == FOLDER)
+                            .get(child)
+                            .is_some_and(|f| !f.library && f.info.parent == id && f.info.name == FOLDER)
                     })
                     .collect();
-                for id in roots {
-                    self.loading |= !fetch(inv, id, &mut self.waiting, &mut self.failed);
+                for root in roots {
+                    self.loading |= !fetch(inv, root, &mut self.waiting, &mut self.failed);
                 }
             }
-        }
-        self.root = source.root(inv);
+            Some(id)
+        } else {
+            self.brand = None;
+            None
+        };
+        // The requested name wins over the kept id, as native_root prefers
+        // `Aurora AO` over `AO`: a kept `AO` must not hide an `Aurora AO`
+        // that a stale cache did not show, or bootstrap renames it into a
+        // second one. The kept id only stands in while its name is changed.
+        let parent = brand.unwrap_or(inv.root);
+        let named = match source {
+            Source::Native => named_native_root(inv, parent),
+            Source::Legacy => child(inv, parent, "#AO"),
+            Source::Alchemy => child(inv, parent, ALCHEMY_FOLDER),
+        };
+        self.root = named.or_else(|| still_there(inv, self.root, parent)).or_else(|| match source {
+            Source::Native => child(inv, parent, OLD_FOLDER),
+            _ => None,
+        });
         let Some(root) = self.root else {
             self.sets.clear();
             return;
@@ -499,6 +547,12 @@ impl Catalog {
         self.missing.dedup();
     }
 
+    /// The `#Aurora` folder of the last load, kept by id while OpenSim's
+    /// Hypergrid rename changes its name. None for an import catalogue.
+    pub fn native_brand(&self) -> Option<Uuid> {
+        self.brand.filter(|_| self.source == Source::Native)
+    }
+
     pub fn selected(&self, id: Uuid) -> Option<&Set> {
         self.sets
             .iter()
@@ -530,6 +584,13 @@ impl Catalog {
         }
         let root = inv.root;
         inv.mark_unread([root]);
+        // AOEngine::reload (aoengine.cpp) sets mAOFolder null, then tick looks
+        // the folders up by name. While the brand is renamed, the Legacy
+        // Viewer's tick finds no #Firestorm and makes a new one, then a new
+        // #AO; Aurora makes nothing here (no twin #Aurora): the reload finds
+        // no sets until the folder has its name back.
+        self.brand = None;
+        self.root = None;
         self.invalidate();
     }
 }
@@ -619,8 +680,18 @@ pub fn create(inv: &Inventory, catalog: &Catalog, set: &Set) -> Result<(Mutation
         return Err(aurora_i18n::tr!("ao-name-or-loading").into());
     }
     let mut change = Mutation::default();
-    let fs = child(inv, inv.root, "#Aurora").unwrap_or_else(|| folder(&mut change, inv.root, "#Aurora".into()));
-    let root = catalog.root.unwrap_or_else(|| folder(&mut change, fs, FOLDER.into()));
+    // The loaded brand by id: while it is renamed `#Aurora (Unavailable)`, a
+    // lookup by name would queue a second `#Aurora` beside it.
+    let root = match catalog.root {
+        Some(root) => root,
+        None => {
+            let brand = catalog
+                .native_brand()
+                .or_else(|| child(inv, inv.root, "#Aurora"))
+                .unwrap_or_else(|| folder(&mut change, inv.root, "#Aurora".into()));
+            folder(&mut change, brand, FOLDER.into())
+        }
+    };
     let id = append_set(&mut change, root, set)?;
     Ok((finish(change), id))
 }

@@ -84,6 +84,20 @@ fn environment(cx: &mut Cx) {
             tr!("ui-options-colored-sky-ambient-help"),
             &field!(colored_sky_ambient),
         );
+        // an Aurora difference: the sun's and the moon's shafts
+        // (aurora-render sun_shafts.rs)
+        cx.experimental()
+            .toggle(tr!("ui-options-sun-rays"), tr!("ui-options-sun-rays-help"), &field!(sun_rays));
+        let no_rays = !cx.s.sun_rays;
+        cx.subs(no_rays, |cx| {
+            cx.slider(
+                tr!("ui-options-sun-rays-strength"),
+                tr!("ui-options-sun-rays-strength-help"),
+                &field!(sun_rays_strength),
+                crate::settings::SUN_RAYS_STRENGTH,
+                "",
+            );
+        });
         // an Aurora difference: the world drawn on a round planet
         cx.experimental().toggle(
             tr!("ui-options-planet-curvature"),

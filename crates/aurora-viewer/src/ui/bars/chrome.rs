@@ -28,6 +28,11 @@ struct Metrics {
     /// (`lift_chat`), instead of the row being as high as it; None in a
     /// bar that does not raise it.
     chat_lift: Option<f32>,
+    /// The chat island of the bottom dock standing over the dock's row this
+    /// frame (the recent emojis' row, a paragraph): its sides, and what it
+    /// is raised by. The dock says so (`raise_chat`), for the side bars
+    /// (`side_room`).
+    chat_raised: Option<(egui::Rangef, f32)>,
 }
 
 #[derive(Clone)]
@@ -40,6 +45,43 @@ struct Slot {
     style: Style,
     locked: bool,
     placeholder: bool,
+    floating: bool,
+}
+
+/// Where the chat block was drawn in this frame, for what stands by it
+/// (the nearby chat lines over the world, `ui::chat::LinesPlace`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChatPlace {
+    /// The block, its raised part included (`lift_chat`).
+    pub rect: Rect,
+    pub bar: Bar,
+    /// In a floating block, not on a bar.
+    pub floating: bool,
+    frame: u64,
+}
+
+impl ChatPlace {
+    #[cfg(test)]
+    pub fn at(rect: Rect, bar: Bar, floating: bool) -> Self {
+        Self {
+            rect,
+            bar,
+            floating,
+            frame: 0,
+        }
+    }
+}
+
+fn chat_place_id() -> Id {
+    Id::unique("toolbar_chat_place")
+}
+
+/// The chat block of this frame, when a bar drew it (`show_chat`, earlier
+/// in the frame): none while the interface is hidden or edited.
+pub fn chat_place(ctx: &egui::Context) -> Option<ChatPlace> {
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    ctx.data(|data| data.get_temp::<ChatPlace>(chat_place_id()))
+        .filter(|place| place.frame == frame)
 }
 
 fn metrics_id() -> Id {
@@ -138,6 +180,7 @@ pub fn prepare(ui: &egui::Ui, p: &Palette, st: &StatusInfo, settings: &ToolbarSe
                 chat_recent: 0.0,
                 chat_field: false,
                 chat_lift: None,
+                chat_raised: None,
             },
         );
         data.insert_temp(slots_id(), Vec::<Slot>::new());
@@ -230,6 +273,7 @@ pub(super) fn register_at(ui: &egui::Ui, button: &ToolButton, row: &super::Row, 
         style: crate::ui::toolbar::blocks::style(ui.ctx(), &button.command, row.style),
         locked: row.locked,
         placeholder,
+        floating: row.floating,
     };
     ui.ctx()
         .data_mut(|data| data.get_temp_mut_or_default::<Vec<Slot>>(slots_id()).push(slot));
@@ -253,15 +297,52 @@ pub fn prepare_chat(ctx: &egui::Context, chat: &crate::ui::chat::ChatUi, width: 
         metrics.chat_recent = recent;
         metrics.chat_field = field;
         metrics.chat_lift = None;
+        metrics.chat_raised = None;
     });
+}
+
+/// The bottom dock's chat island stands `by` over the dock's row this
+/// frame, between the sides `columns`. The island of its own and the dock's
+/// chat block can both be raised: the room lost is the higher one's, and
+/// the columns hold both.
+pub(super) fn raise_chat(ctx: &egui::Context, columns: egui::Rangef, by: f32) {
+    if by > 0.0 {
+        ctx.data_mut(|data| {
+            let raised = &mut data.get_temp_mut_or_default::<Metrics>(metrics_id()).chat_raised;
+            *raised = Some(raised.map_or((columns, by), |(was, lift)| {
+                (egui::Rangef::new(was.min.min(columns.min), was.max.max(columns.max)), lift.max(by))
+            }));
+        });
+    }
+}
+
+/// The room of a side bar, from `room`, what the bars leave to the windows,
+/// and the place the raised chat island takes in it, its margin included.
+/// The windows keep clear of the chat island raised over the dock's row,
+/// all along the screen; a side bar goes down to the dock's row. Its
+/// buttons then keep their place when the recent emojis' row comes and
+/// goes or a paragraph is typed, where a centred bar moved by half of what
+/// the island rose (the human's report, 2026-11-27). Only a bar that would
+/// stand over the raised island gives it room (`side::column`).
+pub(super) fn side_room(ctx: &egui::Context, room: Rect) -> (Rect, Option<Rect>) {
+    let Some((columns, by)) = ctx
+        .data(|data| data.get_temp::<Metrics>(metrics_id()))
+        .and_then(|metrics| metrics.chat_raised)
+    else {
+        return (room, None);
+    };
+    let own = Rect::from_min_max(room.min, egui::pos2(room.right(), room.bottom() + by));
+    let raised = Rect::from_x_y_ranges(columns.expand(islands::MARGIN), room.bottom()..=own.bottom());
+    (own, Some(raised))
 }
 
 /// The bar that holds the chat block raises the block's island over its
 /// row, by what the field takes beyond a line (the recent emojis' row, the
 /// paragraph typed), as the chat island did before the field became a
 /// block: the block keeps a line's height, and the bar's other blocks
-/// theirs. What the island is raised by: nothing for a field of one line,
-/// or for the block's button alone.
+/// theirs. The top bar hangs the island under its row the same way
+/// (`lifted`). What the island is raised by: nothing for a field of one
+/// line, or for the block's button alone.
 pub(super) fn lift_chat(ctx: &egui::Context) -> f32 {
     let editor = chat_editor(ctx);
     ctx.data_mut(|data| {
@@ -281,6 +362,18 @@ pub(super) fn lift_chat(ctx: &egui::Context) -> f32 {
 pub(super) fn chat_lift(ctx: &egui::Context) -> Option<f32> {
     ctx.data(|data| data.get_temp::<Metrics>(metrics_id()))
         .and_then(|metrics| metrics.chat_lift)
+}
+
+/// The chat block's rectangle with what its island stands out of its bar's
+/// row by: over the dock's, under the top bar's.
+fn lifted(rect: Rect, bar: Bar, lift: f32) -> Rect {
+    let mut rect = rect;
+    if bar == Bar::Top {
+        rect.max.y += lift;
+    } else {
+        rect.min.y -= lift;
+    }
+    rect
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -306,9 +399,20 @@ pub fn show_chat(
         .filter(|slot| slot.button.command == "bar_chat" && !slot.placeholder)
     {
         let _context = crate::ui::toolbar::native_context::Scope::new(ui.ctx(), "bar_chat");
-        if slot.bar == Bar::Bottom
-            && let Some(lift) = chat_lift(ui.ctx())
-        {
+        let lift = if matches!(slot.bar, Bar::Bottom | Bar::Top) {
+            chat_lift(ui.ctx())
+        } else {
+            None
+        };
+        let drawn = lifted(slot.rect, slot.bar, lift.unwrap_or(0.0));
+        let place = ChatPlace {
+            rect: drawn,
+            bar: slot.bar,
+            floating: slot.floating,
+            frame: ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT),
+        };
+        ui.ctx().data_mut(|data| data.insert_temp(chat_place_id(), place));
+        if let Some(lift) = lift {
             out = show_lifted_chat(
                 ui.ctx(),
                 p,
@@ -355,7 +459,8 @@ pub fn show_chat(
 }
 
 /// The chat block of the dock, its island raised by `lift` over the dock's
-/// row (`lift_chat`; the dock paints the raised surface).
+/// row (`lift_chat`; the dock paints the raised surface), or of the top
+/// bar, its island hung by `lift` under the bar's row.
 ///
 /// What stands out of the dock is an area of its own, kept right over the
 /// dock's: the pointer there is over the interface, not the world. The
@@ -379,12 +484,18 @@ fn show_lifted_chat(
     width: &mut f32,
     committed: &mut bool,
 ) -> Option<crate::ui::chat::OutgoingChat> {
-    let mut rect = slot.rect;
-    rect.min.y -= lift;
-    let over = Rect::from_min_max(
-        egui::pos2(rect.left() - islands::PAD, rect.top() - islands::PAD),
-        egui::pos2(rect.right() + islands::PAD, slot.rect.top() - islands::PAD),
-    );
+    let rect = lifted(slot.rect, slot.bar, lift);
+    let over = if slot.bar == Bar::Top {
+        Rect::from_min_max(
+            egui::pos2(rect.left() - islands::PAD, slot.rect.bottom() + islands::PAD),
+            egui::pos2(rect.right() + islands::PAD, rect.bottom() + islands::PAD),
+        )
+    } else {
+        Rect::from_min_max(
+            egui::pos2(rect.left() - islands::PAD, rect.top() - islands::PAD),
+            egui::pos2(rect.right() + islands::PAD, slot.rect.top() - islands::PAD),
+        )
+    };
     let row = super::Row {
         bar: slot.bar,
         style: slot.style,

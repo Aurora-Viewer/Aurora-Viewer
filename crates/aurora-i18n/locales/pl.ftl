@@ -3348,8 +3348,6 @@ ui-options-show-chat-channel-hint = Pokazuje wybór kanału (/0) w polach czatu 
 ui-options-show-recent-emojis = Pokazuj ostatnie emoji
 ui-options-show-recent-emojis-hint = Ostatnio używane emoji w wierszu nad polami czatu, widocznym po wysłaniu pierwszego. Kliknij jedno, aby dodać je do wiadomości.
 ui-options-show-recent-emojis-legacy = Pokazuj ostatnie emoji (styl Legacy)
-ui-options-favorite-emojis = Ulubione emoji
-ui-options-favorite-emojis-hint = Kliknij prawym przyciskiem emoji w selektorze lub w wierszu ostatnich, aby je zachować: ulubione są pierwsze w tym wierszu i mają własną kartę w selektorze.
 ui-options-script-errors = Błędy skryptów
 ui-options-script-errors-in-chat = Pokazuj błędy skryptów w czacie w pobliżu
 ui-options-script-errors-in-chat-hint = Błędy skryptów własnych obiektów pojawiają się w czacie w pobliżu na czerwono, ze znakiem ostrzeżenia, a okno debugowania skryptów zbiera je bez otwierania się. Gdy wyłączone, okno otwiera się przy każdym błędzie. Nikt inny ich nie widzi.
@@ -11105,8 +11103,6 @@ ui-options-chat-logs-dated-help = Jeden plik na miesiąc dla każdej rozmowy (na
 ui-options-chat-logs-note = Te pliki to zwykły tekst, który może przeczytać każdy, kto korzysta z tego komputera. Pozostają na tym komputerze, osobno dla każdego konta i każdego świata, i nigdy nie są dołączane do zgłoszenia błędu.
 ui-options-chat-logs-open = Otwórz folder
 ui-options-chat-logs-folder-help = Pliki tego konta zostaną przeniesione do nowego folderu.
-ui-options-chat-logs-legacy-layout = Wspólny folder z Legacy Viewer
-ui-options-chat-logs-legacy-layout-help = Zapisuje pliki tego konta w wybranym folderze w układzie samego Legacy Viewer (first_last), tak aby obie przeglądarki czytały i uzupełniały tę samą historię. Wybierz powyżej folder logów czatu Legacy Viewer. Aurora tylko dopisuje tam wiersze: nic nie jest przenoszone, importowane ani usuwane, a po wyłączeniu wracają własne pliki Aurora. Zachowaj to samo ustawienie „Pliki z datą” w obu przeglądarkach. Tylko Second Life. Domyślnie wyłączone.
 ui-options-chat-logs-moved = { $count ->
     [one] Przeniesiono { $count } plik.
     [few] Przeniesiono { $count } pliki.

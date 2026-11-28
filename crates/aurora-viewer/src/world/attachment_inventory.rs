@@ -100,6 +100,11 @@ impl World {
         let mut seen = HashSet::new();
         for item in items {
             let temporary = self.rlva_temporary_attachment(item).is_some();
+            // removeItemsFromAvatar skips the viewer's bridge on every path,
+            // a COF that is still loading included (`remove_links`)
+            if !temporary && super::bridge::own_bridge(&self.inventory, item) {
+                continue;
+            }
             if (temporary || allow_recovery && (incomplete || !self.inventory.items.contains_key(&item)))
                 && let Some(command) = self.attachment_detach_command(item)
             {
@@ -1018,6 +1023,29 @@ mod tests {
         });
         assert!(world.worn_attachment(&item.id).is_none());
         assert!(!world.inventory.items.contains_key(&item.id), "never fabricate an inventory record");
+    }
+
+    /// #4865, review: the direct detach of a COF still loading skips the
+    /// bridge, as removeItemsFromAvatar does on every path.
+    #[test]
+    fn attachment_recovery_leaves_the_bridge_worn() {
+        let (mut world, object, _missing) = fixture();
+        let bridge = Uuid::from_u128(717);
+        let agent = world.agent_id;
+        appearance::seed_bridge(&mut world.inventory, agent, bridge);
+        let mut worn = object.clone();
+        worn.full_id = Uuid::from_u128(90_040);
+        worn.local_id += 1;
+        worn.name_values = format!("AttachItemID STRING RW SV {bridge}");
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![worn],
+        });
+        let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(bridge), true);
+        assert!(commands.is_empty() && remaining.is_none(), "{commands:?} {remaining:?}");
+        let earrings = Uuid::from_u128(718);
+        let (_, remaining) = world.recover_attachment_removal(appearance::Action::RemoveItems(vec![bridge, earrings]), true);
+        assert!(matches!(remaining, Some(appearance::Action::RemoveItems(items)) if items == [earrings]));
     }
 
     #[test]

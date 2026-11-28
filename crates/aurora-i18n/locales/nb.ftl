@@ -3285,8 +3285,6 @@ ui-options-show-chat-channel-hint = Vis kanalvelgeren (/0) i inndatafeltene for 
 ui-options-show-recent-emojis = Vis nylige emojier
 ui-options-show-recent-emojis-hint = De sist brukte emojiene dine på en rad over chattefeltene, vist når du har sendt én. Klikk på en for å legge den til i meldingen.
 ui-options-show-recent-emojis-legacy = Vis nylige emojier (Legacy-stil)
-ui-options-favorite-emojis = Favorittemojier
-ui-options-favorite-emojis-hint = Høyreklikk på en emoji i velgeren eller på raden med nylige for å beholde den: favorittene kommer først på den raden og har sin egen fane i velgeren.
 ui-options-script-errors = Skriptfeil
 ui-options-script-errors-in-chat = Vis skriptfeil i chat i nærheten
 ui-options-script-errors-in-chat-hint = Skriptfeil fra objektene dine vises i rødt i chat i nærheten, med et varseltegn, og vinduet Skriptfeilsøking tar vare på dem uten å åpnes. Når dette er av, åpnes vinduet ved hver feil. Bare du ser dem.
@@ -10887,8 +10885,6 @@ ui-options-chat-logs-dated-help = Én fil per måned for hver samtale (name-2026
 ui-options-chat-logs-note = Disse filene er ren tekst, som kan leses av alle som kan bruke denne datamaskinen. De blir værende på denne maskinen, atskilt for hver konto og hvert grid, og legges aldri ved en feilrapport.
 ui-options-chat-logs-open = Åpne mappen
 ui-options-chat-logs-folder-help = Filene til denne kontoen flyttes til den nye mappen.
-ui-options-chat-logs-legacy-layout = Del mappen med Legacy Viewer
-ui-options-chat-logs-legacy-layout-help = Skriver filene til denne kontoen i den samme strukturen som Legacy Viewer bruker, under den valgte mappen (first_last), slik at begge viewerne leser og legger til i den samme historikken. Velg chatloggmappen til Legacy Viewer ovenfor. Aurora legger bare til linjer der: ingenting flyttes, importeres eller slettes, og Auroras egne filer kommer tilbake når dette er av. Bruk den samme innstillingen for Daterte filer i begge viewerne. Bare Second Life. Av som standard.
 ui-options-chat-logs-moved = { $count ->
     [one] { $count } fil flyttet.
    *[other] { $count } filer flyttet.

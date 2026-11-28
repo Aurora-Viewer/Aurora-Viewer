@@ -36,6 +36,24 @@ pub struct FilmRequest {
     /// the HUD attachments or not.
     pub size: Option<(u32, u32)>,
     pub huds: bool,
+    /// An offline frame drawn as sub-frames over the time its shutter
+    /// stays open (shutter.rs): this one's place among them. Only the last
+    /// is read back and answered, with their average.
+    pub shutter: Option<Shutter>,
+}
+
+/// A sub-frame of an offline film frame (shutter.rs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Shutter {
+    pub index: u32,
+    pub count: u32,
+}
+
+impl Shutter {
+    /// The frame's last sub-frame: it writes their average and is read back.
+    pub fn last(&self) -> bool {
+        self.index + 1 >= self.count
+    }
 }
 
 /// A film frame read back: its tag, and its pixels (width, height, RGBA8),

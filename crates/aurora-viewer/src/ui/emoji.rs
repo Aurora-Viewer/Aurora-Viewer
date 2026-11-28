@@ -683,9 +683,10 @@ impl Emoji {
     /// A clickable emoji in the rect of `resp`, the picker's and the recent
     /// row's: the pill under the pointer, the picture, a small star on a
     /// `favorite`, its shortcode. Also whether its right-click menu asked to
-    /// add it to the favourites or remove it; `None` while favourites are
-    /// turned off: no star and no menu.
-    fn cell(&mut self, ui: &egui::Ui, p: &Palette, c: char, favorite: Option<bool>, resp: egui::Response) -> (egui::Response, bool) {
+    /// add it to the favourites or remove it. That menu is the emoji's
+    /// alone: in the chat bar it does not end with the chat block's settings
+    /// (the human's request, 2026-11-27).
+    fn cell(&mut self, ui: &egui::Ui, p: &Palette, c: char, favorite: bool, resp: egui::Response) -> (egui::Response, bool) {
         let rect = resp.rect;
         if resp.hovered() {
             ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
@@ -703,9 +704,7 @@ impl Emoji {
                 crate::ui::widgets::PICTURE_TINT,
             );
         }
-        if favorite == Some(true)
-            && let Some(t) = super::icons::global("star-filled")
-        {
+        if favorite && let Some(t) = super::icons::global("star-filled") {
             let star = egui::Rect::from_min_size(rect.right_bottom() - egui::Vec2::splat(10.0), egui::Vec2::splat(9.0));
             ui.painter().image(
                 t.id(),
@@ -715,7 +714,8 @@ impl Emoji {
             );
         }
         let mut toggle = false;
-        if let Some(favorite) = favorite {
+        {
+            let _alone = super::toolbar::native_context::Outside::new(ui.ctx());
             super::menu::context_menu(&resp, p, |ui| {
                 toggle = super::menu::check(ui, p, "star-filled", aurora_i18n::tr!("ui-emoji-favorite"), favorite, true);
             });
@@ -737,8 +737,8 @@ impl Emoji {
     /// filters at once) and keeps it while nothing else has it; Escape is
     /// taken here, before the search field or anything after the picker sees
     /// it, and returned for the caller to close the picker.
-    /// `favorites` is `None` while they are turned off: no star tab, no menu.
-    pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, favorites: Option<&[char]>) -> Picked {
+    /// `favorites` are the account's: their stars and the star tab.
+    pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, favorites: &[char]) -> Picked {
         let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
         let opened = self.shown_pass.is_none_or(|last| last + 1 < pass);
         self.shown_pass = Some(pass);
@@ -757,11 +757,8 @@ impl Emoji {
         }
         let mut chosen = None;
         let mut favorite = None;
-        if favorites.is_none() && self.tab == FAVORITES_TAB {
-            self.tab = 0;
-        }
         ui.horizontal(|ui| {
-            let favorites_tab = favorites.map(|_| (aurora_i18n::tr!("ui-emoji-favorites"), "star-filled"));
+            let favorites_tab = [(aurora_i18n::tr!("ui-emoji-favorites"), "star-filled")];
             let tabs = categories().iter().map(|(label, icon, _)| (*label, *icon)).chain(favorites_tab);
             for (i, (label, icon)) in tabs.enumerate() {
                 let sel = self.tab == i;
@@ -800,7 +797,7 @@ impl Emoji {
         let q = self.query.trim().trim_matches(':').to_lowercase();
         let on_favorites = q.is_empty() && self.tab == FAVORITES_TAB;
         let list: Vec<char> = if on_favorites {
-            favorites.unwrap_or_default().iter().copied().filter(|c| self.in_font(*c)).collect()
+            favorites.iter().copied().filter(|c| self.in_font(*c)).collect()
         } else if q.is_empty() {
             self.lists.get(self.tab).cloned().unwrap_or_default()
         } else {
@@ -834,7 +831,7 @@ impl Emoji {
                         ui.spacing_mut().item_spacing.x = 2.0;
                         for c in list.iter().skip(r * cols).take(cols) {
                             let (_, resp) = ui.allocate_exact_size(egui::vec2(cell, cell), egui::Sense::click());
-                            let (resp, toggle) = self.cell(ui, p, *c, favorites.map(|f| f.contains(c)), resp);
+                            let (resp, toggle) = self.cell(ui, p, *c, favorites.contains(c), resp);
                             if resp.clicked() {
                                 chosen = Some(*c);
                             }
@@ -1023,7 +1020,7 @@ mod tests {
             frames.run(events, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(field));
                 if open {
-                    picked = emoji.picker(ui, &p, &icons, None);
+                    picked = emoji.picker(ui, &p, &icons, &[]);
                 }
                 seen_after = ui.input(|i| i.key_pressed(egui::Key::Escape));
             });

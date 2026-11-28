@@ -8,6 +8,7 @@ pub mod area_search;
 pub mod autoresponse_account;
 pub mod autotune;
 pub mod backup;
+mod chat_log;
 pub mod draw_stepping;
 mod hover_height;
 pub mod registry;
@@ -88,6 +89,19 @@ pub enum ChatThumbnails {
     #[default]
     ChatBar,
     TopRight,
+}
+
+/// Which way the nearby chat lines over the world stand from the chat bar
+/// they follow (Preferences › Chat, `ui::chat::LinesPlace`). Aurora's own:
+/// the Legacy Viewer's console stays at the bottom left, its chat bar too.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ChatLinesDirection {
+    /// Above the bar, or under it when there is more room there (a bar
+    /// moved to the top of the screen).
+    #[default]
+    Auto,
+    Up,
+    Down,
 }
 
 /// The nearby chat bar (Preferences › Chat, #2696): at the bottom always,
@@ -1032,10 +1046,6 @@ pub struct Settings {
     /// The same row with the Legacy chat style: off, as the Legacy Viewer's
     /// row starts closed behind its arrow (the human's choice, 2026-11-09).
     pub show_recent_emojis_legacy: bool,
-    /// Favourite emojis, kept by a right-click on an emoji: first in the
-    /// recent row and a star tab in the picker. Off (the human's choice,
-    /// 2026-11-09; an Aurora addition); Preferences > Chat.
-    pub favorite_emojis: bool,
     /// Our own objects' script errors in the nearby chat, with a red
     /// warning sign, instead of opening the Script debug window, which
     /// still keeps them (ShowScriptErrorsLocation 0; on, the human's choice
@@ -1231,6 +1241,8 @@ pub struct Settings {
     pub chat_toast_seconds: f32,
     /// Wrapped text rows above the chat bar (ConsoleMaxLines, 40; 0 hides them).
     pub chat_console_max_lines: u32,
+    /// Which way those rows stand from the chat bar they follow.
+    pub chat_lines_direction: ChatLinesDirection,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
     /// The same notices as a line of nearby chat (OnlineOfflinetoNearbyChat;
@@ -1296,9 +1308,12 @@ pub struct Settings {
     /// (an Aurora addition): moving between the two viewers keeps the
     /// history, and a notice says what came in.
     pub log_import_at_login: bool,
-    /// The transcripts in the Legacy Viewer's own layout under the chosen
-    /// folder (`<folder>/<first_last>`), so that both viewers share them. An
-    /// Aurora addition, off by default: Aurora then only appends lines there.
+    /// The user said yes to sharing the Legacy Viewer's folder chosen as the
+    /// transcripts' folder: the account's files are then in its own layout
+    /// (`<folder>/<first_last>`), so that both viewers read and add to the
+    /// same history (an Aurora addition, off until asked and answered when
+    /// such a folder is picked). Per account, like the folder
+    /// (`settings/chat_log.rs`).
     pub log_legacy_layout: bool,
     /// Ask before opening a web link outside the trusted domains (the box
     /// "Do not warn me again" of the warning turns it off).
@@ -1817,6 +1832,13 @@ pub struct Settings {
     /// default until tried on modest GPUs, and left alone by the two buttons
     /// of Preferences › Aurora, as the water effects once were.
     pub volumetric_clouds: bool,
+    /// The sun's and the moon's shafts (aurora-render sun_shafts.rs): the
+    /// sky's light around them streaked across the image, cut by what stands
+    /// in front, with no visible mist. An Aurora feature (the Legacy Viewer
+    /// has none), off by default.
+    pub sun_rays: bool,
+    /// Their strength, 0.05..1.
+    pub sun_rays_strength: f32,
     /// 0 Khronos PBR Neutral, 1 ACES (RenderTonemapType: ACES by default,
     /// like the Legacy Viewer)
     pub tonemapper: u8,
@@ -1990,6 +2012,19 @@ pub struct Settings {
     /// The folder holding the conversation transcripts, one folder per
     /// account inside, "" for the default one (InstantMessageLogPath).
     pub chat_log_location: String,
+    /// Each account's transcripts folder and yes to sharing, per grid
+    /// (`chat_log::account_key`, `<grid>/<agent id>`); None keeps the former
+    /// shared transcript folder & layout until the first login.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) chat_log_accounts: Option<std::collections::BTreeMap<String, chat_log::Preferences>>,
+    /// Former pre-split global folder & layout preserved so every account that
+    /// upgrades without an entry inherits them instead of losing the folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) chat_log_legacy_default: Option<chat_log::Preferences>,
+    /// Runtime transcript folder & layout belong to this account after login
+    /// (its key in `chat_log_accounts`).
+    #[serde(skip)]
+    pub(crate) chat_log_account: Option<String>,
     /// The most the simulators may send, all channels together, in kb/s
     /// (Firestorm's ThrottleBandwidthKBPS; the default and the top of the
     /// range are Aurora's, `aurora_net::throttle::DEFAULT_KBPS`).
@@ -2096,6 +2131,10 @@ pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 pub(crate) const PLANET_RADIUS_KM: f32 = aurora_render::curvature::EARTH_RADIUS / 1000.0;
 pub(crate) const PLANET_RADIUS_KM_RANGE: std::ops::RangeInclusive<f32> =
     aurora_render::curvature::RADIUS_MIN / 1000.0..=aurora_render::curvature::RADIUS_MAX / 1000.0;
+
+/// The sun's and the moon's rays' strength (`Settings::sun_rays_strength`).
+pub(crate) const SUN_RAYS_STRENGTH_DEFAULT: f32 = 0.5;
+pub(crate) const SUN_RAYS_STRENGTH: std::ops::RangeInclusive<f32> = 0.05..=1.0;
 
 /// RenderTonemapMix's default (settings.xml).
 pub(crate) const TONEMAP_MIX: f32 = 0.7;
@@ -2692,7 +2731,6 @@ impl Default for Settings {
             show_chat_channel: false,
             show_recent_emojis: false,
             show_recent_emojis_legacy: false,
-            favorite_emojis: false,
             script_errors_in_chat: true,
             script_errors_to_channel: false,
             script_errors_channel: 1,
@@ -2754,6 +2792,7 @@ impl Default for Settings {
             system_notifications_when_active: false,
             chat_toast_seconds: 20.0,
             chat_console_max_lines: 40,
+            chat_lines_direction: ChatLinesDirection::Auto,
             toast_friends_online: true,
             friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
@@ -2944,6 +2983,8 @@ impl Default for Settings {
             specular_aa: true,
             colored_sky_ambient: false,
             volumetric_clouds: false,
+            sun_rays: false,
+            sun_rays_strength: SUN_RAYS_STRENGTH_DEFAULT,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
             hdr_emissive: true,
@@ -3007,6 +3048,9 @@ impl Default for Settings {
             cache_size_mb: 20480,
             cache_location: String::new(),
             chat_log_location: String::new(),
+            chat_log_accounts: None,
+            chat_log_legacy_default: None,
+            chat_log_account: None,
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
             download_connections: DownloadConnections::Automatic,
             no_neighbour_regions: false,
@@ -4062,16 +4106,29 @@ impl Settings {
             newer_file: old.newer_file,
             // Named profiles are user content, like separate preset files.
             graphics_saved: old.graphics_saved,
-            // Reset this avatar's hover options while keeping other accounts.
+            // Reset this avatar's hover and transcript folder options while keeping other accounts.
             hover_height_accounts: old.hover_height_accounts,
             hover_height_account: old.hover_height_account,
             autoresponse_imported: old.autoresponse_imported,
+            chat_log_accounts: old.chat_log_accounts,
+            chat_log_account: old.chat_log_account,
+            chat_log_legacy_default: old.chat_log_legacy_default,
             ..Settings::default()
         };
         // the account logged in keeps its file, its responses and the shared
         // ones back to the defaults; the other accounts keep theirs
         if let Some((file, _)) = responses {
             self.bind_autoresponse(file, Default::default(), Default::default());
+        }
+    }
+
+    /// "Show recent emojis" of the chat style in use (Preferences > Chat
+    /// shows that one alone): the Legacy style keeps its own.
+    pub fn recent_emojis_switch(&mut self) -> &mut bool {
+        if self.chat_style == ChatStyle::Legacy {
+            &mut self.show_recent_emojis_legacy
+        } else {
+            &mut self.show_recent_emojis
         }
     }
 
@@ -4114,6 +4171,7 @@ impl Settings {
         let mut copy = self.clone();
         copy.remember_hover_account();
         copy.shared_autoresponse();
+        copy.remember_chat_log_account();
         if let Some(mut held) = copy.photo_held.take() {
             // a setting changed since the last frame is the user's too
             held.sync(&copy);
@@ -5627,8 +5685,6 @@ mod tests {
         let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
         assert!(!old.show_recent_emojis);
         assert!(!old.show_recent_emojis_legacy);
-        assert!(!Settings::default().favorite_emojis, "favourites off by default");
-        assert!(!old.favorite_emojis);
         let original = Settings {
             show_recent_emojis: true,
             ..Settings::default()
@@ -5636,6 +5692,25 @@ mod tests {
         let saved = serde_json::to_vec(&original).expect("serialize synthetic preference");
         let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic preference");
         assert!(loaded.sanitized().show_recent_emojis);
+        // a profile that kept the favourites' switch of 0.9.x, removed since
+        // (favourites are always there): it loads, the switch is dropped
+        let kept: Settings = serde_json::from_str(r#"{"favorite_emojis":true}"#).expect("a profile with the removed switch");
+        assert!(!serde_json::to_string(&kept).expect("serialize").contains("favorite_emojis"));
+    }
+
+    /// The arrow beside the emoji buttons turns the switch of the chat style
+    /// in use, as Preferences › Chat shows that one alone.
+    #[test]
+    fn the_recent_emojis_switch_is_the_one_of_the_chat_style_in_use() {
+        let mut settings = Settings::default();
+        assert_ne!(settings.chat_style, ChatStyle::Legacy);
+        *settings.recent_emojis_switch() = true;
+        assert!(settings.show_recent_emojis && !settings.show_recent_emojis_legacy);
+        settings.chat_style = ChatStyle::Legacy;
+        assert!(!*settings.recent_emojis_switch());
+        *settings.recent_emojis_switch() = true;
+        settings.show_recent_emojis = false;
+        assert!(*settings.recent_emojis_switch(), "the Legacy style keeps its own");
     }
 
     #[test]

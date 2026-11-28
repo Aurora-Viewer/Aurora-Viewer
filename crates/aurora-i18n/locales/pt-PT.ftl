@@ -3296,8 +3296,6 @@ ui-options-show-chat-channel-hint = Mostrar o seletor de canal (/0) nos campos d
 ui-options-show-recent-emojis = Mostrar emojis recentes
 ui-options-show-recent-emojis-hint = Os emojis que usou por último, numa linha acima dos campos de chat, mostrada depois de ter enviado um. Clique num deles para o adicionar à sua mensagem.
 ui-options-show-recent-emojis-legacy = Mostrar emojis recentes (estilo Legacy)
-ui-options-favorite-emojis = Emojis favoritos
-ui-options-favorite-emojis-hint = Clique com o botão direito num emoji do seletor ou da linha de recentes para o manter: os favoritos aparecem primeiro nessa linha e têm o seu próprio separador no seletor.
 ui-options-script-errors = Erros de script
 ui-options-script-errors-in-chat = Mostrar os erros de script no chat local
 ui-options-script-errors-in-chat-hint = Os erros de script dos seus objetos aparecem no chat local, a vermelho, com um sinal de aviso, e a janela de depuração de scripts guarda-os sem abrir. Desativado, a janela abre-se a cada erro. Mais ninguém os vê.
@@ -10940,8 +10938,6 @@ ui-options-chat-logs-dated-help = Um ficheiro por mês para cada conversa (nome-
 ui-options-chat-logs-note = Estes ficheiros são texto simples, legível por qualquer pessoa que possa usar este computador. Ficam nesta máquina, separados por conta e por grid, e nunca são anexados a um relatório de erro.
 ui-options-chat-logs-open = Abrir a pasta
 ui-options-chat-logs-folder-help = Os ficheiros desta conta são movidos para a nova pasta.
-ui-options-chat-logs-legacy-layout = Partilhar a pasta do Legacy Viewer
-ui-options-chat-logs-legacy-layout-help = Grava os ficheiros desta conta na organização própria do Legacy Viewer, dentro da pasta escolhida (first_last), para que os dois viewers leiam e acrescentem ao mesmo histórico. Escolha acima a pasta de registos de chat do Legacy Viewer. O Aurora só acrescenta linhas: nada é movido, importado ou apagado, e os ficheiros próprios do Aurora voltam quando esta opção está desativada. Mantenha a mesma definição «Ficheiros datados» nos dois viewers. Só Second Life. Desativado por predefinição.
 ui-options-chat-logs-moved = { $count ->
     [one] { $count } ficheiro movido.
    *[other] { $count } ficheiros movidos.

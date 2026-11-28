@@ -3312,8 +3312,6 @@ ui-options-show-chat-channel-hint = Mostra o seletor de canal (/0) nos campos de
 ui-options-show-recent-emojis = Mostrar emojis recentes
 ui-options-show-recent-emojis-hint = Depois que você envia um emoji, os últimos usados aparecem acima dos campos de chat. Clique em um emoji para inseri-lo na mensagem.
 ui-options-show-recent-emojis-legacy = Mostrar emojis recentes (estilo Legacy)
-ui-options-favorite-emojis = Emojis favoritos
-ui-options-favorite-emojis-hint = Clique com o botão direito em um emoji no seletor ou na barra de recentes para salvá-lo. Os favoritos aparecem primeiro nessa barra e em uma aba própria no seletor.
 ui-options-script-errors = Erros de script
 ui-options-script-errors-in-chat = Mostrar erros de script no chat local
 ui-options-script-errors-in-chat-hint = Os erros de script dos seus objetos aparecem no chat local em vermelho, com um sinal de aviso, e a janela de depuração de scripts os guarda sem se abrir. Desativado, a janela se abre a cada erro. Só você os vê.
@@ -10990,8 +10988,6 @@ ui-options-chat-logs-dated-help = Um arquivo por mês para cada conversa (nome-2
 ui-options-chat-logs-note = Esses arquivos são de texto simples, legíveis por qualquer pessoa que possa usar este computador. Eles ficam nesta máquina, separados para cada conta e cada grid, e nunca são anexados a um relatório de bug.
 ui-options-chat-logs-open = Abrir pasta
 ui-options-chat-logs-folder-help = Os arquivos desta conta são movidos para a nova pasta.
-ui-options-chat-logs-legacy-layout = Compartilhar a pasta do Legacy Viewer
-ui-options-chat-logs-legacy-layout-help = Grava os arquivos desta conta na estrutura do Legacy Viewer, na pasta escolhida (nome_sobrenome), para que os dois viewers leiam e acrescentem mensagens ao mesmo histórico. Escolha acima a pasta de registros de chat do Legacy Viewer. O Aurora só acrescenta linhas nela, sem mover, importar ou apagar arquivos. Ao desativar, o Aurora volta a usar os próprios arquivos. Use a mesma opção Arquivos datados nos dois viewers. Só no Second Life. Desativado por padrão.
 ui-options-chat-logs-moved =
     { $count ->
         [one] { $count } arquivo movido.

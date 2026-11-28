@@ -3285,8 +3285,6 @@ ui-options-show-chat-channel-hint = Mostra il selettore del canale (/0) nei camp
 ui-options-show-recent-emojis = Mostra le emoji recenti
 ui-options-show-recent-emojis-hint = Le ultime emoji usate, in una riga sopra i campi della chat, mostrata dopo il primo invio di un'emoji. Fare clic su una per aggiungerla al messaggio.
 ui-options-show-recent-emojis-legacy = Mostra le emoji recenti (stile Legacy)
-ui-options-favorite-emojis = Emoji preferite
-ui-options-favorite-emojis-hint = Fare clic destro su un'emoji nel selettore o nella riga delle recenti per tenerla: le preferite vengono per prime in quella riga e hanno una scheda propria nel selettore.
 ui-options-script-errors = Errori degli script
 ui-options-script-errors-in-chat = Mostra gli errori degli script nella chat locale
 ui-options-script-errors-in-chat-hint = Gli errori degli script dei propri oggetti compaiono in rosso nella chat locale, con un segnale di avvertimento, e la finestra “Debug degli script” li conserva senza aprirsi. Se disattivato, la finestra si apre a ogni errore. Sono visibili solo al proprietario.
@@ -10887,8 +10885,6 @@ ui-options-chat-logs-dated-help = Un file al mese per ogni conversazione (nome-2
 ui-options-chat-logs-note = Questi file sono testo semplice, leggibile da chiunque possa usare questo computer. Restano su questa macchina, separati per ogni account e ogni grid, e non vengono mai allegati a una segnalazione di bug.
 ui-options-chat-logs-open = Apri la cartella
 ui-options-chat-logs-folder-help = I file di questo account vengono spostati nella nuova cartella.
-ui-options-chat-logs-legacy-layout = Condividi la cartella del Legacy Viewer
-ui-options-chat-logs-legacy-layout-help = Scrive i file di questo account nella struttura propria del Legacy Viewer sotto la cartella scelta (nome_cognome), così entrambi i viewer leggono e aggiungono alla stessa cronologia. Scegliere sopra la cartella dei log della chat del Legacy Viewer. Aurora vi aggiunge solo righe: nulla viene spostato, importato o cancellato, e i file propri di Aurora tornano quando è disattivato. Mantenere la stessa impostazione “File con data” in entrambi i viewer. Solo Second Life. Disattivato per impostazione predefinita.
 ui-options-chat-logs-moved = { $count ->
     [one] { $count } file spostato.
    *[other] { $count } file spostati.

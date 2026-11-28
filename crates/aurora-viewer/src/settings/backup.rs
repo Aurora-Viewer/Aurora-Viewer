@@ -44,6 +44,9 @@ const THIS_PC: &[&str] = &[
     "window_maximized",
     "cache_location",
     "chat_log_location",
+    "log_legacy_layout",
+    "chat_log_accounts",
+    "chat_log_legacy_default",
     // a file of this PC (Preferences › Language and updates)
     "custom_language_file",
 ];
@@ -295,6 +298,9 @@ impl Settings {
         self.window_maximized = current.window_maximized;
         self.cache_location = current.cache_location.clone();
         self.chat_log_location = current.chat_log_location.clone();
+        self.log_legacy_layout = current.log_legacy_layout;
+        self.chat_log_accounts = current.chat_log_accounts.clone();
+        self.chat_log_legacy_default = current.chat_log_legacy_default.clone();
         self.custom_language_file = current.custom_language_file.clone();
         self.audio.output_device = current.audio.output_device.clone();
         self.audio.voice_output_device = current.audio.voice_output_device.clone();
@@ -315,6 +321,8 @@ impl Settings {
             let shared = self.autoresponse_shared_part();
             self.bind_autoresponse(file, shared, account);
         }
+        self.chat_log_account = current.chat_log_account.clone();
+        self.remember_chat_log_account();
     }
 }
 
@@ -347,6 +355,10 @@ mod tests {
             chat_log_location: "D:\\logs".into(),
             ..Settings::default()
         };
+        s.select_chat_log_account("agni", Uuid::from_u128(1));
+        s.select_chat_log_account("agni", Uuid::from_u128(2));
+        s.chat_log_location = "D:\\logs-second".into();
+        s.select_chat_log_account("agni", Uuid::from_u128(1));
         s.audio.output_device = "Speakers".into();
         s.audio.voice_output_device = "Headset".into();
         s.audio.input_device = "Microphone".into();
@@ -366,6 +378,7 @@ mod tests {
             "Somewhere",
             "D:\\\\cache",
             "D:\\\\logs",
+            "D:\\\\logs-second",
             "Speakers",
             "Headset",
             "Microphone",
@@ -445,6 +458,34 @@ mod tests {
         assert_eq!(restored.hover_height_account, Some(account));
         assert!(restored.auto_hover_height);
         assert_eq!(restored.auto_hover_offset, -0.12);
+    }
+
+    #[test]
+    fn a_restore_keeps_this_pcs_chat_log_accounts_and_ignores_backups() {
+        let (account_a, account_b, account_c) = (Uuid::from_u128(10), Uuid::from_u128(20), Uuid::from_u128(30));
+        let mut other = Settings::default();
+        other.select_chat_log_account("agni", account_c);
+        other.chat_log_location = "X:\\elsewhere".into();
+        let backup = Backup::parse(&Backup::new(&other, None).to_bytes().unwrap()).unwrap();
+
+        let mut current = Settings::default();
+        current.select_chat_log_account("agni", account_b);
+        current.chat_log_location = "D:\\logs-b".into();
+        current.select_chat_log_account("agni", account_a);
+        current.chat_log_location = "D:\\logs-a".into();
+
+        let mut restored = backup.settings(&current).unwrap();
+        assert_eq!(
+            restored.chat_log_account,
+            Some(crate::settings::chat_log::account_key("agni", account_a))
+        );
+        assert_eq!(restored.chat_log_location, "D:\\logs-a");
+
+        restored.select_chat_log_account("agni", account_b);
+        assert_eq!(restored.chat_log_location, "D:\\logs-b");
+
+        restored.select_chat_log_account("agni", account_c);
+        assert!(restored.chat_log_location.is_empty());
     }
 
     #[test]

@@ -3286,8 +3286,6 @@ ui-options-show-chat-channel-hint = Kanal seçicisini (/0) yakındaki sohbet gir
 ui-options-show-recent-emojis = Son emojileri göster
 ui-options-show-recent-emojis-hint = Son kullandığınız emojiler, bir tane gönderdikten sonra sohbet alanlarının üstünde bir satır olarak görünür. Birini iletinize eklemek için tıklayın.
 ui-options-show-recent-emojis-legacy = Son emojileri göster (Legacy stili)
-ui-options-favorite-emojis = Sık kullanılan emojiler
-ui-options-favorite-emojis-hint = Saklamak için seçicide veya son kullanılanlar satırında bir emojiye sağ tıklayın: sık kullanılanlar o satırda başta gelir ve seçicide kendi sekmeleri vardır.
 ui-options-script-errors = Komut dosyası hataları
 ui-options-script-errors-in-chat = Komut dosyası hatalarını yakındaki sohbette göster
 ui-options-script-errors-in-chat-hint = Nesnelerinizin komut dosyası hataları yakındaki sohbette kırmızı ve bir uyarı işaretiyle görünür; Komut dosyası hata ayıklama penceresi bunları açılmadan saklar. Kapalıyken pencere her hatada açılır. Bunları yalnızca siz görürsünüz.
@@ -10898,8 +10896,6 @@ ui-options-chat-logs-dated-help = Her sohbet için ayda bir dosya (name-2026-10)
 ui-options-chat-logs-note = Bu dosyalar düz metindir; bu bilgisayarı kullanabilen herkes okuyabilir. Bu makinede, her hesap ve her grid için ayrı kalırlar ve hiçbir hata raporuna eklenmezler.
 ui-options-chat-logs-open = Klasörü Aç
 ui-options-chat-logs-folder-help = Bu hesabın dosyaları yeni klasöre taşınır.
-ui-options-chat-logs-legacy-layout = Legacy Viewer'ın klasörünü paylaş
-ui-options-chat-logs-legacy-layout-help = Bu hesabın dosyalarını seçilen klasörün altına (first_last) Legacy Viewer'ın kendi düzeninde yazar; böylece iki görüntüleyici aynı geçmişi okur ve ona ekler. Yukarıda Legacy Viewer'ın sohbet günlüğü klasörünü seçin. Aurora oraya yalnızca satır ekler: hiçbir şey taşınmaz, içeri aktarılmaz veya silinmez ve bu kapatıldığında Aurora'nın kendi dosyaları geri gelir. İki görüntüleyicide de “Tarihli dosyalar” ayarını aynı tutun. Yalnızca Second Life. Varsayılan olarak kapalı.
 ui-options-chat-logs-moved = { $count ->
     [one] { $count } dosya taşındı.
    *[other] { $count } dosya taşındı.

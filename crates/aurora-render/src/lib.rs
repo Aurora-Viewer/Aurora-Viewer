@@ -86,6 +86,7 @@ pub mod second_view;
 mod selection;
 pub mod shadow_cull;
 mod shadow_merge;
+mod shutter;
 mod soft_shadows;
 #[cfg(test)]
 mod specular_aa;
@@ -93,6 +94,7 @@ pub mod spirv_fix;
 pub mod stars;
 pub mod start_progress;
 pub mod stereo_view;
+mod sun_shafts;
 #[cfg(test)]
 mod terrain_tests;
 #[cfg(test)]
@@ -148,7 +150,7 @@ pub use contact_shadows::tile_reach as contact_tile_reach;
 pub use dof::tile_reach as dof_tile_reach;
 pub use drawn_pick::{Drawn, DrawnFace, DrawnMode};
 pub use equirect::{Answer as EquirectAnswer, CAPTURE_CAMERAS, CaptureCamera, EquirectJob, pixel_direction};
-pub use film_readback::{FilmFrame, FilmRequest, overlay_rect};
+pub use film_readback::{FilmFrame, FilmRequest, Shutter, overlay_rect};
 pub use gpu_cull::set_whole_chunk_uploads;
 pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;

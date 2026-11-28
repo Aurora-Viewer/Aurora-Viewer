@@ -303,6 +303,9 @@ pub fn bottom(
         if emoji.is_some() {
             geo.chat.min.y -= chat.recent_emojis.height();
         }
+        // the island of its own stands over the dock's row: the side bars
+        // keep their place beside it (`chrome::side_room`)
+        super::chrome::raise_chat(&ctx, geo.chat.x_range(), geo.chat.height() - geo.height);
     }
     chat.bar_hovered = false;
     let docked = toolbar_settings.location("conversations", layout).is_some();
@@ -434,14 +437,23 @@ pub(super) fn chat_island(
     // 2026-11-27; the Legacy style keeps them under the field in
     // Conversations alone, `Recent::above`)
     let recent = if emoji.is_some() { chat.recent_emojis.height() } else { 0.0 };
+    // In the top bar the island hangs under the bar's row instead of rising
+    // over it (`chrome::lift_chat`): the field stays on the bar's line, at
+    // the head of its island, and the row comes under it, towards the chat
+    // lines. Nothing of the line moves when the row comes and goes.
+    let hangs = row.bar == crate::ui::toolbar::Bar::Top && !row.floating;
     let bottom = island.bottom();
-    let top = bottom - inset - slot;
+    let top = if hangs { island.top() + inset } else { bottom - inset - slot };
     let button = Rect::from_min_size(Pos2::new(island.right() - PAD - slot, top), Vec2::splat(slot));
     let field_right = if with_button { button.left() - GAP } else { island.right() - PAD };
-    let field = Rect::from_min_max(
-        Pos2::new(island.left() + PAD, island.top() + inset + recent),
-        Pos2::new(field_right, bottom - inset),
-    );
+    let field = if hangs {
+        Rect::from_min_max(Pos2::new(island.left() + PAD, top), Pos2::new(field_right, bottom - inset - recent))
+    } else {
+        Rect::from_min_max(
+            Pos2::new(island.left() + PAD, island.top() + inset + recent),
+            Pos2::new(field_right, bottom - inset),
+        )
+    };
     let radius = ui.visuals().window_corner_radius;
     ui.painter().rect_filled(field, radius, p.field);
 
@@ -464,9 +476,32 @@ pub(super) fn chat_island(
         chat.bar_emoji_open = true;
     }
 
+    // the recent emojis' arrow, before the emoji (the human's request,
+    // 2026-11-27; `emoji::recent`): up shows the row, down hides it
+    let mut text_right = smile.left();
+    if emoji.is_some() {
+        let arrow = Rect::from_center_size(
+            Pos2::new(smile.left() - 8.0 - EMOJI_ICON / 2.0, smile.center().y),
+            Vec2::splat(EMOJI_ICON),
+        );
+        let resp = ui.interact(arrow.expand(4.0), recent_arrow_id(), Sense::click());
+        let (icon, tip) = if hangs {
+            chat.recent_emojis.arrow_under()
+        } else {
+            chat.recent_emojis.arrow()
+        };
+        paint_icon(ui, icons, icon, arrow, EMOJI_ICON, slot_ink(p, resp.hovered(), true));
+        if resp.on_hover_text(tip).clicked() {
+            chat.recent_emojis.ask_toggle();
+            // the keyboard stays in the field
+            chat.focus_request = true;
+        }
+        text_right = arrow.left();
+    }
+
     let text = Rect::from_min_max(
         Pos2::new(field.left() + FIELD_PAD, field.top()),
-        Pos2::new(smile.left() - 6.0, field.bottom()),
+        Pos2::new(text_right - 6.0, field.bottom()),
     );
     // what is typed at the chat's text size (Preferences › Chat), the
     // placeholder at the interface's like the bar around it
@@ -491,10 +526,17 @@ pub(super) fn chat_island(
     if recent > 0.0
         && let Some(emoji) = emoji.as_deref_mut()
     {
-        let row = Rect::from_min_max(
-            Pos2::new(field.left(), island.top() + inset),
-            Pos2::new(field.right(), island.top() + inset + recent - 2.0),
-        );
+        let row = if hangs {
+            Rect::from_min_max(
+                Pos2::new(field.left(), field.bottom() + 2.0),
+                Pos2::new(field.right(), bottom - inset),
+            )
+        } else {
+            Rect::from_min_max(
+                Pos2::new(field.left(), island.top() + inset),
+                Pos2::new(field.right(), island.top() + inset + recent - 2.0),
+            )
+        };
         let id = crate::ui::chat::bar_input_id();
         if let Some(c) = chat.recent_emojis.row(ui, p, emoji, row, id) {
             crate::ui::emoji::recent::insert(ui.ctx(), id, &mut chat.input, c);
@@ -529,6 +571,11 @@ pub(super) fn chat_island(
         *committed = true;
     }
     out
+}
+
+/// The recent emojis' arrow of the chat field.
+pub(super) fn recent_arrow_id() -> Id {
+    Id::unique("chat_island_recent_emojis")
 }
 
 /// The emoji picker of the chat field (the one of the Conversations
