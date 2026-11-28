@@ -569,6 +569,10 @@ change to the interface:
      (`gh pr list --author "@me"`); any PR without a "Review" comment (or
      whose CI failed, or that left the merge queue) comes before the rest:
      finish its review (section 11) then its merge (step 9);
+   - **security**: the latest run of the `Security` workflow and of `CodeQL`
+     (cargo-deny, the certificate test, code scanning), and the open
+     Dependabot pull requests; a red run or a new advisory comes before the
+     rest;
    - **issues**: look at the open issues and the new comments on the issues
      linked to your task (section 15), then check their type and reply. To
      choose what to take next, follow the Priority the project manager set

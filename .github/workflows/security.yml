@@ -1,0 +1,83 @@
+name: Security
+
+# cargo-deny: advisories (the accepted risks are listed with a review date in
+# deny.toml), licences, sources and bans; on pull requests, GitHub's dependency
+# review also checks the dependency-graph diff for high or critical advisories.
+# A pull request that adds a crate with a known advisory fails; the weekly run
+# catches advisories published since the last commit, and the yanked crates
+# the next update must replace.
+#
+# A maintainer looks at the weekly run, the CodeQL alerts and the Dependabot
+# pull requests every week (HUMANS.md, "Security").
+on:
+  pull_request:
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - 'packaging/licenses/about.toml'
+      - '.github/workflows/security.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - 'packaging/licenses/about.toml'
+      - '.github/workflows/security.yml'
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Licence allowlist matches about.toml
+        run: |
+          python3 - <<'PY'
+          import tomllib
+          about = sorted(tomllib.load(open("packaging/licenses/about.toml", "rb"))["accepted"])
+          deny = sorted(tomllib.load(open("deny.toml", "rb"))["licenses"]["allow"])
+          if about != deny:
+              raise SystemExit(
+                  f"deny.toml licenses.allow != about.toml accepted:\n"
+                  f"  only in about.toml: {sorted(set(about) - set(deny))}\n"
+                  f"  only in deny.toml:  {sorted(set(deny) - set(about))}"
+              )
+          PY
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
+        with:
+          command: check
+          # --locked: the pull request's Cargo.lock is the one shipped. Do not
+          # pass --all-features: the graph is the published build's. The
+          # action's entrypoint reads rust-toolchain.toml on its own.
+          arguments: --locked
+          log-level: warn
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with:
+          fail-on-severity: high
+          # cargo-deny checks licences against packaging/licenses/about.toml above
+          license-check: false
+          # no write token on a pull request from a fork
+          comment-summary-in-pr: never

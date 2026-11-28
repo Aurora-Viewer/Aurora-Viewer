@@ -1,0 +1,45 @@
+name: Certificates
+
+# The certificate bundle's test: a certificate expires (or a new one is added)
+# without any code changing, so it runs every week as well as when the bundle
+# or the test changes. The test pins `lindenlab.pem` (sim_tls.rs): Linden Lab's
+# authority alone, expired but kept on purpose, and no other certificate that
+# is expired or expires within 90 days.
+on:
+  pull_request:
+    paths:
+      - '**/*.pem'
+      - 'crates/aurora-net/src/sim_tls.rs'
+      - '.github/workflows/certificates.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**/*.pem'
+      - 'crates/aurora-net/src/sim_tls.rs'
+      - '.github/workflows/certificates.yml'
+  schedule:
+    - cron: '47 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: certificates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust stable
+        run: rustup toolchain install --profile minimal --no-self-update
+      # Restores main's Linux test cache without writing a PR cache that
+      # would evict main's from the 10 GB quota (.github/actions/rust-cache).
+      - uses: ./.github/actions/rust-cache
+        with:
+          name: linux-tests
+      - name: Certificate bundle current
+        run: cargo test --profile ci --locked -p aurora-net the_bundle_holds
