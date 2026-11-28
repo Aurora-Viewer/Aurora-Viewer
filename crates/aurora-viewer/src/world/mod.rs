@@ -14,6 +14,7 @@ pub mod calling_cards;
 pub mod object_motion_trace;
 pub mod shape_tween;
 
+pub mod ao_preview;
 mod arrival_wait;
 pub mod avatar_cache;
 pub mod beacons;
@@ -111,6 +112,7 @@ pub mod script_dialog_limit;
 pub mod search;
 pub mod sim_console;
 pub mod social;
+pub mod social_history;
 pub mod sound_parcels;
 pub mod staff;
 pub mod status;
@@ -732,6 +734,8 @@ pub struct World {
     held_partner: Vec<(ObjKey, Uuid)>,
     /// The stand-in Person B, a mirror of our avatar (mirror.rs).
     mirror: Option<mirror::Mirror>,
+    /// The AO window's preview copy of our avatar (ao_preview.rs).
+    ao_preview: Option<ao_preview::AoPreview>,
     /// LiveMesh's Fit lab: mannequins dressed as our avatar (mannequins.rs).
     fit_lab: mannequins::FitLab,
     /// Interface sounds to play (drained by the app).
@@ -984,7 +988,9 @@ pub struct World {
     /// the Legacy Viewer's getSLURLString is.
     tp_back_slurl: Option<(Option<String>, String, Vec3)>,
     /// The account's list of open private and group conversations (open_ims.rs).
-    open_ims_path: Option<std::path::PathBuf>,
+    social_history: social_history::History,
+    /// Fixed before login; distinct from the transcript folder key.
+    pub social_grid: String,
     /// Conversations of the last session, read at login, that the app
     /// reopens when the setting asks for it.
     pub reopen_ims: Vec<open_ims::Conversation>,
@@ -1212,6 +1218,7 @@ impl World {
             couple_anchor: None,
             held_partner: Vec::new(),
             mirror: None,
+            ao_preview: None,
             fit_lab: Default::default(),
             social: social::Social::default(),
             contact_sets: Default::default(),
@@ -1317,7 +1324,8 @@ impl World {
             hide_object_returns: false,
             render_exceptions: Default::default(),
             tp_back_slurl: None,
-            open_ims_path: None,
+            social_history: Default::default(),
+            social_grid: String::new(),
             reopen_ims: Vec::new(),
             cache_dir: None,
         }
@@ -1327,7 +1335,7 @@ impl World {
     /// stays for the next one: the conversations and the nearby chat go, and
     /// the transcripts close (only their writer and settings are kept).
     pub fn reset(&mut self) {
-        self.save_open_ims();
+        self.flush_social_history();
         let lib = self.avatar_lib.clone();
         let cache_dir = self.cache_dir.take();
         // LLChatServiceHistory::stop; the manager stays, so that no ticket
@@ -3401,10 +3409,13 @@ impl World {
                 if hidden > 0 {
                     log::info!("invisible: hidden again from {hidden} friend(s) the login still showed us to");
                 }
-                let open = account.join(open_ims::FILE);
+                self.social_history = social_history::History::load(
+                    &crate::settings::accounts_dir(),
+                    l.agent_id,
+                    &self.social_grid,
+                    self.chat_log.cfg.log_conversations,
+                );
                 self.experiences.log = experience_log::ExperienceLog::load(account.join(experience_log::FILE), &experience_log::now().0);
-                self.reopen_ims = open_ims::load(&open);
-                self.open_ims_path = Some(open);
                 self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
@@ -4904,6 +4915,7 @@ impl World {
             | NetEvent::GroupRoleMembers(_)
             | NetEvent::GroupTitles { .. }
             | NetEvent::GroupNotices { .. }
+            | NetEvent::GroupMembersFailed { .. }
             | NetEvent::GroupBanList { .. }) => {
                 // the Group titles window's own requests
                 if let NetEvent::GroupTitles { group, request, titles } = &ev {
@@ -7001,6 +7013,9 @@ impl World {
 
     pub fn animations_of(&self, owner: &Uuid) -> &[PlayingAnimation] {
         if let Some(playing) = self.mannequin_animations(owner) {
+            return playing;
+        }
+        if let Some(playing) = self.ao_preview_animations(owner) {
             return playing;
         }
         if *owner == self.agent_id {

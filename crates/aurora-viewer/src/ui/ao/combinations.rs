@@ -17,7 +17,7 @@ impl Dialog {
             set,
             state,
             track: false,
-            name: aurora_i18n::tr!("ao-new-group").into(),
+            name: aurora_i18n::tr!("ao-new-stack").into(),
             selected: HashSet::new(),
             rename: None,
         }
@@ -53,7 +53,7 @@ impl Dialog {
             c.steps.iter().any(|s| s.group && Some(s.id) != self.rename && s.name == name)
                 || c.tracks.iter().any(|t| Some(t.id) != self.rename && t.name == name)
         }) {
-            return Err(aurora_i18n::tr!("ao-combine-name-exists").into());
+            return Err(aurora_i18n::tr!("ao-stack-name-exists").into());
         }
         Ok(())
     }
@@ -85,7 +85,7 @@ pub(super) fn show(
         ui.set_width(410.0);
         ui.label(
             RichText::new(aurora_i18n::text(if dialog.rename.is_some() {
-                "ao-rename-combination"
+                "ao-rename-stack-or-layer"
             } else {
                 "ao-combine-title"
             }))
@@ -98,11 +98,11 @@ pub(super) fn show(
                     let key = if index == 0 {
                         "ao-combine-group-choice"
                     } else {
-                        "ao-combine-track-choice"
+                        "ao-combine-layer-choice"
                     };
                     let label = format!(
                         "{}\n{}",
-                        aurora_i18n::text(if index == 0 { "ao-group" } else { "ao-track" }),
+                        aurora_i18n::text(if index == 0 { "ao-stack" } else { "ao-layer" }),
                         aurora_i18n::text(key)
                     );
                     if column
@@ -118,20 +118,20 @@ pub(super) fn show(
                 }
             });
             if dialog.track != before
-                && (dialog.name == aurora_i18n::tr!("ao-new-group") || dialog.name == aurora_i18n::tr!("ao-new-track"))
+                && (dialog.name == aurora_i18n::tr!("ao-new-stack") || dialog.name == aurora_i18n::tr!("ao-new-layer-name"))
             {
-                dialog.name = aurora_i18n::text(if dialog.track { "ao-new-track" } else { "ao-new-group" }).into();
+                dialog.name = aurora_i18n::text(if dialog.track { "ao-new-layer-name" } else { "ao-new-stack" }).into();
             }
             ui.label(
                 RichText::new(aurora_i18n::text(if dialog.track {
-                    "ao-track-example"
+                    "ao-layer-example"
                 } else {
-                    "ao-group-example"
+                    "ao-stack-example"
                 }))
                 .color(p.muted),
             );
         }
-        ui.label(aurora_i18n::text(if dialog.track { "ao-track-name" } else { "ao-group-name" }));
+        ui.label(aurora_i18n::text(if dialog.track { "ao-layer-name" } else { "ao-stack-name" }));
         widgets::restricted_text_field(ui, true, &mut dialog.name, widgets::TextPolicy::AoName, |b, _| {
             egui::TextEdit::singleline(b).desired_width(f32::INFINITY)
         });
@@ -164,9 +164,9 @@ pub(super) fn show(
             let label = if dialog.rename.is_some() {
                 "common-save"
             } else if dialog.track {
-                "ao-create-track"
+                "ao-create-layer"
             } else {
-                "ao-create-group"
+                "ao-create-stack"
             };
             submit = widgets::default_button(ui.add_enabled(valid.is_ok(), egui::Button::new(aurora_i18n::text(label)))).clicked();
             cancel = widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked();

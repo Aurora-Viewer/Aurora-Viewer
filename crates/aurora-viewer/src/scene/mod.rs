@@ -3057,8 +3057,11 @@ impl Scene {
         let iso = &world.photo_isolation;
         let types = self.hidden_types;
         // (hidden, unseen); a HUD is no rendering type: it stays
+        let preview = world.ao_preview().is_some();
         let left_out = |idx: usize, hud: bool| {
-            if !hud && types.hides_object(world, idx) {
+            // the AO preview's skeleton (world/ao_preview.rs): posed for the
+            // preview's stage, drawn nowhere
+            if (!hud && types.hides_object(world, idx)) || (preview && world.on_ao_preview(idx)) {
                 return (true, false);
             }
             match isolate::object_view(world, idx) {
@@ -3088,7 +3091,7 @@ impl Scene {
                     renderer.cull.objects.set(idx, g.cull_object(idx));
                 }
             }
-        } else if iso.hides() || types.any_object() || world.avatar_studio {
+        } else if iso.hides() || types.any_object() || world.avatar_studio || preview {
             for &idx in synced {
                 if let Some(g) = self.gpu.get_mut(idx) {
                     (g.hidden, g.unseen) = left_out(idx, g.hud);
@@ -6888,6 +6891,17 @@ impl Scene {
     pub fn resync_animations(&mut self, now: Instant) {
         use rayon::prelude::*;
         self.motions.par_iter_mut().for_each(|(_, motions)| motions.resync_animations(now));
+    }
+
+    /// Give `to` the joint positions `from` holds (`anim::Controller::
+    /// hold_positions`): the AO window's preview copy takes our deformers.
+    pub fn share_held_positions(&mut self, from: &Uuid, to: &Uuid) {
+        let Some((held, pelvis)) = self.motions.get(from).map(|c| c.held_positions()) else {
+            return;
+        };
+        if let Some(copy) = self.motions.get_mut(to) {
+            copy.hold_positions((&held, pelvis));
+        }
     }
 
     /// "Reset skeleton" of an avatar or an animated object

@@ -8,13 +8,19 @@
 
 use aurora_net::groups::{GroupMember, GroupRole, GroupTitle, MembersPage, NoticeSummary, RoleMembersPage, RolesPage};
 use aurora_net::{NetCommand, NetEvent};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// Groups kept at most (MAX_CACHED_GROUPS): the least recently opened one
-/// goes first.
+/// that no profile window shows goes first.
 const MAX_CACHED_GROUPS: usize = 20;
+
+/// A member request that never answered (a lost UDP reply; a failed
+/// GroupMemberData POST sends `GroupMembersFailed`) stops holding back the
+/// next one after this.
+const MEMBER_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The notices read, per account: a group's notices are unread once they
 /// arrived after its list was first seen and were never opened.
@@ -151,6 +157,15 @@ pub struct GroupMgr {
     /// (group, resident) banned by `ban_member`, to be told
     /// (the EjectAvatarFromGroup notice).
     pub banned: Vec<(Uuid, Uuid)>,
+    /// The groups an open profile window shows (LLGroupMgr's observers):
+    /// never dropped from the cache while shown.
+    observed: HashSet<Uuid>,
+    /// Groups whose member list waits to be asked, oldest first, and the
+    /// request out now: one at a time, one a frame at most
+    /// (LLGroupMgr::sendCapGroupMembersRequest's lastGroupMemberRequestFrame
+    /// and mMemberRequestInFlight).
+    members_queue: VecDeque<Uuid>,
+    member_in_flight: Option<(Uuid, Instant)>,
 }
 
 impl GroupMgr {
@@ -167,16 +182,60 @@ impl GroupMgr {
             .or_else(|| profile.map(|g| i64::from(g.members.max(0))))
     }
 
+    /// What to send this frame, with the next member request when none is
+    /// out.
     pub fn take_commands(&mut self) -> Vec<NetCommand> {
+        self.pump_members(Instant::now());
         std::mem::take(&mut self.out)
     }
 
-    /// createGroupData, the least recently opened group dropped past
-    /// MAX_CACHED_GROUPS (LLGroupMgr::addGroup).
+    /// The next queued member request goes out when the last one answered
+    /// or timed out. Where the Legacy Viewer drops a request asked while
+    /// another is out (and its panel asks again later), Aurora keeps it
+    /// waiting: a copied notice opens up to 10 windows in one frame.
+    fn pump_members(&mut self, now: Instant) {
+        if self
+            .member_in_flight
+            .is_some_and(|(_, sent)| now.duration_since(sent) < MEMBER_REQUEST_TIMEOUT)
+        {
+            return;
+        }
+        self.member_in_flight = None;
+        while let Some(group) = self.members_queue.pop_front() {
+            // forgotten or answered meanwhile: nothing to ask
+            let Some(request) = self.groups.get(&group).and_then(|g| g.member_request) else {
+                continue;
+            };
+            self.member_in_flight = Some((request, now));
+            self.out.push(NetCommand::GroupMembersRequest { group, request });
+            return;
+        }
+    }
+
+    /// The groups the profile windows show now (LLGroupMgr::addObserver /
+    /// removeObserver of each LLPanelGroup).
+    pub fn observe(&mut self, groups: HashSet<Uuid>) {
+        self.observed = groups;
+    }
+
+    #[cfg(test)]
+    pub fn observed(&self) -> &HashSet<Uuid> {
+        &self.observed
+    }
+
+    /// createGroupData, the least recently opened group that no window
+    /// shows dropped past MAX_CACHED_GROUPS (LLGroupMgr::addGroup: "remove
+    /// the oldest un-observed group"; with every group shown, none goes and
+    /// the cache grows past the limit).
     fn data(&mut self, group: Uuid) -> &mut GroupData {
         if !self.groups.contains_key(&group)
             && self.groups.len() >= MAX_CACHED_GROUPS
-            && let Some(oldest) = self.groups.iter().min_by_key(|(_, g)| g.accessed).map(|(id, _)| *id)
+            && let Some(oldest) = self
+                .groups
+                .iter()
+                .filter(|(id, _)| !self.observed.contains(id))
+                .min_by_key(|(_, g)| g.accessed)
+                .map(|(id, _)| *id)
         {
             self.groups.remove(&oldest);
         }
@@ -238,14 +297,16 @@ impl GroupMgr {
     }
 
     /// LLGroupMgr::sendCapGroupMembersRequest: a new request id marks the
-    /// list pending.
+    /// list pending, and the request waits its turn (`pump_members`).
     pub fn request_members(&mut self, group: Uuid) {
         let request = Uuid::new_v4();
         let g = self.data(group);
         g.members.clear();
         g.members_complete = false;
         g.member_request = Some(request);
-        self.out.push(NetCommand::GroupMembersRequest { group, request });
+        if !self.members_queue.contains(&group) {
+            self.members_queue.push_back(group);
+        }
     }
 
     /// sendGroupRoleDataRequest: not again while one is pending.
@@ -725,6 +786,11 @@ impl GroupMgr {
     pub fn on_event(&mut self, ev: &NetEvent) -> bool {
         match ev {
             NetEvent::GroupMembers(page) => self.on_members(page),
+            NetEvent::GroupMembersFailed { request } => {
+                if self.member_in_flight.is_some_and(|(r, _)| r == *request) {
+                    self.member_in_flight = None;
+                }
+            }
             NetEvent::GroupRoles(page) => self.on_roles(page),
             NetEvent::GroupRoleMembers(page) => self.on_role_members(page),
             NetEvent::GroupTitles { group, request, titles } => match self.groups.get_mut(group) {
@@ -761,6 +827,10 @@ impl GroupMgr {
 
     /// processGroupMembersReply / processCapGroupMembersResponse.
     fn on_members(&mut self, page: &MembersPage) {
+        // an answer, stale or not, frees the way for the next request
+        if self.member_in_flight.is_some_and(|(request, _)| request == page.request) {
+            self.member_in_flight = None;
+        }
         let Some(g) = self.groups.get_mut(&page.group).filter(|g| g.member_request == Some(page.request)) else {
             log::warn!("group members: stale group or request id");
             return;
@@ -904,8 +974,19 @@ mod tests {
     fn an_invitation_from_a_menu_asks_the_roles_and_members_again_without_titles_or_notices() {
         let mut mgr = GroupMgr::default();
         mgr.open(G, true);
-        mgr.take_commands();
+        let first = request_of(&mgr.take_commands(), |c| match c {
+            NetCommand::GroupMembersRequest { request, .. } => Some(*request),
+            _ => None,
+        });
         mgr.reload_for_invite(G);
+        // the first member list answers (stale now), freeing the way
+        mgr.on_event(&NetEvent::GroupMembers(Box::new(MembersPage {
+            group: G,
+            request: first,
+            total: 0,
+            members: Vec::new(),
+            whole: true,
+        })));
         let cmds = mgr.take_commands();
         assert!(
             cmds.iter()
@@ -1124,6 +1205,21 @@ mod tests {
         assert!(mgr.get(&Uuid::from_u128(1)).is_none(), "the oldest one went");
         assert!(mgr.get(&Uuid::from_u128(21)).is_some());
     }
+
+    #[test]
+    fn a_group_a_window_shows_is_kept_past_twenty() {
+        let mut mgr = GroupMgr::default();
+        mgr.observe([Uuid::from_u128(1)].into());
+        for i in 1..=21u128 {
+            mgr.open(Uuid::from_u128(i), false);
+        }
+        assert!(mgr.get(&Uuid::from_u128(1)).is_some(), "shown in a window");
+        assert!(mgr.get(&Uuid::from_u128(2)).is_none(), "the oldest one not shown went");
+        // every group shown: none goes, the cache grows
+        mgr.observe((1..=22u128).map(Uuid::from_u128).collect());
+        mgr.open(Uuid::from_u128(22), false);
+        assert_eq!(mgr.groups.len(), MAX_CACHED_GROUPS + 1);
+    }
     /// Answer what the manager asked: the members (owners marked), the
     /// "everyone" role, and the pairs once asked.
     fn answer(mgr: &mut GroupMgr, members: &[(u128, bool)]) -> Vec<NetCommand> {
@@ -1211,5 +1307,78 @@ mod tests {
         assert!(!cmds.iter().any(|c| matches!(c, NetCommand::GroupBans { .. })));
         assert!(!mgr.get(&G).is_some_and(GroupData::ban_pending));
         assert!(mgr.banned.is_empty());
+    }
+
+    /// #4964 review: a copy opens up to 10 windows in one frame; their
+    /// member lists are asked one at a time, as LLGroupMgr does.
+    #[test]
+    fn member_lists_are_asked_one_at_a_time() {
+        let mut mgr = GroupMgr::default();
+        let groups: Vec<Uuid> = (1..=3u128).map(Uuid::from_u128).collect();
+        for g in &groups {
+            mgr.open(*g, false);
+        }
+        let asked = |cmds: &[NetCommand]| -> Vec<(Uuid, Uuid)> {
+            cmds.iter()
+                .filter_map(|c| match c {
+                    NetCommand::GroupMembersRequest { group, request } => Some((*group, *request)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let first = asked(&mgr.take_commands());
+        assert_eq!(first.len(), 1, "one request out");
+        assert_eq!(first[0].0, groups[0]);
+        assert!(asked(&mgr.take_commands()).is_empty(), "the next waits for the answer");
+        mgr.on_event(&NetEvent::GroupMembers(Box::new(MembersPage {
+            group: groups[0],
+            request: first[0].1,
+            total: 0,
+            members: Vec::new(),
+            whole: true,
+        })));
+        let second = asked(&mgr.take_commands());
+        assert_eq!(second.iter().map(|a| a.0).collect::<Vec<_>>(), [groups[1]]);
+        // no answer: the next one goes after the time-out
+        mgr.pump_members(Instant::now() + MEMBER_REQUEST_TIMEOUT + Duration::from_secs(1));
+        let third = asked(&std::mem::take(&mut mgr.out));
+        assert_eq!(third.iter().map(|a| a.0).collect::<Vec<_>>(), [groups[2]]);
+        // a request that failed frees the way at once, not after the time-out
+        let third = third[0].1;
+        mgr.request_members(groups[0]);
+        mgr.on_event(&NetEvent::GroupMembersFailed { request: third });
+        assert_eq!(asked(&mgr.take_commands()).iter().map(|a| a.0).collect::<Vec<_>>(), [groups[0]]);
+        // a group forgotten while waiting is not asked
+        mgr.request_members(groups[0]);
+        mgr.clear(&groups[0]);
+        mgr.member_in_flight = None;
+        assert!(asked(&mgr.take_commands()).is_empty());
+    }
+
+    /// The failure event has to get through `World::apply`, which routes the
+    /// network events to the group data (#4964 review: it was dropped there,
+    /// so the queue waited the whole time-out).
+    #[test]
+    fn a_failed_member_request_frees_the_queue_through_the_world() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (a, b) = (Uuid::from_u128(0xA), Uuid::from_u128(0xB));
+        world.group_data.open(a, false);
+        world.group_data.open(b, false);
+        let asked = |cmds: Vec<NetCommand>| -> Vec<(Uuid, Uuid)> {
+            cmds.into_iter()
+                .filter_map(|c| match c {
+                    NetCommand::GroupMembersRequest { group, request } => Some((group, request)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let first = asked(world.group_data.take_commands());
+        assert_eq!(first.len(), 1, "one request out");
+        assert!(
+            world.apply(NetEvent::GroupMembersFailed { request: first[0].1 }).is_none(),
+            "kept by the world"
+        );
+        let second = asked(world.group_data.take_commands());
+        assert_eq!(second.iter().map(|r| r.0).collect::<Vec<_>>(), [b], "the next one goes at once");
     }
 }

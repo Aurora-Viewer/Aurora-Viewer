@@ -4595,19 +4595,31 @@ of priority 5/6 must retain control. These fixtures never connect to a grid.
 
 AO quick controls: `AURORA_DEMO_AO=quick` opens the compact panel above the
 bottom AO button with a complete swimming set. `quick-missing` and
-`quick-empty` show the disabled swimming gate and empty catalogue. Inspect
-English/French, the set selector (selection keeps the panel open), the
-previous / auto cycle / next buttons beside it, AO enable, mutually exclusive
-swimming/water walking and the manager button. Check Escape, click-away and repeated toolbar clicks.
+`quick-empty` show the disabled swimming gate and empty catalogue. The panel
+is a card: its title with the pin (opens the mini window; lit while it is
+shown, a click then closes it) and Settings, the set picker (the login set
+starred; picking a set keeps the panel open) beside the power button, what
+plays (live dot, state and place, the name, and on a timer "Switches every …"
+with the time left on a track), previous / cycle (its time in a word: Off,
+Auto or the seconds) / next, and the Override sits, Swimming and Walk on water
+tiles (Swimming dimmed with an amber triangle while required animations are
+missing; Swimming and Walk on water exclude each other). Inspect
+English/French/Japanese. Check Escape, click-away and repeated toolbar clicks.
 Existing movement preferences and the full manager must reflect the same
 choices. The other menus/commands still open the full manager directly.
 
 Mini AO window: `AURORA_DEMO_AO=mini` seeds the same complete swimming set
 with the Mini AO window open, as after a relog with it open, and closes the
-full manager at frame 360. Capture around frame 600. Check the "now playing"
-line, previous / next, the set list, Sits, Settings (the full AO window opens
-and the mini window stays open), and the AO popup's "Open mini AO window",
-hidden while the window is shown and expanding it when it is minimized.
+full manager at frame 360. Capture around frame 600. The mini window is a
+one-line strip without a title bar or close button, as tall as the toolbar
+dock and on the toolbar islands' glass (moved by its background). Check the
+"now playing" area (set, state and place, the animation's name; a click lists
+the sets, "Manage sets…" and "Close mini AO"; a right click shows AO settings
+and Close mini AO), then the icon buttons and their tooltips: AO on / off,
+previous / auto cycle / next, Override sits, Swimming (greyed out while
+required animations are missing), Water walk and Settings (the full AO window
+opens and the mini window stays open). The AO popup's pin is lit while the
+strip is shown; a strip left minimized by an older layout comes back whole.
 
 For #1394 on the grid, turn automatic cycling off, choose a non-first stand
 from the manager and then from the quick arrows, and check it after logout/login
@@ -4680,7 +4692,7 @@ Movement presentation validation (2026-10-19): final `scripts/check.ps1` green, 
 
 Passage / water-walk validation (2026-10-18): full `scripts/check.ps1` green, 3,573 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. Built the default dev viewer and inspected `.scratch/ao-passage-layout-fr.png`, `ao-passage-layout-rebound-fr.png` and `ao-passage-layout-small-en.png`, compared with `ao-passage-layout-before-fr.png`. Both switches align beneath the run/flight boosts, concise passage text fits its column, default/rebound hints remain current, and swimming controls remain accessible at both viewport sizes. Last-five before/after FR medians: 60 FPS, UI 0.72/0.69 ms and GPU 2.04/2.09 ms; shared desktop load varies, so these are regression observations. Owned logs contain zero errors/panics and only the same synthetic missing-outfit warning. Human acceptance remains required before PR.
 
-Other existing AO modes: interface, interface-group, interface-track, interface-combine, interface-swim, interface-swim-missing, folder-names, folder-names-wait, 1, transitions, off, movement, movement-rebound, swim, swim-missing, firestorm, firestorm-wait, migrate, migrate-done, migrate-swim, migrate-alchemy, migrate-alchemy-done, empty, unavailable, design-current, design-tabs, design-movement, design-section, design-swim.
+Other existing AO modes: interface, interface-group, interface-track, interface-combine, interface-sets, interface-essentials, interface-swim, interface-swim-missing, folder-names, folder-names-wait, 1, transitions, off, movement, movement-rebound, swim, swim-missing, firestorm, firestorm-wait, migrate, migrate-done, migrate-swim, migrate-alchemy, migrate-alchemy-done, empty, unavailable.
 
 
 - **`AURORA_DEMO_PELVIS_CONSTRAINT=1`**: the plaza's avatars that play the
@@ -4736,7 +4748,7 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   jump, only its pace changes, for the avatars and `AURORA_DEMO_ANIMESH=1`
   animesh alike. Slow Motion Animations slows only our avatar (0.2), the
   others keep the global speed. Nothing is saved: a restart is back at 1.0.
-- **`AURORA_DEMO_AO=interface|interface-group|interface-track|interface-combine|interface-swim|interface-swim-missing`**: approved native AO interface. `interface` has six synthetic standing entries; `interface-group` opens a simultaneous group, `interface-track` an independent cycle, `interface-combine` its guided creation dialog, and `interface-swim` one selected swimming slot with all eight resolved. `interface-swim-missing` removes Floating from that fixture: its state row must show an amber warning triangle, assigned required states a green check, and optional states no marker. The detail pane, compact AO panel and Movement gate share the triangle and missing-animation message; tooltips distinguish missing and assigned required states. No optional-slot counter remains. Test FR/EN, state navigation, single-click selection, row drag insertion/reload, creation from checked main entries, group-member add/remove/order, track cycle isolation, rename and dissociation. Inventory operations use the normal mutation/acknowledgement path against the offline simulator. Examples never seed a user's inventory; all shared theme/font/widget files remain unchanged.
+- **`AURORA_DEMO_AO=interface|interface-group|interface-track|interface-combine|interface-sets|interface-essentials|interface-swim|interface-swim-missing`**: the AO window, one page per group. `interface` opens General with Standing open (six synthetic standing entries); `interface-group` unfolds a group that plays together, `interface-track` opens a layer tab, `interface-combine` the guided dialog, `interface-sets` the "Your sets" panel, `interface-essentials` the six Essentials slots, and `interface-swim` the Swimming page with all eight required slots resolved. `interface-swim-missing` removes Floating: its slot shows the amber warning triangle, assigned slots a green check, empty optional slots a dashed circle, and the page the missing-animation message. Check EN/FR/JA, the set card and its panel (a click on a set opens it to edit, "Use this set" puts it in use and "Active" marks the set in use; sets dragged into a new order keep it; rename in place, duplicate, load at login, delete with its confirmation, the open set's sit and mouselook options, the New set and Import tiles, migration and reload), groups and their counts, slots folded until opened and each group keeping its open slot, drops from the inventory onto any slot, the take-turns card (the track of stops from Auto to 2 min, seconds, the time left on the knob while the slot plays, order menu), row drag reordering (the dropped row stays in place while it is saved; a move during a save waits its turn), together stacks (made from an entry's menu, add, rename, split, remove), layers (the + Layer tab, rename, move, dissolve, remove), Up / Down between slots, and the preview column: our outfit on the Inspect window's 3D stage, posed by a hidden copy of our avatar playing the previewed entry with its layers over our own face, tail and deformer animations (the slot's stock animation while empty), framed upright and held still, turned by a drag; its left edge resizes it; "Updating inventory…" then "Set saved" show beside the entry's name; the world must show no second avatar, shadow, light or name tag. A window saved at the old one-column size opens once at the three-column size. Inventory operations use the normal mutation/acknowledgement path against the offline simulator. Examples never seed a user's inventory.
 - **`AURORA_DEMO_AO=unavailable`**: seeds a native AO, then at frame 360 applies the same in-place rename OpenSim sends on a Hypergrid teleport (`#Aurora` becomes `#Aurora (Unavailable)`, version −1). The AO window must still list its set. Inventory opens beside it on that renamed folder. Offline only; a reload while the folder is renamed finds no sets. The Legacy Viewer would make a second `#Firestorm` and `#AO` there; Aurora deliberately makes no twin `#Aurora`.
 - **`AURORA_DEMO_AO=folder-names`**: seeds an existing native AO (including all eight swimming slots) and an empty bridge directory under their previous `AO` / `Bridge` names. The real acknowledged startup edits must rename both to `#Aurora/Aurora AO` and `#Aurora/Aurora Bridge`; the AO selection and links remain unchanged. Opens the real inventory beside the AO after frame 360 with both sibling folders visible; capture at 1050 after bridge provisioning. Regression tests additionally cover an already worn current bridge retaining its folder/item/object identity and valid handshake without another copy/upload/detach, new-name precedence, pending/failed acknowledgements, an authoritative empty old AO and old interrupted-import protection. Human grid validation: confirm the two existing folders are renamed on login, the selected set and animations still work, and a second login creates no duplicate folder or legacy AO import.
 - **`AURORA_DEMO_AO=folder-names-wait`**: uses the same cached old native folders but withholds both inventory services until frame 720. Capture at 450: `AO` and `Bridge` are unchanged, the selected set still works and no metadata edit is sent. Capture at 1200: both folders have their new names and the bridge reaches Ready after its five-second inventory save. The factory must wait beyond its normal timeout if services are delayed, rename an already worn controller without replacing its identities, and still time out a request that was actually sent. The readiness gate is shared with AO startup; running/ready bridge commands continue independently of inventory availability. Offline only.
@@ -4752,7 +4764,6 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   In `interface-group` / `interface-track`, return to the state list and check the two-line group / track summary.
   With `interface` and `AURORA_TEXT_SIZE=2`, scroll the details to the bottom: Apply must remain fully visible.
 - **`AURORA_DEMO_AO=movement|movement-rebound|swim`**: test the actual integrated AO window. `movement` opens its persistent Movement (EXPERIMENTAL) tab, with a matching experimental heading and menu/toolbar/keybinding labels; `swim` opens the selected generic swimming list with synthetic contributed inventory links and expands only this owned offline window so the lists and cycle controls can be inspected; normal users retain their saved window size and scrolling. `swim-missing` opens Movement with one slot absent: swimming must remain unavailable with the shared warning triangle and missing-animation message. Confirm independent run/flight/swim/passage toggles, run and flight multipliers starting at x1, the active toolbar indicator, swim-state navigation, AO enable/pause, and animation choice/cycles. Ctrl+Alt+M and the movement toolbar open this same manager. Passage uses Ctrl plus the current jump keys (default E / Page Up); it requires its own switch, leaves text/media focus alone, and yields to explicit shortcut conflicts. Rebind Jump and confirm the displayed chord follows. Disable passage during its pulse to cancel it. In a normal human-driven grid session, assign all eight swimming slots in the selected set, enable swimming and verify another viewer sees the matching idle, movement, cushioned-entry and separate flight/shore exit animations. Ordinary AO disable/pause must not stop active swimming animations. Removing a slot or selecting an incomplete set must stop swimming; a different complete set cannot unlock that selection. No import-pack button or automatic fill/upload prompt may appear. Capture around frame 850.
-- **`AURORA_DEMO_AO=design-current|design-tabs|design-movement|design-section|design-swim`**: a native interactive layout study. The Current view reuses the existing AO body unchanged; the side workbench switches to Animations/Movement tabs or a collapsible section. Ctrl+Alt+M and the movement toolbar button open the prototype Movement tab and reopen its workbench; the separate movement floater stays hidden in this design scenario. Movement switches/sliders are temporary preview values and do not control motors or write account movement preferences. `design-swim` opens the AO swimming list and its matching avatar preview. The workbench selects simulated avatar animation states; swimming selection uses the actual AO state lists, including the eight separate swimming contexts in the synthetic inventory. Check AO activation/pause, state selection, animation double-click/cycles, independent motor switches and reset, and returning from movement controls to swimming animation selection. All inventory changes stay in the offline demo. Capture each layout around frame 850; keep the existing dimensions, palette, fonts and widgets for comparison.
 - **`AURORA_DEMO_ANIMESH=1|churn|alpha|alpha-cycle|points|far`**: animated root mesh, linked mesh flagged
   by a child and worn animesh, with independent skeletons of their own and
   alpha shadows. `churn`: the animesh on the ground (orange) also changes its
@@ -6655,6 +6666,10 @@ append `-edit` for its edit controls or use `chat-drawer-left|chat-drawer-top` f
 an open drawer. Check the draft, Enter/Escape, multiline growth, emoji picker and
 width handle in both bar styles. The first bottom chat block must stay inside the
 same bar and edit region as later blocks, with the same glass and block controls.
+With `AURORA_DEMO_RECENT_EMOJIS=1`, the chat block's island alone stands out of its
+bar's row: over the dock's with `chat-bottom` (the row over the field), under the
+top bar's with `chat-top` (the row under the field, the arrow turned the other way).
+The bar, its other islands and the side bars keep their place and their height.
 
 `AURORA_DEMO_TOOLBAR=chrome|appearance|menu-layout|address|top-drag` exercises the shared
 main-menu catalogue and all four edges without changing saved toolbar settings.
@@ -7102,6 +7117,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_DRIVER=old\|old-linux\|aged` | Out of date graphics driver warning on the login screen |
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
+| `AURORA_DEMO_GPU_LOST_UPLOAD=<frame>` | The GPU device is lost right before that frame's interface upload, after the frame's own checks |
 | `AURORA_DEMO_GPU_RESTART_FAIL=1` | After a GPU loss, the first start of the new renderer fails as on a card lost again while it starts |
 | `AURORA_DEMO_GPU_DROP_FAIL=1` | After a GPU loss, dropping the lost renderer meets wgpu's queue panic on its last wait |
 | `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
@@ -7114,6 +7130,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
 | `AURORA_UPDATE_TEST_SLOW_START=<seconds>[,stuck]` | The updated viewer of this test starts slowly, moving on or stuck |
+| `AURORA_PACKAGED=1` | A distribution package's launcher: its package manager installs the updates |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent (no effect while the form is disabled) |
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini`, `mini,names` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `switch`, `show-on-map`, `show-link`, `minimized`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, layout switched with the map open, Show on map, a minimized map expanded by Show on map, coordinate entry and clickable 3D beacon |
@@ -7225,8 +7242,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links][:classic][:wide]` | Group profile window, as a member, officer, owner or guest, in either look |
-| `AURORA_DEMO_GROUPS=many` | More than 50 group memberships for the Conversations group picker |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links][:classic][:wide][:second]` | Group profile window, as a member, officer, owner or guest, in either look; `:second` adds another group's window (Northern Wolves) |
+| `AURORA_DEMO_GROUPS=many\|150` | More than 50 group memberships for the Conversations group picker; `150` fills the list to the grid's most, for copying a notice to many groups |
 | `AURORA_DEMO_ACTIVE_GROUP=none` | Starts the demo session with no active group (active group nil) |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
 | `AURORA_DEMO_GROUP_REGION=1\|still` | Group titles window with region rules; one role of Aurora Builders has a blank title, listed as "<Blank title>"; `1` teleports to a region with its own title and back |
@@ -9828,11 +9845,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the files built into the viewer. The demo and the update test
   installation never download the news, even with this
   variable.
-- **`AURORA_DEMO_UPDATE=1|progress|ready|ignored|beta|grace`**, with `AURORA_DEMO=1`: offer
+- **`AURORA_DEMO_UPDATE=1|progress|ready|ignored|beta|grace|protected|packaged`**, with `AURORA_DEMO=1`: offer
   of a synthetic version, download at 42% or download finished; `beta`
   offers a nightly beta (`0.7.7-beta.20261025.1`), as a viewer on the Beta
   channel sees it; `grace` is the offer below a new minimum version during
   its grace period (12 h left): "Sign in anyway" and "Update", no "Skip".
+  `protected` is the offer on an installation that cannot replace itself
+  (a folder this account cannot write, a sandbox): the reason in red and
+  "Open the release page" instead of "Update" (here it only closes the
+  window); `packaged` is the one of a package manager's installation
+  (`AURORA_PACKAGED`): "update through your package manager", "Skip this
+  version" and "Later" only.
   "Update" animates a simulated progress; "Cancel" goes back to the
   offer. No download and no file replacement. Login
   is inert and the login preferences stay intact.
@@ -9842,6 +9865,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   In a small window, the button stays reachable at the top right.
   `AURORA_DEMO_UPDATE_MAINTENANCE=cache|settings|both` shows the forced effects;
   when absent, the dialog announces the usual preservation and migrations.
+- **`AURORA_PACKAGED=1`**: set by a distribution package's launcher, whose
+  package manager installs Aurora's updates (`docs/LINUX.md`, *Updates*).
+  The viewer still checks at launch: a release it needs to sign in opens
+  the update window, which says to update through the package manager,
+  with no "Update" and no link to the download. No other release opens the
+  window or a notice, no periodic check runs (changing the channel checks
+  once), the Automatic mode downloads
+  nothing, and Preferences › Language and updates shows a note instead of
+  the update mode and interval (the channel stays). A manual "Check for updates" still shows what is
+  out. `0` or an empty value is the same as unset. To try it on a real
+  release check, run `scripts/test-update-linux.py --packaged`.
 - **`AURORA_DEMO_UPDATE_NOTICE=1|ready`**, with `AURORA_DEMO=1`: the notice a
   periodic update check shows in the world (made-up version 9.9.9), at frame
   700; `ready` is the one of a version already downloaded (Automatic mode).
@@ -9934,6 +9968,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   session log` in demo), `OS GPU reset records` and `Vulkan layers
   installed`: read it in the session's
   `public-report.md` under the crash folder of `%LOCALAPPDATA%\Aurora`.
+- **`AURORA_DEMO_GPU_LOST_UPLOAD=<frame>`**, with `AURORA_DEMO=1`: at that
+  frame, once in the run, the world frame loses its device inside its
+  interface upload, after every check of the frame, right before
+  egui-wgpu's `update_buffers` (the device destroyed and marked lost): the
+  loss its checks cannot see (#3844, #5091). The log says
+  `AURORA_DEMO_GPU_LOST_UPLOAD at frame …`, then `GPU device lost while the
+  interface was uploaded: this frame goes without it` (the upload's panic
+  taken as the loss, `device_lost::ui_upload_guarded`), and the recovery
+  replaces the window as with `AURORA_DEMO_GPU_LOST`; no crash window, and
+  the session's `panic.txt` stays empty. Before the guard, egui-wgpu's
+  "Failed to create staging buffer…" panic ended the render thread.
 - **`AURORA_DEMO_GPU_HANG=<frame>`**, with `AURORA_DEMO=1`: a real GPU hang
   at that frame, for testing the recovery on a real driver reset. One
   compute dispatch whose loop runs about 12 s on a recent card (the log says
@@ -10566,6 +10611,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and out; add `AURORA_DEMO_SOUND=1` to hear the sounds. `friends` and `groups`: these tabs.
   `profile`: the Groups tab and the "Group Profile" window of the first
   group.
+- **`AURORA_DEMO_PEOPLE=recent`** includes an interaction 2,332 hours ago. In English its row shows “3 months ago”. Hover the row to see the original calendar date, clock time and zone. Combine with `AURORA_DEMO_BARS=clockslt,clock24` or `clocklocal,clock12` and hover the old row to compare its timestamp in the selected zone and hour format.
+- **`AURORA_DEMO_PEOPLE=recent-save|recent-restore`**: run with the same task title. `recent-save` seeds four recent residents and a private tab, enabling persistence only for the demo account's `social/demo-recent-people` profile. Wait at least two seconds after the list appears, then quit or terminate that viewer process. `recent-restore` does not seed those entries: they return with their original activity times. Both modes force tab reopening for the scenario only. Compare the ordinary `recent` scenario and `AURORA_DEMO_CHATLOG=restore` (private/group tabs), then `service` (the shared Chat Service client).
+- **Recent persistence regressions**: `cargo test --workspace social_history` covers scheduled saves, 600 updates from one resident over 9.6 simulated seconds producing one checkpoint, followed by a 30-second activity checkpoint and an exit flush, restart/killed process, open/closed tabs, disabled reopening, account/grid isolation, early activity, and unreadable files. `AURORA_SOCIAL_TEST_CHILD` is an internal child-test variable only. `cargo test --workspace recent_` covers retention, bounded metadata, and the shared list's gating/merging. Existing Chat Service tests retain its pacing, cooldown and epoch checks. On a real grid, a human must test restart and forced exit with nearby/IM contacts; reopen enabled and disabled; Aditi using the same account; disabled Chat Service or transcripts producing no list request; and one shared list request with the service enabled. The normal hourly and activity-triggered refreshes still belong to the manager.
+
 - **`AURORA_DEMO_PEOPLE=sets[:width]`** and its scenes: People › Contact sets with three demo sets, each with a badge and a look (Family tinted and bordered, Clubbing tinted, Shop bordered), so that their tiles show the cases; Nova sits in two sets (her chips). From 470 points wide the sets have a column (try `sets:560`), narrower (`sets:380`) or beside a sheet they are a picker above the members. `sets-select` chooses two members (the selection bar); `sets-editor` opens Family's editor on Look, `sets-editor-badges` with the badge grid unfolded, `sets-editor-marker` scrolled to the marker's choices, `sets-editor-thin` in a window 560 wide (narrower than 700 the preview is a strip on top), `sets-editor-behaviour`, `sets-editor-replies` and `sets-editor-members` on those tabs; `sets-sort` opens Quick sort on the friends in no set; `sets-options` the options shared by every set. What to look for: the tiles follow each set's Nameplate background (tint) and Nameplate border switches; dragging a set in the column carries its card under the pointer while the others slide out of the way, and releasing it reorders the priority; the preview follows every switch at once, and the marker's preview shows while the marker is on.
 - **`AURORA_DEMO_RADAR_MARKS=1|legacy`**: radar marks, with
   `AURORA_DEMO_CROWD=<n>` (20 is enough). The first six residents of the
@@ -10838,7 +10887,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `other-grid` the warning of a grid whose folders cannot be told apart. The
   four lists are in memory during the run; no transcript is written or
   removed.
-- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service[:skew|self]|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service[:skew|self]|restore[:slow]|import[:run|again|login|same|none]|shared[:on[:log]]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
   `config\demo\accounts\<demo account uuid>\chat_logs\demo\`, never in
@@ -10909,21 +10958,29 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     image, before any join/history request; their ordinary group history
     and participants arrive only after the reply. Closing or snoozing a
     displayed group before frame 1100 must prevent its automatic rejoin.
-  - `shared`: the Legacy layout (Preferences › Chat, "Share the Legacy
-    Viewer's folder"). A synthetic Legacy Viewer folder,
+  - `shared`: sharing the Legacy Viewer's folder (Preferences › Chat ›
+    History). A synthetic Legacy Viewer folder,
     `chat_logs\demo-legacy-viewer\<first_last>.demo\`, rewritten at each
     launch, holds Nova's conversation three days ago and a
-    `conversation.log` of its own; it is chosen as the transcripts folder
-    for this run only (never saved in the demo's settings). Preferences ›
-    Chat opens on History. Turn the option on: the folder shown becomes
-    `…\demo-legacy-viewer\<first_last>.demo`, Erase and Import are
-    greyed, and the next message from Nova is added to the end of the
-    Legacy Viewer's `Nova Example.txt` (its four lines left as written,
-    `conversation.log` untouched). Off again: back to the Aurora layout,
-    nothing moved. `shared:on`: the option on from the start, Nova's
-    conversation showing the Legacy Viewer's four lines in grey, then the
-    new message. The option is saved like any setting; without a chosen
-    folder it does nothing.
+    `conversation.log` of its own (entries for Nova and Tess); it is
+    picked as the transcripts folder for this run only (never saved in
+    the demo's settings). Preferences › Chat opens on History with the
+    question under Account folder: "Existing chat log found in
+    <first_last>.demo (2 files) — share it with the Legacy Viewer?", a
+    violet Share button and a plain Cancel one. Cancel: the notice goes,
+    the folder stays Aurora's own and nothing is moved or shared. Share:
+    the folder shown becomes `…\demo-legacy-viewer\<first_last>.demo`
+    with "Sharing <first_last>.demo with the Legacy Viewer" and the
+    append-only rule under it, Erase, Import and "Clear conversation
+    log…" are greyed, and the next message from Nova is added to the end
+    of the Legacy Viewer's `Nova Example.txt` (its four lines left as
+    written, `conversation.log` untouched). "Default folder" stops
+    sharing, nothing moved. `shared:on`: Share answered from the start,
+    Nova's conversation showing the Legacy Viewer's four lines in grey,
+    then the new message. `shared:on:log` also opens Communicate ›
+    Conversation log…, which lists the Legacy Viewer's entries (Nova,
+    Tess) read from its `conversation.log`; the entries of this session
+    are listed until the logout and never written there.
   - `im`: a conversation with Nova whose file contains two past
     days. What to see: these lines in grey, with their senders' profile
     pictures dimmed (this scenario gives Nova and us one), with a date
@@ -11201,7 +11258,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   opens the classic window (the Legacy Viewer's eight tabs) on the tab of
   the section asked (`terrain`: Terrain, `scripts` or `interventions`:
   Debug, `people`: Access, none: Region).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links][:classic][:wide]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links][:classic][:wide][:second]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -11280,6 +11337,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (`member:members:classic`) keeps the read-only list and has no
   Administration section; an officer (`officer:admin:classic`) sees only
   the parts their abilities allow.
+  `:second` then opens the profile of another group (Northern Wolves,
+  where we get the same abilities as in Aurora Builders; Aurora Builders
+  for `guest`) in a window of its own, stacked 32 px below and to the
+  right of the first one (smaller when the room is short), which stays
+  open with its tab and draft (one window per group, like the Legacy
+  Viewer's standalone group floaters). With `officer:compose:second`,
+  write a notice in Aurora Builders, open Notices › New notice in Northern
+  Wolves: it starts empty, Aurora Builders still holds its draft, and each
+  Send logs `demo group: notice sent to <its group's id>`. Clicking the
+  first group's name again raises its window as it was.
+  "Copy to other groups" in a draft lists the other group (ticked rows
+  stay ticked while the menu is open); "Copy to 1 group" opens or raises
+  that group's window on a new notice with the same subject, message and
+  attachment, and the log says `group notice draft copied to 1 group(s)`.
+  A group already writing a notice is listed as "(replaces the notice
+  being written)".
   Check the header against the mockup (banner,
   insignia, badges, tabs), the switches of "Me in this group" (the active
   group follows in the top bar, the title in the Title shown list), the
@@ -11291,6 +11364,20 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `RequestGroups` response adds 64 named memberships (67 total). Combine it
   with `AURORA_DEMO_CONV=aurora:new`, then open Start group in the Conversations
   column to inspect the scrollable picker and reach the last entry.
+  `AURORA_DEMO_GROUPS=150` fills the list to 150 groups, the grid's most
+  ("Demo group 001"…); two in three get our abilities of Aurora Builders
+  (every one but each third), so with
+  `AURORA_DEMO_GROUP_PROFILE=officer:compose` the draft's "Copy" menu lists
+  about 100 groups with its search, ticks 10 at most ("Up to 10 groups at
+  a time"), and a second copy reaches 10 more; each Send logs
+  `demo group: notice sent to <its id>`. These groups have no members or
+  roles in the demo.
+  The groups pinned in People (or a group's right-click menu) are listed
+  first under "Pinned", and "Tick the pinned groups" ticks them, 10 at
+  most, leaving the menu open for the copy. After a copy, the same entry,
+  from the window the notice was written in or any window the copy
+  opened, ticks the next pinned groups, and the groups already copied to
+  say "(copied)". "Clear selection" unticks every group.
 - **`AURORA_DEMO_WEARABLE_FAVORITES=1|evening|recent|custom|create|import|import-done`**: the
   Favorite Wearables window (the toolbar's Favorite wearables command, Me ›
   Favorite wearables) opens at frame 300 on the outfit of the Appearance demo (seeded

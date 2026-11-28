@@ -68,8 +68,9 @@ pub use tracks::{
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
-    FORM_LABEL_W, FORM_SLIDER_W, Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark,
-    form_row, glyph, navigation, navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
+    FORM_LABEL_W, FORM_SLIDER_W, Modal, ModalGround, NoticeKind, caret_room, collapsing, collapsing_forced, disclosure_caret,
+    experimental_mark, form_row, glyph, navigation, navigation_beside, navigation_wrapped, notice, paint_glyph, section_header, sort_caret,
+    stat, surface,
 };
 pub(crate) use workspace::{
     INVENTORY_LABEL_PADDING, finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
@@ -771,6 +772,9 @@ pub struct Floater<'a> {
     /// A state at the right end of the title bar, before its buttons: a
     /// dot of its colour and its text in muted.
     pub title_state: Option<(Color32, String)>,
+    /// A switch at the right end of the title bar, before its buttons, with
+    /// its label (the AO window's AO on / off).
+    pub title_switch: Option<(&'a str, &'a mut bool)>,
     pub default_pos: egui::Pos2,
     pub default_size: Vec2,
     pub min_size: Vec2,
@@ -818,6 +822,9 @@ pub struct Floater<'a> {
     /// No title bar: its close cross in a small box against its right edge
     /// (see `headless`).
     pub headless: bool,
+    /// Its glass tinted as the toolbars' (`Palette::bar`) instead of the
+    /// windows' (the mini AO strip, laid over the world like a bar).
+    pub bar_glass: bool,
     /// Its body's margins in place of the floater's own (`margin`).
     pub margin: Option<egui::Margin>,
     /// A window without a title bar shows no close cross, and Ctrl+W passes
@@ -844,6 +851,7 @@ impl<'a> Floater<'a> {
             title_note: None,
             title_note_tooltip: None,
             title_state: None,
+            title_switch: None,
             default_pos: pos,
             default_size: size,
             min_size: Vec2::new(220.0, 120.0),
@@ -864,6 +872,7 @@ impl<'a> Floater<'a> {
             aspect: None,
             order: egui::Order::Middle,
             headless: false,
+            bar_glass: false,
             margin: None,
             closable: true,
             cascade: None,
@@ -911,6 +920,12 @@ impl<'a> Floater<'a> {
     /// Details shown when hovering the muted text after the title.
     pub fn title_note_tooltip(mut self, tooltip: impl Into<String>) -> Self {
         self.title_note_tooltip = Some(tooltip.into());
+        self
+    }
+
+    /// A switch with its label before the title buttons (see `title_switch`).
+    pub fn title_switch(mut self, label: &'a str, on: &'a mut bool) -> Self {
+        self.title_switch = Some((label, on));
         self
     }
 
@@ -1015,6 +1030,12 @@ impl<'a> Floater<'a> {
         self
     }
 
+    /// The toolbars' glass (`bar_glass`).
+    pub fn bar_glass(mut self) -> Self {
+        self.bar_glass = true;
+        self
+    }
+
     /// Its body's margins, in place of the floater's own: a small window
     /// without a title bar laid out to the pixel (the Classic style's small
     /// camera window).
@@ -1116,16 +1137,37 @@ impl<'a> Floater<'a> {
         if !self.silent {
             super::sound_cues::floater_shown(ctx, egui::Id::unique(self.id));
         }
-        let opacity = super::surface_opacity::window(ctx, self.id, self.chat);
+        // (one dressed as a bar fades as the bars do, not as a window)
+        let opacity = if self.bar_glass {
+            super::surface_opacity::bars()
+        } else {
+            super::surface_opacity::window(ctx, self.id, self.chat)
+        };
         let shadow = ctx.global_style().visuals.window_shadow;
+        // (the toolbar islands' glass for one laid over the world like a bar)
+        let glass_palette = if self.bar_glass {
+            Palette {
+                panel: p.bar,
+                panel_alpha: workspace::island_alpha(p),
+                ..*p
+            }
+        } else {
+            *p
+        };
+        let tint = glass_palette.panel;
         let fill = super::surface_opacity::frame_fill(
-            p,
-            Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
+            &glass_palette,
+            Color32::from_rgba_unmultiplied(tint.r(), tint.g(), tint.b(), glass_palette.panel_alpha),
             opacity,
         );
+        let border = if self.bar_glass {
+            workspace::island_border(p)
+        } else {
+            border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6)))
+        };
         let frame = egui::Frame::new()
             .fill(fill)
-            .stroke(border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6))))
+            .stroke(border)
             .corner_radius(ctx.global_style().visuals.window_corner_radius)
             .shadow(egui::Shadow {
                 color: shadow.color.gamma_multiply(opacity),
@@ -1199,9 +1241,16 @@ impl<'a> Floater<'a> {
             super::layout::reanchor(ctx, window_id);
             ctx.data_mut(|d| d.insert_temp(window_id.with(PLACE_POS), self.default_pos));
         }
-        let opening = self
-            .cascade
-            .and_then(|group| cascade::prepare(ctx, window_id, group, egui::Rect::from_min_size(self.default_pos, expanded), work));
+        let opening = self.cascade.and_then(|group| {
+            cascade::prepare(
+                ctx,
+                window_id,
+                group,
+                egui::Rect::from_min_size(self.default_pos, expanded),
+                work,
+                self.min_size,
+            )
+        });
         // A window as tall as its content (fixed, or of automatic height)
         // whose content is taller than the room scrolls it, from the frame
         // after the one that showed it too tall, and for as long as it is.
@@ -1269,7 +1318,9 @@ impl<'a> Floater<'a> {
                 if self.framed_header.is_some() { 40.0 } else { 38.0 },
             ));
         } else if let Some(size) = opening.as_ref().and_then(|o| o.size).filter(|_| !self.auto_height) {
-            w = w.fixed_size(size);
+            // a stacked window made smaller to keep its step
+            // (`cascade::Group::keeps_step`) stops at its least size
+            w = w.fixed_size(size.max(self.min_size));
         } else if restore && !self.auto_height {
             w = w.fixed_size(expanded.min(work.size()));
         } else if let Some(size) = shrink {
@@ -1464,6 +1515,11 @@ impl<'a> Floater<'a> {
                             if response.clicked() {
                                 reset_one = true;
                             }
+                        }
+                        if let Some((label, on)) = &mut self.title_switch {
+                            ui.add_space(4.0);
+                            switch(ui, p, on).on_hover_text(*label);
+                            ui.label(RichText::new(*label).size(12.0).color(p.ink));
                         }
                         if let Some((dot, text)) = &self.title_state {
                             ui.add_space(4.0);
@@ -1663,7 +1719,7 @@ impl<'a> Floater<'a> {
                     &painter.with_clip_rect(response.response.rect),
                     slot,
                     response.response.rect,
-                    p,
+                    &glass_palette,
                     radius,
                     opacity,
                 );
@@ -1936,6 +1992,11 @@ impl<'a> Floater<'a> {
                             .clicked()
                         {
                             reset_one = true;
+                        }
+                        if let Some((label, on)) = &mut self.title_switch {
+                            ui.add_space(4.0);
+                            switch(ui, p, on).on_hover_text(*label);
+                            ui.label(RichText::new(*label).size(12.0).color(p.ink));
                         }
                         if let Some((dot, text)) = &self.title_state {
                             ui.add_space(4.0);
@@ -2810,6 +2871,13 @@ pub fn take_floater_resize(ctx: &egui::Context, id: &str) -> Option<Vec2> {
 pub fn minimize_floater(ctx: &egui::Context, id: &str) {
     ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((id, "minimized")), true));
     cascade::minimized(ctx, egui::Id::unique(id), true);
+}
+
+/// Undoes `minimize_floater` at once, for a window without a title bar that
+/// an older layout left minimized (the mini AO strip).
+pub fn unminimize_floater(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((id, "minimized")), false));
+    cascade::minimized(ctx, egui::Id::unique(id), false);
 }
 
 /// The accent that says something waits behind `rect`: a violet wash of

@@ -729,6 +729,13 @@ impl Editor {
                 if self.axis_sliders(ui, p, &mut value, base_point, &rig.canonical_names[bone]) {
                     self.apply_joint_value(rig, frame, bone, value);
                 }
+                // the full window's Position switch: the joint alone, or its
+                // chain bending to follow (FSFloaterPoser's position mode)
+                if self.poser.transform == 1 {
+                    ui.add_space(4.0);
+                    widgets::switch_labeled(ui, p, &mut self.poser.move_joint_only, aurora_i18n::tr!("poser-move-joint-only"))
+                        .on_hover_text(aurora_i18n::text("poser-move-joint-only-hint"));
+                }
             });
     }
 

@@ -556,7 +556,7 @@ fn list_part(
                         AvatarList::Nearby,
                     );
                 }
-                super::rows::contact_tip(resp, tip.as_deref());
+                super::rows::contact_tip(resp, tip.as_deref(), || None);
             }
         });
 }

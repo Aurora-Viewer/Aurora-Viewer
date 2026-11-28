@@ -22,7 +22,7 @@ use super::chat_log::format;
 use super::chat_log::service::csv::ArchiveScan;
 use super::chat_log::service::merge::{History, Messages, replace_history};
 use super::chat_log::service::message::{HistoryMessage, LiveContext, capture_live_message, incoming_context, record_live_message};
-use super::chat_service::stitch::{self, PREVIEW_LIMIT, ReadResult, SESSION_LIMIT};
+use super::chat_service::stitch::{self, PREVIEW_LIMIT, ReadResult, SESSION_LIMIT, TranscriptFamily};
 use super::chat_service::storage::{self, Storage};
 use super::chat_service::{Action, Context, Env, Gates, Manager, PreparedArchive, StateLoad};
 use super::names::{AvatarName, AvatarNames, NameScope};
@@ -80,6 +80,11 @@ pub struct DirectView {
     service_allowed: bool,
     /// The transcript stem the plaintext is read from, once known.
     stem: Option<String>,
+    /// The History window's stem while the resident is not named: the one
+    /// its transcript source was resolved with.
+    fallback_stem: Option<String>,
+    /// The resolved transcript folder and naming inputs used for the last read.
+    family: Option<TranscriptFamily>,
     /// The live lines' captures, oldest first.
     captures: Vec<Capture>,
     /// The last history placed, to place it once.
@@ -131,6 +136,8 @@ pub struct ChatService {
     delete_done: Option<bool>,
     /// Transcript files the last delete removed.
     swept: Arc<std::sync::atomic::AtomicUsize>,
+    /// The last folder placement version seen from `ChatLog`.
+    place_version: u64,
     /// A delete closed the History window (invalidateHistory).
     pub close_preview: bool,
 }
@@ -164,6 +171,13 @@ fn grid_now() -> u32 {
 fn unix_secs(t: SystemTime) -> u32 {
     t.duration_since(UNIX_EPOCH)
         .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX))
+}
+
+/// The History window's stem: the resident's (`World::direct_stem`), else
+/// the fallback it was opened with, so a resident the name cache does not
+/// know yet still has its plaintext read.
+fn preview_stem(stem: Option<String>, fallback: Option<&str>) -> Option<String> {
+    stem.or_else(|| fallback.map(str::to_owned))
 }
 
 impl ChatService {
@@ -233,6 +247,7 @@ impl World {
     /// Start with the files in `dir` (the tests' folder).
     pub(super) fn chat_service_start_in(&mut self, dir: std::path::PathBuf) {
         let agent = self.agent_id;
+        let place_version = self.chat_log.place_version();
         let cs = &mut self.chat_service;
         if cs.fresh_folder {
             // the demo account's own folder, before any job reads it
@@ -243,6 +258,7 @@ impl World {
         cs.preview = None;
         cs.names.clear();
         cs.context = None;
+        cs.place_version = place_version;
         cs.manager.start(agent, cs.enabled);
         cs.dirty = true;
     }
@@ -322,7 +338,21 @@ impl World {
         // sessions that closed take their view along
         let open: HashSet<Uuid> = self.social.ims.iter().map(|s| s.other).collect();
         self.chat_service.views.retain(|id, _| open.contains(id));
+        let place_version = self.chat_log.place_version();
+        if self.chat_service.place_version != place_version {
+            self.chat_service.place_version = place_version;
+            let ids: Vec<Uuid> = self.chat_service.views.keys().copied().collect();
+            for id in ids {
+                if let Some(v) = self.chat_service.views.get(&id)
+                    && !v.loading
+                    && self.direct_family(id, v.stem.as_deref()) != v.family
+                {
+                    self.direct_load(id);
+                }
+            }
+        }
         self.run_chat_service();
+        self.poll_recent_participants();
     }
 
     /// Run the manager when an input or its clock asks, and its actions
@@ -433,6 +463,7 @@ impl World {
                 self.chat_service.names.insert(id);
             }
             Action::SnapshotChanged(id) => self.direct_on_snapshot(id),
+            Action::ConversationsListed(entries) => self.on_recent_conversations(entries),
             Action::ConversationLogEntry {
                 resident,
                 newest_unix_secs,
@@ -577,7 +608,7 @@ impl World {
         }
         let snapshot = self.chat_service.manager.snapshot(id);
         let stem = self.direct_stem(id, snapshot.name.as_ref());
-        let family = stem.as_deref().and_then(|s| self.chat_log.family_of(s));
+        let family = self.direct_family(id, stem.as_deref());
         let env = WorldEnv {
             mutes: &self.mutes,
             names: &self.social.avatar_names,
@@ -587,6 +618,7 @@ impl World {
             return;
         };
         v.stem = stem;
+        v.family = family.clone();
         v.token += 1;
         v.archive_serial = snapshot.archive_serial;
         v.service_allowed = snapshot.service_presentation_allowed;
@@ -603,14 +635,7 @@ impl World {
         self.stitched_read(id, token, family, read, SESSION_LIMIT);
     }
 
-    fn stitched_read(
-        &mut self,
-        id: Uuid,
-        token: u64,
-        family: Option<(std::path::PathBuf, String)>,
-        read: super::chat_service::ViewRead,
-        limit: usize,
-    ) {
+    fn stitched_read(&mut self, id: Uuid, token: u64, family: Option<TranscriptFamily>, read: super::chat_service::ViewRead, limit: usize) {
         let agent = self.agent_id;
         let tx = self.chat_service.sender();
         let Some(storage) = self.chat_service.storage.clone() else {
@@ -640,13 +665,24 @@ impl World {
         let suppressed = self.chat_service.manager.history_suppressed();
         let epoch = self.chat_service.manager.epoch();
         let stem = self.direct_stem(id, snapshot.name.as_ref());
-        // the History window's read
-        if let Some((pid, v)) = self.chat_service.preview.as_mut()
+        let family = self.direct_family(id, stem.as_deref());
+        // the History window's read: its family is worked out as it was
+        // opened, with its fallback stem
+        if let Some((pid, v)) = self.chat_service.preview.as_ref()
             && *pid == id
             && v.token == token
         {
+            let fallback = v.fallback_stem.clone();
+            let preview_family = self.direct_family(id, preview_stem(stem.clone(), fallback.as_deref()).as_deref());
+            let Some((_, v)) = self.chat_service.preview.as_mut() else {
+                return;
+            };
             v.loading = false;
             if result.epoch != epoch || suppressed {
+                return;
+            }
+            if preview_family != v.family {
+                self.open_direct_preview(id, fallback.as_deref());
                 return;
             }
             v.history.set_loaded(result.messages);
@@ -667,6 +703,7 @@ impl World {
         if result.archive_serial != snapshot.archive_serial
             || result.included_service != snapshot.service_presentation_allowed
             || stem != v.stem
+            || family != v.family
         {
             self.direct_load(id);
             return;
@@ -717,6 +754,11 @@ impl World {
                 format!("{} {}", n.legacy_first, n.legacy_last)
             })
         })
+    }
+
+    fn direct_family(&self, id: Uuid, stem: Option<&str>) -> Option<TranscriptFamily> {
+        let stem = stem?;
+        self.chat_log.family_of(Some(id), stem)
     }
 
     /// The session's live lines as session rows, newest first, each with
@@ -972,9 +1014,11 @@ impl World {
 
     /// The History window opened on a resident's transcript: its stitched
     /// history, 10000 rows (LLFloaterConversationPreview), and the
-    /// resident first in the queue. False when the history is not the
-    /// service's (not running, a group).
-    pub fn open_direct_preview(&mut self, id: Uuid) -> bool {
+    /// resident first in the queue. `fallback`: the stem its transcript
+    /// source was resolved with (a Conversation Log entry's `history_file`,
+    /// else its name), read while the resident is not named yet. False
+    /// when the history is not the service's (not running, a group).
+    pub fn open_direct_preview(&mut self, id: Uuid, fallback: Option<&str>) -> bool {
         if !self.is_direct(&id) {
             return false;
         }
@@ -985,14 +1029,18 @@ impl World {
         };
         self.chat_service.manager.prioritize(id, false, &env);
         let read = self.chat_service.manager.begin_view_read(id, Instant::now(), &env);
-        let stem = self.transcript_stem(&id);
-        let family = stem.as_deref().and_then(|s| self.chat_log.family_of(s));
+        let snapshot = self.chat_service.manager.snapshot(id);
+        let fallback_stem = fallback.map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+        let stem = preview_stem(self.direct_stem(id, snapshot.name.as_ref()), fallback_stem.as_deref());
+        let family = self.direct_family(id, stem.as_deref());
         self.chat_service.dirty = true;
         let token = self.chat_service.preview.as_ref().map_or(0, |(_, v)| v.token) + 1;
         let view = DirectView {
             token,
             loading: read.is_some(),
             stem,
+            fallback_stem,
+            family: family.clone(),
             ..DirectView::default()
         };
         self.chat_service.preview = Some((id, view));

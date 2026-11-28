@@ -26,8 +26,8 @@ mod cutout;
 mod dedicated;
 mod device_lost;
 pub use device_lost::{
-    GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_drop, in_guarded_poll, in_guarded_start, is_drop_loss_panic, is_loss_panic,
-    is_start_loss_panic, loss_details, start_guarded,
+    GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_drop, in_guarded_poll, in_guarded_start, in_guarded_ui_upload, is_drop_loss_panic,
+    is_loss_panic, is_start_loss_panic, loss_details, start_guarded,
 };
 mod dof;
 mod drawn_pick;
@@ -70,6 +70,7 @@ pub mod preview;
 mod preview_blend;
 mod preview_mesh;
 mod preview_mips;
+mod preview_veil;
 pub mod probes;
 pub mod projector_shadows;
 mod readback;

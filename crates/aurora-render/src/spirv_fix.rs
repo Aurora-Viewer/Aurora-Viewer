@@ -1,6 +1,6 @@
 //! Workaround for naga's SPIR-V `sample_mask` built-in, on Vulkan.
 //!
-//! naga 30.0.1 (gfx-rs/wgpu) writes a WGSL `@builtin(sample_mask)` input or
+//! naga 30.0.2 (gfx-rs/wgpu) writes a WGSL `@builtin(sample_mask)` input or
 //! output of a fragment shader as a scalar `u32` variable decorated
 //! `BuiltIn SampleMask`. Vulkan's SPIR-V environment wants that built-in as
 //! an array of 32-bit integers (one `u32` per 32 samples; the Vulkan spec,
@@ -15,7 +15,7 @@
 //! built-in through the route wgpu-hal would take, then fixes the words:
 //!
 //! 1. the WGSL is parsed and validated with naga, and written to SPIR-V with
-//!    the options wgpu-hal 30.0.1's Vulkan backend uses (`writer_options`
+//!    the options wgpu-hal 30.0.2's Vulkan backend uses (`writer_options`
 //!    says which and why);
 //! 2. [`rewrite`] turns each `SampleMask` variable into an `array<u32, 1>`
 //!    (its length constant, array type, pointer type) and routes every
@@ -193,7 +193,7 @@ const fn api_version(minor: u32) -> u32 {
     (1 << 22) | (minor << 12)
 }
 
-/// The SPIR-V options wgpu-hal 30.0.1's Vulkan backend writes shaders with,
+/// The SPIR-V options wgpu-hal 30.0.2's Vulkan backend writes shaders with,
 /// built the way `Adapter::device_from_raw` (src/vulkan/adapter.rs,
 /// `naga_options`), `Device::create_shader_module` and `compile_stage`
 /// (src/vulkan/device.rs) do. Each field says where it comes from; the
@@ -202,7 +202,7 @@ const fn api_version(minor: u32) -> u32 {
 /// `zero_initialize_workgroup_memory: true`).
 ///
 /// wgpu-hal writes one SPIR-V module per entry point at pipeline creation
-/// (`Workarounds::SEPARATE_ENTRY_POINTS`, unconditionally on in 30.0.1:
+/// (`Workarounds::SEPARATE_ENTRY_POINTS`, unconditionally on in 30.0.2:
 /// "TODO: only enable for particular devices"). This module writes all the
 /// entry points of the WGSL at once (`pipeline_options: None`, the shape
 /// of wgpu-hal's other path), since a passthrough module is one Vulkan

@@ -23,6 +23,7 @@ use aurora_updater::{
     feed::{Channel, Release, Source},
     install::Workspace,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -119,6 +120,9 @@ enum Event {
     Checked {
         result: Result<Option<Release>, Failure>,
         generation: u64,
+        /// With a release: why this installation cannot install it
+        /// (`cannot_update_here`).
+        blocked: Option<Failure>,
     },
     Progress(Progress),
     Prepared(Result<Workspace, Failure>),
@@ -159,6 +163,12 @@ pub struct Updater {
     /// Until when a release below its minimum still lets this version sign
     /// in (`grace_deadline`).
     grace_until: Option<SystemTime>,
+    /// Why this installation cannot install the release offered, found by
+    /// the check that offered it (`cannot_update_here`): the window then
+    /// offers no Update, and the Automatic mode downloads nothing (#4290).
+    pub blocked: Option<Failure>,
+    /// A package manager installs this viewer's updates (`packaged`).
+    pub packaged: bool,
 }
 
 pub fn checks_enabled() -> bool {
@@ -203,6 +213,8 @@ impl Updater {
             announced: String::new(),
             notice: None,
             grace_until: None,
+            blocked: None,
+            packaged: packaged(),
         };
         // Disabled still checks the minimum supported version, as Firestorm does.
         if enabled {
@@ -252,6 +264,26 @@ impl Updater {
             settings.save();
         }
     }
+    /// The update mode in force: a package manager's installation only
+    /// hears of the updates it needs to sign in, whatever Preferences say.
+    fn mode(&self, settings: &Settings) -> Mode {
+        if self.packaged { Mode::Disabled } else { settings.update_mode }
+    }
+
+    /// A check answered with a release: say once why this installation
+    /// cannot install it.
+    fn follow_blocked(&mut self, blocked: Option<Failure>) {
+        if let (Some(problem), Some(r)) = (blocked, &self.release)
+            && self.blocked.is_none()
+        {
+            log::info!(
+                "update: {} found; this installation cannot install it ({problem:?}), no download offered",
+                r.tag
+            );
+        }
+        self.blocked = blocked;
+    }
+
     pub fn blocks_login(&self) -> bool {
         self.required() || self.policy_pending || matches!(self.state, State::Handoff)
     }
@@ -296,6 +328,7 @@ impl Updater {
         let source = self.source.clone();
         let channel = self.channel;
         let tx = self.tx.clone();
+        let packaged = self.packaged;
         runtime.spawn(async move {
             let result =
                 async { tokio::time::timeout(std::time::Duration::from_secs(8), source.check(aurora_version::version(), channel)).await? }
@@ -304,7 +337,49 @@ impl Updater {
                         log::warn!("release check: {e:#}");
                         Failure::Network
                     });
-            let _ = tx.send(Event::Checked { result, generation });
+            // Only a release found needs the answer, and only Linux can
+            // answer Protected: the probe writes beside the installation. A
+            // package manager's viewer, or a system with no package to
+            // install in place (macOS), needs no probe. A probe stuck on a
+            // hung mount runs on a thread of its own that nothing joins
+            // (dropping the runtime waits for its blocking tasks), so
+            // quitting never waits for it, and sign-in waits at most
+            // PROBE_TIMEOUT more; Update then shows and the click's own
+            // check decides. One probe at a time: later checks do not pile
+            // threads up behind a stuck one.
+            let blocked = match result {
+                Ok(Some(_)) if packaged || !aurora_updater::installs_here() => {
+                    blocked_without_probe(packaged, aurora_updater::installs_here())
+                }
+                Ok(Some(_)) if cfg!(target_os = "linux") && !PROBING.swap(true, Ordering::AcqRel) => {
+                    let (answer, probed) = tokio::sync::oneshot::channel();
+                    let spawned = std::thread::Builder::new().name("update-probe".into()).spawn(move || {
+                        let _ = answer.send(cannot_update_here());
+                        PROBING.store(false, Ordering::Release);
+                    });
+                    if spawned.is_err() {
+                        PROBING.store(false, Ordering::Release);
+                    }
+                    match spawned {
+                        Ok(_) => tokio::time::timeout(PROBE_TIMEOUT, probed)
+                            .await
+                            .map_err(|_| log::warn!("update: the installation folder did not answer in time"))
+                            .ok()
+                            .and_then(Result::ok)
+                            .flatten(),
+                        Err(e) => {
+                            log::warn!("update probe: {e}");
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            };
+            let _ = tx.send(Event::Checked {
+                result,
+                generation,
+                blocked,
+            });
         });
     }
 
@@ -316,7 +391,7 @@ impl Updater {
             return false;
         };
         self.enabled
-            && settings.update_mode != Mode::Disabled
+            && self.mode(settings) != Mode::Disabled
             && !self.open
             && !self.quiet_check
             && !self.rollback_notice
@@ -346,15 +421,20 @@ impl Updater {
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 Event::Checked { generation, .. } if generation != self.generation => {}
-                Event::Checked { result, .. } if self.quiet_check => {
+                Event::Checked { result, blocked, .. } if self.quiet_check => {
                     self.quiet_check = false;
                     self.last_check = Some(Instant::now());
-                    self.quiet_result(result, settings, info, runtime);
+                    self.quiet_result(result, blocked, settings, info, runtime);
                 }
-                Event::Checked { result: Ok(release), .. } => {
+                Event::Checked {
+                    result: Ok(release),
+                    blocked,
+                    ..
+                } => {
                     self.last_check = Some(Instant::now());
                     self.policy_pending = false;
                     self.release = release;
+                    self.follow_blocked(blocked);
                     self.follow_grace(settings);
                     self.state = if self.release.is_some() { State::Offer } else { State::Current };
                     if let Some(r) = &self.release {
@@ -362,11 +442,17 @@ impl Updater {
                             version: r.version.clone(),
                             url: String::new(),
                         };
-                        self.open = should_offer(r.required, self.manual, settings.update_mode, &settings.ignored_update, &r.tag);
+                        self.open = should_offer(r.required, self.manual, self.mode(settings), &settings.ignored_update, &r.tag);
                         if self.open {
                             self.announced = r.tag.clone();
                         }
-                        if self.open && !self.manual && !self.rollback_notice && !r.required && settings.update_mode == Mode::Automatic {
+                        if self.open
+                            && !self.manual
+                            && !self.rollback_notice
+                            && !r.required
+                            && self.blocked.is_none()
+                            && self.mode(settings) == Mode::Automatic
+                        {
                             self.download(runtime);
                         }
                     } else {
@@ -452,6 +538,7 @@ impl Updater {
     fn quiet_result(
         &mut self,
         result: Result<Option<Release>, Failure>,
+        blocked: Option<Failure>,
         settings: &mut Settings,
         info: &mut LoginInfo,
         runtime: &tokio::runtime::Handle,
@@ -479,12 +566,13 @@ impl Updater {
         let (tag, version, required) = (r.tag.clone(), r.version.clone(), r.required);
         self.release = Some(r);
         self.follow_grace(settings);
+        self.follow_blocked(blocked);
         self.state = State::Offer;
         if !announce {
             return;
         }
         self.announced = tag;
-        if !required && settings.update_mode == Mode::Automatic {
+        if !required && self.blocked.is_none() && self.mode(settings) == Mode::Automatic {
             self.quiet_download = true;
             self.start_download(runtime, false);
         } else {
@@ -503,13 +591,17 @@ impl Updater {
         if self.busy() {
             return;
         }
-        if !aurora_updater::installs_here() || release.archive.is_none() || release.sha256.is_none() {
+        let refusal = self.blocked.or_else(|| {
+            (!aurora_updater::installs_here() || release.archive.is_none() || release.sha256.is_none()).then_some(Failure::Unsupported)
+        });
+        if let Some(refusal) = refusal {
             if show {
-                self.state = State::Error(Failure::Unsupported);
+                self.state = State::Error(refusal);
                 self.open = true;
             } else {
-                // no package to install here (macOS): the notice offers the
-                // version, the window links its page
+                // no package to install here (macOS), or an installation
+                // that cannot replace itself: the notice offers the version,
+                // the window links its page
                 self.quiet_download = false;
                 self.notice = Some(Notice {
                     version: release.version.clone(),
@@ -529,31 +621,8 @@ impl Updater {
         runtime.spawn(async move {
             let result = async {
                 let work = tokio::task::spawn_blocking(|| {
-                    let path = std::env::current_exe().map_err(|e| {
-                        log::warn!("update install path: {e}");
-                        Failure::Filesystem
-                    })?;
-                    let parent = path.parent().ok_or(Failure::Filesystem)?;
-                    // a sandbox's folder is a read-only package: say so before
-                    // the layout check, which would otherwise answer "extract
-                    // it into a dedicated folder" first
-                    if let Some(problem) = aurora_updater::install::sandboxed() {
-                        return Err(problem);
-                    }
-                    if let Err(e) = Workspace::check_install(parent) {
-                        log::warn!("update: this folder cannot be updated in place: {e:#}");
-                        return Err(if aurora_updater::install::at_drive_root(parent) {
-                            Failure::DriveRoot
-                        } else {
-                            Failure::Unsupported
-                        });
-                    }
-                    // one this account may not write: the package manager or
-                    // the bundle owns the viewer
-                    if let Some(problem) = aurora_updater::install::self_update_problem(parent) {
-                        return Err(problem);
-                    }
-                    Workspace::new(parent).map_err(|e| {
+                    let parent = install_folder()?;
+                    Workspace::new(&parent).map_err(|e| {
                         log::warn!("update prepare: {e:#}");
                         prepare_failure(&e)
                     })
@@ -598,6 +667,89 @@ impl Updater {
             });
             let _ = tx.send(Event::Handoff(result));
         });
+    }
+}
+
+/// Set by a distribution package's launcher (`AURORA_PACKAGED=1`): its
+/// package manager installs the updates. The viewer still checks at
+/// launch, for a release it needs to sign in, and then says to update
+/// through the package manager; it announces no other release, checks no
+/// more while it runs, downloads nothing and links no download (#4290).
+pub const PACKAGED_ENV: &str = "AURORA_PACKAGED";
+
+/// How long the check waits for `cannot_update_here` before showing
+/// Update anyway.
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// `AURORA_PACKAGED`, or `--packaged` (the link entry of a packaged
+/// viewer, `url_scheme.rs`). A test sees neither the shell's variable nor
+/// its arguments.
+pub fn packaged() -> bool {
+    !cfg!(test) && (packaged_value(std::env::var_os(PACKAGED_ENV).as_deref()) || crate::cli::get().packaged)
+}
+
+fn packaged_value(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// The folder of this installation, once it is known to be one the viewer
+/// can replace in place; else why not.
+fn install_folder() -> Result<std::path::PathBuf, Failure> {
+    let path = std::env::current_exe().map_err(|e| {
+        log::warn!("update install path: {e}");
+        Failure::Filesystem
+    })?;
+    let parent = path.parent().ok_or(Failure::Filesystem)?;
+    // a sandbox's folder is a read-only package: say so before the layout
+    // check, which would otherwise answer "extract it into a dedicated
+    // folder" first
+    if let Some(problem) = aurora_updater::install::sandboxed() {
+        return Err(problem);
+    }
+    if let Err(e) = Workspace::check_install(parent) {
+        log::warn!("update: this folder cannot be updated in place: {e:#}");
+        return Err(if aurora_updater::install::at_drive_root(parent) {
+            Failure::DriveRoot
+        } else {
+            Failure::Unsupported
+        });
+    }
+    // one this account may not write: the package manager or the bundle
+    // owns the viewer
+    if let Some(problem) = aurora_updater::install::self_update_problem(parent) {
+        return Err(problem);
+    }
+    Ok(parent.to_owned())
+}
+
+/// A probe of the installation folder is running (`spawn_check`).
+static PROBING: AtomicBool = AtomicBool::new(false);
+
+/// Whether this installation cannot replace itself because something else
+/// owns it (a system package, a sandbox: `Failure::Protected`), asked when
+/// a check finds a release, so that the window says so before Update is
+/// clicked (#4290). The other refusals keep coming from the click. Found
+/// once per run: the probe writes beside the installation, and periodic
+/// checks come every few minutes.
+fn cannot_update_here() -> Option<Failure> {
+    static FOUND: std::sync::OnceLock<Option<Failure>> = std::sync::OnceLock::new();
+    *FOUND.get_or_init(|| match install_folder() {
+        Err(Failure::Protected) => Some(Failure::Protected),
+        _ => None,
+    })
+}
+
+/// What a found release cannot be installed by, known without touching the
+/// disk: a package manager's (`AURORA_PACKAGED`), or a system with no package
+/// to install in place (macOS, whose bundle is replaced by hand: the click
+/// answered `Unsupported` already, the offer now says it first).
+fn blocked_without_probe(packaged: bool, installs_here: bool) -> Option<Failure> {
+    if packaged {
+        Some(Failure::Protected)
+    } else if !installs_here {
+        Some(Failure::Unsupported)
+    } else {
+        None
     }
 }
 
@@ -735,8 +887,19 @@ mod tests {
     }
 
     fn checked(updater: &Updater, result: Result<Option<Release>, Failure>) {
+        checked_blocked(updater, result, None);
+    }
+
+    fn checked_blocked(updater: &Updater, result: Result<Option<Release>, Failure>, blocked: Option<Failure>) {
         let generation = updater.generation;
-        updater.tx.send(Event::Checked { result, generation }).expect("result");
+        updater
+            .tx
+            .send(Event::Checked {
+                result,
+                generation,
+                blocked,
+            })
+            .expect("result");
     }
 
     #[test]
@@ -870,6 +1033,7 @@ mod tests {
             .send(Event::Checked {
                 result: Ok(Some(release("v0.4.0", false))),
                 generation: stale,
+                blocked: None,
             })
             .expect("stale");
         updater.poll(&mut settings, &mut info, rt.handle());
@@ -878,6 +1042,96 @@ mod tests {
         updater.poll(&mut settings, &mut info, rt.handle());
         assert!(updater.open && matches!(updater.state, State::Offer));
         assert!(updater.take_notice().is_none());
+    }
+
+    #[test]
+    fn an_installation_that_cannot_replace_itself_is_offered_no_download() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let mut settings = Settings {
+            update_mode: Mode::Automatic,
+            ..Default::default()
+        };
+        let mut info = LoginInfo::preview_release("0.3.0");
+        // the check at launch: the window opens on the offer, nothing downloads
+        let mut updater = Updater::new(rt.handle(), Channel::Stable);
+        let mut r = release("v0.4.0", false);
+        // a release this system could install: only the installation refuses it
+        let asset = |name: &str| aurora_updater::feed::Asset {
+            name: name.into(),
+            size: 1,
+            browser_download_url: format!("http://127.0.0.1:9/{name}"),
+        };
+        r.archive = Some(asset("aurora.tar.zst"));
+        r.sha256 = Some([0; 32]);
+        checked_blocked(&updater, Ok(Some(r.clone())), Some(Failure::Protected));
+        updater.poll(&mut settings, &mut info, rt.handle());
+        assert!(updater.open && matches!(updater.state, State::Offer));
+        assert!(matches!(updater.blocked, Some(Failure::Protected)));
+        // Update, had it been offered, says why at once
+        updater.download(rt.handle());
+        assert!(matches!(updater.state, State::Error(Failure::Protected)));
+        // a periodic check: a plain notice, not a background download
+        let mut updater = Updater::new(rt.handle(), Channel::Stable);
+        updater.enabled = true;
+        updater.state = State::Current;
+        updater.last_check = Some(Instant::now() - Duration::from_secs(3600));
+        updater.poll(&mut settings, &mut info, rt.handle());
+        assert!(updater.quiet_check);
+        checked_blocked(&updater, Ok(Some(r)), Some(Failure::Protected));
+        updater.poll(&mut settings, &mut info, rt.handle());
+        assert!(matches!(updater.state, State::Offer) && !updater.open);
+        let notice = updater.take_notice().expect("notice");
+        assert!(!notice.ready);
+        // a release this installation can install clears it
+        checked(&updater, Ok(Some(release("v0.4.1", false))));
+        updater.poll(&mut settings, &mut info, rt.handle());
+        assert!(updater.blocked.is_none());
+    }
+
+    #[test]
+    fn a_package_managers_installation_hears_only_of_a_required_update() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let mut settings = Settings {
+            update_mode: Mode::Automatic,
+            ..Default::default()
+        };
+        let mut info = LoginInfo::preview_release("0.3.0");
+        for (required, opens) in [(false, false), (true, true)] {
+            let mut updater = Updater::new(rt.handle(), Channel::Stable);
+            updater.packaged = true;
+            assert_eq!(updater.mode(&settings), Mode::Disabled);
+            checked_blocked(&updater, Ok(Some(release("v0.4.0", required))), Some(Failure::Protected));
+            updater.poll(&mut settings, &mut info, rt.handle());
+            assert_eq!(updater.open, opens, "required: {required}");
+            assert!(matches!(updater.state, State::Offer), "no download, required: {required}");
+            // no periodic check while it runs
+            updater.enabled = true;
+            updater.last_check = Some(Instant::now() - Duration::from_secs(3600));
+            updater.open = false;
+            assert!(!updater.periodic_due(&settings, Instant::now()));
+        }
+        // a manual check still shows what is there
+        assert!(should_offer(false, true, Mode::Disabled, "", "v0.4.0"));
+        // the variable says so only when set to something
+        for (value, set) in [
+            (Some("1"), true),
+            (Some("yes"), true),
+            (Some("0"), false),
+            (Some(""), false),
+            (None, false),
+        ] {
+            assert_eq!(packaged_value(value.map(std::ffi::OsStr::new)), set, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn a_package_manager_or_a_system_without_a_package_blocks_the_offer_without_a_probe() {
+        assert!(matches!(blocked_without_probe(true, true), Some(Failure::Protected)));
+        assert!(matches!(blocked_without_probe(true, false), Some(Failure::Protected)));
+        // macOS: no package to install here, said in the offer
+        assert!(matches!(blocked_without_probe(false, false), Some(Failure::Unsupported)));
+        // Windows and Linux: the probe (Linux) or the click decides
+        assert!(blocked_without_probe(false, true).is_none());
     }
 
     #[test]

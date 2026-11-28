@@ -135,6 +135,7 @@ fn ao_choices_survive_settings_restart_reordering_groups_tracks_and_inactive_sta
             selected: set.id,
             mini_open: true,
             animations: runtime.take_choices(Some(&set)).expect("new selection"),
+            set_order: Vec::new(),
         },
     );
     assert!(
@@ -1840,4 +1841,30 @@ fn a_dropped_selection_of_animations_is_linked_in_one_request() {
         change.operations.last(),
         Some(Operation::Links { parent, links }) if *parent == folders[0] && links.len() == 3 && links[0].desc == "0"
     ));
+}
+
+/// "Your sets" keeps the order the user dragged, the sets not placed after
+/// it by name; a move keeps the whole order as shown.
+#[test]
+fn the_set_order_is_kept_and_new_sets_follow_by_name() {
+    let set = |n: u128, name: &str| Set {
+        id: Uuid::from_u128(n),
+        name: name.into(),
+        sits: false,
+        smart: false,
+        mouselook: false,
+        default: false,
+        states: HashMap::new(),
+    };
+    let sets = [set(1, "Alpha"), set(2, "Beta"), set(3, "Gamma")];
+    let mut account = Account::default();
+    let names = |a: &Account| a.ordered(&sets).iter().map(|s| s.name.clone()).collect::<Vec<_>>();
+    assert_eq!(names(&account), ["Alpha", "Beta", "Gamma"], "by name at first");
+    let shown: Vec<Uuid> = account.ordered(&sets).iter().map(|s| s.id).collect();
+    account.move_set(&shown, 2, 0);
+    assert_eq!(names(&account), ["Gamma", "Alpha", "Beta"]);
+    // a set made later, and one gone: placed after, by name
+    let more = [set(1, "Alpha"), set(3, "Gamma"), set(4, "Delta")];
+    let names: Vec<_> = account.ordered(&more).iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names, ["Gamma", "Alpha", "Delta"]);
 }

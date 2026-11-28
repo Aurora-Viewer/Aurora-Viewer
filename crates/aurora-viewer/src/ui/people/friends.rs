@@ -588,7 +588,11 @@ fn row(
     }
     rows::person_menu(&resp, p, c.world, NameScope::Roster, &st.sel, f.id);
     let on_names = resp.hover_pos().is_some_and(|at| at.x >= left && at.x <= end.names_right);
-    rows::contact_tip(resp, (on_names && (cut || line.full != line.name)).then_some(line.full.as_str()));
+    rows::contact_tip(
+        resp,
+        (on_names && (cut || line.full != line.name)).then_some(line.full.as_str()),
+        || None,
+    );
 }
 
 /// Show `id`'s contact sheet. In Conversations › Contacts, a sheet the

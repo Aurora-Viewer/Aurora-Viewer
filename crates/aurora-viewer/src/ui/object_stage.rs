@@ -67,6 +67,26 @@ pub struct StageUi {
     pub worn: bool,
     /// One item is inspected: it does not move.
     pub single: bool,
+    /// What the pointer is on is outlined, named and clicked (Inspect, Area
+    /// Search); off, the view only turns (the AO window's preview).
+    pub picking: bool,
+    /// The bar of buttons on a face of its own, drawn with the view; off, on
+    /// the view's ground and drawn by the caller (`show_bar`) over what it
+    /// lays on the view (the AO window's preview, its caption on a fade).
+    pub bar_face: bool,
+    /// The view's bottom band blurred more and more toward its bottom edge
+    /// (the AO window's preview, under its caption).
+    pub veil: Option<aurora_render::preview::Veil>,
+    /// The bar ends on its play / pause button and its hint; off, on its
+    /// last tool (the AO window's preview plays what the window previews).
+    pub player: bool,
+    /// What is shown stands upright in a tall view: framed by its height at
+    /// rest, filling the view, the camera still while it moves (the AO
+    /// window's preview column).
+    pub upright: bool,
+    /// Room kept free at the view's bottom, over the bar, for what the caller
+    /// lays there (the AO window's caption).
+    pub keep_bottom: f32,
     /// The animation plays; None: it was not chosen (it does, unless motion is
     /// reduced).
     playing: Option<bool>,
@@ -116,6 +136,12 @@ impl Default for StageUi {
             light: false,
             worn: false,
             single: false,
+            picking: true,
+            bar_face: true,
+            veil: None,
+            player: true,
+            upright: false,
+            keep_bottom: 0.0,
             playing: None,
             live: None,
             joints: None,
@@ -138,6 +164,24 @@ impl Default for StageUi {
 }
 
 impl StageUi {
+    /// The accent, as it reads over the ground.
+    pub fn accent(&self, p: &Palette) -> Color32 {
+        if self.light {
+            p.violet.lerp_to_gamma(dark(p), 0.35)
+        } else {
+            p.violet_pale
+        }
+    }
+
+    /// The colour of a success, as it reads over the ground.
+    pub fn success(&self, p: &Palette) -> Color32 {
+        if self.light {
+            p.success.lerp_to_gamma(dark(p), 0.45)
+        } else {
+            p.success
+        }
+    }
+
     /// Other objects: the view starts over.
     pub fn restart(&mut self) {
         self.camera = CAMERA;
@@ -213,7 +257,7 @@ impl StageUi {
         let free = if controls {
             Rect::from_min_max(
                 egui::pos2(view_rect.left(), view_rect.top() + top),
-                egui::pos2(view_rect.right(), view_rect.bottom() - BAR - 8.0),
+                egui::pos2(view_rect.right(), view_rect.bottom() - BAR - 8.0 - self.keep_bottom),
             )
         } else {
             view_rect
@@ -242,11 +286,20 @@ impl StageUi {
         };
         let frame = self.stand(ui, id, &model, standing);
         let view = self.view(p, &frame, view_rect, free, middle);
-        self.look(ui, &resp, &model, &frame, &view, view_rect, standing);
+        if self.picking {
+            self.look(ui, &resp, &model, &frame, &view, view_rect, standing);
+        } else {
+            self.over = None;
+        }
         let pose = self.pose(&model, standing, frame);
-        let highlight = self.highlight(ui, p, id, &model, showing);
-        aurora_render::preview::paint_stage(ui, id, model.model.clone(), view, view_rect, Some(pose), highlight);
-        let hit = resp.clicked().then(|| resp.interact_pointer_pos()).flatten().and_then(|at| {
+        let highlight = if self.picking {
+            self.highlight(ui, p, id, &model, showing)
+        } else {
+            None
+        };
+        aurora_render::preview::paint_stage_veiled(ui, id, model.model.clone(), view, view_rect, Some(pose), highlight, self.veil);
+        let clicked = resp.clicked() && self.picking;
+        let hit = clicked.then(|| resp.interact_pointer_pos()).flatten().and_then(|at| {
             let (from, dir) = view.ray(&model.model, view_rect, at);
             let unit = model.pick(standing, &frame, &self.bones, from, dir)?;
             Some(Hit {
@@ -265,14 +318,26 @@ impl StageUi {
         if controls && self.animated() {
             self.badge(ui, p, free);
         }
-        if controls {
-            let bar = Rect::from_min_max(
-                egui::pos2(rect.left() + 8.0, rect.bottom() - BAR - 8.0),
-                egui::pos2(rect.right() - 8.0, rect.bottom() - 8.0),
-            );
-            self.bar(ui, p, bar);
+        if controls && self.bar_face {
+            self.bar(ui, p, Self::bar_rect(rect));
         }
         hit
+    }
+
+    /// Where the bar of buttons lies over a view of `rect`.
+    fn bar_rect(rect: Rect) -> Rect {
+        Rect::from_min_max(
+            egui::pos2(rect.left() + 8.0, rect.bottom() - BAR - 8.0),
+            egui::pos2(rect.right() - 8.0, rect.bottom() - 8.0),
+        )
+    }
+
+    /// The bar of buttons over the view of `rect`, for a caller that drew the
+    /// view without it (`bar_face` off): after what it lays on the view.
+    pub fn show_bar(&mut self, ui: &mut egui::Ui, p: &Palette, rect: Rect) {
+        if rect.height() >= WITH_BAR && self.stage.model().is_ok() {
+            self.bar(ui, p, Self::bar_rect(rect));
+        }
     }
 
     /// Drag to turn, right or middle drag (or Shift) to move, wheel to come
@@ -335,7 +400,12 @@ impl StageUi {
     fn view(&self, p: &Palette, frame: &Frame, rect: Rect, free: Rect, middle: Vec2) -> View {
         let height = rect.height().max(1.0);
         // all of it in sight, whichever side is the shorter
-        let room = (height / free.height().max(1.0)).max(height / free.width().max(1.0));
+        let room = if self.upright {
+            // its height in the view's; its width about half its height
+            (height / free.height().max(1.0)).max(height * UPRIGHT_WIDTH / free.width().max(1.0))
+        } else {
+            (height / free.height().max(1.0)).max(height / free.width().max(1.0))
+        };
         View {
             yaw: self.camera.yaw,
             pitch: self.camera.pitch,
@@ -423,6 +493,19 @@ impl StageUi {
             ui.ctx().request_repaint();
         }
         let anchored = match &self.joints {
+            // an upright figure in its own view (the AO preview): framed once
+            // as it first shows, then held still while it moves; framed again
+            // only when it changes size a lot (its outfit still arriving),
+            // not when a pose spreads its arms
+            Some(joints) if self.upright => {
+                let (bounds, body) = (model.bounds(&self.bones), model.body(joints));
+                let now = Steady::of(&bounds, body).frame.radius;
+                let steady = match &mut self.steady {
+                    Some(steady) if now < steady.frame.radius * UPRIGHT_GROWN && now > steady.frame.radius * 0.6 => *steady,
+                    steady => *steady.insert(Steady::of(&bounds, body)),
+                };
+                steady.frame
+            }
             Some(joints) if self.worn && !self.single => {
                 let (bounds, body) = (model.bounds(&self.bones), model.body(joints));
                 let steady = match &mut self.steady {
@@ -552,13 +635,15 @@ impl StageUi {
     /// The controls: turn, look from higher or lower, nearer or further, and
     /// back to the start; what dragging does, written at their right.
     fn bar(&mut self, ui: &mut egui::Ui, p: &Palette, rect: Rect) {
-        let radius = ui.visuals().window_corner_radius;
-        let face = if self.light {
-            p.bar.to_opaque()
-        } else {
-            p.bar.gamma_multiply(0.78)
-        };
-        ui.painter().rect_filled(rect, radius, face);
+        if self.bar_face {
+            let radius = ui.visuals().window_corner_radius;
+            let face = if self.light {
+                p.bar.to_opaque()
+            } else {
+                p.bar.gamma_multiply(0.78)
+            };
+            ui.painter().rect_filled(rect, radius, face);
+        }
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt("object_stage_bar")
@@ -567,26 +652,28 @@ impl StageUi {
         );
         let ui = &mut child;
         ui.spacing_mut().item_spacing.x = 2.0;
+        // on a light ground with no face of their own, dark buttons
+        let dark = self.light && !self.bar_face;
         let camera = &mut self.camera;
-        if tool(ui, p, "rotate", aurora_i18n::tr!("stage-turn-left")) {
+        if tool(ui, p, dark, "rotate", aurora_i18n::tr!("stage-turn-left")) {
             camera.yaw += 0.5;
         }
-        if tool(ui, p, "rotate-clockwise", aurora_i18n::tr!("stage-turn-right")) {
+        if tool(ui, p, dark, "rotate-clockwise", aurora_i18n::tr!("stage-turn-right")) {
             camera.yaw -= 0.5;
         }
-        if tool(ui, p, "arrow-up", aurora_i18n::tr!("stage-higher")) {
+        if tool(ui, p, dark, "arrow-up", aurora_i18n::tr!("stage-higher")) {
             camera.pitch = (camera.pitch + 0.25).min(1.4);
         }
-        if tool(ui, p, "arrow-down", aurora_i18n::tr!("stage-lower")) {
+        if tool(ui, p, dark, "arrow-down", aurora_i18n::tr!("stage-lower")) {
             camera.pitch = (camera.pitch - 0.25).max(-1.2);
         }
-        if tool(ui, p, "plus", aurora_i18n::tr!("stage-nearer")) {
+        if tool(ui, p, dark, "plus", aurora_i18n::tr!("stage-nearer")) {
             camera.zoom_at(1.25, Vec2::ZERO, Vec2::ZERO);
         }
-        if tool(ui, p, "minus", aurora_i18n::tr!("stage-further")) {
+        if tool(ui, p, dark, "minus", aurora_i18n::tr!("stage-further")) {
             camera.zoom_at(0.8, Vec2::ZERO, Vec2::ZERO);
         }
-        if *camera != CAMERA && tool(ui, p, "restore", aurora_i18n::tr!("stage-reset")) {
+        if *camera != CAMERA && tool(ui, p, dark, "restore", aurora_i18n::tr!("stage-reset")) {
             *camera = CAMERA;
         }
         let tip = if self.light {
@@ -594,7 +681,16 @@ impl StageUi {
         } else {
             aurora_i18n::tr!("stage-light")
         };
-        if tool_lit(ui, p, "bulb-filled", tip, self.light) {
+        if !self.player {
+            // nothing follows: the ground's switch at the bar's right end
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if tool_lit(ui, p, dark, "bulb-filled", tip, self.light) {
+                    self.light = !self.light;
+                }
+            });
+            return;
+        }
+        if tool_lit(ui, p, dark, "bulb-filled", tip, self.light) {
             self.light = !self.light;
         }
         if self.animated() {
@@ -784,6 +880,15 @@ impl Camera {
 
 /// The darker and the lighter of the theme's text and ground: a light ground
 /// and its text, in any theme.
+/// How much larger an upright figure has to show before it is framed again
+/// (`StageUi::upright`): more of its outfit arrived, past what a pose
+/// spreading its arms or legs makes of it.
+const UPRIGHT_GROWN: f32 = 1.5;
+
+/// How wide an upright figure frames, as a share of the sphere around it
+/// (`StageUi::upright`): arms at its sides, turned any way.
+const UPRIGHT_WIDTH: f32 = 0.5;
+
 fn dark(p: &Palette) -> Color32 {
     let (a, b) = (p.ink.to_opaque(), p.bar.to_opaque());
     if a.intensity() < b.intensity() { a } else { b }
@@ -816,20 +921,24 @@ fn tag(ui: &egui::Ui, p: &Palette, rect: Rect, at: egui::Pos2, text: &str) {
 }
 
 /// One button of the bar.
-fn tool(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> bool {
-    tool_lit(ui, p, icon, tip, false)
+/// A button of the bar; `dark`: drawn dark, on a light ground.
+fn tool(ui: &mut egui::Ui, p: &Palette, dark: bool, icon: &str, tip: &str) -> bool {
+    tool_lit(ui, p, dark, icon, tip, false)
 }
 
-fn tool_lit(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) -> bool {
+fn tool_lit(ui: &mut egui::Ui, p: &Palette, dark: bool, icon: &str, tip: &str, on: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(BUTTON), Sense::click());
     if resp.hovered() {
-        ui.painter()
-            .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
+        let face = if dark { p.navy.gamma_multiply(0.12) } else { p.raised };
+        ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, face);
     }
-    let ink = match (on, resp.hovered()) {
-        (true, _) => p.warn,
-        (false, true) => p.ink,
-        (false, false) => p.muted,
+    let ink = match (on, resp.hovered(), dark) {
+        (true, _, false) => p.warn,
+        (true, _, true) => p.amber.lerp_to_gamma(p.navy, 0.35),
+        (false, true, false) => p.ink,
+        (false, false, false) => p.muted,
+        (false, true, true) => p.navy,
+        (false, false, true) => p.bar.lerp_to_gamma(p.muted, 0.25),
     };
     super::sheet::icon_at(ui, icon, rect.center(), 16.0, ink);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, tip));

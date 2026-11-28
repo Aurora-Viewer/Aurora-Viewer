@@ -1707,10 +1707,7 @@ inventory-move-confirm = Move
 inventory-move-connection-unavailable = Cannot move: the region connection is unavailable.
 inventory-move-invalid-target = The item or destination folder could not be found. Reload the inventory.
 ao-title = AO · Avatar animations
-ao-help = Choose a state on the left. Click an animation to choose it, or drag to change its order. “Combine…” creates a simultaneous group or a track with its own cycle. Sets and options are stored in #Aurora/Aurora AO.
 ao-enabled = Enable AO
-ao-pause = Pause
-ao-stands = Stands and turns
 ao-set = Set
 ao-reload = Reload sets from inventory
 ao-new = New set
@@ -1728,27 +1725,21 @@ ao-migrate-name-exists = Aurora already has a set with this name. Choose another
 ao-duplicate = Duplicate
 ao-loading = Loading animation folders…
 ao-saving = Updating inventory…
-ao-saved = Set saved.
+ao-saved = Set saved
 ao-empty = Create a set or import a notecard to begin.
 ao-sits = Override sits
 ao-smart = Smart sits
 ao-mouselook = Disable stands in mouselook
-ao-default = Default set
 ao-current = Current state: { $state }
 ao-previous = Previous animation
 ao-next = Next animation
-ao-add = Add animation
 ao-play-tip = Double-click to choose this animation
 ao-up = Move up
 ao-down = Move down
-ao-track = Track
-ao-group = Group
-ao-drop = Add or drop an animation here.
 ao-container-name = Group or track name
 ao-target = Add into: { $name }
 ao-state-root = Main state
 ao-cycle = Cycle
-ao-random = Random
 ao-set-name = AO set name
 ao-remove-confirm = Remove this AO entry? Original animations are preserved. Removed folders go to Trash.
 ao-choose = Choose from inventory
@@ -1798,7 +1789,6 @@ ao-water-shore-exit = Leap onto an obstacle
 ao-swim-slots = Swimming animations for this set
 ao-swim-required = Required swimming animations are missing.
 ao-swim-required-missing = Required to enable swimming: animation missing.
-ao-swim-required-present = Required to enable swimming: animation assigned.
 ao-swim-choose = Choose an animation…
 ao-swim-ready = The required swimming animations are assigned.
 ao-swimming-forward = Swimming at the surface
@@ -1809,7 +1799,6 @@ ao-water-dive-entry = Dive · water entry
 ao-water-cannonball = Cannonball
 ao-swim-optional = Optional. Your current swimming animations keep working without this slot.
 movement-water-jumps = Dive jumps and cannonballs
-movement-water-jumps-help = After jumping, tap within 0.45 s to dive. A later press, another press during the dive, or a press while flying above water starts a cannonball.
 ao-swimming-up = Swimming up
 ao-swimming-down = Swimming down
 ao-always = Always
@@ -10484,6 +10473,7 @@ update-notice-title = Aurora { $version } is available
 update-notice-ready-title = Aurora { $version } is ready to install
 update-notice-body = A new version of Aurora is waiting for you: { $current } → { $version }.
 update-notice-install = Install…
+update-notice-how = How to update…
 update-demo-finish = Finish demo
 update-check = Check for updates
 update-check-hint = Show available updates, including skipped versions.
@@ -10507,6 +10497,8 @@ update-error-filesystem = Unable to prepare installation. Check free space and f
 update-error-package = The package is incomplete or invalid. The current installation is preserved.
 update-error-unsupported = This release cannot be installed automatically from this folder. Download it from its page and extract it into a dedicated folder.
 update-error-protected = Aurora cannot replace itself here: this folder belongs to a sandboxed package (Flatpak, Snap, AppImage) or your account cannot write to it. Update it the way it was installed, or download the new version from its page.
+update-packaged = Your package manager installs Aurora’s updates: update Aurora through it.
+update-packaged-settings = Your package manager installs Aurora’s updates. Aurora only tells you of an update it needs to sign in.
 update-error-drive-root = Aurora cannot update itself in a folder at the root of a drive, like E:\Aurora Viewer. Move the folder one level down, for example to E:\Games\Aurora Viewer, start Aurora from there, then update.
 update-error-unsupported-macos = On macOS, a new version is installed by hand. Download it from its page, then replace Aurora Viewer in your Applications folder with the new one.
 update-error-startup = The update helper could not start. The current installation is preserved.
@@ -11201,6 +11193,19 @@ people-sets-priority-hint = Drag a set up or down: when two sets style the same 
 people-sets-no-sets = No contact set yet
 people-sets-edit = Edit this set
 people-recent-ago = { $when } ago
+people-recent-seconds = { $count ->
+    [one] { $count } second
+   *[other] { $count } seconds
+    }
+people-recent-minutes = { $count ->
+    [one] { $count } minute
+   *[other] { $count } minutes
+    }
+people-recent-hours = { $count ->
+    [one] { $count } hour
+   *[other] { $count } hours
+    }
+people-recent-last-interaction = Last interaction: { $date } at { $time } { $zone }
 people-recent-empty = Nobody yet: the residents you talk with show up here.
 people-blocked-all = Everything
 people-blocked-voice = Voice
@@ -11459,16 +11464,26 @@ ui-options-open-on-offline = Open conversations when offline messages arrive
 ui-options-open-on-offline-help = Opens the conversations window when private messages or invitations sent while you were away arrive at login.
 ui-options-chat-logs-dated = Dated files
 ui-options-chat-logs-dated-help = One file per month for each conversation (name-2026-10) and one per day for the nearby chat (chat-2026-10-12), instead of a single growing file.
+ui-options-chat-logs-dated-shared = While sharing, Aurora adds to the files the Legacy Viewer reads, dated or not. Dated files applies to Aurora's own folder only.
 ui-options-chat-logs-note = These files are plain text, readable by anyone who can use this computer. They stay on this machine, apart for each account and each grid, and are never attached to a bug report.
 ui-options-chat-logs-open = Open folder
 ui-options-chat-logs-folder-help = This account's files are moved to the new folder.
-ui-options-chat-logs-legacy-layout = Share the Legacy Viewer's folder
-ui-options-chat-logs-legacy-layout-help = Writes this account's files in the Legacy Viewer's own layout under the chosen folder (first_last), so that both viewers read and add to the same history. Choose the Legacy Viewer's chat log folder above. Aurora only adds lines there: nothing is moved, imported or erased, and Aurora's own files come back when this is off. Keep the same Dated files setting in both viewers. Second Life only. Off by default.
+ui-options-chat-logs-legacy-sharing = Sharing { $folder } with the Legacy Viewer
+ui-options-chat-logs-legacy-append-only = Both First Last.txt and first_last.txt are recognized. Aurora adds new lines to the existing files and never rewrites or renames them.
+ui-options-chat-logs-legacy-found = { $count ->
+    [one] Existing chat log found in { $folder } ({ $count } file) — share it with the Legacy Viewer?
+   *[other] Existing chat log found in { $folder } ({ $count } files) — share it with the Legacy Viewer?
+    }
+ui-options-chat-logs-legacy-folder-found = Legacy Viewer chat log folder found ({ $folder }) — share it with the Legacy Viewer?
+ui-options-chat-logs-other-account = This folder belongs to another account ({ $folder }). Keeping the current folder.
+ui-options-chat-logs-main-grid-folder = This folder ({ $folder }) holds your main-grid logs, not your Second Life Beta (Aditi) logs. Keeping the current folder.
+ui-options-chat-logs-switch-to = Switch to { $folder }
 ui-options-chat-logs-moved = { $count ->
     [one] { $count } file moved.
    *[other] { $count } files moved.
     }
 ui-options-chat-logs-move-failed = Unable to move the files: the previous folder is kept.
+ui-options-chat-logs-change-failed = Unable to change the folder: the previous folder is kept.
 ui-options-chat-logs-erase = Erase this account's history…
 ui-options-chat-logs-erase-title = Erase this account's history?
 ui-options-chat-logs-erase-text = Every conversation file of this account on this grid is removed from the disk: instant messages, groups, conferences and nearby chat. This cannot be undone. Other accounts are not touched. The copy of the private conversations kept by the grid is not deleted: Aurora stops showing its messages older than this erase.
@@ -12639,7 +12654,8 @@ ui-land-dialogs-return-objects-of-owners = { $owners ->
    *[other] Return the { $count } objects of these { $owners } owners to them?
     }
 ui-land-dialogs-objects-of-owners-returned = The objects of the selected owners have been returned.
-ui-group-profile-title = Group Profile
+ui-group-profile-title-loading = Group Profile - Loading...
+ui-group-profile-title-named = Group Profile - { $name }
 ui-group-profile-view = View the group's profile
 ui-group-profile-members-and-roles = Members and roles
 ui-group-profile-leave = Leave
@@ -12806,6 +12822,19 @@ ui-group-notices-message = Message…
 ui-group-notices-drop = Drag an item or landmark from Inventory, Favorites, or Places (copy + transfer)
 ui-group-notices-not-attachable = This item cannot be attached: it must be copyable and transferable, and not worn.
 ui-group-notices-remove-attachment = Remove the attachment
+ui-group-notices-copy-tip = Copy this notice to other groups you can send notices to: each opens in its own window, ready to send
+ui-group-notices-copy-to = Copy this notice to
+ui-group-notices-copy-replaces = { $group } (replaces the notice being written)
+ui-group-notices-copy-limit = Up to { $count } groups at a time: copy again for more.
+ui-group-notices-copy-tick-pinned = Tick the pinned groups
+ui-group-notices-copy-others = Other groups
+ui-group-notices-copy-copied = { $group } (copied)
+ui-group-notices-copy-clear = Clear selection
+ui-group-notices-copy-do = { $count ->
+    [0] Copy
+    [one] Copy to { $shown } group
+   *[other] Copy to { $shown } groups
+    }
 ui-group-notices-send = { $count ->
     [one] Send to { $shown } member
    *[other] Send to { $shown } members
@@ -13779,19 +13808,7 @@ movement-running = Enhance running
 movement-fly-assist = Enhance flying
 movement-swimming = Enable swimming
 movement-jump-obstacles = Jump out of the water at steep obstacles
-movement-key-unbound = Unassigned
-movement-key-double = Double-tap
-movement-water-submerge = At the surface: submerge
-movement-water-surface = Underwater: return to the surface
-movement-water-leap = At the surface: leap out of the water
-movement-water-takeoff = At the surface: take flight
-movement-water-dive = Dive: immediately after jumping
-movement-water-cannonball = Cannonball: in flight, or press again during a dive
-movement-water-walk-crouch = Crouch / crouch-walk
-movement-water-walk-jump = Jump and land on the water
 movement-water-walk = Walk / run on water
-movement-run-multiplier = Running multiplier
-movement-run-help = ×1 keeps normal running unchanged. Increase up to ×5 to boost running; walking is unchanged.
 movement-run-awaiting-script = Running: awaiting fresh bridge feedback.
 movement-run-no-command = Running: no boost command currently received by the script.
 movement-run-no-controls = awaiting movement keys
@@ -13807,8 +13824,6 @@ movement-run-ramping = accelerating gradually
 movement-run-saturated = thrust limit reached
 movement-run-regulation = Requested thrust: { $power }%; ramp target: { $ramp } m/s; { $restarts } restarts.
 movement-run-feedback = Running: { $state }. Target { $target } m/s; script measures { $speed } m/s; { $pushes } thrust updates.
-movement-swim-speed = Swimming
-movement-fly-multiplier = Flight multiplier
 movement-float-height = Flotation height
 movement-float-help = Offset from the default surface position: positive floats higher, negative lower. 0 m restores the default height.
 movement-speed-help = Each enhancement can be switched separately. Simulator physics and latency can limit speeds. Movelock takes priority.
@@ -13912,28 +13927,10 @@ bridge-request-gone = The bridge's address changed with the region. Reconnecting
 bridge-request-response = The bridge returned an unreadable or incomplete state. Retrying.
 bridge-request-sequence = The bridge response does not match the command sent. Retrying.
 
-ao-design-title = AO layout study
-ao-design-help = Compare the current native AO window with two movement layouts. Existing AO controls use the same window and widgets.
-ao-design-current = Current window
-ao-design-tabs = Animations / Movement tabs
-ao-design-section = Collapsible movement section
-ao-design-avatar = Avatar preview state
-ao-design-animations = Animations
-ao-design-movement = Movement
-ao-design-swim-animations = Choose swimming animations in AO
-ao-design-open = Open AO
-ao-design-reset = Reset movement values
-ao-design-session = Offline prototype. Movement values are temporary; no motor or online account is changed.
-ao-design-movement-help = Each movement aid is independent. AO activation controls animation playback.
-ao-design-animation-help = Swimming animations are selected in the AO swimming states, using its inventory lists.
-ao-design-passage = Preview only: an obstacle-pass request would be sent here.
 
 # Integrated AO movement tab.
-ao-tab-animations = Animations
-ao-tab-movement = Movement (EXPERIMENTAL)
 ao-movement-help = Movement aids are configured independently of the AO’s other animations.
 movement-pass-enable = Obstacle passage
-movement-fly-help = ×1 keeps normal flight. Increase up to ×5 to fly faster.
 
 # Authenticated read-only Aurora bridge queries.
 radar-opt-bridge = Correct missing altitudes with the Aurora bridge
@@ -13986,54 +13983,11 @@ ao-duplicate-native = { $count ->
 ao-native-already-exists = A native Aurora AO folder already exists. Choose it in the AO window instead of migrating again.
 
 # Guided AO editor
-ao-states = States
-ao-combine = Combine…
 ao-combine-title = Combine animations
-ao-new-group = New group
-ao-new-track = New track
-ao-group-name = Group name
-ao-track-name = Track name
-ao-create-group = Create group
-ao-create-track = Create track
-ao-combine-name-exists = A group or track already has that name.
-ao-rename-combination = Rename group or track
-ao-group-example = A group plays several animations together. For example: a body pose and a hand animation.
-ao-track-example = A track has its own cycle alongside the main cycle. For example: switch hand gestures while body poses follow their own cycle.
 ao-combine-existing = Move animations here from { $state }
 ao-combine-existing-help = Checked animations will be removed from the main list.
-ao-back-state = ← Back to { $state }
-ao-group-kind = Group · Simultaneous playback
-ao-track-kind = Track · Independent cycle
-ao-group-explanation = All animations in this group play together.
-ao-track-explanation = One animation at a time, alongside the { $state } cycle.
-ao-add-group = Add to group
-ao-add-track = Add to track
-ao-group-cycle-help = This group is one entry in the { $state } alternation.
-ao-dissolve-group = Ungroup animations
-ao-dissolve-track = Dissolve track
 ao-combine-empty = Add animations here.
-ao-parallel-tracks = Parallel tracks
-ao-entry-help = Click to choose or open · Drag to reorder
-ao-track-cycle = Track alternation
-ao-state-cycle = { $state } alternation
-ao-auto-cycle = Switch automatically
-ao-cycle-interval = Interval
-ao-group-summary = { $count ->
-    [one] Group · { $count } animation
-   *[other] Group · { $count } animations together
-    }
-ao-track-summary = { $count ->
-    [one] Track · { $count } animation · Independent cycle
-   *[other] Track · { $count } animations · Independent cycle
-    }
-ao-group-count = { $count ->
-    [one] { $count } animation to play
-   *[other] { $count } animations to play together
-    }
-movement-run-speed = Running speed
-movement-flight-speed = Flight speed
 ao-combine-group-choice = Play several animations together
-ao-combine-track-choice = Add an independent cycle
 
 # Construction inspector and resource picker
 numeric-increase = Increase
@@ -14191,9 +14145,13 @@ poser-finger-col-middle = middle
 poser-finger-col-tip = tip
 poser-hint-rotation = degrees, parent frame
 poser-hint-position = meters, avatar axes · the chain follows
+poser-hint-position-only = meters, avatar axes · this joint only
+poser-move-joint-only = Move this joint only
+poser-move-joint-only-hint = Move this joint directly without bending its chain. Mirror mode also moves the opposite joint.
 poser-hint-scale = factors · center cube = uniform
 poser-ball-rotation = Drag to rotate · aligned with the camera
 poser-ball-position = Drag the handle in world · the chain bends
+poser-ball-position-only = Drag the handle in world · this joint only
 poser-ball-scale = Cubes in world: one axis · center: uniform
 poser-whole-pose = Whole pose
 poser-save-options = Save options
@@ -14600,8 +14558,6 @@ ao-underwater-swimming-fallback = Uses the surface swimming list until animation
 
 ao-quick-manager = Settings
 ao-mini-title = Mini AO
-ao-now-playing = { $state }: { $name }
-ao-now-playing-none = { $state }: No animation selected
 ao-quick-pin = Open mini AO window
 ao-quick-previous = Previous animation ({ $state })
 ao-quick-next = Next animation ({ $state })
@@ -16859,3 +16815,170 @@ phototools-director-lens = The Director's lens is shown while its window is open
 phototools-view-angle-viewfinder = The viewfinder owns the view angle: yours comes back when it closes.
 ui-options-dof-show-focus-point = Show focus point
 ui-options-dof-show-focus-point-help = A small crosshair on the point the lens focuses on: yellow when it is free, red when it is locked.
+
+# AO window, one page per group (2026-11-27)
+ao-status-off = AO off
+ao-turn-on = Turn the AO on
+ao-turn-off = Turn the AO off
+ao-no-set = No set yet
+ao-no-set-line = Make one to begin
+ao-set-count = { $count ->
+    [one] { $count } set
+   *[other] { $count } sets
+    }
+ao-animation-count = { $count ->
+    [one] { $count } animation
+   *[other] { $count } animations
+    }
+ao-loads-at-login = Loads at login
+ao-sets-tip = Switch sets, or make a new one
+ao-your-sets = Your sets
+ao-set-more = More for this set
+ao-load-at-login = Load at login
+ao-delete-set = Delete…
+ao-delete-set-confirm = Delete “{ $set }”? Its animations stay in your inventory.
+ao-sits-line = Your sits, even on furniture
+ao-smart-line = Furniture with its own pose keeps it
+ao-mouselook-line = Stand still while you aim
+ao-migrate-link = Bring sets from another viewer…
+ao-all-slots = All slots
+ao-essentials = Essentials
+ao-all-slots-hint = Every slot of your AO, { $count } in all.
+ao-essentials-hint = Only the { $count } core animations everyone notices.
+ao-category-general-line = Standing, sitting and typing
+ao-category-ground-line = Walking, running and turning
+ao-category-jumping-line = Jumps and landings
+ao-category-flight-line = Moving in the air
+ao-category-water-line = Only needed if you turn on swimming
+ao-tab-movement-short = Movement
+ao-movement-intro = Each enhancement is separate. Simulator physics and latency can limit speeds.
+ao-experimental = Experimental
+ao-swimming-switch = Swimming
+ao-page-hint = Drag animations from your inventory onto a slot. Click a slot to edit it.
+ao-slot-default = Default animation
+ao-slot-empty-hint = Second Life's default plays · drop an animation here
+ao-more-count = +{ $count } more
+ao-playing-now = Playing now
+ao-playing = Playing
+ao-together = Together
+ao-main = Main
+ao-new-layer = New layer: plays on top, with its own turns
+ao-layer-line = { $layer } plays on top of the main list.
+ao-remove-layer = Remove this layer
+ao-turns-solo = Add a second animation and they'll take turns.
+ao-turns-manual = You switch them yourself
+ao-turns-every = Switches to the next one every
+ao-turns-each-time = A different one each time it starts
+ao-seconds-suffix = { " s" }
+ao-order-in-order = In order
+ao-order-shuffle = Shuffle
+ao-order-manual = Manual
+ao-order-in-order-line = One after the other, from the top
+ao-order-shuffle-line = A random one each time
+ao-order-manual-line = Only when you choose
+ao-preview = Preview
+ao-preview-place = { $index } of { $count }
+ao-preview-none = Nothing to preview yet
+ao-preview-previous = Previous animation
+ao-preview-next = Next animation
+ao-drop-box = Drop animations here, or click to choose
+ao-line-standing = When you stand still
+ao-line-standing-up = Getting up from a sit
+ao-line-sitting = On chairs and objects
+ao-line-ground-sit = Without an object
+ao-line-typing = While you type in chat
+ao-line-always = Plays under everything else
+ao-line-walking = When you walk
+ao-line-running = When you run
+ao-line-crouching = Holding crouch
+ao-line-crouch-walk = Moving while crouched
+ao-line-turning = Turning in place
+ao-line-pre-jumping = Just before a jump
+ao-line-jumping = While in the air
+ao-line-falling = Dropping down
+ao-line-soft-landing = After a short fall
+ao-line-landing = After a long fall
+ao-line-flying = Flying forward
+ao-line-flying-slow = At low speed
+ao-line-hovering = Staying still in the air
+ao-line-flying-up = Flying up
+ao-line-flying-down = Flying down
+ao-line-floating = Still at the surface
+ao-line-swimming-forward = Moving at the surface
+ao-line-underwater-swimming = Moving underwater
+ao-line-swimming-up = Rising underwater
+ao-line-swimming-down = Diving deeper
+ao-line-underwater-floating = Still underwater
+ao-line-water-entry = Entering the water
+ao-line-water-flight-exit = Out of the water into the air
+ao-line-water-shore-exit = Out of the water onto a ledge
+ao-line-water-dive-jump = Jumping in head first
+ao-line-water-dive-entry = Hitting the water
+ao-line-water-cannonball = Jumping in curled up
+ao-line-swimming-style = Swimming style
+ao-welcome = Welcome to your AO
+ao-welcome-title = Give your avatar its own way of moving
+ao-welcome-body = An AO replaces Second Life's default animations (standing, walking, sitting…) with animations you own. Everyone around you sees them.
+ao-welcome-step-1 = Open a group
+ao-welcome-step-1-line = General, Ground, Jumping… on the left.
+ao-welcome-step-2 = Drag animations onto its slots
+ao-welcome-step-2-line = Straight from your inventory. Watch them in the preview.
+ao-welcome-step-3 = Turn your AO on
+ao-welcome-step-3-line = With the power button at the top of this window.
+ao-welcome-name = Name your first set
+ao-welcome-default-name = My first set
+ao-welcome-create = Create my set
+ao-welcome-migrate = Bring a set from the Legacy Viewer or Alchemy
+ao-welcome-library = No animations yet? Start with the free ones in your Library. Animations you buy on the Marketplace arrive in your inventory.
+ao-layer-earlier = Move this layer earlier
+ao-layer-later = Move this layer later
+ao-mini-default = Default animations
+ao-mini-sets-tip = Click to change the set
+ao-swim-ready-tag = Swim ready
+ao-manage-sets = Manage sets…
+ao-rename-stack-or-layer = Rename stack or layer
+ao-combine-layer-choice = Play on top, with its own turns
+ao-stack = Stack
+ao-layer = Layer
+ao-new-stack = New stack
+ao-new-layer-name = New layer
+ao-layer-example = A layer plays on top of the main list and takes turns on its own. For example: hand gestures that change while the body poses follow theirs.
+ao-stack-example = A stack plays several animations together. For example: a body pose and a hand animation.
+ao-layer-name = Layer name
+ao-stack-name = Stack name
+ao-create-layer = Create layer
+ao-create-stack = Create stack
+ao-stack-name-exists = A stack or layer already has that name.
+ao-dissolve-layer = Dissolve layer
+ao-split-stack = Split apart
+ao-add-to-stack = Add to this stack
+ao-play-in-world = Play it in the world
+ao-remove-member = Remove “{ $name }”
+ao-row-help = Click to preview · Double-click or Shift+click to play it in the world · Drag to reorder · Right-click for more
+ao-switch = AO
+ao-order-tip = How they take turns
+ao-run-multiplier = Running multiplier
+ao-flight-multiplier = Flight multiplier
+ao-swim-speed-label = Speed
+ao-water-walk-line = Turns swimming off while on.
+ao-make-stack = Make a stack with…
+ao-layer-tab = Layer
+ao-active = Active
+ao-use-set = Use
+ao-use-set-tip = Make this the set your AO plays
+ao-use-this-set = Use this set
+ao-not-in-use = Editing a set not in use: your AO plays { $set }.
+ao-set-options = Set options
+ao-add-sets = Add sets
+ao-new-line = Start from empty
+ao-import-short = Import
+ao-import-tile-line = From a notecard
+ao-next-in = next in { $seconds } s
+ao-stop-seconds = { $count } s
+ao-stop-minutes = { $count } min
+ao-stop-auto = Auto
+ao-mini-close = Close mini AO
+ao-cycle-off = Off
+ao-switches-every = Switches every { $time }
+ao-tile-swimming = Swimming
+ao-tile-water-walk = Walk on water

@@ -9,7 +9,7 @@
 //! Firestorm.
 
 use super::view::{self, View};
-use super::{GroupAction, GroupProfileUi};
+use super::{GroupAction, GroupWindow};
 use crate::theme::Palette;
 use crate::ui::context::{self, CtxAction};
 use crate::ui::place_details::Ctx;
@@ -47,7 +47,7 @@ pub fn visible(v: &View) -> bool {
     v.member.is_some()
 }
 
-pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
+pub fn show(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let Some(me) = v.member else { return };
     if st.land.active != Some(v.id) {
         st.land.active = Some(v.id);
@@ -121,7 +121,7 @@ fn figure(ui: &mut egui::Ui, p: &Palette, value: &str, color: Color32, name: &st
 /// Land in use, available, contributed (processGroupLand's totals), and our
 /// contribution.
 fn stats(
-    st: &mut GroupProfileUi,
+    st: &mut GroupWindow,
     ui: &mut egui::Ui,
     c: &mut Ctx,
     v: &View,
@@ -176,7 +176,7 @@ fn stats(
 
 /// Our contribution, applied when the field is left
 /// (LLPanelGroupLandMoney::impl::applyContribution).
-fn contribution(st: &mut GroupProfileUi, ui: &mut egui::Ui, v: &View, me: &GroupMembership, actions: &mut Vec<GroupAction>) {
+fn contribution(st: &mut GroupWindow, ui: &mut egui::Ui, v: &View, me: &GroupMembership, actions: &mut Vec<GroupAction>) {
     let stored = me.contribution;
     let mut text = st.land.contribution.clone().unwrap_or_else(|| stored.to_string());
     let resp = crate::ui::widgets::restricted_text_field(ui, true, &mut text, crate::ui::widgets::TextPolicy::Digits, |b, _| {
@@ -263,7 +263,7 @@ enum ParcelAct {
 }
 
 /// The group's parcels (group_parcel_list).
-fn parcels(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, data: Option<&GroupMoneyData>, actions: &mut Vec<GroupAction>) {
+fn parcels(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, data: Option<&GroupMoneyData>, actions: &mut Vec<GroupAction>) {
     let p = c.p;
     let width = ui.available_width();
     let shares = [1.1_f32, 1.5, 1.1];
@@ -455,7 +455,7 @@ fn chevron(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool)
 }
 
 /// The group's L$: the three pages, the week and its arrows.
-fn money(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, data: Option<&GroupMoneyData>, actions: &mut Vec<GroupAction>) {
+fn money(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, data: Option<&GroupMoneyData>, actions: &mut Vec<GroupAction>) {
     let p = c.p;
     let ledger = st.land.ledger;
     let page = data.and_then(|d| d.page(ledger));

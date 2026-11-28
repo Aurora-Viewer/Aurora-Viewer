@@ -1579,10 +1579,7 @@ inventory-move-confirm = Przenieś
 inventory-move-connection-unavailable = Nie można przenieść: połączenie z regionem jest niedostępne.
 inventory-move-invalid-target = Nie można znaleźć przedmiotu lub folderu docelowego. Wczytaj szafę ponownie.
 ao-title = AO · Animacje awatara
-ao-help = Wybierz stan po lewej stronie. Kliknij animację, aby ją wybrać, lub przeciągnij, aby zmienić jej kolejność. „Połącz…” tworzy grupę jednoczesną lub ścieżkę z własnym cyklem. Zestawy i opcje są przechowywane w #Aurora/Aurora AO.
 ao-enabled = Włącz AO
-ao-pause = Wstrzymaj
-ao-stands = Stanie i obroty
 ao-set = Zestaw
 ao-reload = Wczytaj zestawy z szafy ponownie
 ao-new = Nowy zestaw
@@ -1605,22 +1602,16 @@ ao-empty = Utwórz zestaw lub zaimportuj notkę, aby rozpocząć.
 ao-sits = Zastępuj siadanie
 ao-smart = Sprytne siadanie
 ao-mouselook = Wyłącz stanie w widoku pierwszoosobowym
-ao-default = Domyślny zestaw
 ao-current = Bieżący stan: { $state }
 ao-previous = Poprzednia animacja
 ao-next = Następna animacja
-ao-add = Dodaj animację
 ao-play-tip = Kliknij dwukrotnie, aby wybrać tę animację
 ao-up = Przesuń w górę
 ao-down = Przesuń w dół
-ao-track = Ścieżka
-ao-group = Grupa
-ao-drop = Dodaj lub upuść animację tutaj.
 ao-container-name = Nazwa grupy lub ścieżki
 ao-target = Dodaj do: { $name }
 ao-state-root = Stan główny
 ao-cycle = Cykl
-ao-random = Losowo
 ao-set-name = Nazwa zestawu AO
 ao-remove-confirm = Usunąć ten wpis AO? Oryginalne animacje zostaną zachowane. Usunięte foldery trafiają do kosza.
 ao-choose = Wybierz z szafy
@@ -1670,7 +1661,6 @@ ao-water-shore-exit = Wyskok na przeszkodę
 ao-swim-slots = Animacje pływackie dla tego zestawu
 ao-swim-required = Brakuje wymaganych animacji pływania.
 ao-swim-required-missing = Wymagane do włączenia pływania: brak animacji.
-ao-swim-required-present = Wymagane do włączenia pływania: animacja przypisana.
 ao-swim-choose = Wybierz animację…
 ao-swim-ready = Wymagane animacje pływania są przypisane.
 ao-swimming-forward = Pływanie na powierzchni
@@ -1681,7 +1671,6 @@ ao-water-dive-entry = Nurkowanie · wejście do wody
 ao-water-cannonball = Bomba
 ao-swim-optional = Opcjonalne. Bieżące animacje pływania działają dalej bez tego miejsca.
 movement-water-jumps = Skoki do wody i bomby
-movement-water-jumps-help = Po skoku naciśnij ponownie w ciągu 0,45 s, aby zanurkować. Późniejsze naciśnięcie, kolejne naciśnięcie podczas nurkowania lub naciśnięcie podczas lotu nad wodą wykonuje bombę.
 ao-swimming-up = Pływanie w górę
 ao-swimming-down = Pływanie w dół
 ao-always = Zawsze
@@ -11103,8 +11092,6 @@ ui-options-chat-logs-dated-help = Jeden plik na miesiąc dla każdej rozmowy (na
 ui-options-chat-logs-note = Te pliki to zwykły tekst, który może przeczytać każdy, kto korzysta z tego komputera. Pozostają na tym komputerze, osobno dla każdego konta i każdego świata, i nigdy nie są dołączane do zgłoszenia błędu.
 ui-options-chat-logs-open = Otwórz folder
 ui-options-chat-logs-folder-help = Pliki tego konta zostaną przeniesione do nowego folderu.
-ui-options-chat-logs-legacy-layout = Wspólny folder z Legacy Viewer
-ui-options-chat-logs-legacy-layout-help = Zapisuje pliki tego konta w wybranym folderze w układzie samego Legacy Viewer (first_last), tak aby obie przeglądarki czytały i uzupełniały tę samą historię. Wybierz powyżej folder logów czatu Legacy Viewer. Aurora tylko dopisuje tam wiersze: nic nie jest przenoszone, importowane ani usuwane, a po wyłączeniu wracają własne pliki Aurora. Zachowaj to samo ustawienie „Pliki z datą” w obu przeglądarkach. Tylko Second Life. Domyślnie wyłączone.
 ui-options-chat-logs-moved = { $count ->
     [one] Przeniesiono { $count } plik.
     [few] Przeniesiono { $count } pliki.
@@ -12346,7 +12333,6 @@ ui-land-dialogs-return-objects-of-owners = { $owners ->
    *[other] Zwrócić tym właścicielom ({ $owners }) ich obiekty ({ $count })?
     }
 ui-land-dialogs-objects-of-owners-returned = Obiekty wybranych właścicieli zostały zwrócone.
-ui-group-profile-title = Profil grupy
 ui-group-profile-view = Zobacz profil grupy
 ui-group-profile-members-and-roles = Członkowie i funkcje
 ui-group-profile-leave = Opuść
@@ -13496,19 +13482,7 @@ movement-running = Ulepszony bieg
 movement-fly-assist = Ulepszone latanie
 movement-swimming = Włącz pływanie
 movement-jump-obstacles = Wyskakuj z wody przy stromych przeszkodach
-movement-key-unbound = Nieprzypisane
-movement-key-double = Dwukrotne naciśnięcie
-movement-water-submerge = Na powierzchni: zanurzenie
-movement-water-surface = Pod wodą: powrót na powierzchnię
-movement-water-leap = Na powierzchni: skok z wody
-movement-water-takeoff = Na powierzchni: wzbij się w powietrze
-movement-water-dive = Nurkowanie: bezpośrednio po skoku
-movement-water-cannonball = Bomba: w locie lub naciśnij ponownie podczas nurkowania
-movement-water-walk-crouch = Kucnięcie / chód w przykucu
-movement-water-walk-jump = Skok i lądowanie na wodzie
 movement-water-walk = Chód / bieg po wodzie
-movement-run-multiplier = Mnożnik biegu
-movement-run-help = ×1 pozostawia zwykły bieg bez zmian. Zwiększ do ×5, aby przyspieszyć bieg; chód pozostaje bez zmian.
 movement-run-awaiting-script = Bieg: oczekiwanie na świeżą odpowiedź mostu.
 movement-run-no-command = Bieg: skrypt nie otrzymuje obecnie polecenia przyspieszenia.
 movement-run-no-controls = oczekiwanie na klawisze ruchu
@@ -13524,8 +13498,6 @@ movement-run-ramping = stopniowe przyspieszanie
 movement-run-saturated = osiągnięto limit ciągu
 movement-run-regulation = Żądany ciąg: { $power }%; cel narastania: { $ramp } m/s; restarty: { $restarts }.
 movement-run-feedback = Bieg: { $state }. Cel { $target } m/s; pomiar skryptu { $speed } m/s; aktualizacje ciągu: { $pushes }.
-movement-swim-speed = Pływanie
-movement-fly-multiplier = Mnożnik lotu
 movement-float-height = Wysokość unoszenia się
 movement-float-help = Przesunięcie względem domyślnej pozycji na powierzchni: wartość dodatnia unosi wyżej, ujemna niżej. 0 m przywraca domyślną wysokość.
 movement-speed-help = Każde ulepszenie można przełączać osobno. Fizyka symulatora i opóźnienia mogą ograniczać prędkość. Movelock ma pierwszeństwo.
@@ -13629,26 +13601,8 @@ bridge-request-http = Symulator odrzucił żądanie mostu (HTTP { $status }). Po
 bridge-request-gone = Adres mostu zmienił się wraz z regionem. Ponowne łączenie.
 bridge-request-response = Most zwrócił nieczytelny lub niepełny stan. Ponowna próba.
 bridge-request-sequence = Odpowiedź mostu nie pasuje do wysłanego polecenia. Ponowna próba.
-ao-design-title = Studium układu AO
-ao-design-help = Porównanie obecnego natywnego okna AO z dwoma układami ruchu. Istniejące elementy sterujące AO używają tego samego okna i widżetów.
-ao-design-current = Bieżące okno
-ao-design-tabs = Karty Animacje / Ruch
-ao-design-section = Zwijana sekcja ruchu
-ao-design-avatar = Stan podglądu awatara
-ao-design-animations = Animacje
-ao-design-movement = Ruch
-ao-design-swim-animations = Wybierz animacje pływania w AO
-ao-design-open = Otwórz AO
-ao-design-reset = Resetuj wartości ruchu
-ao-design-session = Prototyp offline. Wartości ruchu są tymczasowe; żaden silnik ani konto online nie zostanie zmienione.
-ao-design-movement-help = Każde wspomaganie ruchu jest niezależne. Aktywacja AO steruje odtwarzaniem animacji.
-ao-design-animation-help = Animacje pływania wybiera się w stanach pływania AO, z jego list szafy.
-ao-design-passage = Tylko podgląd: tutaj zostałoby wysłane żądanie przejścia przez przeszkodę.
-ao-tab-animations = Animacje
-ao-tab-movement = Ruch (EKSPERYMENTALNE)
 ao-movement-help = Wspomaganie ruchu konfiguruje się niezależnie od pozostałych animacji AO.
 movement-pass-enable = Przejście przez przeszkody
-movement-fly-help = ×1 utrzymuje normalny lot. Zwiększ do ×5, aby latać szybciej.
 radar-opt-bridge = Popraw brakujące wysokości za pomocą mostu Aurora
 bridge-script-info-loading = Pobieranie informacji o skrypcie przez most Aurora…
 bridge-script-info-region = Informacje o skrypcie są dostępne tylko dla obiektu w bieżącym regionie.
@@ -13685,63 +13639,11 @@ bridge-object-info-result =
     Bieżąca pozycja własnego awatara: { $observer }
 bridge-query-timeout = Most nie zwrócił żądanych informacji na czas. Spróbuj ponownie.
 bridge-query-interrupted = Żądanie informacji zostało przerwane przez zmianę regionu lub połączenia z mostem. Spróbuj ponownie.
-ao-states = Stany
-ao-combine = Połącz…
 ao-combine-title = Łączenie animacji
-ao-new-group = Nowa grupa
-ao-new-track = Nowa ścieżka
-ao-group-name = Nazwa grupy
-ao-track-name = Nazwa ścieżki
-ao-create-group = Utwórz grupę
-ao-create-track = Utwórz ścieżkę
-ao-combine-name-exists = Grupa lub ścieżka ma już taką nazwę.
-ao-rename-combination = Zmień nazwę grupy lub ścieżki
-ao-group-example = Grupa odtwarza kilka animacji naraz. Na przykład: pozę ciała i animację dłoni.
-ao-track-example = Ścieżka ma własny cykl obok cyklu głównego. Na przykład: zmiana gestów dłoni, podczas gdy pozy ciała mają własny cykl.
 ao-combine-existing = Przenieś animacje tutaj z { $state }
 ao-combine-existing-help = Zaznaczone animacje zostaną usunięte z listy głównej.
-ao-back-state = ← Powrót do: { $state }
-ao-group-kind = Grupa · Jednoczesne odtwarzanie
-ao-track-kind = Ścieżka · Niezależny cykl
-ao-group-explanation = Wszystkie animacje tej grupy są odtwarzane naraz.
-ao-track-explanation = Jedna animacja naraz, obok cyklu: { $state }.
-ao-add-group = Dodaj do grupy
-ao-add-track = Dodaj do ścieżki
-ao-group-cycle-help = Ta grupa jest jednym wpisem w naprzemienności: { $state }.
-ao-dissolve-group = Rozgrupuj animacje
-ao-dissolve-track = Rozwiąż ścieżkę
 ao-combine-empty = Dodaj animacje tutaj.
-ao-parallel-tracks = Ścieżki równoległe
-ao-entry-help = Kliknij, aby wybrać lub otworzyć · Przeciągnij, by zmienić kolejność
-ao-track-cycle = Naprzemienność ścieżki
-ao-state-cycle = Naprzemienność: { $state }
-ao-auto-cycle = Przełączaj automatycznie
-ao-cycle-interval = Interwał
-ao-group-summary =
-    { $count ->
-        [one] Grupa · { $count } animacja
-        [few] Grupa · { $count } animacje naraz
-        [many] Grupa · { $count } animacji naraz
-       *[other] Grupa · { $count } animacji naraz
-    }
-ao-track-summary =
-    { $count ->
-        [one] Ścieżka · { $count } animacja · Niezależny cykl
-        [few] Ścieżka · { $count } animacje · Niezależny cykl
-        [many] Ścieżka · { $count } animacji · Niezależny cykl
-       *[other] Ścieżka · { $count } animacji · Niezależny cykl
-    }
-ao-group-count =
-    { $count ->
-        [one] { $count } animacja do odtworzenia
-        [few] { $count } animacje do odtworzenia naraz
-        [many] { $count } animacji do odtworzenia naraz
-       *[other] { $count } animacji do odtworzenia naraz
-    }
-movement-run-speed = Prędkość biegu
-movement-flight-speed = Prędkość lotu
 ao-combine-group-choice = Odtwarzaj kilka animacji naraz
-ao-combine-track-choice = Dodaj niezależny cykl
 numeric-increase = Zwiększ
 numeric-decrease = Zmniejsz
 build-status-no-mod = Bez prawa modyfikacji

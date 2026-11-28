@@ -17,6 +17,16 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 use uuid::Uuid;
 
+/// Which local plaintext transcript family backs a direct conversation's
+/// stitched read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptFamily {
+    pub dir: PathBuf,
+    pub peer: Option<Uuid>,
+    pub stem: String,
+    pub shared: bool,
+}
+
 /// The rows an IM session shows (LLIMModel's 200).
 pub const SESSION_LIMIT: usize = 200;
 /// The rows the History window reads (LLFloaterConversationPreview, 10000).
@@ -209,13 +219,15 @@ pub fn stitch(legacy: Messages, archive_rows: &[HistoryRow], preview: &[HistoryR
 }
 
 /// The whole read of one resident (readStitched). `family`: the transcript
-/// folder and cleaned stem, `None` when the account keeps none or the name
-/// is not known yet.
+/// folder and stem inputs, `None` when the account keeps none or the folder
+/// or name is not known yet. Shared Legacy Viewer folders resolve all Legacy,
+/// username, dated, and `conversation.log`-mapped variants and deduplicate
+/// overlapping lines across split files.
 pub fn read_stitched(
     storage: &Storage,
     agent: Uuid,
     resident: Uuid,
-    family: Option<(PathBuf, String)>,
+    family: Option<TranscriptFamily>,
     read: &ViewRead,
     limit: usize,
 ) -> ReadResult {
@@ -235,19 +247,36 @@ pub fn read_stitched(
             archive_rows = scan.display_rows;
         }
     }
-    let mut legacy = Vec::new();
-    if let Some((dir, stem)) = family {
-        for path in transcript_family(&dir, &stem) {
-            if let Ok(bytes) = std::fs::read(&path) {
-                crate::disk_io::read(crate::disk_io::Origin::Logs, bytes.len());
-                legacy.extend(
-                    crate::world::chat_log::store::parse(&bytes, false)
-                        .iter()
-                        .map(|e| legacy_message(e, agent)),
-                );
-            }
+    let legacy = match family {
+        None => Vec::new(),
+        // every spelling, whole; a line without a date still goes after the
+        // dated ones (mergeDirectHistory), not by its file's modification
+        // time as in the other conversations' reads (human decision,
+        // 2026-11-18)
+        Some(family) if family.shared => {
+            let paths = crate::world::chat_log::names::all_candidate_files(&family.dir, family.peer, &family.stem);
+            crate::world::chat_log::store::read_combined_files(&paths)
+                .iter()
+                .map(|e| legacy_message(e, agent))
+                .collect()
         }
-    }
+        // Aurora's own folder holds Aurora's spelling only: the LL viewer's
+        // family, not every candidate (human decision, 2026-11-18)
+        Some(family) => {
+            let mut out = Vec::new();
+            for path in transcript_family(&family.dir, &family.stem) {
+                if let Ok(bytes) = std::fs::read(&path) {
+                    crate::disk_io::read(crate::disk_io::Origin::Logs, bytes.len());
+                    out.extend(
+                        crate::world::chat_log::store::parse(&bytes, false)
+                            .iter()
+                            .map(|e| legacy_message(e, agent)),
+                    );
+                }
+            }
+            out
+        }
+    };
     let legacy = admit_legacy(legacy, oldest_epoch);
     // the preview is newest first, as the snapshot holds it
     let preview: Vec<HistoryRow> = if read.include_service {
@@ -412,6 +441,72 @@ mod tests {
             .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, ["Some One.txt", "Some One-2025-12.txt", "Some One-2026-02.txt"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shared_family_combines_username_legacy_and_conversation_log_without_duplicates() {
+        let dir = std::env::temp_dir().join(format!("aurora-stitch-shared-{}", Uuid::new_v4()));
+        let transcripts = dir.join("transcripts");
+        let service_dir = dir.join("service");
+        std::fs::create_dir_all(&transcripts).unwrap();
+        std::fs::create_dir_all(&service_dir).unwrap();
+
+        let agent = Uuid::from_u128(1);
+        let peer = Uuid::from_u128(2);
+        std::fs::write(
+            transcripts.join("conversation.log"),
+            format!("[1767261600] 0 0 0 Some One| {peer} {peer} custom_alias|\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            transcripts.join("Some One.txt"),
+            "[2020/01/01 10:00]  Some One: from legacy\n[2020/01/01 10:01]  You: shared copy\n",
+        )
+        .unwrap();
+        std::fs::write(
+            transcripts.join("some_one.txt"),
+            "[2020/01/01 10:01]  You: shared copy\n[2020/01/01 10:02]  Some One: from username\n",
+        )
+        .unwrap();
+        std::fs::write(
+            transcripts.join("custom_alias.txt"),
+            "[2020/01/01 10:03]  Some One: from conversation log alias\n",
+        )
+        .unwrap();
+
+        let storage = Storage::new(service_dir, agent);
+        let read = ViewRead {
+            epoch: 1,
+            archive_serial: 0,
+            deleted_before_ticks: 0,
+            include_service: true,
+            preview: vec![row(1, "from the service")],
+        };
+        let result = read_stitched(
+            &storage,
+            agent,
+            peer,
+            Some(TranscriptFamily {
+                dir: transcripts,
+                peer: Some(peer),
+                stem: "Some One".into(),
+                shared: true,
+            }),
+            &read,
+            0,
+        );
+        let texts: Vec<&str> = result.messages.iter().map(|m| m.message.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "from legacy",
+                "shared copy",
+                "from username",
+                "from conversation log alias",
+                "from the service",
+            ]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
