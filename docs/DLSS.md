@@ -333,11 +333,17 @@ Reflex keeping input latency down. Not yet run on Windows.
   restart tells. Turned off while it runs, it stops at once; the proxy goes
   at the next restart.
 - **What it is given.** For each frame DLSS draws: the depth and motion
-  DLSS reads, copied by the viewer before DLSS runs, and the window's image
-  before the interface (a copy of it, in the window's format), all three
-  tagged valid until the present, so Streamline copies none of them. The
-  interface itself is not given, so in a generated frame it is moved with
-  the scene behind it where they differ.
+  DLSS reads, copied by the viewer before DLSS runs, the window's image
+  before the interface (a copy of it, in the window's format), and the
+  interface alone (Streamline's "UI colour and alpha": the frame as shown
+  where it differs from the image before the interface, opaque, transparent
+  elsewhere, as the Linux frames mix them), all four tagged valid until the
+  present, so Streamline copies none of them. With the interface given,
+  Streamline's interface recomposition is on: the scene and the interface
+  are interpolated apart and the interface laid over the generated frame,
+  so it does not move with the scene. `AURORA_DLSS_FG_UI=0` leaves the
+  interface out, as before, for a comparison: Streamline then takes it from
+  the difference itself, and moved it with the scene.
 - **Off for a frame** DLSS did not draw, under a modal's blur, and before
   the window's size or vsync changes (NVIDIA's guide: not while the
   swapchain is made again): the swapchain is made again once a present has

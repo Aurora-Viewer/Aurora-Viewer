@@ -382,6 +382,11 @@ mod shader_tests {
     }
 
     #[test]
+    fn dlss_fg_ui_shader_is_valid() {
+        validate(include_str!("shaders/dlss_fg_ui.wgsl"));
+    }
+
+    #[test]
     fn motion_history_shader_is_valid() {
         validate(include_str!("shaders/motion_history.wgsl"));
     }

@@ -264,6 +264,10 @@ mod sl {
         pub const SPECULAR_ALBEDO: u32 = 8;
         /// normals with the roughness in w (`DLSSDNormalRoughnessMode::ePacked`)
         pub const NORMAL_ROUGHNESS: u32 = 14;
+        /// `kBufferTypeUIColorAndAlpha`: the interface alone, premultiplied,
+        /// alpha 0 where there is none (DLSS-G guide, UI handling)
+        #[cfg_attr(not(windows), allow(dead_code))]
+        pub const UI_COLOR_AND_ALPHA: u32 = 23;
     }
 
     /// `sl::DLSSDNormalRoughnessMode::ePacked`
@@ -5775,11 +5779,15 @@ mod imp {
 
         /// Windows' frame generation, before the frame's last submit: the
         /// window's image before the interface (`hudless`, at the window's
-        /// size, in its format) and the copies of the depth and the motion
+        /// size, in its format), the interface alone (`ui`, the same, as
+        /// dlss_fg.rs `Interface` draws it; None with `AURORA_DLSS_FG_UI=0`)
+        /// and the copies of the depth and the motion
         /// ([`Dlss::fg_copy_inputs`]) tagged with the frame's token, and
         /// frame generation asked on for the present, [`fg_frames`]
-        /// generated per frame drawn (1 for 2x, at most what the GPU says).
-        /// Off with `hudless` None (the setting off, a modal's blur, a
+        /// generated per frame drawn (1 for 2x, at most what the GPU says),
+        /// the interface recomposed over them when `ui` is given (guide
+        /// §6.6: the scene and the interface interpolated apart, so the
+        /// interface does not move with the scene). Off with `hudless` None (the setting off, a modal's blur, a
         /// resize to come), for a frame DLSS did not draw, for a window
         /// under the smallest size it takes, and at a size its status was
         /// not OK at; `keep` keeps the feature's memory through an off of a
@@ -5790,6 +5798,7 @@ mod imp {
             &mut self,
             encoder: &mut wgpu::CommandEncoder,
             hudless: Option<&wgpu::TextureView>,
+            ui: Option<&wgpu::TextureView>,
             keep: bool,
         ) -> Option<wgpu::CommandBuffer> {
             let token = self.fg_win.token?;
@@ -5840,6 +5849,9 @@ mod imp {
                 })(),
                 _ => None,
             };
+            // the interface alone, with the rest only
+            let ui = ui.filter(|_| tagged.is_some());
+            let mut ui_tagged = ui.and_then(|ui| resource(ui, &self.adapter, false));
             if tagged.is_some()
                 && let (Some(hudless), Some([depth, motion])) = (hudless, &self.fg_win.inputs)
             {
@@ -5850,18 +5862,27 @@ mod imp {
                         state: wgpu::TextureUses::RESOURCE,
                     }
                 }
-                encoder.transition_resources(std::iter::empty(), [read(hudless), read(depth), read(motion)].into_iter());
+                encoder.transition_resources(
+                    std::iter::empty(),
+                    [read(hudless), read(depth), read(motion)]
+                        .into_iter()
+                        .chain(ui.filter(|_| ui_tagged.is_some()).map(read)),
+                );
             }
             let on = tagged.is_some();
             let frames = match self.fg_win.max {
                 0 => 1,
                 max => fg_frames().min(max),
             };
-            let options = sl::DlssgOptions::new(
+            let apart = on && ui_tagged.is_some();
+            let mut options = sl::DlssgOptions::new(
                 if on { sl::dlssg_mode::ON } else { sl::dlssg_mode::OFF },
                 frames,
                 if on || keep { sl::DLSSG_RETAIN_RESOURCES_WHEN_OFF } else { 0 },
             );
+            if apart {
+                options.enable_user_interface_recomposition = sl::TRUE;
+            }
             let extent = |(width, height): (u32, u32)| sl::Extent {
                 top: 0,
                 left: 0,
@@ -5880,7 +5901,9 @@ mod imp {
             // valid until the present (frame generation's own, written by
             // nothing until the next frame's copies, which go after the
             // present), and the Dlss keeps them until its last present
-            // (`retire`); no copy is asked, so `own` stays empty
+            // (`retire`), the renderer the window's two (dlss_fg.rs
+            // `Interface`, through `after_streamline`); no copy is asked,
+            // so `own` stays empty
             let r = with_started(lib, &self.device, &self.lost, false, |st| unsafe {
                 if st.start != self.start {
                     return None;
@@ -5889,11 +5912,14 @@ mod imp {
                     let cmd = e.ok_or("not a Vulkan encoder")?.raw_handle();
                     let f = lib.dlssg()?;
                     if let (Some([hudless, depth, motion]), Some(display)) = (&mut tagged, display) {
-                        let tags = [
+                        let mut tags = vec![
                             sl::ResourceTag::new(hudless, sl::buffer::HUDLESS_COLOR, display).until_present(),
                             sl::ResourceTag::new(depth, sl::buffer::DEPTH, render).until_present(),
                             sl::ResourceTag::new(motion, sl::buffer::MOTION_VECTORS, render).until_present(),
                         ];
+                        if let Some(ui) = &mut ui_tagged {
+                            tags.push(sl::ResourceTag::new(ui, sl::buffer::UI_COLOR_AND_ALPHA, display).until_present());
+                        }
                         sl::check((lib.set_tag_for_frame)(
                             token as sl::FrameToken,
                             &handle,
@@ -5910,7 +5936,17 @@ mod imp {
             match r {
                 Some(Ok(())) => {
                     if on && self.fg_win.asked == 0 {
-                        log::info!("DLSS frame generation: on, {} frame(s) generated per frame drawn", frames);
+                        log::info!(
+                            "DLSS frame generation: on, {} frame(s) generated per frame drawn, {}",
+                            frames,
+                            if apart {
+                                "the interface tagged apart and recomposed"
+                            } else if ui.is_some() {
+                                "the interface in the scene (its image could not be tagged)"
+                            } else {
+                                "the interface in the scene (AURORA_DLSS_FG_UI=0)"
+                            }
+                        );
                     } else if !on && self.fg_win.asked != 0 {
                         log::info!("DLSS frame generation: off for now");
                     }
@@ -6545,7 +6581,13 @@ mod imp {
         }
 
         #[cfg(windows)]
-        pub fn fg_present(&mut self, _: &mut wgpu::CommandEncoder, _: Option<&wgpu::TextureView>, _: bool) -> Option<wgpu::CommandBuffer> {
+        pub fn fg_present(
+            &mut self,
+            _: &mut wgpu::CommandEncoder,
+            _: Option<&wgpu::TextureView>,
+            _: Option<&wgpu::TextureView>,
+            _: bool,
+        ) -> Option<wgpu::CommandBuffer> {
             match self.0 {}
         }
 

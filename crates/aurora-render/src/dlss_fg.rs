@@ -1,4 +1,4 @@
-//! DLSS frame generation's images (prototype, Linux's sl-ngx only; dlss.rs
+//! DLSS frame generation's images (prototype, Linux's sl-ngx; dlss.rs
 //! `Dlss::generate`): the setting `RenderSettings::dlss_fg`, which
 //! `AURORA_DLSS_FG=1` or `0` overrides for a run.
 //!
@@ -27,6 +27,10 @@
 //! window's format), handed over at the frame's end and kept until the
 //! presenter has read them. It presents both, half a frame apart, on a
 //! queue of its own, with Reflex on its swapchain.
+//!
+//! Windows' frame generation (Streamline's DLSS-G, at the present) uses
+//! only [`Interface`]: the image before the interface and the interface
+//! alone, tagged for it (dlss.rs `fg_present`).
 //!
 //! `AURORA_DLSS_FG_DUMP=<folder>` writes the three images of three frames
 //! in a row as PPM, from the `AURORA_DLSS_FG_DUMP_AT`-th generation (300
@@ -628,4 +632,326 @@ fn mix(device: &wgpu::Device, views: [&wgpu::TextureView; 3]) -> (wgpu::RenderPi
         cache: None,
     });
     (pipeline, group)
+}
+
+/// `AURORA_DLSS_FG_UI=0` (or `off`) for a test: Windows' frame generation
+/// gets the image before the interface alone, as before [`Interface`] had
+/// the interface tagged apart; unset, it is.
+#[cfg_attr(not(windows), allow(dead_code, reason = "Windows' frame generation only"))]
+pub(crate) fn interface_apart() -> bool {
+    static APART: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *APART.get_or_init(|| {
+        std::env::var("AURORA_DLSS_FG_UI")
+            .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "off"))
+            .unwrap_or(true)
+    })
+}
+
+/// Windows' frame generation (Streamline's, at the present; dlss.rs
+/// `fg_present`): its images, in the window's format and size. `hudless`
+/// is the window's image before the interface. `ui` is the interface
+/// alone, for Streamline's "UI colour and alpha" (DLSS-G guide, UI
+/// handling): without it Streamline takes the interface from where the
+/// frame as shown and `hudless` differ, as NGX did on Linux, and smeared
+/// the dock and chat bar in the generated frames (module doc); with it,
+/// and the interface recomposition it allows (guide §6.6), the scene and
+/// the interface are interpolated apart. `ui` is drawn after the interface
+/// from a copy of the frame as shown (`shown`), by
+/// shaders/dlss_fg_ui.wgsl: the pixels the interface changed, opaque, the
+/// rest transparent, as the Linux frames mix them (dlss_fg_mix.wgsl).
+/// Streamline reads `hudless` and `ui` at the present, on its own queue:
+/// they go through `dlss::after_streamline`, as the whole.
+#[cfg_attr(not(windows), allow(dead_code, reason = "Windows' frame generation only"))]
+pub(crate) struct Interface {
+    hudless: wgpu::Texture,
+    hudless_view: wgpu::TextureView,
+    /// None with `AURORA_DLSS_FG_UI=0` ([`interface_apart`])
+    ui: Option<InterfaceUi>,
+}
+
+/// [`Interface`]'s interface alone and what draws it.
+#[cfg_attr(not(windows), allow(dead_code, reason = "Windows' frame generation only"))]
+struct InterfaceUi {
+    shown: wgpu::Texture,
+    /// kept with its view, which Streamline is given
+    _ui: wgpu::Texture,
+    ui_view: wgpu::TextureView,
+    pipeline: wgpu::RenderPipeline,
+    group: wgpu::BindGroup,
+}
+
+#[cfg_attr(not(windows), allow(dead_code, reason = "Windows' frame generation only"))]
+impl Interface {
+    /// The images for a window of `size` in `format`, the interface's with
+    /// `apart` ([`interface_apart`]).
+    pub fn new(device: &wgpu::Device, size: wgpu::Extent3d, format: wgpu::TextureFormat, apart: bool) -> Self {
+        let image = |label, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let read = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING;
+        let hudless = image("DLSS FG hudless", read);
+        let hudless_view = hudless.create_view(&wgpu::TextureViewDescriptor::default());
+        let ui = apart.then(|| {
+            let shown = image("DLSS FG shown", read);
+            // (read by Streamline as a shader resource, as `hudless`; a
+            // copy source for the test that reads it back)
+            let ui = image(
+                "DLSS FG interface alone",
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            );
+            let shown_view = shown.create_view(&wgpu::TextureViewDescriptor::default());
+            let (pipeline, group) = interface_pass(device, format, [&shown_view, &hudless_view]);
+            InterfaceUi {
+                ui_view: ui.create_view(&wgpu::TextureViewDescriptor::default()),
+                shown,
+                _ui: ui,
+                pipeline,
+                group,
+            }
+        });
+        Self { hudless, hudless_view, ui }
+    }
+
+    /// Made for a window of `size` in `format`, with the interface apart or
+    /// not as `apart`.
+    pub fn fits(&self, size: wgpu::Extent3d, format: wgpu::TextureFormat, apart: bool) -> bool {
+        self.hudless.size() == size && self.hudless.format() == format && self.ui.is_some() == apart
+    }
+
+    /// The window's image before the interface, copied as it is.
+    pub fn copy_hudless(&self, encoder: &mut wgpu::CommandEncoder, window: &wgpu::Texture) {
+        encoder.copy_texture_to_texture(window.as_image_copy(), self.hudless.as_image_copy(), self.hudless.size());
+    }
+
+    /// The interface alone, from the window's image as shown, after the
+    /// interface and after [`Self::copy_hudless`] in the same frame.
+    pub fn encode_ui(&self, encoder: &mut wgpu::CommandEncoder, window: &wgpu::Texture) {
+        let Some(ui) = &self.ui else {
+            return;
+        };
+        encoder.copy_texture_to_texture(window.as_image_copy(), ui.shown.as_image_copy(), ui.shown.size());
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("DLSS FG interface alone"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &ui.ui_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&ui.pipeline);
+        pass.set_bind_group(0, &ui.group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    /// The image before the interface, as Streamline is given it.
+    pub fn hudless(&self) -> &wgpu::TextureView {
+        &self.hudless_view
+    }
+
+    /// The interface alone, as Streamline is given it; None with
+    /// `AURORA_DLSS_FG_UI=0`.
+    pub fn ui(&self) -> Option<&wgpu::TextureView> {
+        self.ui.as_ref().map(|ui| &ui.ui_view)
+    }
+}
+
+/// [`Interface`]'s pass: its pipeline for the window's `format`, and its
+/// images bound (shown, hudless), which live as long as the `Interface`.
+fn interface_pass(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    views: [&wgpu::TextureView; 2],
+) -> (wgpu::RenderPipeline, wgpu::BindGroup) {
+    let entry = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("DLSS FG interface alone"),
+        entries: &[entry(0), entry(1)],
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("DLSS FG interface alone"),
+        layout: &layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(views[0]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(views[1]),
+            },
+        ],
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("DLSS FG interface alone"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/dlss_fg_ui.wgsl").into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("DLSS FG interface alone"),
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+        label: Some("DLSS FG interface alone"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+    (pipeline, group)
+}
+
+#[cfg(test)]
+mod interface_tests {
+    use super::Interface;
+
+    const W: u32 = 64;
+    const H: u32 = 32;
+    const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+
+    fn window(device: &wgpu::Device, queue: &wgpu::Queue, pixel: impl Fn(u32, u32) -> [u8; 4]) -> wgpu::Texture {
+        let size = wgpu::Extent3d {
+            width: W,
+            height: H,
+            depth_or_array_layers: 1,
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("window"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let data: Vec<u8> = (0..H)
+            .flat_map(|y| (0..W).map(move |x| (x, y)))
+            .flat_map(|(x, y)| pixel(x, y))
+            .collect();
+        queue.write_texture(
+            texture.as_image_copy(),
+            &data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(W * 4),
+                rows_per_image: Some(H),
+            },
+            size,
+        );
+        texture
+    }
+
+    /// The interface alone on a GPU, as Windows' frame generation draws it
+    /// each frame (renderer.rs): the copies, the pass and the move to a
+    /// shader resource Streamline reads (dlss.rs `fg_present`), without a
+    /// validation error, twice in a row (the second frame moves the images
+    /// back from what Streamline read), and the pixels the interface drew
+    /// opaque with the shown colour, the rest transparent black.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn interface_alone_on_a_gpu() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("adapter");
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("device");
+        let scene = |x: u32, y: u32| [(x * 4) as u8, (y * 8) as u8, 90, 255];
+        let drew = |x: u32, y: u32| (10..30).contains(&x) && (5..20).contains(&y);
+        let before = window(&device, &queue, scene);
+        let shown = window(&device, &queue, |x, y| if drew(x, y) { [250, 20, 200, 255] } else { scene(x, y) });
+        let interface = Interface::new(&device, before.size(), FORMAT, true);
+        let ui = interface.ui().expect("the interface apart").texture().clone();
+        let read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("read"),
+            size: u64::from(W * H * 4),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        for _ in 0..2 {
+            let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            interface.copy_hudless(&mut encoder, &before);
+            interface.encode_ui(&mut encoder, &shown);
+            let resource = |texture| wgpu::TextureTransition {
+                texture,
+                selector: None,
+                state: wgpu::TextureUses::RESOURCE,
+            };
+            encoder.transition_resources(
+                std::iter::empty(),
+                [resource(interface.hudless().texture()), resource(&ui)].into_iter(),
+            );
+            queue.submit([encoder.finish()]);
+            let error = pollster::block_on(scope.pop());
+            assert!(error.is_none(), "{error:?}");
+        }
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            ui.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &read,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(W * 4),
+                    rows_per_image: Some(H),
+                },
+            },
+            ui.size(),
+        );
+        queue.submit([encoder.finish()]);
+        read.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        let bytes = read.slice(..).get_mapped_range().expect("mapped").to_vec();
+        for y in 0..H {
+            for x in 0..W {
+                let at = ((y * W + x) * 4) as usize;
+                let got = &bytes[at..at + 4];
+                let want = if drew(x, y) { [250, 20, 200, 255] } else { [0, 0, 0, 0] };
+                let close = got.iter().zip(want).all(|(g, w)| g.abs_diff(w) <= 1);
+                assert!(close, "at {x},{y}: {got:?}, not {want:?}");
+            }
+        }
+    }
 }

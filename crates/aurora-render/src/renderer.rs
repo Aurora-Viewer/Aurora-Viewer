@@ -2536,9 +2536,10 @@ pub(crate) struct Backend {
     /// for Preferences (`dlss_fg::status`)
     fg_meter: Option<crate::dlss_fg::Meter>,
     /// Windows' frame generation (Streamline's, at the present): the
-    /// window's image before the interface, in its format and size
+    /// window's image before the interface and the interface alone, in
+    /// its format and size
     #[cfg(windows)]
-    fg_hudless: Option<wgpu::Texture>,
+    fg_hudless: Option<crate::dlss_fg::Interface>,
     /// Windows' frame generation: frames the window's size or vsync
     /// change has waited for a present asked off, whose swapchain is not
     /// made under frame generation (DLSS-G guide §17); 0 when none waits
@@ -15883,9 +15884,8 @@ impl Backend {
                     && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) =>
             {
                 let (size, format) = (t.texture.size(), t.texture.format());
-                if self.fg_hudless.as_ref().is_none_or(|h| h.size() != size || h.format() != format)
-                    && self.fg_hudless_refused != Some(size)
-                {
+                let apart = crate::dlss_fg::interface_apart();
+                if self.fg_hudless.as_ref().is_none_or(|h| !h.fits(size, format, apart)) && self.fg_hudless_refused != Some(size) {
                     // checked apart: refused, frame generation is off at
                     // this size and the frame presents (the old image once
                     // Streamline is through with it: `fg_hudless_drop`,
@@ -15893,31 +15893,23 @@ impl Backend {
                     if let Some(old) = self.fg_hudless.take() {
                         crate::dlss::after_streamline(&self.queue, old);
                     }
-                    let (made, refused) = crate::gpu_alloc::scoped(&self.device, || {
-                        self.device.create_texture(&wgpu::TextureDescriptor {
-                            label: Some("DLSS FG hudless"),
-                            size,
-                            mip_level_count: 1,
-                            sample_count: 1,
-                            dimension: wgpu::TextureDimension::D2,
-                            format,
-                            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-                            view_formats: &[],
-                        })
-                    });
+                    let (made, refused) =
+                        crate::gpu_alloc::scoped(&self.device, || crate::dlss_fg::Interface::new(&self.device, size, format, apart));
                     if self.memory_refused(refused) {
-                        log::warn!("DLSS frame generation: the video memory refused the image before the interface: off at this size");
+                        log::warn!(
+                            "DLSS frame generation: the video memory refused the images before and of the interface: off at this size"
+                        );
                         self.fg_hudless_refused = Some(size);
                     } else {
                         (self.fg_hudless, self.fg_hudless_refused) = (Some(made), None);
                     }
                 }
-                self.fg_hudless.as_ref().map(|h| {
-                    encoder.copy_texture_to_texture(t.texture.as_image_copy(), h.as_image_copy(), size);
-                    h.create_view(&wgpu::TextureViewDescriptor::default())
+                self.fg_hudless.as_ref().is_some_and(|h| {
+                    h.copy_hudless(&mut encoder, &t.texture);
+                    true
                 })
             }
-            _ => None,
+            _ => false,
         };
         // ---- egui: its meshes, and what it painted for the world (name
         // tags, floating texts), which the HUD attachments cover
@@ -16382,13 +16374,27 @@ impl Backend {
                 fg_cmds.extend(fg.encode_dump(&self.device));
             }
         }
-        // Windows' frame generation: the image before the interface tagged
-        // and the present's options, after the frame's commands (off
-        // without one; its memory kept while the setting is on)
+        // Windows' frame generation: the interface alone drawn from the
+        // frame as shown, then it and the image before the interface
+        // tagged and the present's options, after the frame's commands
+        // (off without them; its memory kept while the setting is on)
+        #[cfg(windows)]
+        let fg_interface = match (&surface_tex, &self.fg_hudless) {
+            (FrameTarget::Surface(t), Some(interface)) if fg_hudless => {
+                interface.encode_ui(&mut encoder, &t.texture);
+                Some(interface)
+            }
+            _ => None,
+        };
         #[cfg(windows)]
         if !self.external
             && let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut())
-            && let Some(commands) = dlss.fg_present(&mut encoder, fg_hudless.as_ref(), fg_on)
+            && let Some(commands) = dlss.fg_present(
+                &mut encoder,
+                fg_interface.map(|i| i.hudless()),
+                fg_interface.and_then(|i| i.ui()),
+                fg_on,
+            )
         {
             fg_cmds.push(commands);
         }
