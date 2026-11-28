@@ -11201,6 +11201,19 @@ people-sets-priority-hint = Drag a set up or down: when two sets style the same 
 people-sets-no-sets = No contact set yet
 people-sets-edit = Edit this set
 people-recent-ago = { $when } ago
+people-recent-seconds = { $count ->
+    [one] { $count } second
+   *[other] { $count } seconds
+    }
+people-recent-minutes = { $count ->
+    [one] { $count } minute
+   *[other] { $count } minutes
+    }
+people-recent-hours = { $count ->
+    [one] { $count } hour
+   *[other] { $count } hours
+    }
+people-recent-last-interaction = Last interaction: { $date } at { $time } { $zone }
 people-recent-empty = Nobody yet: the residents you talk with show up here.
 people-blocked-all = Everything
 people-blocked-voice = Voice

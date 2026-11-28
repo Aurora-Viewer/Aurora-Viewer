@@ -536,9 +536,16 @@ pub(super) fn select(
     action
 }
 
-pub(super) fn contact_tip(resp: egui::Response, detail: Option<&str>) {
-    let hint = aurora_i18n::tr!("people-edit-contact-hold");
-    resp.on_hover_text(detail.map_or_else(|| hint.to_owned(), |detail| format!("{detail}\n{hint}")));
+pub(super) fn contact_tip(resp: egui::Response, detail: Option<&str>, extra: impl FnOnce() -> Option<String>) {
+    resp.on_hover_ui(|ui| {
+        if let Some(detail) = detail {
+            ui.label(detail);
+        }
+        if let Some(extra) = extra() {
+            ui.label(extra);
+        }
+        ui.label(aurora_i18n::tr!("people-edit-contact-hold"));
+    });
 }
 
 /// The right-click menu of a resident's row: the menu of several when the

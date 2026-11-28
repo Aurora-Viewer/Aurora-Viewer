@@ -11203,6 +11203,19 @@ people-sets-priority-hint = Glissez un cercle vers le haut ou le bas : quand deu
 people-sets-no-sets = Aucun cercle pour l’instant
 people-sets-edit = Modifier ce cercle
 people-recent-ago = il y a { $when }
+people-recent-seconds = { $count ->
+    [one] { $count } seconde
+   *[other] { $count } secondes
+    }
+people-recent-minutes = { $count ->
+    [one] { $count } minute
+   *[other] { $count } minutes
+    }
+people-recent-hours = { $count ->
+    [one] { $count } heure
+   *[other] { $count } heures
+    }
+people-recent-last-interaction = Dernière interaction : { $date } à { $time } { $zone }
 people-recent-empty = Personne pour l'instant : les résidents avec qui vous parlez apparaissent ici.
 people-blocked-all = Tout
 people-blocked-voice = Voix
