@@ -20,13 +20,26 @@ impl App {
             self.world
                 .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
         }
-        let classic = self.settings.classic_pay_window;
+        let classic = self.settings.classic_pay_window || self.pay_ui.demo_classic;
         let (confirm, threshold) = (self.settings.confirm_payments, self.settings.payment_confirm_threshold);
-        let paying_object = self.interactions.dialog.as_ref().is_some_and(|d| d.target.action == Action::Pay);
+        let rules = ui::pay::Rules {
+            classic,
+            contactless: self.settings.pay_contactless && !self.pay_ui.demo_button,
+            confirm,
+            threshold,
+            reduce_motion: self.settings.reduce_motion,
+        };
+        // the window of a payment just made stays a moment for the terminal
+        // of the Aurora look alone (`Interactions::paid`)
+        if classic || !rules.contactless {
+            self.interactions.paid = None;
+        }
+        let paying_object =
+            self.interactions.dialog.as_ref().is_some_and(|d| d.target.action == Action::Pay) || self.interactions.paid.is_some();
         if paying_object && !classic {
             a.object_confirm = self
                 .pay_ui
-                .show_object(ctx, p, &mut self.interactions, &self.world, confirm, threshold)
+                .show_object(ctx, p, &mut self.interactions, &self.world, rules)
                 .map(Some);
         } else {
             let answer = ui::object_actions::show(ctx, p, &mut self.interactions, &self.world);
@@ -49,7 +62,7 @@ impl App {
             }
         }
         let pics = (&self.avatar_pics, &self.ui_images);
-        for action in self.pay_ui.show(ctx, p, &self.world, pics, classic, confirm, threshold) {
+        for action in self.pay_ui.show(ctx, p, &self.world, pics, rules) {
             match action {
                 PayAction::Send(cmd) => self.send(*cmd),
                 PayAction::BuyCurrency(missing) => {
@@ -61,9 +74,9 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_PAY=resident|short|confirm|sent|group (docs/TESTING.md):
-    /// the Pay window in that state, Nova as the payee. An object's payment
-    /// is AURORA_DEMO_ACTIONS=pay.
+    /// AURORA_DEMO_PAY=resident|short|confirm|sent|group|hold|button|classic
+    /// (docs/TESTING.md): the Pay window in that state, Nova as the payee.
+    /// An object's payment is AURORA_DEMO_ACTIONS=pay.
     pub(super) fn demo_pay(&mut self) {
         let Ok(mode) = std::env::var("AURORA_DEMO_PAY") else {
             return;

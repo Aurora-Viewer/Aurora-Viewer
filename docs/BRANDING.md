@@ -147,7 +147,12 @@ dragging a handle switch to `violet_light`, like any selection.
 - **Name plate.** The tag above an avatar (`ui/nameplate.rs`) is the
   **only exception** to the almost square corners: a glass plate with fully
   rounded ends. It is not a precedent: nothing else in the interface is
-  rounder, but for the residents' pictures (below).
+  rounder, but for the residents' pictures and the payment card (below).
+- **Payment card.** The card of the Pay window's contactless terminal
+  (`ui/pay/terminal.rs`) and the place it is held on have the corners of a
+  payment card: the drawing of a thing, like a picture, not a surface of
+  the interface. The card is black under every skin, its colours declared
+  as content to the theme guard. The human's choice of 2026-11-28.
 - **Residents' pictures.** The profile pictures of the residents are round:
   on the name plates, and in the Conversations window (bubbles, head of a
   conversation, list), drawn by `widgets::avatar_disc`, with their status
@@ -312,6 +317,10 @@ its mane made of aurora ribbons, in a circle. Its colours: violet `#8B5CF6`
 and indigo `#4F46E5` for the head, turquoise `#5EEAD4` and a deeper
 turquoise `#56CAA9` for the ribbons. Do not distort it, recolour it or add
 an effect to it; the one-colour versions above are the only recolourings.
+One exception, the human's choice of 2026-11-28: the wolf engraved in the
+payment card of the Pay window (`ui/pay/terminal.rs`) is the white
+silhouette under a dark tint, tone on tone, and a band of light crosses it
+as the card moves to the reader. It is not a precedent.
 
 ## README buttons
 

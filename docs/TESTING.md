@@ -3302,9 +3302,14 @@ Transaction windows, with the same variable:
 - `pay-layout`, `pay-hidden`, `pay-large`: four four-digit amounts, free
   field and hidden buttons, maximum amount.
 - `pay-vendor`, `pay-vendor-short` (#1869): a vendor with one L$ 180 price
-  and no free amount, like CasperVend. The price button pays at once (no
+  and no free amount, like CasperVend. With Contactless payment off
+  (Preferences › Aurora › Pay window), the price button pays at once (no
   Pay button below it); `-short` starts with L$ 100: the button stays
   enabled and opens Buy L$ for the missing L$ 80, the window staying open.
+  With Contactless payment on (the default), the price is chosen already
+  and the terminal's card, or the Pay button, pays it at the end of its
+  hold; short of L$, the same hold opens Buy L$. The window then says
+  "Payment accepted" and closes by itself after 1.5 s.
 - `buy-touch-menu` (#1869): the for-sale cube keeps the Touch click action
   and Buy is chosen from its menu; add `-confirm` to press Buy at frame 320
   (the log shows `demo purchase confirmed: … prim=971, price=10`).
@@ -7529,8 +7534,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   L$ 500, the confirmation asked above the threshold (Preferences ›
   Payments). `sent`: the end of a payment, with its message. `group`: the
   Northern Wolves group as the payee (its insignia on the card), without a
-  message field. An object's payment
-  is `AURORA_DEMO_ACTIONS=pay`.
+  message field. With Preferences › Aurora › Pay window › Contactless
+  payment (on by default) the Aurora look shows its terminal in every mode:
+  hold the click on the card until the four lights are on, or press Pay,
+  which holds it; let go sooner and nothing is paid. `hold`: the terminal
+  drawn most of the way through a hold (the card on the reader, three
+  lights on), for a capture. `button`: the Pay button alone for this run,
+  as with the setting off; `classic`: the Legacy look for this run (the
+  shared settings are not changed by either). An object's payment is
+  `AURORA_DEMO_ACTIONS=pay`.
 - **`AURORA_DEMO_MONEY_TRACKER=<mode>`**: opens Me › Money tracker on twelve
   made-up transactions of the last 75 minutes (tips through an object,
   gifts, a sale and a purchase, an upload fee, a group's joining fee).
@@ -13170,7 +13182,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MUSIC=<url>`, `1` or `fade` | Music of the demo parcel |
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `data`, `script`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
-| `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
+| `AURORA_DEMO_SOUND=1`, `ui`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible (`ui`: with no chime) |
 | `AURORA_DEMO_SOUND_OCCLUSION=1` | Three looping sounds: in the open, behind a wall, shut in a box; each one's occlusion in the log |
 | `AURORA_SOUND_OCCLUSION=0` or `1` | "Muffle sounds behind walls" forced off or on for this launch, without saving it |
 | `AURORA_DEMO_SOUND_HRTF=1`, `circle` or `updown` | A sound circling the listener and one rising above it and falling, for the 3D sound for headphones |
@@ -13631,8 +13643,8 @@ What the inventory must show with these scenarios:
   world (`text`: drag it anywhere, right click for the history, the copy
   and the window). `stop` ends the stream after the last title: "No
   stream playing", the history kept. No sound is played.
-- **`AURORA_DEMO_SOUND=1|hud|parcel-open|parcel-local|parcel-source`**: world sounds (looping chime) and interface
-  sounds (in a development build, taken from the sound cache of grid
+- **`AURORA_DEMO_SOUND=1|ui|hud|parcel-open|parcel-local|parcel-source`**: world sounds (looping chime) and interface
+  sounds; `ui`: the interface sounds alone, with no chime in the world (in a development build, taken from the sound cache of grid
   sessions if it holds them; otherwise, and in a `--release` build, a brief
   tick per sound). Without it the media play muted too: the viewer sends
   them a volume of 0, so a video in the demo is silent unless this is set.

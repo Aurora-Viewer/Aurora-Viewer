@@ -696,6 +696,8 @@ build-layout-finish = Finish organising
 
 blender-shape-changed = The worn shape or its Modify rights changed. Transfer cancelled.
 
+ui-pay-terminal-cancelled = Payment cancelled
+
 blender-live-upload-materials = Includes base colours and textures. Upload PBR materials separately.
 
 blender-live-invalid-color = Empty surface or invalid material colour.

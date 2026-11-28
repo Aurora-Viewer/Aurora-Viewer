@@ -25783,7 +25783,8 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
             }
             // AURORA_DEMO_SOUND=1: a looped chime in the world; =hud:
-            // on a linked HUD prim. Interface sounds are enabled too.
+            // on a linked HUD prim. Interface sounds are enabled too; =ui:
+            // them alone, with no chime.
             if std::env::var_os("AURORA_DEMO_SOUND").is_some() {
                 let (id, clip) = crate::demo::chime();
                 self.scene.sounds.insert(id, clip);
@@ -25797,6 +25798,7 @@ impl ApplicationHandler for App {
                         self.world.agent.get_off(Vec3::new(132.0, 132.0, self.world.agent.position.z));
                         crate::demo::sound_parcels::events(id, &mode)
                     }
+                    "ui" => Vec::new(),
                     _ => crate::demo::sound_events(id),
                 };
                 for ev in events {
