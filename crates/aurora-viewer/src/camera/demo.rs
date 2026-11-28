@@ -16,6 +16,10 @@
 //! - `drift,x,y[,n]`: the same close-up, then a very slow Ctrl+Alt orbit
 //!   (a fiftieth of a pixel per frame) until frame 1200: edges that drift
 //!   steadily when the picture is exact, for comparing consecutive captures
+//! - `spin,x,y[,px]`: Alt+click at (x, y) at frame 600, then a steady
+//!   Ctrl+Alt orbit of `px` pixels a frame (0.5 by default) until frame
+//!   1200: the view turns all the time, for the sun shadows that hopped as
+//!   the camera turned (captures at several frames, `AURORA_SHADOW_ANCHOR`)
 //! - `zoom-resident`: the People list's Zoom on the nearest standing resident
 //!   at frame 600, who then walks south from 660 to 760 and west until 860:
 //!   the camera keeps facing them all along
@@ -245,6 +249,47 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                     },
                     Step::Drag(0.02, 0.0),
                 ]),
+                1201 => out.extend([
+                    Step::Release,
+                    Step::Mods {
+                        ctrl: false,
+                        shift: false,
+                        alt: false,
+                    },
+                    Step::Log,
+                ]),
+                _ => {}
+            }
+        }
+        "spin" => {
+            let (Some(x), Some(y)) = (num(1), num(2)) else {
+                return out;
+            };
+            let px = num(3).unwrap_or(0.5).clamp(0.01, 20.0);
+            match frame {
+                600 => out.extend([
+                    Step::Cursor(x, y),
+                    Step::Mods {
+                        ctrl: false,
+                        shift: false,
+                        alt: true,
+                    },
+                    Step::Press,
+                    Step::Log,
+                ]),
+                601..=1200 => {
+                    out.extend([
+                        Step::Mods {
+                            ctrl: true,
+                            shift: false,
+                            alt: true,
+                        },
+                        Step::Drag(px, 0.0),
+                    ]);
+                    if frame % 100 == 0 {
+                        out.push(Step::Log);
+                    }
+                }
                 1201 => out.extend([
                     Step::Release,
                     Step::Mods {
