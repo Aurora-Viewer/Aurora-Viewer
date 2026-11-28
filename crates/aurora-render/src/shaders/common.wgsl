@@ -3281,7 +3281,20 @@ fn water_fx_ocean(p: vec2<f32>, footprint: f32, fine: bool, at: WaterSeaAt) -> W
         let att=(1.0-smoothstep(0.5,2.0,k*footprint))*w;
         o.offset+=d.xyz*w;
         if(!(fine && c==1 && water_fine_on())){o.slope+=s.xy*att;}
-        o.jacobian+=vec3<f32>(s.z,d.w,s.w)*att;
+        // The fold the whitecaps are cut from, read as a Catmull-Rom spline
+        // where a texel spans more than a pixel (the surface's own reading,
+        // `fine`): bilinear, the fold creases at every texel's edge, and
+        // cut at the whitecaps' threshold a tight crest's foam took a corner
+        // at each crease, the corners sliding along as the crest ran
+        // through the fixed texels (the long chop's are 1.5 m, its tight
+        // crests a few texels across). The spline goes through the texels'
+        // values, so the crests fold as much as the CPU's maps say
+        // (water_cap_folds' coverage); further out it is the bilinear one.
+        var jac=vec3<f32>(s.z,d.w,s.w);
+        let texel=tile/128.0;
+        let near=1.0-smoothstep(texel*0.5,texel*1.5,footprint);
+        if(fine && near>0.0){jac=mix(jac,water_fx_ocean_fold(row,i,f),near);}
+        o.jacobian+=jac*att;
         let foam=water_fx_ocean_foam(row+256,i,f);
         o.foam=max(o.foam,foam*select(att,w,c==0));
     }
@@ -3310,6 +3323,30 @@ fn water_fx_ocean_foam(row: i32, base: vec2<i32>, f: vec2<f32>) -> f32 {
         for(var x=0;x<4;x++){
             let q=(base+vec2<i32>(x-1,y-1)+vec2<i32>(128))%vec2<i32>(128);
             line+=textureLoad(water_ground,vec2<i32>(q.x,row+q.y),0).x*wx[x];
+        }
+        sum+=line*wy[y];
+    }
+    return sum;
+}
+// The Catmull-Rom spline's weights at `t` (0..1) for the texels at -1, 0,
+// 1 and 2 from the one under it: through every texel's value, smooth in
+// its slope across their edges.
+fn water_catmull_rom(t: f32) -> vec4<f32> {
+    return vec4<f32>(t*(-0.5+t*(1.0-0.5*t)),1.0+t*t*(-2.5+1.5*t),t*(0.5+t*(2.0-1.5*t)),t*t*(-0.5+0.5*t));
+}
+// A cascade's displacement Jacobian (∂Dx/∂x, ∂Dx/∂y, ∂Dy/∂y: its maps
+// from `row`) at texel `base` plus `f`, as a Catmull-Rom spline over the
+// 4 x 4 texels round it, wrapping (water_fx_ocean).
+fn water_fx_ocean_fold(row: i32, base: vec2<i32>, f: vec2<f32>) -> vec3<f32> {
+    let wx=water_catmull_rom(f.x);let wy=water_catmull_rom(f.y);
+    var sum=vec3<f32>(0.0);
+    for(var y=0;y<4;y++){
+        var line=vec3<f32>(0.0);
+        for(var x=0;x<4;x++){
+            let q=(base+vec2<i32>(x-1,y-1)+vec2<i32>(128))%vec2<i32>(128);
+            let d=textureLoad(water_ground,vec2<i32>(q.x,row+q.y),0).w;
+            let s=textureLoad(water_ground,vec2<i32>(q.x,row+128+q.y),0).zw;
+            line+=vec3<f32>(s.x,d,s.y)*wx[x];
         }
         sum+=line*wy[y];
     }
@@ -3377,6 +3414,27 @@ fn water_fine_foam(p:vec2<f32>,gx:vec2<f32>,gy:vec2<f32>)->f32 {
     return g0.y*(g0.x*s00+g1.x*s10)+g1.y*(g0.x*s01+g1.x*s11);
 }
 fn water_fine_on() -> bool { return water_fx.fine.x > 0.5; }
+// The short cascade's Jacobian on the GPU's finer maps (∂Dx/∂x, ∂Dx/∂y,
+// ∂Dy/∂y: layers 1 and 0) at `uv` in tiles, as a Catmull-Rom spline over the
+// 4 x 4 texels of mip 0 round it, wrapping.
+fn water_fine_fold(uv:vec2<f32>,size:f32)->vec3<f32> {
+    let n=i32(size);
+    let pos=fract(uv)*size-0.5;
+    let base=vec2<i32>(floor(pos));let f=pos-floor(pos);
+    let wx=water_catmull_rom(f.x);let wy=water_catmull_rom(f.y);
+    var sum=vec3<f32>(0.0);
+    for(var y=0;y<4;y++){
+        var line=vec3<f32>(0.0);
+        for(var x=0;x<4;x++){
+            let q=(base+vec2<i32>(x-1,y-1)+vec2<i32>(n))%vec2<i32>(n);
+            let s=textureLoad(water_fine,q,1,0).zw;
+            let d=textureLoad(water_fine,q,0,0).w;
+            line+=vec3<f32>(s.x,d,s.y)*wx[x];
+        }
+        sum+=line*wy[y];
+    }
+    return sum;
+}
 // (`p` where the water lies before the waves move it: water_pixel's
 // `flow`. The short cascade is in the surface's shape already, read there
 // as it is; the finest, not in it, through its own displacement.)
@@ -3401,6 +3459,16 @@ fn water_fx_fine(p:vec2<f32>,gx:vec2<f32>,gy:vec2<f32>,chop:f32,open:f32)->Water
             // finest ripples are capillary and do not break white
             let dxy=textureSampleGrad(water_fine,tex_sampler,at,0,du,dv).w*short;
             o.fold=1.0-((1.0+s.z*short)*(1.0+s.w*short)-dxy*dxy);
+            // (as a Catmull-Rom spline where a texel spans more than a
+            // pixel, as water_fx_ocean's fold: cut finely into the small
+            // crests' lips, the bilinear fold's creases drew their ends
+            // square)
+            let size=f32(textureDimensions(water_fine).x);
+            let near=1.0-smoothstep(0.5,1.5,max(length(du),length(dv))*size);
+            if(near>0.0){
+                let j=water_fine_fold(uv,size)*short;
+                o.fold=mix(o.fold,1.0-((1.0+j.x)*(1.0+j.z)-j.y*j.y),near);
+            }
         }
     }
     o.foam=water_fine_foam(p,gx,gy)*short;
