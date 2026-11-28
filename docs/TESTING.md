@@ -4595,24 +4595,31 @@ of priority 5/6 must retain control. These fixtures never connect to a grid.
 
 AO quick controls: `AURORA_DEMO_AO=quick` opens the compact panel above the
 bottom AO button with a complete swimming set. `quick-missing` and
-`quick-empty` show the disabled swimming gate and empty catalogue. Inspect
-English/French, the set selector (selection keeps the panel open), the
-previous / auto cycle / next buttons beside it, AO enable, mutually exclusive
-swimming/water walking and the manager button. Check Escape, click-away and repeated toolbar clicks.
+`quick-empty` show the disabled swimming gate and empty catalogue. The panel
+is a card: its title with the pin (opens the mini window; lit while it is
+shown, a click then closes it) and Settings, the set picker (the login set
+starred; picking a set keeps the panel open) beside the power button, what
+plays (live dot, state and place, the name, and on a timer "Switches every …"
+with the time left on a track), previous / cycle (its time in a word: Off,
+Auto or the seconds) / next, and the Override sits, Swimming and Walk on water
+tiles (Swimming dimmed with an amber triangle while required animations are
+missing; Swimming and Walk on water exclude each other). Inspect
+English/French/Japanese. Check Escape, click-away and repeated toolbar clicks.
 Existing movement preferences and the full manager must reflect the same
 choices. The other menus/commands still open the full manager directly.
 
 Mini AO window: `AURORA_DEMO_AO=mini` seeds the same complete swimming set
 with the Mini AO window open, as after a relog with it open, and closes the
 full manager at frame 360. Capture around frame 600. The mini window is a
-one-line strip without a title bar (moved by its background, closed by its
-cross). Check the "now playing" area (set, state and place, the animation's
-name; a click lists the sets and "Manage sets…"), then the icon buttons and
-their tooltips: AO on / off, previous / auto cycle / next, Override sits,
-Swimming (greyed out while required animations are missing), Water walk and
-Settings (the full AO window opens and the mini window stays open). The AO
-popup's "Open mini AO window" is hidden while the strip is shown; a strip
-left minimized by an older layout comes back whole.
+one-line strip without a title bar or close button, as tall as the toolbar
+dock and on the toolbar islands' glass (moved by its background). Check the
+"now playing" area (set, state and place, the animation's name; a click lists
+the sets, "Manage sets…" and "Close mini AO"; a right click shows AO settings
+and Close mini AO), then the icon buttons and their tooltips: AO on / off,
+previous / auto cycle / next, Override sits, Swimming (greyed out while
+required animations are missing), Water walk and Settings (the full AO window
+opens and the mini window stays open). The AO popup's pin is lit while the
+strip is shown; a strip left minimized by an older layout comes back whole.
 
 For #1394 on the grid, turn automatic cycling off, choose a non-first stand
 from the manager and then from the quick arrows, and check it after logout/login
@@ -4741,7 +4748,7 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   jump, only its pace changes, for the avatars and `AURORA_DEMO_ANIMESH=1`
   animesh alike. Slow Motion Animations slows only our avatar (0.2), the
   others keep the global speed. Nothing is saved: a restart is back at 1.0.
-- **`AURORA_DEMO_AO=interface|interface-group|interface-track|interface-combine|interface-sets|interface-essentials|interface-swim|interface-swim-missing`**: the AO window, one page per group. `interface` opens General with Standing open (six synthetic standing entries); `interface-group` unfolds a group that plays together, `interface-track` opens a layer tab, `interface-combine` the guided dialog, `interface-sets` the "Your sets" panel, `interface-essentials` the six Essentials slots, and `interface-swim` the Swimming page with all eight required slots resolved. `interface-swim-missing` removes Floating: its slot shows the amber warning triangle, assigned slots a green check, empty optional slots a dashed circle, and the page the missing-animation message. Check EN/FR/JA, the set card and its panel (switch, rename in place, duplicate, load at login, delete with its confirmation, the sit and mouselook options), groups and their counts, the summary tiles (a click on "still empty" opens that slot), drops from the inventory onto any slot, the take-turns card (order menu, Auto…2 min slider, seconds, Next), row drag reordering, together stacks (add, rename, split, remove), layers (new, rename, move, dissolve, remove), Up / Down between slots, and the preview column: our outfit on the Inspect window's 3D stage, posed by a hidden skeleton playing the previewed entry with its layers (the slot's stock animation while empty), turned by a drag and paused from the stage's bar; the world must show no second avatar, shadow, light or name tag. A window saved at the old one-column size opens once at the three-column size. Inventory operations use the normal mutation/acknowledgement path against the offline simulator. Examples never seed a user's inventory.
+- **`AURORA_DEMO_AO=interface|interface-group|interface-track|interface-combine|interface-sets|interface-essentials|interface-swim|interface-swim-missing`**: the AO window, one page per group. `interface` opens General with Standing open (six synthetic standing entries); `interface-group` unfolds a group that plays together, `interface-track` opens a layer tab, `interface-combine` the guided dialog, `interface-sets` the "Your sets" panel, `interface-essentials` the six Essentials slots, and `interface-swim` the Swimming page with all eight required slots resolved. `interface-swim-missing` removes Floating: its slot shows the amber warning triangle, assigned slots a green check, empty optional slots a dashed circle, and the page the missing-animation message. Check EN/FR/JA, the set card and its panel (a click on a set opens it to edit, "Use this set" puts it in use and "Active" marks the set in use; sets dragged into a new order keep it; rename in place, duplicate, load at login, delete with its confirmation, the open set's sit and mouselook options, the New set and Import tiles, migration and reload), groups and their counts, slots folded until opened and each group keeping its open slot, drops from the inventory onto any slot, the take-turns card (the track of stops from Auto to 2 min, seconds, the time left on the knob while the slot plays, order menu), row drag reordering (the dropped row stays in place while it is saved; a move during a save waits its turn), together stacks (made from an entry's menu, add, rename, split, remove), layers (the + Layer tab, rename, move, dissolve, remove), Up / Down between slots, and the preview column: our outfit on the Inspect window's 3D stage, posed by a hidden copy of our avatar playing the previewed entry with its layers over our own face, tail and deformer animations (the slot's stock animation while empty), framed upright and held still, turned by a drag; its left edge resizes it; "Updating inventory…" then "Set saved" show beside the entry's name; the world must show no second avatar, shadow, light or name tag. A window saved at the old one-column size opens once at the three-column size. Inventory operations use the normal mutation/acknowledgement path against the offline simulator. Examples never seed a user's inventory.
 - **`AURORA_DEMO_AO=unavailable`**: seeds a native AO, then at frame 360 applies the same in-place rename OpenSim sends on a Hypergrid teleport (`#Aurora` becomes `#Aurora (Unavailable)`, version −1). The AO window must still list its set. Inventory opens beside it on that renamed folder. Offline only; a reload while the folder is renamed finds no sets. The Legacy Viewer would make a second `#Firestorm` and `#AO` there; Aurora deliberately makes no twin `#Aurora`.
 - **`AURORA_DEMO_AO=folder-names`**: seeds an existing native AO (including all eight swimming slots) and an empty bridge directory under their previous `AO` / `Bridge` names. The real acknowledged startup edits must rename both to `#Aurora/Aurora AO` and `#Aurora/Aurora Bridge`; the AO selection and links remain unchanged. Opens the real inventory beside the AO after frame 360 with both sibling folders visible; capture at 1050 after bridge provisioning. Regression tests additionally cover an already worn current bridge retaining its folder/item/object identity and valid handshake without another copy/upload/detach, new-name precedence, pending/failed acknowledgements, an authoritative empty old AO and old interrupted-import protection. Human grid validation: confirm the two existing folders are renamed on login, the selected set and animations still work, and a second login creates no duplicate folder or legacy AO import.
 - **`AURORA_DEMO_AO=folder-names-wait`**: uses the same cached old native folders but withholds both inventory services until frame 720. Capture at 450: `AO` and `Bridge` are unchanged, the selected set still works and no metadata edit is sent. Capture at 1200: both folders have their new names and the bridge reaches Ready after its five-second inventory save. The factory must wait beyond its normal timeout if services are delayed, rename an already worn controller without replacing its identities, and still time out a request that was actually sent. The readiness gate is shared with AO startup; running/ready bridge commands continue independently of inventory availability. Offline only.

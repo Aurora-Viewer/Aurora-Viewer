@@ -4932,7 +4932,7 @@ own root. In the offline demo the viewer hands it that root through
 | Cache or conversation history in a folder chosen in the preferences | the cache in `<chosen folder>\AuroraViewerCache\` (from the next start); the history in `<chosen folder>\<account uuid>\chat_logs\<grid>\` |
 | Remembered password (hash, never the password) | Windows Credential Manager, "Aurora Viewer" service |
 
-AO window, one page per group (2026-11-27): `ui/ao.rs` lays the floater out in three columns. `ui/ao/sidebar.rs` holds the set card (name, number of sets, animation count, Loads at login), the "Your sets" panel it opens (switch, rename in place, duplicate, load at login, show in inventory, delete with an inline confirmation, the open set's sit and mouselook options, new set, notecard import, migration, reload), the All slots / Essentials switch, the five groups of `category.rs` with their filled counts, Movement, and Stands and turns. `ui/ao/page.rs` shows a group's summary tiles and every slot of the group; each slot takes inventory drops and the open one unfolds `ui/ao/slot.rs`: main list and layers (tracks) as tabs, the take-turns card (order menu In order / Shuffle / Manual over the `:CY` / `:RN` options, a time slider whose 0 is "Each time", the next one at each entry into the state), rows with together stacks (groups), entry details and the drop box. `ui/ao/preview.rs` is the preview column (caption, layers, segments); `ui/ao/first_run.rs` replaces the page while the account has no set. Every edit still goes through the inventory plans of `ao/inventory.rs` and `ao/inventory/editor.rs`.
+AO window, one page per group (2026-11-27): `ui/ao.rs` lays the floater out in three columns, the AO switch in its title bar (`Floater::title_switch`) and the preview column resized by a drag on its left edge (its width kept with the window's layout). `ui/ao/sidebar.rs` holds the card of the set open in the window (`AoUi::editing`, apart from the set in use, FloaterAO::onSelectSet), a "Use this set" banner while it is not the one in use (FloaterAO::onClickActivate), the "Your sets" panel it opens (sets dragged into the order kept in `Account::set_order`, local only; "Active" on the set in use; ⋯ menu: use, rename in place, duplicate, load at login, show in inventory, delete with a confirmation under the list; the open set's sit and mouselook options; tiles for a new set and a notecard import; migration and reload), the All slots / Essentials switch, the five groups of `category.rs` with their filled counts, and Movement. `ui/ao/page.rs` shows every slot of a group, folded until opened, each group keeping its open slot (`AoUi::open_slots`); each slot takes inventory drops and the open one unfolds `ui/ao/slot.rs`: Main and layers as tabs, the take-turns card (a track of stops from Auto, the next one at each entry into the state, to 2 min, a typed time between two stops, the time left to the next one while the slot plays from `Runtime::next_switch`, the order menu In order / Shuffle / Manual over the `:CY` / `:RN` options), rows dragged with `widgets::reorder` (the dropped order shown at once, `AoUi::held_order`, moves during a save queued, `queued_moves`), together stacks, and the drop box. `ui/ao/preview.rs` is the preview column: Inspect's 3D stage (`ui/object_stage.rs`, framed upright from the live pose and held still, its bar on the stage's ground) under a caption with the saving and "Set saved" notices, laid on a fade and on the stage's progressive blur (`aurora_render::preview_veil`). `world/ao_preview.rs` keeps the copy of our avatar it shows: client-only, wearing copies of what we wear without their lights (`World::copy_own_avatar`, shared with the animation editor's mirror), left out of every view by the scene, playing the previewed entry over our non-AO animations, our held joint positions shared with it (`Scene::share_held_positions`, deformers); `app/ao_preview.rs` drives it while the column is drawn. `ui/ao/first_run.rs` replaces the page while the account has no set. Every edit still goes through the inventory plans of `ao/inventory.rs` and `ao/inventory/editor.rs`.
 
 The integrated Movement tab persists physical settings independently of AO activation. Water instructions are short gesture rows using the current Up/Down primary and secondary bindings, with modifiers and mouse buttons drawn through shared keycaps. Page Up/Down labels use compact Page arrows. Unbound actions are explicit; the double-tap and jump-then-descend sequences are distinct. Detailed dive timing stays in a dynamically keyed tooltip. Remove the former swimming-animation navigation button and dense AO implementation paragraph; the ordinary Animations tab remains the editor. `movement::Runtime::swim_signal` supplies a stable swim state to `ao::runtime`, which alone chooses and broadcasts swimming animations through the normal AO lists/cycles. The AO never uploads or automatically seeds the contributed swim pack. Its former import button/uploader and legacy swim-seeding module have been removed; existing inventory swimming choices remain user-owned. Obstacle passage is separately enabled and uses Ctrl plus the current jump bindings, with explicit conflicting bindings winning and nonce-stable physical commands. The native key handler suppresses only the ordinary jump for that active passage chord. The shared toolbar reflects any enabled movement aid.
 
@@ -5219,20 +5219,23 @@ editor ends its clip preview and returns to the Studio's ordinary pose mode.
 
 ## Local interactive water
 
-AO quick controls (2026-10-18): `ui/ao/quick.rs` opens above the toolbar AO
+AO quick controls (2026-10-18, the card of 2026-11-27): `ui/ao/quick.rs` opens above the toolbar AO
 button (or beside a relocated side-bar button), using the shared overlay and
-popup behavior. Its set selector and enable switch edit the same account as
-the manager; swim/water-walk and run/flight boosts edit existing movement
-preferences and retain the selected set's swimming-readiness gate. Child set
-menus keep the parent open; Escape/outside clicks dismiss it, and the manager
-button opens the existing floater. The popup and the persistent
-`ui/ao/mini.rs` window share the state-step controls, the sit override save
+popup behavior. It is the mockup's Now Playing card: its title with the mini
+window's pin (lit while the strip is shown, a click then closes it) and
+Settings, the set as a wide picker beside the AO's power, what plays with its
+countdown, previous / cycle / next, and tiles for Override sits, Swimming and
+Walk on water, editing the same account and movement preferences as the
+manager and keeping the selected set's swimming-readiness gate. Its set list
+keeps the panel open; Escape/outside clicks dismiss it. The popup and the
+persistent `ui/ao/mini.rs` window share the transport, the sit override save
 and the swimming gate (`quick::cycle_buttons`, `save_sits`,
-`swimming_guard`). Since 2026-11-27 the mini window is a one-line strip
-without a title bar: what plays now (a click opens the set list), then icon
-buttons with tooltips. It can be pinned from the popup, toggled from the
-toolbar, and is remembered per account; its Settings button opens the manager
-beside it.
+`swimming_guard`). The mini window is a one-line strip without a title bar or
+close button, on the toolbar islands' glass and height (`Floater::bar_glass`,
+`widgets::island_alpha` / `island_border`): what plays now (a click opens the
+set list, a right click its menu with Close), then icon buttons with
+tooltips. It can be pinned from the popup, toggled from the toolbar, and is
+remembered per account; its Settings button opens the manager beside it.
 `ui/ao/category.rs` partitions every state
 into General, Ground, Jumping, Flying and Swimming, in that order. General
 contains Standing, Sitting, Sitting on ground, Standing up, Typing and Always,
