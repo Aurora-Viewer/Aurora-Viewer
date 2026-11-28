@@ -2115,9 +2115,17 @@ mod imp {
         // (VR's reason only with the files there: without, setting them up
         // is what Preferences says)
         let files = || folder().is_some_and(|dir| std::path::Path::new(dir).join(sl::SHIM).is_file());
+        // (Windows: a start left on a lost device keeps DLSS off until the
+        // viewer restarts, `fresh`, though the next device opens with the
+        // extensions: Busy's note says so, where Ready showed FSR's rows
+        // with no word why)
+        #[cfg(windows)]
+        let busy = BUSY.load(Ordering::Relaxed) || GIVEN_UP.load(Ordering::Relaxed);
+        #[cfg(not(windows))]
+        let busy = BUSY.load(Ordering::Relaxed);
         // (BUSY first: a VR headset's device opened without Streamline for that
         // reason is not the headset's doing)
-        if BUSY.load(Ordering::Relaxed) && forced() != Some(false) && files() {
+        if busy && forced() != Some(false) && files() {
             S::Busy
         } else if XR.load(Ordering::Relaxed) && forced() != Some(false) && files() {
             S::Vr
@@ -4641,13 +4649,20 @@ mod imp {
         /// the smallest side frame generation takes (`min`)
         small: bool,
         /// the window's size at the last present asked on, and the size a
-        /// status other than OK was read at: off there, until the window
-        /// takes another size (DLSS-G guide §14.3: on in an invalid state,
-        /// it paints the frame pink)
+        /// status other than OK was read at: off there, tried once more
+        /// after a moment, then off until the window takes another size
+        /// (DLSS-G guide §14.3: on in an invalid state, it paints the frame
+        /// pink)
         size: Option<(u32, u32)>,
         bad: Option<(u32, u32)>,
         /// presents in a row read with a status other than OK
         bad_run: u32,
+        /// when `bad` was set, and whether that size was already tried
+        /// again once ([`super::fg_retry_due`]); `ok_run` presents in a
+        /// row read OK since, which give the try back
+        bad_since: Option<std::time::Instant>,
+        retried: bool,
+        ok_run: u32,
         /// asked on once for this viewport: asked off, without its memory
         /// kept, as the feature goes ([`Dlss::retire`])
         used: bool,
@@ -5803,7 +5818,14 @@ mod imp {
             if let (Some(bad), Some(size)) = (self.fg_win.bad, size)
                 && bad != size
             {
-                self.fg_win.bad = None;
+                (self.fg_win.bad, self.fg_win.retried) = (None, false);
+            }
+            // (a status of a moment, such as a present Streamline could not
+            // make as the window started, must not keep it off at that size
+            // until the window is resized: tried once more)
+            if self.fg_win.bad.is_some() && super::fg_retry_due(self.fg_win.bad_since, self.fg_win.retried, std::time::Instant::now()) {
+                (self.fg_win.bad, self.fg_win.retried) = (None, true);
+                log::info!("DLSS frame generation: tried again at this window size");
             }
             let small = size.is_some_and(|(w, h)| w.min(h) < self.fg_win.min);
             self.fg_win.small = small;
@@ -6079,12 +6101,28 @@ mod imp {
             self.fg_win.status = Some(state.status);
             // (DLSS-G guide §14.3: "If not, disable DLSS-G"; three presents
             // in a row, so one of a moment, as Reflex starts, does not keep
-            // it off)
-            self.fg_win.bad_run = if state.status == 0 { 0 } else { self.fg_win.bad_run + 1 };
+            // it off). Asked off by the next frame's `fg_present`, not here:
+            // options set again after the present fall on the frame already
+            // presented (Streamline: "Repeated slDLSSGSetOptions() call")
+            (self.fg_win.bad_run, self.fg_win.ok_run) = if state.status == 0 {
+                (0, self.fg_win.ok_run.saturating_add(1))
+            } else {
+                (self.fg_win.bad_run + 1, 0)
+            };
+            if self.fg_win.ok_run >= super::FG_OK_RUN {
+                self.fg_win.retried = false;
+            }
             if self.fg_win.bad_run >= 3 {
-                log::warn!("DLSS frame generation: off at this window size, on again at another");
+                if self.fg_win.retried {
+                    log::warn!("DLSS frame generation: off at this window size, on again at another");
+                } else {
+                    log::warn!(
+                        "DLSS frame generation: off at this window size, tried again in {} s or at another size",
+                        super::FG_RETRY.as_secs()
+                    );
+                }
                 (self.fg_win.bad, self.fg_win.bad_run) = (self.fg_win.size, 0);
-                self.fg_off();
+                self.fg_win.bad_since = Some(std::time::Instant::now());
             }
         }
 
@@ -6562,6 +6600,27 @@ pub(crate) fn after_streamline<T: Send + 'static>(queue: &wgpu::Queue, held: T) 
     queue.on_submitted_work_done(move || drop(held));
 }
 
+/// Windows' frame generation, turned off at a window size by statuses other
+/// than OK: tried once more at that size after this long, so a status of a
+/// moment (a present Streamline could not make as the window started) does
+/// not keep it off until the window is resized.
+#[cfg_attr(not(all(feature = "dlss", windows)), allow(dead_code, reason = "Windows' frame generation only"))]
+const FG_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Presents in a row read OK after which a size that fails again is given
+/// its one try again ([`FG_RETRY`]) anew: about ten seconds of frames.
+#[cfg_attr(not(all(feature = "dlss", windows)), allow(dead_code, reason = "Windows' frame generation only"))]
+const FG_OK_RUN: u32 = 600;
+
+/// Whether a size frame generation was turned off at (`since`) is tried
+/// again `now`: once, [`FG_RETRY`] later. A size that fails after that try
+/// stays off until the window takes another (DLSS-G guide §14.3: on in an
+/// invalid state, it paints the frame pink).
+#[cfg_attr(not(all(feature = "dlss", windows)), allow(dead_code, reason = "Windows' frame generation only"))]
+fn fg_retry_due(since: Option<std::time::Instant>, retried: bool, now: std::time::Instant) -> bool {
+    !retried && since.is_some_and(|since| now.saturating_duration_since(since) >= FG_RETRY)
+}
+
 pub(crate) use imp::{
     Dlss, closing, fg_ready, fg_restart, fg_wanted, folder_named, instance, left_behind, optimal_size, refused_here, refused_memory,
     request_device, resizing, retry, retry_asked, rr_device, rr_probe, rr_ready, rr_ready_on, rr_refused_here, rr_retry,
@@ -6601,7 +6660,22 @@ pub(crate) fn render_size(display: (u32, u32), ratio: f32) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answers, SL_NGX_COMMIT, lock_within, refused, render_size};
+    use super::{Answers, FG_RETRY, SL_NGX_COMMIT, fg_retry_due, lock_within, refused, render_size};
+
+    #[test]
+    fn a_size_frame_generation_turned_off_at_is_tried_once_more() {
+        let since = Instant::now();
+        // not before the wait, and only with a time it was turned off at
+        assert!(!fg_retry_due(Some(since), false, since));
+        assert!(!fg_retry_due(Some(since), false, since + FG_RETRY - Duration::from_millis(1)));
+        assert!(!fg_retry_due(None, false, since + FG_RETRY));
+        // once the wait is over
+        assert!(fg_retry_due(Some(since), false, since + FG_RETRY));
+        // never a second time: it stays off there until another size
+        assert!(!fg_retry_due(Some(since), true, since + FG_RETRY * 100));
+        // a clock read before the time set does not try it
+        assert!(!fg_retry_due(Some(since + FG_RETRY), false, since));
+    }
 
     #[test]
     fn the_viewer_and_the_setup_script_name_one_sl_ngx() {

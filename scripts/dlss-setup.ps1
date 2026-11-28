@@ -169,10 +169,17 @@ try {
     Write-Host ''
     Write-Host "NVIDIA DLSS is under NVIDIA's licence, not the viewer's. Read it:"
     Write-Host ''
-    # Paging needs a console; a host without it (the ISE, a remote session)
-    # throws, and gets the text whole.
-    try { Get-Content -LiteralPath $licence | Out-Host -Paging }
-    catch { Get-Content -LiteralPath $licence | Out-Host }
+    # Paging needs a console to read keys from: without one (input or
+    # output redirected, as when another program runs the script) it waits
+    # for ever, so the text comes whole. A host that refuses paging (the
+    # ISE, a remote session) throws, and gets it whole too.
+    $console = $Host.Name -eq 'ConsoleHost' -and -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected
+    if ($console) {
+        try { Get-Content -LiteralPath $licence | Out-Host -Paging }
+        catch { Get-Content -LiteralPath $licence | Out-Host }
+    } else {
+        Get-Content -LiteralPath $licence | Out-Host
+    }
     Write-Host ''
     $answer = Read-Host "Do you accept NVIDIA's licence for DLSS? Type yes to install"
     if ($answer -cne 'yes') { Fail 'not accepted: nothing installed' }

@@ -343,8 +343,10 @@ Reflex keeping input latency down. Not yet run on Windows.
   swapchain is made again): the swapchain is made again once a present has
   asked it off, or after three frames, or at once when the window gives no
   image, asked off first. Off too in a window under the smallest size it
-  takes, and after three presents in a row whose status is not `ok`, until
-  the window takes another size. Off as DLSS goes (another anti-aliasing,
+  takes, and after three presents in a row whose status is not `ok`: tried
+  once more 2 seconds later (a present Streamline could not make as the
+  window started must not keep it off), then off until the window takes
+  another size. Off as DLSS goes (another anti-aliasing,
   another model), its memory let go.
 - **Vsync is not applied** while it runs: NVIDIA supports vsync with frame
   generation on Direct3D 12 only. The frame rate limit stays in effect, and

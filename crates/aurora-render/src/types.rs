@@ -1493,7 +1493,9 @@ pub enum DlssSupport {
     /// a call that had not returned, and is not called beside it; or a
     /// render thread was left behind in a GPU call, its DLSS kept (for the
     /// rest of the run). FSR draws until the viewer restarts (or, after a
-    /// loss, another device opens).
+    /// loss, another device opens). On Windows also after a loss that left
+    /// Streamline started on the lost device: the next device opens with the
+    /// extensions, but DLSS stays off until the viewer restarts.
     Busy,
     /// A build without the `dlss` feature.
     #[default]
