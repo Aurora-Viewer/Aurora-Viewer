@@ -19,6 +19,10 @@ const FIRST_LOCAL: u32 = 0xFFF3_0000;
 /// How far we may walk before the copy follows (metres): it stays in range,
 /// where the scene poses avatars.
 const FOLLOW: f32 = 8.0;
+/// How long what we wear has to stay the same before the copy is dressed
+/// again: attachments arrive one by one after a login or a teleport, and
+/// each would otherwise make the whole copy again.
+const DRESS_SETTLE: std::time::Duration = std::time::Duration::from_millis(1500);
 
 #[derive(Debug, Clone)]
 pub struct AoPreview {
@@ -29,6 +33,8 @@ pub struct AoPreview {
     /// What we wore when it was made: an outfit change makes it again, so
     /// that its joints stay those of what we wear.
     worn: Vec<Uuid>,
+    /// What we wear now, when it differs from `worn`, and since when.
+    dressing: Option<(Vec<Uuid>, Instant)>,
     /// The previewed entry's assets, and their animations started when the
     /// entry was chosen.
     assets: Vec<Uuid>,
@@ -81,7 +87,18 @@ impl World {
             .is_some_and(|p| self.objects.index_of_uuid(&p.id).is_some());
         let worn = self.own_worn();
         let moved = self.ao_preview.as_ref().is_none_or(|p| p.at.distance(here) > FOLLOW);
-        let dressed = self.ao_preview.as_ref().is_some_and(|p| p.worn != worn);
+        // dressed again once what we wear has settled
+        let mut dressed = false;
+        if let Some(preview) = self.ao_preview.as_mut() {
+            if preview.worn == worn {
+                preview.dressing = None;
+            } else {
+                match &preview.dressing {
+                    Some((pending, since)) if *pending == worn => dressed = now.duration_since(*since) >= DRESS_SETTLE,
+                    _ => preview.dressing = Some((worn.clone(), now)),
+                }
+            }
+        }
         if dressed {
             // (what we took off would stay on it: made again from nothing)
             if let Some(old) = &self.ao_preview {
@@ -90,13 +107,20 @@ impl World {
         }
         if !alive || moved || dressed {
             // (moved in place: `upsert_preview` keeps the objects there)
-            let root = self.copy_own_avatar(id, FIRST_LOCAL, here, rotation, false)?;
+            let Some(root) = self.copy_own_avatar(id, FIRST_LOCAL, here, rotation, false) else {
+                // (no copy left behind that the next frame would take for ours)
+                if dressed {
+                    self.ao_preview = None;
+                }
+                return None;
+            };
             let old = self.ao_preview.take();
             self.ao_preview = Some(AoPreview {
                 id,
                 root,
                 at: here,
                 worn,
+                dressing: None,
                 assets: old.as_ref().map_or_else(Vec::new, |p| p.assets.clone()),
                 previewed: old.as_ref().map_or_else(Vec::new, |p| p.previewed.clone()),
                 animations: old.map_or_else(Vec::new, |p| p.animations),

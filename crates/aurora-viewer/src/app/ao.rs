@@ -24,6 +24,10 @@ impl App {
                 .unwrap_or_default();
             self.ao_runtime = runtime::Runtime::with_choices(choices);
             self.ao_held_changes.clear();
+            // (the preview's stage model goes with the old window's state)
+            self.ao_ui.stage.stage.clear(&self.scene);
+            self.ao_preview_body = None;
+            self.ao_preview_light = None;
             self.ao_ui = Default::default();
             self.ao_missing.clear();
             self.ao_default_applied = false;
@@ -540,7 +544,9 @@ impl App {
                 if let Some(id) = pending.select.and_then(|id| reply.created.get(&id).copied()) {
                     self.ao_ui.editing = Some(id);
                     let account = self.settings.ao.accounts.entry(self.world.agent_id).or_default();
-                    if !self.ao_catalog.sets.iter().any(|s| s.id == account.selected) {
+                    // (the catalogue is still the one before this reply: a set
+                    // plays by default, or as the first, even with no id saved)
+                    if self.ao_catalog.selected(account.selected).is_none() {
                         account.selected = id;
                         if !self.demo {
                             self.settings.save();
@@ -562,6 +568,7 @@ impl App {
             }
             Err(reason) => {
                 self.ao_ui.message = reason;
+                self.ao_ui.drop_moves();
                 // AIS can fail after some operations succeeded. Reload the
                 // server's state; never replay a possibly completed creation.
                 for id in pending.refresh {

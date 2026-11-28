@@ -342,12 +342,12 @@ pub(super) struct HeldOrder {
 
 /// A move of an entry waiting for the edit before it to be saved.
 pub(super) struct QueuedMove {
-    set: Uuid,
-    state: State,
-    list: List,
-    source: Uuid,
-    target: Uuid,
-    after: bool,
+    pub(super) set: Uuid,
+    pub(super) state: State,
+    pub(super) list: List,
+    pub(super) source: Uuid,
+    pub(super) target: Uuid,
+    pub(super) after: bool,
 }
 
 struct Editor<'a> {
@@ -402,11 +402,13 @@ impl Editor<'_> {
         keys.iter().filter_map(|k| ids.iter().position(|id| id == k)).collect()
     }
 
-    /// Plays that entry of a list (`owner`: its folder) in the world; the
-    /// open set is put in use first when another one is (FloaterAO's
-    /// double-click, indra/newview/ao.cpp).
+    /// Plays that entry of a list (`owner`: its folder) in the world. The
+    /// open set is put in use first when another one is, only while the
+    /// entry's state is the one playing, as FloaterAO's double-click
+    /// (indra/newview/ao.cpp) leaves the set alone for another state; the
+    /// entry is still chosen for when its state comes, as before.
     fn play(&mut self, owner: Uuid, index: usize) {
-        if self.state.active_set != self.set.id {
+        if self.state.active_set != self.set.id && self.runtime.current == Some(self.state.state) {
             self.state.use_set = Some(self.set.id);
         }
         self.runtime.choose(self.state.state, owner, index);
@@ -718,7 +720,9 @@ impl Editor<'_> {
     /// click previews an entry; a double click or Shift+click plays it in
     /// the world (FloaterAO's list click, `AOEngine::selectAnimation`).
     fn main_list(&mut self, ui: &mut egui::Ui, c: &StateConfig) {
-        let playing = self.runtime.index(self.state.state, c.folder);
+        // (only the set in use plays: another set's rows say nothing)
+        let in_use = self.state.active_set == self.set.id;
+        let playing = in_use.then(|| self.runtime.index(self.state.state, c.folder));
         // (in the order just dropped while it is being saved)
         let order = self.shown_order(List::Main, &c.steps.iter().map(|s| s.id).collect::<Vec<_>>());
         let specs: Vec<RowSpec<'_>> = order
@@ -732,7 +736,7 @@ impl Editor<'_> {
                     vec![step.name.as_str()]
                 },
                 together: step.group,
-                playing: playing == index,
+                playing: playing == Some(index),
                 previewed: self.state.preview.previews(None, index),
             })
             .collect();
@@ -823,7 +827,8 @@ impl Editor<'_> {
     /// A layer's members, taking turns: a click previews one over the main
     /// entry, a double click or Shift+click plays it in the world.
     fn members(&mut self, ui: &mut egui::Ui, track: &Track) {
-        let playing = self.runtime.index(self.state.state, track.id);
+        let in_use = self.state.active_set == self.set.id;
+        let playing = in_use.then(|| self.runtime.index(self.state.state, track.id));
         let list = List::Members(track.id);
         let order = self.shown_order(list, &track.members.iter().map(|m| m.link).collect::<Vec<_>>());
         let specs: Vec<RowSpec<'_>> = order
@@ -833,7 +838,7 @@ impl Editor<'_> {
                 id: member.link,
                 names: vec![member.name.as_str()],
                 together: false,
-                playing: playing == index,
+                playing: playing == Some(index),
                 previewed: self.state.preview.previews(Some(track.id), index),
             })
             .collect();
@@ -876,7 +881,6 @@ impl Editor<'_> {
     /// Returns each row's response and whether its remove button was clicked.
     fn rows(&mut self, ui: &mut egui::Ui, list: List, specs: &[RowSpec<'_>]) -> Vec<(egui::Response, bool)> {
         let width = ui.available_width();
-        let busy = self.busy();
         let responses: Vec<egui::Response> = ui
             .scope(|ui| {
                 ui.spacing_mut().item_spacing.y = ROW_GAP;
@@ -936,22 +940,7 @@ impl Editor<'_> {
                 after: to > from,
             });
         }
-        // one move saved at a time, each against the list as saved
-        if !busy {
-            let next = self
-                .state
-                .queued_moves
-                .iter()
-                .position(|m| m.set == self.set.id && m.state == self.state.state && m.list == list);
-            if let Some(next) = next {
-                let m = self.state.queued_moves.remove(next);
-                match inventory::editor::reorder(self.inv, self.set, m.state, m.list, m.source, m.target, m.after) {
-                    Ok(change) if !change.operations.is_empty() => self.out.push(Action::Edit(change, None)),
-                    Ok(_) => {}
-                    Err(reason) => self.state.message = reason,
-                }
-            }
-        }
+        // (saved one at a time by the window, `send_queued_move`)
         out
     }
 

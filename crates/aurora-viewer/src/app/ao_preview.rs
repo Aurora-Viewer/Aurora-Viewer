@@ -2,8 +2,9 @@
 //! hidden skeleton of our avatar plays the previewed entry
 //! (world/ao_preview.rs), and the 3D stage of Inspect (`object_stage`) shows
 //! our outfit posed by its joints, as Inspect shows an avatar
-//! (app/inspect.rs `inspect_stage`). Closed where RLVa limits what may be
-//! seen, as that stage is.
+//! (app/inspect.rs `inspect_stage`). It shows our own outfit and no names,
+//! so none of Inspect's RLVa name rules applies; the copy goes whenever the
+//! window is not drawn (`ao_preview_unseen`).
 use super::*;
 use crate::object_stage::Place;
 use uuid::Uuid;
@@ -13,28 +14,41 @@ use uuid::Uuid;
 const BODY_PARTS: std::time::Duration = std::time::Duration::from_millis(500);
 
 impl App {
+    /// After the interface's pass: a frame that did not draw the AO window
+    /// (the interface hidden, a full-frame photo view, a Director playback)
+    /// takes the copy away, as a closed window does.
+    pub(super) fn ao_preview_unseen(&mut self) {
+        if !std::mem::take(&mut self.ao_preview_seen) {
+            self.remove_ao_preview_copy();
+        }
+    }
+
+    /// The copy, the stage's model and its watch go.
+    fn remove_ao_preview_copy(&mut self) {
+        if let Some(copy) = self.world.ao_preview() {
+            self.scene.watched.remove(&copy);
+            self.world.remove_ao_preview();
+            self.ao_ui.stage.stage.clear(&self.scene);
+            self.ao_ui.stage.restart();
+            self.ao_preview_light = None;
+            self.ao_preview_body = None;
+        }
+    }
+
     /// The preview's skeleton and stage for this frame, before the AO window
     /// is drawn: both go while the stage is not shown.
     pub(super) fn ao_preview_stage(&mut self, ctx: &egui::Context) {
+        self.ao_preview_seen = true;
         let shown = self.ao_ui.take_stage() && self.panels.ao && self.in_world();
         if !shown {
-            if let Some(copy) = self.world.ao_preview() {
-                self.scene.watched.remove(&copy);
-                self.world.remove_ao_preview();
-                self.ao_ui.stage.stage.clear(&self.scene);
-                self.ao_ui.stage.restart();
-                self.ao_preview_light = None;
-            }
+            self.remove_ao_preview_copy();
             return;
         }
         let now = std::time::Instant::now();
-        let selected = self
-            .settings
-            .ao
-            .accounts
-            .get(&self.world.agent_id)
-            .map_or(Uuid::nil(), |a| a.selected);
-        let assets = self.ao_ui.preview_assets(self.ao_catalog.selected(selected), &self.ao_runtime);
+        // the set open in the window, which is not always the one in use
+        let account = self.settings.ao.accounts.get(&self.world.agent_id).cloned().unwrap_or_default();
+        let shown = self.ao_ui.edited(&self.ao_catalog, &account);
+        let assets = self.ao_ui.preview_assets(shown, &self.ao_runtime);
         // what we play ourselves, less the AO's own and the stock animations
         // of the states (the preview's entry stands in for them): the face,
         // the tail, deformers and gestures stay under it

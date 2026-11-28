@@ -210,7 +210,8 @@ impl Step {
         Self {
             least,
             most,
-            step: 0.25,
+            // (the old slider's step: every saved multiplier stays reachable)
+            step: 0.1,
             write: |v| format!("×{v:.2}"),
         }
     }
@@ -252,7 +253,9 @@ fn labelled_stepper(ui: &mut egui::Ui, p: &Palette, id: &str, label: &str, value
                 let tint = if button.hovered() && enabled { p.ink } else { p.muted };
                 widgets::paint_glyph(ui.painter(), icon, hit.center(), 12.0, tint);
                 if button.clicked() && enabled {
-                    *value = ((*value + sign * step.step) / step.step).round() * step.step;
+                    // from the value as it is, kept to the hundredth (not
+                    // snapped to the step: a saved ×1.33 goes to ×1.43)
+                    *value = ((*value + sign * step.step) * 100.0).round() / 100.0;
                     *value = value.clamp(step.least, step.most);
                 }
             }

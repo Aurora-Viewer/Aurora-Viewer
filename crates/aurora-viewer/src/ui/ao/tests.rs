@@ -1785,6 +1785,16 @@ fn playing_an_entry_of_another_set_puts_it_in_use() {
     other.default = false;
     f.catalog.sets.push(other.clone());
     f.state.editing = Some(other.id);
+    let in_use = f.account.selected;
+    // another state plays (walking): the set is left alone, as FloaterAO's
+    // double-click does, and the entry waits for its state
+    f.runtime.current = Some(State::Walking);
+    f.settle();
+    click_with(&mut f, "Aurora Stand B", egui::PointerButton::Secondary, Default::default());
+    assert!(f.click(aurora_i18n::tr!("ao-play-in-world")).is_empty());
+    assert_eq!(f.account.selected, in_use, "not for another state");
+    // standing: the set goes in use with the entry
+    f.runtime.current = Some(State::Standing);
     f.settle();
     click_with(&mut f, "Aurora Stand B", egui::PointerButton::Secondary, Default::default());
     let out = f.click(aurora_i18n::tr!("ao-play-in-world"));
@@ -1892,6 +1902,9 @@ fn a_dropped_entry_stays_put_and_a_move_during_a_save_waits() {
     for _ in 0..20 {
         assert!(f.draw(Vec::new()).0.is_empty());
     }
+    // the slot folded meanwhile: the move still waits, and goes all the same
+    f.state.open_slots = Default::default();
+    f.settle();
     // the first save comes back: the waiting move goes
     crate::world::inventory::actions::demo_mutate(&mut f.inv, Uuid::from_u128(1), first.clone()).expect("ack");
     f.catalog.invalidate();

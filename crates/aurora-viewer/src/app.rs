@@ -1304,6 +1304,9 @@ pub struct App {
     /// The stage ground the AO preview was given last frame: the window's
     /// toggle is read against it (app/ao_preview.rs).
     ao_preview_light: Option<bool>,
+    /// The AO window's pass ran this frame (`ao_preview_stage`): without it
+    /// (the interface hidden, a full-frame photo view), the copy goes.
+    ao_preview_seen: bool,
     ao_catalog: crate::ao::inventory::Catalog,
     ao_bootstrap: crate::ao::bootstrap::Bootstrap,
     ao_runtime: crate::ao::runtime::Runtime,
@@ -2501,6 +2504,7 @@ impl App {
             ao_ui: Default::default(),
             ao_preview_body: None,
             ao_preview_light: None,
+            ao_preview_seen: false,
             ao_catalog: Default::default(),
             ao_bootstrap: Default::default(),
             ao_runtime: Default::default(),
@@ -13982,6 +13986,7 @@ impl App {
             // gets no input events: what the first pass clicked must survive
             // the second, or a click that changed a row's size is lost.
             actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
+            self.ao_preview_unseen();
             self.studio_overlay(ui.ctx());
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             crate::outside::carry::hint(ui.ctx(), &self.palette);

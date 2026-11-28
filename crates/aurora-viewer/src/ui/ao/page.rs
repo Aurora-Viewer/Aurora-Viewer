@@ -168,8 +168,15 @@ fn section(
     out: &mut Vec<Action>,
 ) -> egui::Response {
     let open = state.open_slots[Category::of(item).index()] == Some(item) && state.tab == 0;
-    // unfolding and folding glide (`reveal`)
-    let time = if ui.style().animation_time > 0.0 { REVEAL } else { 0.0 };
+    // unfolding and folding glide (`reveal`); a slot left for another one
+    // closes at once: its body is drawn for the slot the window works on,
+    // which is now the other one
+    let handed_over = !open && state.state != item;
+    let time = if ui.style().animation_time > 0.0 && !handed_over {
+        REVEAL
+    } else {
+        0.0
+    };
     let t = ui
         .ctx()
         .animate_bool_with_time(ui.scope_id().with(("ao_slot_open", item.name())), open, time);
@@ -181,7 +188,7 @@ fn section(
         .scope(|ui| {
             ui.set_width(width);
             ui.spacing_mut().item_spacing.y = 6.0;
-            let header = header(ui, p, runtime, item, count, open);
+            let header = header(ui, p, runtime, item, count, open, state.active_set == set.id);
             if t > 0.0 {
                 reveal(ui, ui.scope_id().with(("ao_slot_body", item.name())), t, |ui| {
                     egui::Frame::new()
@@ -304,7 +311,9 @@ fn keyboard(ui: &egui::Ui, header: &egui::Response, states: &[State], index: usi
 
 /// The slot's mark, name, what it is for, whether it plays now, and its
 /// count.
-fn header(ui: &mut egui::Ui, p: &Palette, runtime: &Runtime, item: State, count: usize, open: bool) -> egui::Response {
+/// `in_use`: the set shown is the one the AO plays (only its slot says
+/// "Playing now").
+fn header(ui: &mut egui::Ui, p: &Palette, runtime: &Runtime, item: State, count: usize, open: bool, in_use: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), HEADER), egui::Sense::click());
     let inner = rect.shrink2(Vec2::new(10.0, 0.0));
     let y = inner.center().y;
@@ -330,7 +339,7 @@ fn header(ui: &mut egui::Ui, p: &Palette, runtime: &Runtime, item: State, count:
     let count_galley = ui.painter().layout_no_wrap(count_text, egui::FontId::proportional(11.5), p.muted);
     let mut right = inner.right() - count_galley.size().x;
     widgets::paint_row_text(ui.painter(), count_galley, right, y, p.muted);
-    if runtime.current == Some(item) && count > 0 {
+    if in_use && runtime.current == Some(item) && count > 0 {
         let label = aurora_i18n::tr!("ao-playing-now");
         let galley = ui
             .painter()

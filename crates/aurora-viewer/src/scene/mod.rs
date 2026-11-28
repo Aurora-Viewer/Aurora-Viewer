@@ -6846,15 +6846,10 @@ impl Scene {
     /// Give `to` the joint positions `from` holds (`anim::Controller::
     /// hold_positions`): the AO window's preview copy takes our deformers.
     pub fn share_held_positions(&mut self, from: &Uuid, to: &Uuid) {
-        let Some((held, pelvis)) = self.motions.get(from).map(|c| {
-            let (held, pelvis) = c.held_positions();
-            (held.to_vec(), pelvis)
-        }) else {
+        let Some((held, pelvis)) = self.motions.get(from).map(|c| c.held_positions()) else {
             return;
         };
-        if let Some(copy) = self.motions.get_mut(to)
-            && copy.held_positions() != (held.as_slice(), pelvis)
-        {
+        if let Some(copy) = self.motions.get_mut(to) {
             copy.hold_positions((&held, pelvis));
         }
     }

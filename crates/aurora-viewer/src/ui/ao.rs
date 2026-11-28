@@ -198,10 +198,17 @@ impl AoUi {
     }
 
     /// The set open in the window: the one opened, else the one in use.
-    pub(super) fn edited<'a>(&self, catalog: &'a inventory::Catalog, account: &Account) -> Option<&'a Set> {
+    pub fn edited<'a>(&self, catalog: &'a inventory::Catalog, account: &Account) -> Option<&'a Set> {
         self.editing
             .and_then(|id| catalog.sets.iter().find(|s| s.id == id))
             .or_else(|| catalog.selected(account.selected))
+    }
+
+    /// An edit failed: the moves waiting for their turn were made on the
+    /// order it would have saved, and the order shown for it goes.
+    pub fn drop_moves(&mut self) {
+        self.queued_moves.clear();
+        self.held_order = None;
     }
 
     /// An edit was saved: said a moment over the preview, in place of a
@@ -328,8 +335,8 @@ pub fn show(
     let selected_id = selected.map_or(Uuid::nil(), |s| s.id);
     if state.selected_set != selected_id {
         state.selected_set = selected_id;
+        // (moves waiting for their turn keep it: they name their set)
         state.held_order = None;
-        state.queued_moves.clear();
         state.picker = None;
         state.container = None;
         state.cycle_edit = None;
@@ -379,6 +386,7 @@ pub fn show(
         }
         preview_edge(ui, p, full, preview_w);
     });
+    send_queued_move(inv, catalog, state, &mut out);
     if let Some(id) = state.use_set.take()
         && account.selected != id
     {
@@ -465,6 +473,27 @@ fn glow_line(ui: &egui::Ui, x: f32, span: egui::Rangef, at: f32, color: egui::Co
         }
     }
     ui.painter().add(egui::Shape::mesh(mesh));
+}
+
+/// Saves the first move waiting for its turn, against its list as saved
+/// now: one edit at a time, when none is under way or sent this frame,
+/// whichever page the window shows.
+fn send_queued_move(inv: &Inventory, catalog: &inventory::Catalog, state: &mut AoUi, out: &mut Vec<Action>) {
+    let sending = out
+        .iter()
+        .any(|a| matches!(a, Action::Edit(..) | Action::EditContainer(..) | Action::Create(_)));
+    if state.busy() || sending || state.queued_moves.is_empty() {
+        return;
+    }
+    let m = state.queued_moves.remove(0);
+    let Some(set) = catalog.sets.iter().find(|s| s.id == m.set) else {
+        return;
+    };
+    match inventory::editor::reorder(inv, set, m.state, m.list, m.source, m.target, m.after) {
+        Ok(change) if !change.operations.is_empty() => out.push(Action::Edit(change, None)),
+        Ok(_) => {}
+        Err(reason) => state.message = reason,
+    }
 }
 
 /// One column of the window, laid out in its own rect and cut at its edges,
