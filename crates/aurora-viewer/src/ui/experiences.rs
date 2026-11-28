@@ -182,7 +182,7 @@ impl ExperiencesUi {
                         );
                     }
                     for e in list {
-                        if found_row(ui, p, &e) {
+                        if found_row(ui, p, world, &e) {
                             open_profile = Some(e.id);
                         }
                     }
@@ -341,10 +341,12 @@ fn filter_found(mut list: Vec<aurora_net::land::FoundExperience>, max_rating: u8
     list
 }
 
-/// One experience found: name and rating; the card opens the profile. True
-/// when it was clicked.
-fn found_row(ui: &mut egui::Ui, p: &Palette, e: &aurora_net::land::FoundExperience) -> bool {
-    card(ui, p, ("xp_found", e.id), e.name.trim(), e.maturity, None)
+/// One experience found: name, rating and creator, as the Legacy Viewer's
+/// picker shows its owner column; the card opens the profile. True when it
+/// was clicked.
+fn found_row(ui: &mut egui::Ui, p: &Palette, world: &mut World, e: &aurora_net::land::FoundExperience) -> bool {
+    let creator = crate::ui::land::creator_name(world, e.owner).map(|c| aurora_i18n::tr!("ui-experiences-by", creator = c));
+    card(ui, p, ("xp_found", e.id), e.name.trim(), e.maturity, None, creator.as_deref())
 }
 
 fn muted(ui: &mut egui::Ui, p: &Palette, text: &str) {
@@ -379,15 +381,16 @@ fn row(ui: &mut egui::Ui, p: &Palette, world: &mut World, id: Uuid) -> bool {
             } else {
                 aurora_i18n::tr!("ui-group-experiences-land")
             };
-            card(ui, p, ("xp_row", id), &name, d.maturity, Some(scope))
+            card(ui, p, ("xp_row", id), &name, d.maturity, Some(scope), None)
         }
-        None => card(ui, p, ("xp_row", id), &name, 0, None),
+        None => card(ui, p, ("xp_row", id), &name, 0, None, None),
     }
 }
 
-/// A clickable card: an icon tile, the name, the rating badge (when known)
-/// and the scope, and a chevron. True when clicked.
-fn card(ui: &mut egui::Ui, p: &Palette, id: (&str, Uuid), name: &str, maturity: u8, scope: Option<&str>) -> bool {
+/// A clickable card: an icon tile, the name, the rating badge (when known),
+/// the scope, an optional muted note (the creator) and a chevron. True when
+/// clicked.
+fn card(ui: &mut egui::Ui, p: &Palette, id: (&str, Uuid), name: &str, maturity: u8, scope: Option<&str>, note: Option<&str>) -> bool {
     let frame = egui::Frame::new()
         .fill(p.bar)
         .corner_radius(ui.visuals().window_corner_radius)
@@ -406,6 +409,9 @@ fn card(ui: &mut egui::Ui, p: &Palette, id: (&str, Uuid), name: &str, maturity: 
                             ui.label(RichText::new(scope).size(11.5).color(p.muted));
                         }
                     });
+                    if let Some(note) = note {
+                        ui.label(RichText::new(note).size(11.0).color(p.muted));
+                    }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());

@@ -2785,6 +2785,7 @@ ui-experience-profile-ignored-field = 項目「{ $field }」は無視されま�
 ui-experiences-title = エクスペリエンス
 ui-experiences-allowed = 許可
 ui-experiences-blocked = ブロック
+ui-experiences-by = 作成者：{ $creator }
 ui-experiences-admin = 管理
 ui-experiences-contributor = 貢献
 ui-experiences-owned = 所有

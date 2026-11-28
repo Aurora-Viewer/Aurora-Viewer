@@ -7,7 +7,7 @@ use crate::theme::Palette;
 use crate::world::World;
 use crate::world::land::powers;
 use aurora_net::land::{AL_ALLOW_EXPERIENCE, AL_BLOCK_EXPERIENCE, PARCEL_MAX_EXPERIENCE_LIST};
-use egui::{RichText, Vec2};
+use egui::{FontId, RichText, Vec2};
 use uuid::Uuid;
 
 pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut World) {
@@ -44,6 +44,13 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             *selected = None;
         }
         let mut remove = None;
+        let rows: Vec<(Uuid, String, Option<String>)> = list
+            .iter()
+            .map(|id| {
+                let (name, creator) = describe(world, *id);
+                (*id, name, creator)
+            })
+            .collect();
         ui.allocate_ui_with_layout(
             Vec2::new(ui.available_width(), half_h),
             egui::Layout::left_to_right(egui::Align::Min),
@@ -76,15 +83,11 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                                 .show(ui, |ui| {
                                     ui.vertical(|ui| {
                                         ui.set_width(list_w - 12.0);
-                                        if list.is_empty() {
+                                        if rows.is_empty() {
                                             ui.label(RichText::new(aurora_i18n::tr!("status-empty")).size(12.0).color(p.muted));
                                         }
-                                        for id in list {
-                                            let name = world
-                                                .land
-                                                .experience_name(id)
-                                                .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into());
-                                            let (rect, r) = ui.allocate_exact_size(Vec2::new(list_w - 12.0, 20.0), egui::Sense::click());
+                                        for (id, name, creator) in &rows {
+                                            let (rect, r) = ui.allocate_exact_size(Vec2::new(list_w - 12.0, 32.0), egui::Sense::click());
                                             let fill = if *selected == Some(*id) {
                                                 p.violet.gamma_multiply(0.6)
                                             } else if r.hovered() {
@@ -93,13 +96,39 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                                                 p.field
                                             };
                                             ui.painter().rect_filled(rect, 0.0, fill);
-                                            ui.painter().text(
-                                                rect.left_center() + Vec2::new(6.0, 0.0),
-                                                egui::Align2::LEFT_CENTER,
+                                            let name_font = FontId::proportional(12.0);
+                                            let note_font = FontId::proportional(10.5);
+                                            let gap = crate::ui::widgets::two_lines_gap(ui, &name_font, &note_font, 14.0);
+                                            let text_w = rect.width() - 12.0;
+                                            let note = creator
+                                                .as_ref()
+                                                .map(|c| aurora_i18n::tr!("ui-experiences-by", creator = c.as_str()));
+                                            let cut_name = crate::ui::widgets::paint_elided(
+                                                ui,
                                                 name,
-                                                egui::FontId::proportional(12.0),
+                                                rect.left_center() + Vec2::new(6.0, -gap / 2.0),
+                                                text_w,
+                                                name_font,
                                                 p.ink,
                                             );
+                                            let cut_note = note.as_deref().is_some_and(|note| {
+                                                crate::ui::widgets::paint_elided(
+                                                    ui,
+                                                    note,
+                                                    rect.left_center() + Vec2::new(6.0, gap / 2.0),
+                                                    text_w,
+                                                    note_font,
+                                                    p.muted,
+                                                )
+                                            });
+                                            if cut_name || cut_note {
+                                                let mut hover = name.clone();
+                                                if let Some(note) = &note {
+                                                    hover.push('\n');
+                                                    hover.push_str(note);
+                                                }
+                                                r.clone().on_hover_text(hover);
+                                            }
                                             if r.clicked() {
                                                 *selected = Some(*id);
                                             }
@@ -127,6 +156,30 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             *selected = None;
         }
     }
+}
+
+/// The two lines of an experience's row: its name and its creator's display
+/// name. The details are asked once when unknown. An empty name, and one
+/// whose details could not be read, shows untitled, as
+/// LLPanelExperienceListEditor::onExperienceDetails does
+/// (ExperienceNameUntitled, indra/newview/llpanelexperiencelisteditor.cpp).
+///
+/// The creator line is Aurora's: the Legacy Viewer's list shows the name
+/// only, and two experiences with the same name cannot be told apart
+/// without their creator.
+pub(super) fn describe(world: &mut World, id: Uuid) -> (String, Option<String>) {
+    let Some(owner) = world
+        .land
+        .experience(&id)
+        .map(|d| (!d.invalid()).then_some(d.owner).filter(|o| !o.is_nil()))
+    else {
+        return (aurora_i18n::tr!("common-loading").into(), None);
+    };
+    let name = world
+        .land
+        .experience_name(&id)
+        .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into());
+    (name, owner.and_then(|owner| super::creator_name(world, owner)))
 }
 
 /// experienceRemoved: EXPERIENCE_KEY_TYPE_NONE, then the list goes out.

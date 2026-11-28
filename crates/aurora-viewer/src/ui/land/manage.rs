@@ -1661,23 +1661,30 @@ fn experiences(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
         });
         let mut remove = None;
         for id in list {
-            let label = world
-                .land
-                .experience_name(id)
-                .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into());
+            let (label, creator) = super::experiences::describe(world, *id);
             ui.horizontal(|ui| {
-                ui.set_min_height(26.0);
+                ui.set_min_height(if creator.is_some() { 34.0 } else { 26.0 });
                 ui.add_space(12.0);
                 widgets::glyph(ui, "flask-filled", p.muted, 13.0);
-                // the list's "Profile" button: the experience profile
-                if ui
-                    .add(egui::Label::new(RichText::new(label).size(12.5).color(p.ink)).sense(Sense::click()))
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .on_hover_text(aurora_i18n::tr!("common-profile-2"))
-                    .clicked()
-                {
-                    world.experiences.open_profile(*id);
-                }
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    // the list's "Profile" button: the experience profile
+                    if ui
+                        .add(egui::Label::new(RichText::new(label).size(12.5).color(p.ink)).sense(Sense::click()))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(aurora_i18n::tr!("common-profile-2"))
+                        .clicked()
+                    {
+                        world.experiences.open_profile(*id);
+                    }
+                    if let Some(creator) = &creator {
+                        ui.label(
+                            RichText::new(aurora_i18n::tr!("ui-experiences-by", creator = creator.as_str()))
+                                .size(11.0)
+                                .color(p.muted),
+                        );
+                    }
+                });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-delete"), can) {
                         remove = Some(*id);

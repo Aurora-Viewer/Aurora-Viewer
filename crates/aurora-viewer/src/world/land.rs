@@ -8,6 +8,7 @@
 //! llpanelenvironment.cpp and llinventory/llparcel.cpp (originally LGPL 2.1).
 
 use aurora_llsd::Llsd;
+use aurora_net::experience::ExperienceDetails;
 use aurora_net::land::{self, AccessEntry, FoundAvatar, LandCommand, LandEvent, ObjectOwner, ParcelUpdate};
 use aurora_net::{GroupMembership, NetCommand, ParcelInfo, RegionHandle, parcel_flags as pf};
 use glam::Vec3;
@@ -65,6 +66,9 @@ const REFRESH_IDLE: Duration = Duration::from_secs(15);
 const REFRESH_AFTER_UPDATE: Duration = Duration::from_secs(5);
 /// A refresh without an answer is forgotten after this long.
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long an experience whose details could not be read is kept before it
+/// is asked again (LLExperienceCache::DEFAULT_EXPIRATION).
+const EXPERIENCE_RETRY: Duration = Duration::from_secs(600);
 /// PARCEL_GRID_STEP_METERS.
 pub(super) const GRID_STEP: f32 = 4.0;
 
@@ -574,7 +578,11 @@ pub struct Land {
     pub seen_parcels: Vec<(RegionHandle, std::sync::Arc<ParcelInfo>)>,
     pub covenant: Option<Covenant>,
     covenant_asked: Option<(RegionHandle, Instant)>,
-    pub experience_names: HashMap<Uuid, String>,
+    /// The experiences named by the parcel's and the estate's lists, with
+    /// their name, creator and rating (LLExperienceCache's entries).
+    experience_details: HashMap<Uuid, ExperienceDetails>,
+    /// When an invalid entry may be asked again (LLExperienceCache's expiry).
+    experience_retry: HashMap<Uuid, Instant>,
     experiences_asked: HashSet<Uuid>,
     pub group_names: HashMap<Uuid, String>,
     groups_asked: HashSet<Uuid>,
@@ -822,15 +830,50 @@ impl Land {
         }
     }
 
-    /// Experience name, asked once when unknown.
-    pub fn experience_name(&mut self, id: &Uuid) -> Option<String> {
-        if let Some(n) = self.experience_names.get(id) {
-            return Some(n.clone());
+    /// Keeps an experience's details, with a retry delay when they could not
+    /// be read (LLExperienceCache's invalid entries).
+    fn learn_experience(&mut self, d: ExperienceDetails) {
+        if d.invalid() {
+            self.experience_retry.insert(d.id, Instant::now() + EXPERIENCE_RETRY);
+        } else {
+            self.experience_retry.remove(&d.id);
         }
-        if self.experiences_asked.insert(*id) {
+        self.experience_details.insert(d.id, d);
+    }
+
+    /// The details of an experience named by a parcel or estate list, asked
+    /// once when unknown (LLExperienceCache::get). An invalid entry is asked
+    /// again once its retry delay has passed.
+    pub fn experience(&mut self, id: &Uuid) -> Option<&ExperienceDetails> {
+        if self.experience_retry.get(id).is_some_and(|at| Instant::now() >= *at) {
+            self.experience_retry.remove(id);
+            self.experience_details.remove(id);
+            self.experiences_asked.remove(id);
+        }
+        if !self.experience_details.contains_key(id) && self.experiences_asked.insert(*id) {
             self.send(LandCommand::ExperienceInfo(vec![*id]));
         }
-        None
+        self.experience_details.get(id)
+    }
+
+    /// The details already read, without asking (a chat link labels an
+    /// experience whose name may already be known).
+    pub fn known_experience(&self, id: &Uuid) -> Option<&ExperienceDetails> {
+        self.experience_details.get(id)
+    }
+
+    /// Experience name as the lists show it, asked once when unknown. An
+    /// experience whose details could not be read, or whose name is empty,
+    /// reads as untitled, like LLLPanelExperienceListEditor's
+    /// ExperienceNameUntitled.
+    pub fn experience_name(&mut self, id: &Uuid) -> Option<String> {
+        self.experience(id).map(|d| {
+            if d.invalid() || d.name.trim().is_empty() {
+                aurora_i18n::tr!("ui-land-picker-experience-untitled").to_owned()
+            } else {
+                d.name.trim().to_owned()
+            }
+        })
     }
 
     pub fn apply(&mut self, ev: LandEvent, ctx: &SelectionContext) {
@@ -934,7 +977,11 @@ impl Land {
                     sel.revision += 1;
                 }
             }
-            LandEvent::ExperienceInfo(list) => self.experience_names.extend(list),
+            LandEvent::ExperienceInfo(list) => {
+                for d in list {
+                    self.learn_experience(d);
+                }
+            }
             LandEvent::GroupNames(list) => self.group_names.extend(list),
             LandEvent::ScriptSummary(r) => {
                 self.scripts.revision = self.scripts.revision.wrapping_add(1);
@@ -956,7 +1003,21 @@ impl Land {
             }
             LandEvent::ExperienceSearch { query, results } => {
                 if let Some(list) = results.as_ref() {
-                    self.experience_names.extend(list.iter().map(|e| (e.id, e.name.clone())));
+                    // findExperienceByNameCoro inserts its rows in the cache:
+                    // the name and creator are known before the details arrive.
+                    // The search row is partial (no description, group or
+                    // slurl); only the name, creator, rating and properties are
+                    // read from it here.
+                    for e in list.iter().filter(|e| !e.id.is_nil()) {
+                        self.learn_experience(ExperienceDetails {
+                            id: e.id,
+                            name: e.name.clone(),
+                            owner: e.owner,
+                            maturity: e.maturity,
+                            properties: e.properties,
+                            ..Default::default()
+                        });
+                    }
                 }
                 if let Some((q, r)) = self.window_experience_search.as_mut()
                     && *q == query
@@ -1224,6 +1285,92 @@ mod tests {
             })
             .collect();
         assert_eq!(sent, vec![land::AL_ALLOW_EXPERIENCE]);
+    }
+
+    /// GetExperienceInfo keeps the creator, so two experiences with the same
+    /// name can be told apart in the lists.
+    #[test]
+    fn experience_details_keep_their_creator() {
+        let mut land = Land::default();
+        let id = Uuid::from_u128(0xE1);
+        let owner = Uuid::from_u128(0xA1);
+        assert!(land.experience(&id).is_none());
+        let sent = land.take_commands();
+        assert!(matches!(&sent[..], [NetCommand::Land(LandCommand::ExperienceInfo(ids))] if ids == &vec![id]));
+        // asked once, even while the answer is missing
+        assert!(land.experience(&id).is_none());
+        assert!(land.take_commands().is_empty());
+        land.apply(
+            LandEvent::ExperienceInfo(vec![ExperienceDetails {
+                id,
+                name: "Shared".into(),
+                owner,
+                ..Default::default()
+            }]),
+            &SelectionContext {
+                agent_region: None,
+                region_id: Uuid::nil(),
+            },
+        );
+        assert_eq!(land.experience_name(&id).as_deref(), Some("Shared"));
+        assert_eq!(land.known_experience(&id).map(|d| d.owner), Some(owner));
+        // known now: the same id asks for nothing more
+        assert!(land.take_commands().is_empty());
+    }
+
+    /// A failed GetExperienceInfo, or an empty name, reads as untitled, as
+    /// LLLPanelExperienceListEditor shows it in the Region / Estate lists.
+    #[test]
+    fn an_invalid_experience_reads_untitled() {
+        let mut land = Land::default();
+        let id = Uuid::from_u128(0xE2);
+        let ctx = SelectionContext {
+            agent_region: None,
+            region_id: Uuid::nil(),
+        };
+        land.apply(LandEvent::ExperienceInfo(vec![ExperienceDetails::unknown(id)]), &ctx);
+        assert_eq!(
+            land.experience_name(&id).as_deref(),
+            Some(aurora_i18n::tr!("ui-land-picker-experience-untitled"))
+        );
+        // a valid entry whose name is empty reads the same
+        land.apply(
+            LandEvent::ExperienceInfo(vec![ExperienceDetails {
+                id,
+                name: "  ".into(),
+                ..Default::default()
+            }]),
+            &ctx,
+        );
+        assert_eq!(
+            land.experience_name(&id).as_deref(),
+            Some(aurora_i18n::tr!("ui-land-picker-experience-untitled"))
+        );
+    }
+
+    /// An invalid entry is asked again after its retry delay, so one network
+    /// error does not leave it untitled for the whole session.
+    #[test]
+    fn an_invalid_experience_is_asked_again_after_a_while() {
+        let mut land = Land::default();
+        let id = Uuid::from_u128(0xE3);
+        let ctx = SelectionContext {
+            agent_region: None,
+            region_id: Uuid::nil(),
+        };
+        land.apply(LandEvent::ExperienceInfo(vec![ExperienceDetails::unknown(id)]), &ctx);
+        assert!(land.experience(&id).is_some_and(|d| d.invalid()));
+        assert!(land.take_commands().is_empty(), "known, not expired");
+        // as if EXPERIENCE_RETRY had passed
+        land.experience_retry.insert(id, Instant::now() - Duration::from_secs(1));
+        assert!(land.experience(&id).is_none());
+        assert!(matches!(
+            &land.take_commands()[..],
+            [NetCommand::Land(LandCommand::ExperienceInfo(ids))] if ids == &vec![id]
+        ));
+        // the id is asked once, not every frame
+        assert!(land.experience(&id).is_none());
+        assert!(land.take_commands().is_empty());
     }
 
     use super::*;
