@@ -61,6 +61,10 @@ fn demo_vr_closed() -> Option<u64> {
 /// (`xr_frame::runtime_leaving`), one call to an in-process queue each time.
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+/// How long a snapshot's DLSS set aside waits for the next film frame
+/// once the window's targets are back (`Backend::dlss_aside`): a film
+/// export asks for it again within a frame or two.
+const DLSS_ASIDE: std::time::Duration = std::time::Duration::from_secs(2);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The G-buffer at the Standard precision: 8 bits per channel.
 const GBUF_STANDARD: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -113,6 +117,27 @@ fn gbuf_wanted(device: &wgpu::Device, external: bool, wide: &[u32], s: &RenderSe
     let traced = s.shadow_resolution > 0 && crate::rt_shadows::traced(device, external, s.ray_tracing).reflections;
     s.gbuffer()
         .then(|| gbuf_format(s.normal_precision.high(s.ssr, traced), wide.contains(&samples)))
+}
+
+/// The G-buffer the scene's pipelines draw into: the settings' (`gbuf`,
+/// [`gbuf_wanted`]), or the Standard one when only Ray Reconstruction's guides
+/// ask for one (`rr`).
+fn gbuf_drawn(gbuf: Option<wgpu::TextureFormat>, rr: bool) -> Option<wgpu::TextureFormat> {
+    gbuf.or(rr.then_some(GBUF_STANDARD))
+}
+
+/// The base colour beside the G-buffer, for DLSS Ray Reconstruction's guides.
+pub(crate) const ALBEDO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
+static RR_UNTRACED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The window's settings trace nothing for DLSS Ray Reconstruction to clean
+/// up: ray tracing or its sun shadows off, or the shadows off (`rr_wanted`).
+/// Preferences says so under a Ray Reconstruction chosen and ready; while
+/// it waits for anything else (a resize, the guides compiling, a snapshot,
+/// a DLSS failure) it says nothing.
+pub fn rr_untraced() -> bool {
+    RR_UNTRACED.load(std::sync::atomic::Ordering::Relaxed)
 }
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -449,6 +474,7 @@ impl Smaa {
             samples: 1,
             format: Some(format),
             gbuf: None,
+            albedo: false,
             range: None,
             depth_format: None,
             depth_bias: Default::default(),
@@ -781,6 +807,7 @@ impl Glow {
             samples: 1,
             format: Some(fmt),
             gbuf: None,
+            albedo: false,
             range: None,
             depth_format: None,
             depth_bias: Default::default(),
@@ -882,6 +909,10 @@ struct Taa {
     /// FSR 3.1 in the place of the TAA pass (`AURORA_FSR=1`, fsr.rs), with
     /// the post bind group reading its image.
     fsr: Option<(crate::fsr::Fsr, wgpu::BindGroup)>,
+    /// DLSS in FSR's place (`AURORA_DLSS=1`, dlss.rs), with the post bind
+    /// group reading its image; FSR stays beside it for the display depth
+    /// and for the day DLSS fails.
+    dlss: Option<(crate::dlss::Dlss, wgpu::BindGroup)>,
     parity: usize,
     reset: bool,
 }
@@ -1035,6 +1066,38 @@ fn lost_at_start(lost: &crate::device_lost::DeviceLost, surface: &Arc<wgpu::Surf
     Err(RenderError::DeviceLost)
 }
 
+/// `AURORA_DLSS_RR_BEHIND=1` (debug, docs/TESTING.md): Ray Reconstruction's
+/// depth, motion and guides stay those of the opaque surface behind the
+/// blended faces opaque to the eye (`RrInputs`), to compare. The impostor
+/// cards are in scene pass A, so they stay in all three.
+fn rr_inputs_behind() -> bool {
+    static BEHIND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *BEHIND.get_or_init(|| std::env::var("AURORA_DLSS_RR_BEHIND").is_ok_and(|v| v == "1"))
+}
+
+/// The depth and motion DLSS Ray Reconstruction reads, one surface for
+/// depth, motion and guide normal as NVIDIA's RR guide asks (3.4.1): the
+/// motion copied from the depth prepass before the occlusion's passes draw
+/// into it (GTAO's normals, or TAA's motion), with none of its own where an
+/// impostor card is nearer (they have no prepass: the card's depth moves
+/// the pixel, `fs_impostor_still`); the depth once scene pass A is drawn
+/// (the prepass's and the cards'). Then the blended faces opaque to the eye
+/// (`SCREEN_BLEND_ALPHA`, the heads, bodies and hair that look solid) are
+/// drawn over both (`rr_blend`), their mesh normal marked in the motion's
+/// xy (object.wgsl `NORMAL_RR_FACE`), where the guides take that face's normal and
+/// colour instead of scene pass A's G-buffer (dlss_guides.wgsl): a blended
+/// avatar moving over a wall keeps its own history. Fainter blended faces
+/// and the water keep the surface behind them in all three (the guide's
+/// choice for a transparent surface without specular motion, 3.4.1, and
+/// for refraction, 3.5): they are in the colour alone.
+/// `AURORA_DLSS_RR_BEHIND=1` leaves those blended faces out
+/// (`rr_inputs_behind`). Made only with the pipelines that draw the guides
+/// (`rr_compiled`), as part of the targets.
+struct RrInputs {
+    depth: (wgpu::Texture, wgpu::TextureView),
+    motion: (wgpu::Texture, wgpu::TextureView),
+}
+
 /// A planar reflection render target.
 struct ReflTarget {
     color: wgpu::TextureView,
@@ -1068,6 +1131,11 @@ struct Targets {
     /// G-buffer (normal, roughness, metallic) for SSR.
     gbuf_msaa: Option<wgpu::TextureView>,
     gbuf: Option<wgpu::TextureView>,
+    /// Base colour beside it, for Ray Reconstruction (`rr_guides`).
+    albedo_msaa: Option<wgpu::TextureView>,
+    pub(crate) albedo: Option<wgpu::TextureView>,
+    /// Ray Reconstruction's depth and motion, with its base colour.
+    rr_inputs: Option<RrInputs>,
     /// SSAO raw and blurred (half resolution).
     ao: Option<(wgpu::TextureView, wgpu::TextureView, u32, u32)>,
     /// GTAO's targets (gtao.rs), when its method is chosen or `AURORA_AO`
@@ -1275,6 +1343,11 @@ struct Pipelines {
     /// `FSR_BLEND_ALPHA`, with their motion, into the occlusion's depth
     /// once the occlusion and the contact shadows have read it.
     fsr_blend_normal: SidedPipelines,
+    /// Ray Reconstruction only (made with its guides' pipelines): the
+    /// blended faces opaque to the eye (`SCREEN_BLEND_ALPHA`), with their
+    /// motion and normal marked (object.wgsl `fs_depth_rr_face`), into its copies of the
+    /// depth and the motion (`RrInputs`).
+    rr_blend: Option<SidedPipelines>,
     /// Depth prepass into the scene pass's own multisampled depth (MSAA
     /// only): ordinary / portal-clipped, each one-sided and two-sided.
     pre_msaa: Option<[[wgpu::RenderPipeline; 2]; 2]>,
@@ -2020,6 +2093,16 @@ struct FrameGroups {
 
 /// What a frame draws into: the swapchain image, presented, or a photo's
 /// own texture (`Capture::Snapshot`), read back and dropped.
+/// `Backend::remake_surface`'s answer when another renderer holds the
+/// window's surface (the second camera's).
+const SURFACE_SHARED: &str = "the second camera holds the window";
+
+/// How long a frame handed to sl-ngx's presenter waits for the frame
+/// before it to be taken up: past it, the frame is not shown. Under Fifo
+/// the presenter takes one every two refreshes (33 ms at 60 Hz).
+#[cfg(all(feature = "dlss", target_os = "linux"))]
+const FG_HAND_OVER_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
+
 enum FrameTarget {
     Surface(wgpu::SurfaceTexture),
     Offscreen(wgpu::Texture),
@@ -2053,8 +2136,19 @@ pub(crate) struct Backend {
     queue: wgpu::Queue,
     /// Destroyed by hand in `Drop`, unless the device is lost.
     surface: std::mem::ManuallyDrop<Arc<wgpu::Surface<'static>>>,
+    /// What the window's surface is made again from, for DLSS frame
+    /// generation (`renew_surface`); None off Wayland and for an external
+    /// renderer.
+    window: Option<crate::present::WindowHandles>,
     config: wgpu::SurfaceConfiguration,
     external: bool,
+    /// Whether this renderer's drop shuts Streamline down on its device (DLSS,
+    /// dlss.rs): the main renderer's, which goes with its device at exit or
+    /// a switch to or from VR. Not an external one (it shares the main
+    /// one's device), and not one `remake_refused` replaces or a try it
+    /// refused: the device lives on, and Streamline on it holds the new
+    /// renderer's feature.
+    closes_ngx: bool,
     /// What the second camera's renderer is made from (second_view.rs):
     /// the window's start, kept (`seed` is let go once the start is over);
     /// None for an external renderer, or once one could not be made.
@@ -2335,16 +2429,50 @@ pub(crate) struct Backend {
     /// (`soft_path`): the mask is drawn and read only while they were.
     soft_pipelines: bool,
     /// The G-buffer the scene's pipelines were compiled for: its format,
-    /// none without it (`gbuf_wanted`). The targets are made of it, not of
-    /// the settings: a set compiling for another precision draws into the
-    /// one of before until it arrives.
+    /// none without it (`gbuf_wanted`; with Ray Reconstruction alone asking
+    /// for one, they draw its own, `gbuf_drawn`). The targets are made of
+    /// it, not of the settings: a set compiling for another precision draws
+    /// into the one of before until it arrives.
     gbuf_pipelines: Option<wgpu::TextureFormat>,
     /// The sample counts the device draws 16 normalized bits at, 1
     /// included: none without the format (`GBUF_WIDE`).
     gbuf_wide: Vec<u32>,
-    /// The pipelines being compiled for other samples, SSR or another
-    /// G-buffer format, if any.
+    /// The pipelines and targets draw Ray Reconstruction's guides
+    /// (`rr_here` when they were built).
+    rr_compiled: bool,
+    /// A capture compiled super resolution's pipelines, Ray
+    /// Reconstruction refused for the captures (`dlss::snapshot_rr_refused`,
+    /// `snapshot_without_rr`): the window between two captures keeps them
+    /// too, so that a film does not compile them again at every frame.
+    /// Until no capture follows within `DLSS_ASIDE` (the run over,
+    /// `end_snapshot_rr_off`); the instant is when the last capture gave
+    /// the window its size back (`release_snapshot`), None while one is
+    /// drawn. The captures themselves follow the refusal, which outlives
+    /// the run.
+    snapshot_rr_off: Option<Option<Instant>>,
+    /// The pipelines being compiled for other samples, SSR, another
+    /// G-buffer format or Ray Reconstruction, if any.
     pipeline_build: Option<PipelineBuild>,
+    /// This frame draws a photo or film frame, or belongs to a photo drawn
+    /// in parts (its whole drawn small, its tiles, the frames between
+    /// them: `FrameParams::photo_job`) or a 360° capture: a
+    /// `pipeline_build` done meanwhile waits, so that a tiled photo's
+    /// tiles and a 360° capture's faces keep the pipelines and targets
+    /// they began with. A photo waiting for the 3D drawing to resume
+    /// (`PausedPart`) holds them as long; the frames meanwhile draw with
+    /// the pipelines they have.
+    capturing: bool,
+    /// The captures' Ray Reconstruction refusal as the capture under way
+    /// began with it: kept while `capturing`, so that the retry of Try
+    /// again or another model meanwhile does not give its later tiles or
+    /// faces Ray Reconstruction that the first ones drew without
+    /// (`snapshot_rr_refused`). The model itself changes at once
+    /// (`remodel_dlss`), as any setting does.
+    rr_latched: bool,
+    /// The settings were applied once: the first apply moves from
+    /// `RenderSettings::default`, which is no change of the user's
+    /// (`rr_retry` waits for a real one).
+    settings_applied: bool,
     /// The pipeline workers still running, a set no longer wanted included:
     /// waited for when the renderer is dropped (`wait_pipeline_workers`).
     pipeline_workers: Vec<std::thread::JoinHandle<()>>,
@@ -2352,10 +2480,75 @@ pub(crate) struct Backend {
     rain_wet: RainWet,
     snow_trail: SnowTrail,
     vsync: bool,
+    /// The surface presents under Fifo for DLSS frame generation, whatever
+    /// the vsync (`set_presentation`).
+    fg_paced: bool,
+    /// The main thread lets frame generation run (`SurfaceState::fg_allowed`).
+    fg_allowed: bool,
     /// Presentation modes of the surface, read when it was created.
     present_modes: Vec<wgpu::PresentMode>,
     settings: RenderSettings,
     taa: Option<Taa>,
+    /// The TAA history (and DLSS's feature with it) is wanted but left to
+    /// the render targets' remake, which makes it once at the new size:
+    /// made before it, DLSS would make a feature for the old size first.
+    taa_pending: bool,
+    /// The last ask to try DLSS again this renderer acted on
+    /// (`crate::dlss::retry_asked`, Preferences' button).
+    dlss_retry: u64,
+    /// The display size of this renderer's last DLSS that was not a
+    /// snapshot's: a resize waits for its size to hold before DLSS is
+    /// made (`crate::dlss::resizing`), each renderer its own.
+    dlss_last: std::cell::Cell<Option<(u32, u32)>>,
+    /// When the size a resize left has held long enough for DLSS to be
+    /// made at it (`dlss_after_resize`): FSR draws until then, and no
+    /// remake of the targets follows a resize that stopped.
+    dlss_due: std::cell::Cell<Option<Instant>>,
+    /// DLSS drew the last frame that reached the upscale, and in which
+    /// mode (None: FSR or another anti-aliasing): what each frame's stats
+    /// report, a skipped frame's too, so that a crash note written while
+    /// the window is minimized names DLSS, not the setting's FSR.
+    dlss_drew: Option<crate::DlssDrawing>,
+    /// A DLSS set aside by a remake of the targets, with when: the
+    /// window's while a snapshot draws, the snapshot's once it is over.
+    /// A film's export swaps the window's targets and a frame's at every
+    /// frame: each keeps its feature for the next swap (`make_taa`)
+    /// instead of making both again (~35 ms each). A snapshot's left
+    /// unused goes after `DLSS_ASIDE`, and any goes when the targets are
+    /// refused.
+    dlss_aside: Option<(crate::dlss::Dlss, Instant)>,
+    /// DLSS frame generation's images while it runs (`fg_on`, dlss_fg.rs)
+    fg: Option<crate::dlss_fg::FrameGen>,
+    /// The size (and whether the presenter's ring) the video memory last
+    /// refused frame generation's images at: off at that size, the frame
+    /// presented as drawn, until the window's size changes (`make_fg`)
+    fg_refused: Option<((u32, u32), bool)>,
+    /// Linux: sl-ngx's presenter on the window's surface while frame
+    /// generation runs (dlss.rs `Presenter`), and why it last could not
+    /// run or stopped: frame generation then presents the prototype's way
+    /// (two presents a frame, dlss_fg.rs) until the setting is next off
+    /// (or, for the second camera, until it lets go of the surface)
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    fg_presenter: Option<crate::dlss::Presenter>,
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    fg_present_refused: Option<crate::dlss_fg::FgRefusal>,
+    /// frame generation's frames counted over a second, while it runs,
+    /// for Preferences (`dlss_fg::status`)
+    fg_meter: Option<crate::dlss_fg::Meter>,
+    /// Windows' frame generation (Streamline's, at the present): the
+    /// window's image before the interface and the interface alone, in
+    /// its format and size
+    #[cfg(windows)]
+    fg_hudless: Option<crate::dlss_fg::Interface>,
+    /// Windows' frame generation: frames the window's size or vsync
+    /// change has waited for a present asked off, whose swapchain is not
+    /// made under frame generation (DLSS-G guide §17); 0 when none waits
+    #[cfg(windows)]
+    fg_hold: u8,
+    /// the video memory refused the image before the interface at this
+    /// size: not asked again until the window changes
+    #[cfg(windows)]
+    fg_hudless_refused: Option<wgpu::Extent3d>,
     /// This frame's TAA jitter in pixels, y down: where it moved the image.
     taa_jitter: glam::Vec2,
     prev_view_proj: Option<Mat4>,
@@ -2397,15 +2590,44 @@ impl Drop for Backend {
     /// (#1650). A lost device only closes the viewer, so the surface is left
     /// to the process, which releases it with the driver's objects.
     fn drop(&mut self) {
+        // sl-ngx's presenter before the surface it presents to (its ring
+        // left to it when it could not be ended: `Presenter::end`)
+        #[cfg(all(feature = "dlss", target_os = "linux"))]
+        if let Some(mut presenter) = self.fg_presenter.take()
+            && !presenter.end()
+        {
+            std::mem::forget(self.fg.take());
+        }
         if self.lost.get() {
+            // (DLSS's features stay with the lost device: the flag says so
+            // to dlss.rs, which never calls Streamline on it again)
             log::warn!("GPU device lost: the window surface is left to the process");
             self.outside.leak();
             return;
         }
         self.wait_pipeline_workers();
+        // Windows: frame generation asked off and DLSS's feature let go
+        // (`Dlss::retire`: off without its memory, then freed) before the
+        // swapchain Streamline's proxy holds goes with the surface
+        // (DLSS-G guide §6.4, §17), its image before the interface once
+        // Streamline is through with it
+        #[cfg(windows)]
+        {
+            if let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut()) {
+                dlss.fg_off();
+            }
+            self.taa = None;
+            self.fg_hudless_drop();
+        }
         // SAFETY: dropped once, here, and never used again: the backend is
         // being dropped.
         unsafe { std::mem::ManuallyDrop::drop(&mut self.surface) };
+        // the main renderer goes with its device (the viewer's exit, a
+        // switch to or from VR): Streamline is shut down on it, bounded, and lets
+        // go of it (an external renderer shares the main one's device)
+        if self.closes_ngx {
+            crate::dlss::closing(&self.device);
+        }
     }
 }
 
@@ -2453,7 +2675,11 @@ struct XrWorld {
 pub(crate) struct BackendInit {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub surface: Arc<wgpu::Surface<'static>>,
+    /// None in a kept seed (`Backend::seed_of`): the window's surface of
+    /// the moment is put in when a renderer is made from it, since
+    /// `renew_surface` can replace it.
+    pub surface: Option<Arc<wgpu::Surface<'static>>>,
+    pub window: Option<crate::present::WindowHandles>,
     pub external: bool,
     pub vr: Arc<crate::vr_control::Control>,
     pub output_format: Option<wgpu::TextureFormat>,
@@ -2695,6 +2921,9 @@ struct PipeDesc<'a> {
     format: Option<wgpu::TextureFormat>,
     /// Second color target (G-buffer for SSR), of this format.
     gbuf: Option<wgpu::TextureFormat>,
+    /// With `gbuf`, a third: the base colour, for Ray Reconstruction
+    /// (`RenderSettings::rr_guides`).
+    albedo: bool,
     /// Second color target of the passes of the exact blend order
     /// (`blend_exact::Lists::range`): its blend, and what is written.
     range: Option<(Option<wgpu::BlendState>, wgpu::ColorWrites)>,
@@ -2831,6 +3060,33 @@ fn begin_scene_b_on<'a>(
 /// that never reads the mask pays nothing for it.
 fn soft_path(s: &RenderSettings) -> bool {
     crate::soft_shadows::Override::from_env().needed(s.soft_shadows)
+}
+
+/// Whether the scene pass draws Ray Reconstruction's guides (the G-buffer
+/// with a base colour beside it): `RenderSettings::rr_guides`, Streamline has not
+/// refused it on this device, and something is traced. Without a traced
+/// effect RR has nothing to denoise, and super resolution draws for less
+/// (the second camera never traces). Every traced effect rides on the
+/// traced sun shadows: the ray tracer is made only with them
+/// (`follow_ray_tracing`) and traces only on the frames that draw shadows
+/// (`rt_now`), so shadows off (`shadow_resolution` 0) is nothing traced,
+/// and super resolution draws with the setting kept. Checked at each
+/// frame's settings: a change builds the pipelines again (`rr_compiled`).
+/// Streamline is started first when it has not said yet whether it offers RR on
+/// this device (`dlss::rr_probe`): a device without it never compiles
+/// the guides' pipelines.
+fn rr_wanted(device: &wgpu::Device, lost: &crate::device_lost::DeviceLost, external: bool, s: &RenderSettings) -> bool {
+    let traced = crate::rt_shadows::traced(device, external, s.ray_tracing);
+    let untraced = !(traced.shadows && s.shadow_resolution > 0);
+    // (the window's: an external renderer traces nothing)
+    if !external {
+        RR_UNTRACED.store(untraced, std::sync::atomic::Ordering::Relaxed);
+    }
+    if !s.rr_guides() || untraced {
+        return false;
+    }
+    crate::dlss::rr_probe(device, lost);
+    crate::dlss::rr_ready_on(device)
 }
 
 /// Whether the soft shadows' pipelines and masks are kept: the option (or
@@ -3320,6 +3576,13 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
             blend: None,
             write_mask: wgpu::ColorWrites::ALL,
         }));
+        if d.albedo {
+            targets.push(Some(wgpu::ColorTargetState {
+                format: ALBEDO_FORMAT,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            }));
+        }
     }
     if let Some((blend, write_mask)) = d.range {
         targets.push(Some(wgpu::ColorTargetState {
@@ -3708,15 +3971,19 @@ struct Impostors {
     sprite: wgpu::RenderPipeline,
     /// The cards' depth alone, single sample (contact shadows).
     sprite_depth: wgpu::RenderPipeline,
+    /// No motion where the cards are drawn, into Ray Reconstruction's copy
+    /// of the motion (`RrInputs`); made with its guides' pipelines.
+    sprite_still: Option<wgpu::RenderPipeline>,
 }
 
-/// The impostors' capture (opaque, blended) and card (colour, depth alone)
-/// pipelines.
+/// The impostors' capture (opaque, blended) and card (colour, depth alone,
+/// still) pipelines.
 type ImpostorPipelines = (
     wgpu::RenderPipeline,
     wgpu::RenderPipeline,
     wgpu::RenderPipeline,
     wgpu::RenderPipeline,
+    Option<wgpu::RenderPipeline>,
 );
 
 /// The pipelines that depend on the MSAA samples, SSR and the G-buffer's
@@ -3727,8 +3994,10 @@ type ImpostorPipelines = (
 /// new ones with their targets on the frame the set arrives.
 struct PipelineBuild {
     samples: u32,
-    /// The G-buffer's format, none without it (`gbuf_wanted`).
+    /// The G-buffer's format, none without it (`gbuf_drawn`).
     gbuf: Option<wgpu::TextureFormat>,
+    /// With Ray Reconstruction's base colour target.
+    albedo: bool,
     /// Compiled with the soft shadows' path (`soft_path`).
     soft: bool,
     started: std::time::Instant,
@@ -3760,6 +4029,7 @@ impl Impostors {
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
         gbuf: Option<wgpu::TextureFormat>,
+        albedo: bool,
         soft: bool,
     ) -> Impostors {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3819,8 +4089,17 @@ impl Impostors {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let (capture_opaque, capture_blend, sprite, sprite_depth) =
-            Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, gbuf, soft);
+        let (capture_opaque, capture_blend, sprite, sprite_depth, sprite_still) = Self::make_pipelines(
+            device,
+            &layout,
+            frame_layout,
+            records_layout,
+            tex_layout,
+            samples,
+            gbuf,
+            albedo,
+            soft,
+        );
         Impostors {
             layout,
             atlas,
@@ -3835,6 +4114,7 @@ impl Impostors {
             capture_blend,
             sprite,
             sprite_depth,
+            sprite_still,
         }
     }
 
@@ -3919,7 +4199,13 @@ impl Impostors {
     }
 
     fn set_pipelines(&mut self, p: ImpostorPipelines) {
-        (self.capture_opaque, self.capture_blend, self.sprite, self.sprite_depth) = p;
+        (
+            self.capture_opaque,
+            self.capture_blend,
+            self.sprite,
+            self.sprite_depth,
+            self.sprite_still,
+        ) = p;
     }
 
     /// The pictures are drawn with the scene's own shaders.
@@ -3941,6 +4227,7 @@ impl Impostors {
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
         gbuf: Option<wgpu::TextureFormat>,
+        albedo: bool,
         soft: bool,
     ) -> ImpostorPipelines {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -3972,6 +4259,7 @@ impl Impostors {
             samples,
             format: Some(HDR_FORMAT),
             gbuf,
+            albedo: gbuf.is_some() && albedo,
             range: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
@@ -4021,7 +4309,23 @@ impl Impostors {
                 ..desc("impostor cards depth", "vs_impostor", "fs_impostor_depth", Vb::Sprite, 1, None)
             },
         );
-        (capture_opaque, capture_blend, sprite, sprite_depth)
+        // no motion of their own, into Ray Reconstruction's copy of the
+        // motion, where a card is nearer than the prepass's depth (tested,
+        // not written)
+        let sprite_still = albedo.then(|| {
+            make_pipeline(
+                device,
+                &module,
+                &pl,
+                PipeDesc {
+                    format: Some(crate::gtao::NORMAL_FORMAT),
+                    write_mask: wgpu::ColorWrites::BLUE | wgpu::ColorWrites::ALPHA,
+                    depth_write: false,
+                    ..desc("impostor cards still", "vs_impostor", "fs_impostor_still", Vb::Sprite, 1, None)
+                },
+            )
+        });
+        (capture_opaque, capture_blend, sprite, sprite_depth, sprite_still)
     }
 }
 
@@ -4209,7 +4513,7 @@ impl Backend {
     /// `egui_later`: made without egui's renderer, which the backend this
     /// one replaces hands over once it has come through whole.
     fn new_with(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
-        let seed = Box::new(init.clone());
+        let seed = Self::seed_of(&init);
         let device = init.device.clone();
         let lost = init.lost.clone();
         let (made, oom, invalid) = crate::gpu_alloc::scoped_apart(&device, || Self::make(init, egui_later));
@@ -4222,6 +4526,15 @@ impl Backend {
             backend.refused_at_start();
         }
         Ok(backend)
+    }
+
+    /// What a later renderer is made from: `init` without the window's
+    /// surface, which would otherwise outlive a renewed one
+    /// (`renew_surface`); each use puts in the surface of the moment.
+    fn seed_of(init: &BackendInit) -> Box<BackendInit> {
+        let mut seed = init.clone();
+        seed.surface = None;
+        Box::new(seed)
     }
 
     /// The interface alone, with the notice, until `remake_refused` makes
@@ -4251,12 +4564,13 @@ impl Backend {
 
     fn make(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-        let xr_seed = init.xr.as_ref().map(|_| Box::new(init.clone()));
-        let second_seed = (!init.external).then(|| Box::new(init.clone()));
+        let xr_seed = init.xr.as_ref().map(|_| Self::seed_of(&init));
+        let second_seed = (!init.external).then(|| Self::seed_of(&init));
         let BackendInit {
             device,
             queue,
             surface,
+            window,
             external,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             vr,
@@ -4280,6 +4594,7 @@ impl Backend {
             lost,
             gpu_frames,
         } = init;
+        let surface = surface.ok_or_else(|| RenderError::Surface("no window surface given".into()))?;
         let caps = surface.get_capabilities(&adapter);
         let format = output_format
             .or_else(|| {
@@ -4303,6 +4618,10 @@ impl Backend {
         let mut surface_usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
         if caps.usages.contains(wgpu::TextureUsages::COPY_SRC) {
             surface_usage |= wgpu::TextureUsages::COPY_SRC;
+        } else if cfg!(windows) {
+            // Windows' frame generation copies the window's image before
+            // the interface: without the copy it stays off
+            log::info!("presentation: the window's images cannot be copied: no DLSS frame generation");
         }
         let config = wgpu::SurfaceConfiguration {
             usage: surface_usage,
@@ -4887,6 +5206,7 @@ impl Backend {
                 scene_groups: vec![frame_entries.clone(), records_entries.clone(), tex_layout_entries.clone()],
             }
         };
+        let rr = rr_wanted(&device, &lost, external, &settings);
         let pipelines = Self::make_pipelines(
             &device,
             &frame_layout,
@@ -4897,7 +5217,8 @@ impl Backend {
             &gbuf_layout,
             msaa_samples,
             format,
-            gbuf_pipelines,
+            gbuf_drawn(gbuf_pipelines, rr),
+            rr,
             soft_path(&settings),
         );
         let ssao = Self::make_ssao(&device);
@@ -4911,7 +5232,7 @@ impl Backend {
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
         let refuse = crate::gpu_alloc::targets_refused();
-        let (targets, refused) = crate::gpu_alloc::scoped(&device, || {
+        let ((targets, rr_refused), refused) = crate::gpu_alloc::scoped(&device, || {
             Self::make_targets(
                 &device,
                 &post_layout,
@@ -4928,14 +5249,20 @@ impl Backend {
                 msaa_samples,
                 gbuf_pipelines,
                 &settings,
+                rr,
                 external,
                 refuse,
             )
         });
         let mut oom = crate::gpu_alloc::Refusals::default();
+        // (Ray Reconstruction's own targets refused: the set is tried
+        // again without them, `make_targets`)
+        if rr_refused && !lost.get() {
+            crate::dlss::rr_targets_refused(!external);
+        }
         // (a device lost meanwhile ends the start at the next
         // `lost_at_start`, not as video memory full)
-        if (refused && !lost.get()) || refuse {
+        if ((refused || rr_refused) && !lost.get()) || refuse {
             log::warn!("render targets: out of video memory, the interface alone until they can be made");
             oom.targets_failed(Instant::now());
         }
@@ -5021,7 +5348,8 @@ impl Backend {
             &records_layout,
             &tex_layout,
             msaa_samples,
-            gbuf_pipelines,
+            gbuf_drawn(gbuf_pipelines, rr),
+            rr,
             soft_path(&settings),
         );
         let particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -5036,8 +5364,10 @@ impl Backend {
             device,
             queue,
             surface: std::mem::ManuallyDrop::new(surface),
+            window: window.filter(|_| !external),
             config,
             external,
+            closes_ngx: !external,
             second_seed,
             second: None,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -5188,16 +5518,47 @@ impl Backend {
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             pipeline_build: None,
+            capturing: false,
+            rr_latched: false,
+            settings_applied: false,
             soft_pipelines: soft_path(&settings),
             gbuf_pipelines,
             gbuf_wide,
+            rr_compiled: rr,
+            snapshot_rr_off: None,
             pipeline_workers: Vec::new(),
             rain_wet: RainWet::default(),
             snow_trail: SnowTrail::default(),
             vsync,
+            fg_paced: false,
+            fg_allowed: true,
             present_modes,
             settings,
             taa: None,
+            taa_pending: false,
+            // (asks made before this renderer are no news to it)
+            dlss_retry: {
+                let mut seen = 0;
+                crate::dlss::retry_asked(&mut seen);
+                seen
+            },
+            dlss_last: std::cell::Cell::new(None),
+            dlss_due: std::cell::Cell::new(None),
+            dlss_drew: None,
+            dlss_aside: None,
+            fg: None,
+            fg_refused: None,
+            #[cfg(all(feature = "dlss", target_os = "linux"))]
+            fg_presenter: None,
+            #[cfg(all(feature = "dlss", target_os = "linux"))]
+            fg_present_refused: None,
+            fg_meter: None,
+            #[cfg(windows)]
+            fg_hudless: None,
+            #[cfg(windows)]
+            fg_hold: 0,
+            #[cfg(windows)]
+            fg_hudless_refused: None,
             taa_jitter: glam::Vec2::ZERO,
             prev_view_proj: None,
             prev_motion_view: None,
@@ -5364,6 +5725,7 @@ impl Backend {
             format: Some(HDR_FORMAT),
             range: None,
             gbuf: None,
+            albedo: false,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
             constants: &[],
@@ -5528,6 +5890,7 @@ impl Backend {
         samples: u32,
         surface_format: wgpu::TextureFormat,
         gbuf: Option<wgpu::TextureFormat>,
+        albedo: bool,
         soft: bool,
     ) -> Pipelines {
         let ssr = gbuf.is_some();
@@ -5572,6 +5935,7 @@ impl Backend {
             samples,
             format: Some(HDR_FORMAT),
             gbuf: None,
+            albedo: false,
             range: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
@@ -5588,6 +5952,7 @@ impl Backend {
             format: Some(surface_format),
             samples: 1,
             gbuf: None,
+            albedo: false,
             range: None,
             cull: None,
             blend,
@@ -5619,6 +5984,7 @@ impl Backend {
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Always,
             gbuf,
+            albedo,
             ..base("sky", "vs_sky", g("fs_sky", "fs_sky_g"))
         });
         let clouds_weather = pipe(PipeDesc {
@@ -5634,14 +6000,17 @@ impl Backend {
         });
         let terrain = pipe(PipeDesc {
             gbuf,
+            albedo,
             ..base("terrain", "vs_terrain", g("fs_terrain", "fs_terrain_g"))
         });
         let terrain_pbr = pipe(PipeDesc {
             gbuf,
+            albedo,
             ..base("terrain pbr", "vs_terrain_pbr", g("fs_terrain_pbr", "fs_terrain_pbr_g"))
         });
         let opaque = pipe(PipeDesc {
             gbuf,
+            albedo,
             ..base("opaque", "vs_main", g("fs_opaque", "fs_opaque_g"))
         });
         let creation_preview = pipe(PipeDesc {
@@ -5651,11 +6020,13 @@ impl Backend {
         let opaque_2s = pipe(PipeDesc {
             cull: None,
             gbuf,
+            albedo,
             ..base("opaque 2s", "vs_main", g("fs_opaque", "fs_opaque_g"))
         });
         let mask = pipe(PipeDesc {
             a2c: samples > 1,
             gbuf,
+            albedo,
             constants: &a2c,
             ..base("mask", "vs_main", g("fs_mask", "fs_mask_g"))
         });
@@ -5663,6 +6034,7 @@ impl Backend {
             a2c: samples > 1,
             cull: None,
             gbuf,
+            albedo,
             constants: &a2c,
             ..base("mask 2s", "vs_main", g("fs_mask", "fs_mask_g"))
         });
@@ -6472,6 +6844,19 @@ impl Backend {
                 ..base("fsr blended faces motion", "vs_depth_mask_normal", "fs_depth_contact_normal")
             })
         });
+        let rr_blend = albedo.then(|| {
+            std::array::from_fn(|side| {
+                pipe(PipeDesc {
+                    cull: blend_cull(side != 0),
+                    samples: 1,
+                    format: Some(crate::gtao::NORMAL_FORMAT),
+                    write_mask: wgpu::ColorWrites::ALL,
+                    depth_compare: wgpu::CompareFunction::Greater,
+                    constants: &[("DEPTH_CONTACT_ALPHA", SCREEN_BLEND_ALPHA)],
+                    ..base("dlss rr blended faces", "vs_depth_mask_normal", "fs_depth_rr_face")
+                })
+            })
+        });
         let pre_msaa = (samples > 1).then(|| {
             let msaa = |label: &'static str, cull: Option<wgpu::Face>, clipped: bool| {
                 pipe(PipeDesc {
@@ -6594,6 +6979,7 @@ impl Backend {
             samples: 1,
             format: None,
             gbuf: None,
+            albedo: false,
             range: None,
             depth_format: Some(SHADOW_FORMAT),
             depth_bias: wgpu::DepthBiasState {
@@ -6691,6 +7077,7 @@ impl Backend {
                 samples: 1,
                 format: Some(surface_format),
                 gbuf: None,
+                albedo: false,
                 range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
@@ -6785,6 +7172,7 @@ impl Backend {
             pre_solid: pre_solid.resolve(&mut done),
             pre_solid_normal: pre_solid_normal.resolve(&mut done),
             fsr_blend_normal: fsr_blend_normal.resolve(&mut done),
+            rr_blend: rr_blend.resolve(&mut done),
             pre_msaa: pre_msaa.resolve(&mut done),
             refl_sky: refl_sky.resolve(&mut done),
             refl_terrain: refl_terrain.resolve(&mut done),
@@ -6850,6 +7238,7 @@ impl Backend {
                     samples: 1,
                     format: Some(AO_FORMAT),
                     gbuf: None,
+                    albedo: false,
                     range: None,
                     depth_format: None,
                     depth_bias: Default::default(),
@@ -6890,9 +7279,10 @@ impl Backend {
         samples: u32,
         gbuf: Option<wgpu::TextureFormat>,
         s: &RenderSettings,
+        rr: bool,
         external: bool,
         refuse: bool,
-    ) -> Targets {
+    ) -> (Targets, bool) {
         let (w, h) = (width.max(1), height.max(1));
         let att = wgpu::TextureUsages::RENDER_ATTACHMENT;
         let sampled = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
@@ -6942,12 +7332,54 @@ impl Backend {
         let water_interface = make_view(device, "nearest water interface", w, h, DEPTH_FORMAT, 1, sampled).1;
         let water_mask = make_view(device, "water exclusion mask", w, h, wgpu::TextureFormat::R8Unorm, 1, sampled).1;
         // (of the format the pipelines in use were compiled for)
-        let (gbuf_msaa, gbuf) = match gbuf {
-            Some(format) => (
+        let gbuffer = |format: wgpu::TextureFormat| {
+            (
                 (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, format, samples, att).1),
                 Some(make_view(device, "gbuffer", w, h, format, 1, sampled).1),
-            ),
+            )
+        };
+        let (mut gbuf_msaa, mut gbuf) = match gbuf {
+            Some(format) => gbuffer(format),
             None => (None, None),
+        };
+        // The targets only Ray Reconstruction reads (the base colour, its
+        // copies of the depth and the motion, the G-buffer when nothing
+        // else wants it), checked apart: refused, Ray Reconstruction is
+        // refused (`dlss::rr_targets_refused`), so the set made again once
+        // the pipelines are built without it leaves them out, and super
+        // resolution draws, instead of the interface alone at every try
+        let mut rr_refused = false;
+        let (albedo_msaa, albedo, rr_inputs) = if rr {
+            let ((rr_gbuf, albedo_msaa, albedo, rr_inputs), refused) = crate::gpu_alloc::scoped(device, || {
+                // (drawn into after the copy: the impostor cards and the
+                // blended faces opaque to the eye)
+                // (Windows: copied in turn for frame generation, dlss.rs
+                // `fg_copy_inputs`)
+                let copied = wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | att
+                    | if cfg!(windows) {
+                        wgpu::TextureUsages::COPY_SRC
+                    } else {
+                        wgpu::TextureUsages::empty()
+                    };
+                (
+                    gbuf.is_none().then(|| gbuffer(GBUF_STANDARD)),
+                    (samples > 1).then(|| make_view(device, "albedo msaa", w, h, ALBEDO_FORMAT, samples, att).1),
+                    Some(make_view(device, "albedo", w, h, ALBEDO_FORMAT, 1, sampled).1),
+                    Some(RrInputs {
+                        depth: make_view(device, "dlss rr depth", w, h, DEPTH_FORMAT, 1, copied),
+                        motion: make_view(device, "dlss rr motion", w, h, crate::gtao::NORMAL_FORMAT, 1, copied),
+                    }),
+                )
+            });
+            if let Some(made) = rr_gbuf {
+                (gbuf_msaa, gbuf) = made;
+            }
+            rr_refused = refused;
+            (albedo_msaa, albedo, rr_inputs)
+        } else {
+            (None, None, None)
         };
         let ao_override = crate::gtao::Override::from_env();
         let (legacy_ao, gtao_ao) = ao_override.needed(s.ao_method);
@@ -7041,7 +7473,7 @@ impl Backend {
                 },
             ],
         });
-        Targets {
+        let targets = Targets {
             color_msaa,
             color_tex,
             color,
@@ -7056,6 +7488,9 @@ impl Backend {
             scene_copy,
             gbuf_msaa,
             gbuf,
+            albedo_msaa,
+            albedo,
+            rr_inputs,
             ao,
             gtao,
             gtao_shown,
@@ -7069,7 +7504,8 @@ impl Backend {
             water_air,
             mirror,
             post_bind_group,
-        }
+        };
+        (targets, rr_refused)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -7657,7 +8093,7 @@ impl Backend {
             };
             (mk(&self.dummies.white), mk(raw))
         });
-        if self.taa.is_some() {
+        if self.taa.is_some() || std::mem::take(&mut self.taa_pending) {
             self.remake_taa();
         }
     }
@@ -7677,12 +8113,212 @@ impl Backend {
         (live.texture_memory.read() + live.buffer_memory.read()).max(0) as u64
     }
 
-    /// The TAA history at the current size, measured (`taa_bytes`).
+    /// The TAA history at the current size, measured (`taa_bytes`). A
+    /// DLSS that fits the new targets is kept (`Dlss::fits`): its bytes
+    /// were not made again, so they are counted apart.
+    /// The post pass's bind group reading `v`, the TAA pass's, FSR's or
+    /// DLSS's output.
+    fn post_taa_group(&self, v: &wgpu::TextureView) -> wgpu::BindGroup {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("post taa"),
+            layout: &self.post_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(v),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.post_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.post_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.glow.views[1]),
+                },
+            ],
+        })
+    }
+
+    /// The size the TAA pass, FSR or DLSS draws at: the window's when FSR
+    /// upscales (the 1x1 set that frees a refused one shrinks FSR's display
+    /// size part too, rebuild_targets), else the scene's.
+    fn taa_display(&self) -> (u32, u32) {
+        if self.fsr_upscale().is_some() && !self.targets_shrunk {
+            (self.config.width, self.config.height)
+        } else {
+            self.scene_size()
+        }
+    }
+
+    /// DLSS made once the size a resize left has held (`dlss_due`, set by
+    /// `make_taa` while the size moved): no remake of the targets follows
+    /// a resize that stopped, so the feature is added to the TAA set as it
+    /// stands, FSR kept for the frames DLSS fails.
+    fn dlss_after_resize(&mut self) {
+        if self.dlss_due.get().is_none_or(|due| Instant::now() < due) {
+            return;
+        }
+        self.dlss_due.set(None);
+        if self.snapshot_window.is_some()
+            || self.targets_shrunk
+            || !self.dlss_wanted()
+            || crate::dlss::refused_here()
+            || self.taa.as_ref().is_none_or(|t| t.fsr.is_none() || t.dlss.is_some())
+        {
+            return;
+        }
+        let display = self.taa_display();
+        // one out-of-memory scope over all of it, as `make_taa` has
+        // through its callers: Dlss::new checks its textures, not its
+        // pipeline, buffer and bind groups, nor the post pass's group
+        let device = self.device.clone();
+        let (made, refused) = crate::gpu_alloc::scoped(&device, || {
+            let taa = self.taa.as_ref()?;
+            let motion = self.targets.gtao.as_ref().map(|g| &g.normals).or(taa.motion.as_ref())?;
+            // (the same targets and pipelines as `make_taa`'s: Ray
+            // Reconstruction's are kept through the resize, `rr_compiled`)
+            let inputs = self.dlss_inputs(motion);
+            let dlss = crate::dlss::Dlss::new(
+                &self.device,
+                &self.queue,
+                &self.lost,
+                self.scene_size(),
+                display,
+                (self.settings.dlss_model, self.settings.dlss_rr_model),
+                &inputs,
+                false,
+                !self.external,
+            )?;
+            let group = self.post_taa_group(dlss.output());
+            Some((dlss, group))
+        });
+        // refused: FSR keeps drawing, the DLSS made is let go (its
+        // feature released once its frames are done, Dlss::retire); the
+        // next remake of the targets tries again
+        if refused {
+            crate::dlss::refused_memory("after the resize", !self.external);
+            return;
+        }
+        let Some((dlss, group)) = made else {
+            return;
+        };
+        self.taa_bytes += dlss.bytes();
+        if let Some(taa) = self.taa.as_mut() {
+            taa.dlss = Some((dlss, group));
+        }
+    }
+
+    /// Ray Reconstruction's guides drawn with `s`: `rr_wanted`, except
+    /// through a run of photo or film frames drawn without them
+    /// (`snapshot_rr_off`).
+    fn rr_here(&self, s: &RenderSettings) -> bool {
+        rr_wanted(&self.device, &self.lost, self.external, s) && self.snapshot_rr_off.is_none()
+    }
+
+    /// The run of captures `snapshot_rr_off` stands for is over: none
+    /// began within `DLSS_ASIDE` of the last one's end (Try again or
+    /// another model asked during it takes effect from here). The window's
+    /// pipelines follow `rr_here` again (compiled on their worker, as any
+    /// settings change).
+    fn end_snapshot_rr_off(&mut self) {
+        if self.snapshot_window.is_none()
+            && self
+                .snapshot_rr_off
+                .is_some_and(|released| released.is_some_and(|at| at.elapsed() > DLSS_ASIDE))
+        {
+            self.snapshot_rr_off = None;
+        }
+    }
+
+    /// The photo or film frame drawn without Ray Reconstruction: the
+    /// pipelines compiled again without its guides, on this thread (the
+    /// frame is drawn now), and the targets made with them. Kept through
+    /// the run of captures (`snapshot_rr_off`): once per run, never per
+    /// frame.
+    fn snapshot_without_rr(&mut self) {
+        self.snapshot_rr_off = Some(None);
+        let (samples, gbuf, soft) = (self.msaa_samples, self.gbuf_pipelines, self.soft_pipelines);
+        log::warn!("snapshot: Ray Reconstruction refused for the captures: compiling super resolution's pipelines for them");
+        self.pipeline_build = None;
+        let scene = Self::make_pipelines(
+            &self.device,
+            &self.frame_layout,
+            &self.records_layout,
+            &self.tex_layout,
+            &self.shadow_layout,
+            [&self.post_layout, &self.bloom.post_layout],
+            &self.gbuf_layout,
+            samples,
+            self.config.format,
+            gbuf,
+            false,
+            soft,
+        );
+        let impostors = Impostors::make_pipelines(
+            &self.device,
+            &self.impostors.layout,
+            &self.frame_layout,
+            &self.records_layout,
+            &self.tex_layout,
+            samples,
+            gbuf,
+            false,
+            soft,
+        );
+        self.rr_compiled = false;
+        // (makes the targets again, `rebuild_targets`)
+        self.apply_settings_with(self.settings, Some((samples, gbuf, scene, impostors)));
+    }
+
+    /// Ray Reconstruction refused for the captures (`dlss::snapshot_rr_refused`),
+    /// or refused when the capture under way began (`rr_latched`): the
+    /// retry of Try again or another model during a tiled photo or a 360°
+    /// capture waits for its end.
+    fn snapshot_rr_refused(&self) -> bool {
+        self.rr_latched || crate::dlss::snapshot_rr_refused()
+    }
+
+    /// What DLSS reads, for `make_taa` and `dlss_after_resize` alike. Ray
+    /// Reconstruction's depth and motion are its own copies, the surface
+    /// its guides describe: scene pass A's, the impostor cards and the
+    /// blended faces opaque to the eye drawn over it (`RrInputs`). Super
+    /// resolution keeps the occlusion's depth, with the blended faces
+    /// opaque to the eye drawn over it and their motion beside. (With
+    /// those targets, super resolution reads them too: a DLSS made again
+    /// as super resolution after Streamline refused RR, until the pipelines
+    /// without the guides are compiled, reads a depth and a motion that
+    /// match, the cards included.) A photo or film frame once Ray
+    /// Reconstruction was refused for the captures draws super resolution
+    /// without the guides, from targets made without the copies
+    /// (`make_targets_now`).
+    fn dlss_inputs<'a>(&'a self, motion_read: &'a wgpu::TextureView) -> crate::dlss::Inputs<'a> {
+        let rr_here = !(self.snapshot_window.is_some() && self.snapshot_rr_refused());
+        let (depth, motion) = match (&self.targets.rr_inputs, &self.targets.ao_depth) {
+            (Some(rr), _) => (&rr.depth.1, &rr.motion.1),
+            (None, Some((_, view))) => (view, motion_read),
+            (None, None) => (&self.targets.depth_ss, motion_read),
+        };
+        crate::dlss::Inputs {
+            color: &self.targets.color,
+            depth,
+            motion,
+            gbuf: rr_here.then_some(self.targets.gbuf.as_ref()).flatten(),
+            albedo: rr_here.then_some(self.targets.albedo.as_ref()).flatten(),
+        }
+    }
+
     fn remake_taa(&mut self) {
         let before = self.live_bytes();
-        let taa = self.make_taa();
-        self.taa_bytes = self.live_bytes().saturating_sub(before);
+        let old = self.taa.as_mut().and_then(|t| t.dlss.take()).map(|(dlss, _)| dlss);
+        let aside = self.dlss_aside.take().map(|(dlss, _)| dlss);
+        let (taa, kept, aside) = self.make_taa(old, aside);
+        self.taa_bytes = self.live_bytes().saturating_sub(before) + kept;
         self.taa = Some(taa);
+        self.dlss_aside = aside.map(|dlss| (dlss, Instant::now()));
     }
 
     fn scene_size(&self) -> (u32, u32) {
@@ -7722,8 +8358,37 @@ impl Backend {
             self.drop_first_use_targets();
             let _ = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, Some((1, 1))));
         }
-        let (_, refused) = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, None));
-        if self.memory_refused(refused) || refuse {
+        // a photo or film frame once a capture met a refusal of Ray
+        // Reconstruction, whatever refused it and at whatever size: super
+        // resolution's pipelines first, before any of its targets are
+        // asked for again (the targets are made with them,
+        // `snapshot_without_rr`)
+        if self.snapshot_window.is_some() && self.rr_compiled && (self.snapshot_rr_off.is_some() || self.snapshot_rr_refused()) {
+            self.snapshot_without_rr();
+            return;
+        }
+        let (rr_refused, refused) = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, None));
+        // a photo or film frame's: drawn again at once with super
+        // resolution's pipelines and targets alone, the window's Ray
+        // Reconstruction left as it was (the refused set gives way to a
+        // 1x1 one first)
+        if self.memory_refused(rr_refused) && self.snapshot_window.is_some() && !refuse {
+            let _ = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, Some((1, 1))));
+            self.snapshot_without_rr();
+            return;
+        }
+        // Ray Reconstruction's own targets refused: refused like Streamline
+        // refusing it, so the pipelines are built again without its guides
+        // and the next try makes the set without them (`make_targets`); a
+        // snapshot's is remembered for the captures alone
+        // (`make_targets_now`)
+        if self.memory_refused(rr_refused) && self.snapshot_window.is_none() {
+            crate::dlss::rr_targets_refused(!self.external);
+        }
+        if self.memory_refused(refused || rr_refused) || refuse {
+            // (the DLSS set aside goes first: its textures and the targets
+            // it read are room for the next try)
+            self.dlss_aside = None;
             if self.oom.targets_failed(Instant::now()) {
                 log::warn!("render targets: out of video memory, the interface alone until they can be made");
             }
@@ -7797,8 +8462,10 @@ impl Backend {
         refused && !self.lost.get()
     }
 
-    /// `size` forces a size: the 1x1 set that frees a refused one.
-    fn make_targets_now(&mut self, refuse: bool, size: Option<(u32, u32)>) {
+    /// `size` forces a size: the 1x1 set that frees a refused one. True
+    /// when the video memory refused the targets only Ray Reconstruction
+    /// reads (`make_targets`).
+    fn make_targets_now(&mut self, refuse: bool, size: Option<(u32, u32)>) -> bool {
         self.occlusion.invalidate();
         // the soft shadows' pipelines, made when they are wanted and freed
         // with their masks when they no longer are
@@ -7816,6 +8483,18 @@ impl Backend {
         let window = (self.config.width, self.config.height);
         let forced = size.is_some();
         let size = size.unwrap_or_else(|| match self.fsr_upscale() {
+            // (DLSS takes Streamline's own size for the mode, else rounds up to its smallest, dlss.rs)
+            Some(ratio) if crate::dlss::wanted(self.settings.dlss) => {
+                // (a start Streamline refuses here is the device's, shown in
+                // Preferences whichever view met it, dlss.rs `refused_here`)
+                // the size of the feature Dlss::new will make: Ray
+                // Reconstruction only while Streamline has not refused it (the
+                // guides' pipelines may still be compiled after a refusal,
+                // and super resolution's sizes are its own)
+                let rr = self.rr_compiled && crate::dlss::rr_ready_on(&self.device);
+                crate::dlss::optimal_size(&self.device, &self.lost, window, ratio, rr)
+                    .unwrap_or_else(|| crate::dlss::render_size(window, ratio))
+            }
             Some(ratio) => crate::fsr::render_size(window, ratio),
             None => crate::rlva::resolution::render_size(window, self.rlva_resolution_divisor, scale),
         });
@@ -7829,10 +8508,14 @@ impl Backend {
                 scale
             );
         }
+        // (a snapshot once Ray Reconstruction was refused for the captures
+        // has the pipelines without its guides first, `rebuild_targets`, so
+        // its targets are made without them)
+        let snapshot = self.snapshot_window.is_some() && !forced;
         // the new targets are made while the old ones live: the counters'
         // growth in between is what this size takes
         let before = self.live_bytes();
-        let targets = Self::make_targets(
+        let (targets, rr_refused) = Self::make_targets(
             &self.device,
             &self.post_layout,
             &self.post_sampler,
@@ -7848,9 +8531,16 @@ impl Backend {
             self.msaa_samples,
             self.gbuf_pipelines,
             &self.settings,
+            self.rr_compiled,
             self.external,
             refuse,
         );
+        // (a snapshot's Ray Reconstruction targets refused: super
+        // resolution draws every capture from here, the window's left as it
+        // was)
+        if rr_refused && snapshot && !self.lost.get() {
+            crate::dlss::snapshot_rr_targets_refused();
+        }
         let smaa = (self.settings.aa == AntiAliasing::Smaa).then(|| {
             self.smaa
                 .make_targets(&self.device, &self.queue, &self.dummies.white, size.0, size.1, self.surface_srgb)
@@ -7864,6 +8554,7 @@ impl Backend {
         self.histogram.bind(&self.device, &self.targets.color);
         self.targets_shrunk = forced;
         self.rebuild_bind_groups();
+        rr_refused
     }
 
     /// The surface can be copied from (captures).
@@ -7876,8 +8567,30 @@ impl Backend {
     }
     /// Follow the window: size and vsync wanted for the frame being drawn.
     fn apply_surface(&mut self, s: SurfaceState) {
+        self.fg_allowed = s.fg_allowed;
+        let resize = (s.width, s.height) != (self.config.width, self.config.height);
+        // Windows' frame generation, on at the last present: off for this
+        // frame's, and the swapchain made again once a present asked it off
+        // (`fg_hold`). Three frames at most: one whose present never comes
+        // (no image from the window, a failure) asks it off itself
+        #[cfg(windows)]
+        {
+            let change = resize || s.vsync != self.vsync;
+            let dlss = self.taa.as_mut().and_then(|t| t.dlss.as_mut()).map(|(d, _)| d);
+            if change && dlss.as_ref().is_some_and(|d| d.fg_asked()) {
+                if self.fg_hold < 3 {
+                    self.fg_hold += 1;
+                    return;
+                }
+                log::warn!("DLSS frame generation: no present asked it off in 3 frames: off before the swapchain is made again");
+                if let Some(d) = dlss {
+                    d.fg_off();
+                }
+            }
+            self.fg_hold = 0;
+        }
         self.set_vsync(s.vsync);
-        if (s.width, s.height) != (self.config.width, self.config.height) {
+        if resize {
             self.resize(s.width, s.height);
         }
     }
@@ -7889,7 +8602,7 @@ impl Backend {
         self.config.width = width;
         self.config.height = height;
         if !self.external {
-            crate::present::configure(&self.surface, &self.device, &self.config);
+            self.configure_window();
         }
         self.rebuild_targets();
     }
@@ -7914,8 +8627,9 @@ impl Backend {
             _ => 1,
         };
         let soft = soft_path(&s);
+        let albedo = self.rr_here(&s);
         let gbuf = gbuf_wanted(&self.device, self.external, &self.gbuf_wide, &s, samples);
-        if (samples, gbuf, soft) == (self.msaa_samples, self.gbuf_pipelines, self.soft_pipelines) {
+        if (samples, gbuf, albedo, soft) == (self.msaa_samples, self.gbuf_pipelines, self.rr_compiled, self.soft_pipelines) {
             // (a set still compiling for other samples is no longer wanted)
             self.pipeline_build = None;
             self.apply_settings_with(s, None);
@@ -7924,12 +8638,13 @@ impl Backend {
         if self
             .pipeline_build
             .as_ref()
-            .is_none_or(|b| (b.samples, b.gbuf, b.soft) != (samples, gbuf, soft))
+            .is_none_or(|b| (b.samples, b.gbuf, b.albedo, b.soft) != (samples, gbuf, albedo, soft))
         {
             log::info!(
-                "compiling the pipelines for {samples} sample(s), SSR {}, G-buffer {}, soft shadows {}",
+                "compiling the pipelines for {samples} sample(s), SSR {}, G-buffer {}, base colour {}, soft shadows {}",
                 if s.ssr { "on" } else { "off" },
                 gbuf.map_or_else(|| "off".to_owned(), |f| format!("{f:?}")),
+                if albedo { "on" } else { "off" },
                 if soft { "on" } else { "off" }
             );
             if gbuf.is_some() && self.gbuf_pipelines.is_some() && gbuf != self.gbuf_pipelines {
@@ -7943,7 +8658,7 @@ impl Backend {
                     crate::rt_shadows::traced(&self.device, self.external, s.ray_tracing)
                 );
             }
-            let (build, worker) = self.start_pipeline_build(samples, gbuf, soft);
+            let (build, worker) = self.start_pipeline_build(samples, gbuf, albedo, soft);
             self.pipeline_workers.retain(|w| !w.is_finished());
             self.pipeline_workers.extend(worker);
             self.pipeline_build = Some(build);
@@ -7951,23 +8666,34 @@ impl Backend {
         let Some(build) = &self.pipeline_build else {
             return;
         };
-        match build.done.try_recv() {
+        // (a set done while a photo or film frame is drawn waits for its
+        // end, `capturing`)
+        let done = if self.capturing || self.snapshot_window.is_some() {
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        } else {
+            build.done.try_recv()
+        };
+        match done {
             Ok((scene, impostors)) => {
                 log::info!(
                     "pipelines for {samples} sample(s) ready in {} ms",
                     build.started.elapsed().as_millis()
                 );
                 self.pipeline_build = None;
+                self.rr_compiled = albedo;
                 self.apply_settings_with(s, Some((samples, gbuf, scene, impostors)));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // the other settings now, the samples, SSR and soft shadows
-                // with their pipelines (the soft shadows' mask is made
-                // once the pipelines that read it are there; the G-buffer
-                // keeps the format of the pipelines in use, `gbuf_pipelines`)
+                // the other settings now, the samples, SSR, soft shadows and
+                // Ray Reconstruction with their pipelines (the soft shadows'
+                // mask is made once the pipelines that read it are there; the
+                // G-buffer keeps the format of the pipelines in use,
+                // `gbuf_pipelines`)
                 let now = RenderSettings {
                     aa: self.settings.aa,
                     ssr: self.settings.ssr,
+                    dlss: self.settings.dlss,
+                    dlss_rr: self.settings.dlss_rr,
                     soft_shadows: self.settings.soft_shadows,
                     rain_surfaces: self.settings.rain_surfaces,
                     ..s
@@ -7989,7 +8715,8 @@ impl Backend {
                     &self.gbuf_layout,
                     samples,
                     self.config.format,
-                    gbuf,
+                    gbuf_drawn(gbuf, albedo),
+                    albedo,
                     soft,
                 );
                 let impostors = Impostors::make_pipelines(
@@ -7999,20 +8726,24 @@ impl Backend {
                     &self.records_layout,
                     &self.tex_layout,
                     samples,
-                    gbuf,
+                    gbuf_drawn(gbuf, albedo),
+                    albedo,
                     soft,
                 );
+                self.rr_compiled = albedo;
                 self.apply_settings_with(s, Some((samples, gbuf, scene, impostors)));
             }
         }
     }
 
-    /// Compile the pipelines for `samples`, the G-buffer `gbuf` and the
-    /// soft shadows' path `soft` on a worker thread.
+    /// Compile the pipelines for `samples`, the G-buffer `gbuf` (the
+    /// settings', `gbuf_wanted`), Ray Reconstruction's base colour `albedo`
+    /// and the soft shadows' path `soft` on a worker thread.
     fn start_pipeline_build(
         &self,
         samples: u32,
         gbuf: Option<wgpu::TextureFormat>,
+        albedo: bool,
         soft: bool,
     ) -> (PipelineBuild, Option<std::thread::JoinHandle<()>>) {
         let (tx, done) = std::sync::mpsc::sync_channel(1);
@@ -8040,10 +8771,21 @@ impl Backend {
                 gbuf_layout,
                 samples,
                 format,
-                gbuf,
+                gbuf_drawn(gbuf, albedo),
+                albedo,
                 soft,
             );
-            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, gbuf, soft);
+            let impostors = Impostors::make_pipelines(
+                &device,
+                impostor,
+                frame,
+                records,
+                tex,
+                samples,
+                gbuf_drawn(gbuf, albedo),
+                albedo,
+                soft,
+            );
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));
         });
@@ -8056,6 +8798,7 @@ impl Backend {
         let build = PipelineBuild {
             samples,
             gbuf,
+            albedo,
             soft,
             started: std::time::Instant::now(),
             done,
@@ -8119,6 +8862,7 @@ impl Backend {
         let mut targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
             || fsr_ratio(s.aa) != fsr_ratio(self.settings.aa)
+            || s.dlss != self.settings.dlss
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
             || s.ssao.min(1) != self.settings.ssao.min(1)
             || s.ao_method != self.settings.ao_method
@@ -8178,28 +8922,63 @@ impl Backend {
             );
             self.shadow_merge.atlas_changed(&self.device, &self.shadow_view, res, SHADOW_FORMAT);
         }
+        // (the model alone makes only the DLSS feature again, below: the
+        // sizes and the targets do not change with it)
+        let model_changed = (s.dlss_model, s.dlss_rr_model) != (self.settings.dlss_model, self.settings.dlss_rr_model);
+        let rr_model_changed = s.dlss_rr_model != self.settings.dlss_rr_model;
         self.settings = s;
         self.previews.set_anti_aliasing(self.settings.aa);
         self.follow_ray_tracing();
         if matches!(s.aa, AntiAliasing::Taa | AntiAliasing::Fsr(_)) {
             // FSR in the place of the TAA pass, or the TAA pass again
             if !taa_was || fsr_ratio(s.aa).is_some() != self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
-                let device = self.device.clone();
-                let (_, refused) = crate::gpu_alloc::scoped(&device, || self.remake_taa());
-                // (refused, the next try makes every target again, the TAA
-                // history with them)
-                first_use(&mut self.oom, "TAA history", true, refused && !self.lost.get());
+                if targets_dirty {
+                    // (made once by the targets' remake below, at their
+                    // new size: `taa_pending`)
+                    self.taa = None;
+                    self.taa_bytes = 0;
+                    self.taa_pending = true;
+                } else {
+                    let device = self.device.clone();
+                    let (_, refused) = crate::gpu_alloc::scoped(&device, || self.remake_taa());
+                    // (refused, the next try makes every target again, the TAA
+                    // history with them)
+                    first_use(&mut self.oom, "TAA history", true, refused && !self.lost.get());
+                }
             }
         } else {
             self.taa = None;
             self.taa_bytes = 0;
+            self.taa_pending = false;
             self.prev_view_proj = None;
+            // (a DLSS set aside is let go with the rest: its expiry runs
+            // only in the frames that draw FSR, which none does now)
+            self.dlss_aside = None;
         }
         if targets_dirty {
             self.rebuild_targets();
         } else if shadows_dirty || probes_dirty {
             self.rebuild_bind_groups_checked("TAA history after a shadow or probe change");
         }
+        // another Ray Reconstruction model asks Streamline again after a refusal
+        // (the pipelines follow at the next frame, `rr_wanted`): the
+        // window's renderer alone, and not at its first apply, which a
+        // renderer made again or the second camera's makes from the
+        // defaults, so that neither forgets a refusal that stands
+        if rr_model_changed && self.settings_applied && !self.external {
+            crate::dlss::rr_retry();
+        }
+        self.settings_applied = true;
+        if model_changed && !targets_dirty && !self.taa_pending {
+            self.remodel_dlss();
+        }
+    }
+
+    /// DLSS would be made with the targets: FSR's anti-aliasing, as
+    /// `make_taa` asks it (an RLVa resolution limit included), and DLSS
+    /// wanted.
+    fn dlss_wanted(&self) -> bool {
+        matches!(self.settings.aa, AntiAliasing::Fsr(_)) && crate::dlss::wanted(self.settings.dlss)
     }
 
     /// The ray tracer follows the settings: made when they turn ray
@@ -8289,7 +9068,55 @@ impl Backend {
         }
     }
 
-    fn make_taa(&self) -> Taa {
+    /// The DLSS model changed: the feature is made again with it, keeping
+    /// DLSS's textures and every target (the model is read when the
+    /// feature is made, nothing else depends on it). Without a DLSS to
+    /// remake (one given up is let go), the targets are made again with
+    /// one, unless Streamline refused to start on this device: only Preferences'
+    /// button asks that again ([`crate::dlss::retry`]).
+    fn remodel_dlss(&mut self) {
+        let models = (self.settings.dlss_model, self.settings.dlss_rr_model);
+        if let Some(taa) = self.taa.as_mut()
+            && let Some((dlss, _)) = taa.dlss.as_mut()
+        {
+            dlss.remodel(models);
+            if dlss.failed() {
+                // FSR takes the next frame from nothing: its history is of
+                // the frames before DLSS
+                taa.dlss = None;
+                taa.reset = true;
+            }
+        } else if self.dlss_wanted() && !crate::dlss::refused_here() {
+            self.rebuild_targets();
+        }
+    }
+
+    /// Preferences asked to try DLSS again ([`crate::dlss_retry`]): the
+    /// targets are made again, and DLSS with them, from Streamline's start (its
+    /// render size may differ from the fallback FSR drew at). The ask waits
+    /// (not taken) while DLSS would not be made: another anti-aliasing,
+    /// or a snapshot's targets in place, or a capture under way
+    /// (`capturing`: a tiled photo's later tiles keep what its first drew).
+    fn retry_dlss_if_asked(&mut self) {
+        if !self.dlss_wanted() || self.snapshot_window.is_some() || self.capturing {
+            return;
+        }
+        if crate::dlss::retry_asked(&mut self.dlss_retry) {
+            // (a failed DLSS is not kept by the remake: `fits` is false for
+            // those, so a new one is made. A working super resolution kept
+            // on a Ray Reconstruction retry is made again as RR once the
+            // pipelines with the guides are compiled, `rr_wanted`)
+            self.rebuild_targets();
+        }
+    }
+
+    /// `old`: the DLSS of the TAA this one replaces, and `aside` the one
+    /// set aside (`dlss_aside`); the one that fits the new targets is
+    /// kept. Also returns the bytes of the DLSS kept (0 when none), and
+    /// the DLSS to set aside now: the window's while a snapshot draws, a
+    /// snapshot's once back at the window (the next film frame's); any
+    /// other is let go.
+    fn make_taa(&self, old: Option<crate::dlss::Dlss>, aside: Option<crate::dlss::Dlss>) -> (Taa, u64, Option<crate::dlss::Dlss>) {
         let device = &self.device;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("taa"),
@@ -8334,6 +9161,7 @@ impl Backend {
                 samples: 1,
                 format: Some(HDR_FORMAT),
                 gbuf: None,
+                albedo: false,
                 range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
@@ -8376,7 +9204,8 @@ impl Backend {
                     self.scene_size().1,
                     crate::gtao::NORMAL_FORMAT,
                     1,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    // (copied for Ray Reconstruction, `RrInputs`)
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                 )
                 .1,
             ),
@@ -8414,39 +9243,13 @@ impl Backend {
             })
         };
         let bind_groups = [bg(&history[1]), bg(&history[0])];
-        let post_bg = |v: &wgpu::TextureView| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("post taa"),
-                layout: &self.post_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(v),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.post_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.post_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(&self.glow.views[1]),
-                    },
-                ],
-            })
-        };
+        let post_bg = |v: &wgpu::TextureView| self.post_taa_group(v);
         let post_bgs = [post_bg(&history[0]), post_bg(&history[1])];
+        let display = self.taa_display();
+        // FSR first: it is what draws when DLSS cannot, so with video
+        // memory for one of the two it is FSR's, and a DLSS refused its
+        // textures (Dlss::new's own error scope) leaves FSR drawing
         let fsr = with_fsr.then(|| {
-            // (the 1x1 set that frees a refused one shrinks FSR's display
-            // size part too, rebuild_targets)
-            let display = if self.fsr_upscale().is_some() && !self.targets_shrunk {
-                (self.config.width, self.config.height)
-            } else {
-                self.scene_size()
-            };
             let fsr = crate::fsr::Fsr::new(
                 device,
                 self.scene_size(),
@@ -8464,7 +9267,87 @@ impl Backend {
             let bg = post_bg(fsr.output());
             (fsr, bg)
         });
-        Taa {
+        let mut kept = 0;
+        let mut set_aside = None;
+        // (not asked again on a device where Streamline refused to start: the
+        // textures DLSS would make and drop at every remake, each frame of
+        // a window's resize, and an error line each time; Preferences'
+        // button asks again, `retry_dlss_if_asked`)
+        let dlss = (with_fsr && !self.targets_shrunk && crate::dlss::wanted(self.settings.dlss) && !crate::dlss::refused_here())
+            .then(|| {
+                let snapshot = self.snapshot_window.is_some();
+                let inputs = self.dlss_inputs(motion_read);
+                let models = (self.settings.dlss_model, self.settings.dlss_rr_model);
+                let mut pool: Vec<crate::dlss::Dlss> = old.into_iter().chain(aside).collect();
+                let fitting = pool
+                    .iter()
+                    .position(|dlss| dlss.fits(device, self.scene_size(), display, models, &inputs));
+                let fitting = fitting.map(|at| pool.swap_remove(at));
+                // the window's kept through a snapshot, the snapshot's
+                // through the window's frames between two of a film
+                set_aside = pool.into_iter().find(|dlss| dlss.snapshot() != snapshot);
+                match fitting {
+                    // the targets made again at the same size: the
+                    // feature stays, only what reads the targets is new
+                    Some(mut dlss) => {
+                        dlss.rebind(&inputs);
+                        // (one made for a snapshot's targets reports for
+                        // the window again, and the reverse)
+                        dlss.serving(snapshot, !self.external);
+                        kept = dlss.bytes();
+                        let bg = post_bg(dlss.output());
+                        Some((dlss, bg))
+                    }
+                    // a resize in progress: nothing of DLSS until the size
+                    // holds (`dlss_after_resize`)
+                    None if !snapshot && let Some(due) = crate::dlss::resizing(display, &self.dlss_last) => {
+                        self.dlss_due.set(Some(due));
+                        None
+                    }
+                    None => {
+                        if !snapshot {
+                            self.dlss_due.set(None);
+                        }
+                        // an out-of-memory scope of its own, as in
+                        // `dlss_after_resize`: Dlss::new checks its
+                        // textures, not its pipeline, buffer and bind
+                        // groups, nor the post pass's group, and a refusal
+                        // there under the callers' scope would refuse the
+                        // whole set of targets, not only DLSS (FSR draws)
+                        let (made, refused) = crate::gpu_alloc::scoped(device, || {
+                            let dlss = crate::dlss::Dlss::new(
+                                device,
+                                &self.queue,
+                                &self.lost,
+                                self.scene_size(),
+                                display,
+                                models,
+                                &inputs,
+                                snapshot,
+                                // (what Preferences says of DLSS is the window's:
+                                // an external renderer, the second camera's or an
+                                // eye of VR, falls back to FSR alone)
+                                !self.external,
+                            )?;
+                            let bg = post_bg(dlss.output());
+                            Some((dlss, bg))
+                        });
+                        // (the DLSS made is let go: its feature released
+                        // once its frames are done, Dlss::retire; the next
+                        // remake of the targets tries again)
+                        if refused {
+                            // (a snapshot's targets report nothing, as Dlss::new
+                            // and `serving` have it: the window's DLSS stays)
+                            crate::dlss::refused_memory("for the new targets", !self.external && !snapshot);
+                            None
+                        } else {
+                            made
+                        }
+                    }
+                }
+            })
+            .flatten();
+        let taa = Taa {
             pipeline,
             layout,
             buffer,
@@ -8473,31 +9356,433 @@ impl Backend {
             post_bgs,
             motion,
             fsr,
+            dlss,
             parity: 0,
             reset: true,
-        }
+        };
+        (taa, kept, set_aside)
     }
 
     fn set_vsync(&mut self, vsync: bool) {
-        if vsync == self.vsync {
+        self.set_presentation(vsync, self.fg_paced);
+    }
+
+    /// DLSS frame generation runs on this frame's window image
+    /// (`RenderSettings::frame_generation`, and a DLSS to draw it with),
+    /// while the main thread allows it (`fg_allowed`: the window in front).
+    /// Left running behind another workspace, the window's first images
+    /// once it was in front again waited up to 1 s each, for up to 11 s.
+    fn fg_on(&self) -> bool {
+        self.fg_allowed && self.settings.frame_generation() && self.taa.as_ref().is_some_and(|t| t.dlss.is_some())
+    }
+
+    /// The presentation mode for the vsync setting, or Fifo while Linux's
+    /// frame generation runs (`fg`): its two presents a frame are paced by
+    /// the screen, the drawn frames at half its rate (dlss_fg.rs).
+    /// `AURORA_PRESENT_MODE` wins over both (and keeps sl-ngx's presenter,
+    /// Fifo only, from starting: `sync_fg_presenter`).
+    fn set_presentation(&mut self, vsync: bool, fg: bool) {
+        if (vsync, fg) == (self.vsync, self.fg_paced) {
             return;
         }
         self.vsync = vsync;
+        self.fg_paced = fg;
         // The rule of the creation (present.rs): switching the setting in a
         // session ends on the mode a launch with that setting presents with.
-        let mode = crate::present::choose(&self.present_modes, vsync, crate::present::forced());
+        let forced = crate::present::forced().or(fg.then_some(wgpu::PresentMode::Fifo));
+        let mode = crate::present::choose(&self.present_modes, vsync, forced);
         log::info!(
-            "presentation: {} (vsync {})",
+            "presentation: {} (vsync {}{})",
             crate::present::name(mode),
-            if vsync { "on" } else { "off" }
+            if vsync { "on" } else { "off" },
+            if fg { ", DLSS frame generation" } else { "" }
         );
         if mode == self.config.present_mode {
             return;
         }
+        let renew = crate::present::renews_surface(self.config.present_mode, mode, fg);
         self.config.present_mode = mode;
-        if !self.external {
+        if self.external {
+            return;
+        }
+        // (sl-ngx's presenter's swapchain is Fifo, its own: the mode is
+        // the window's again once it stops)
+        #[cfg(all(feature = "dlss", target_os = "linux"))]
+        if self.fg_presenter.is_some() {
+            return;
+        }
+        if renew && self.renew_surface() {
+            return;
+        }
+        self.configure_window();
+    }
+
+    /// The window's surface made again and configured, before DLSS frame
+    /// generation presents under Fifo (`present::renews_surface`: the
+    /// driver's commit timer, stale since the last Fifo, held the swapchain
+    /// for as long as frame generation had been off). False, with nothing
+    /// changed, when the surface cannot be let go: off Wayland, a lost
+    /// device, or the renderers of a VR session or of the second camera
+    /// holding it (its picture may be in this frame's interface).
+    fn renew_surface(&mut self) -> bool {
+        if let Err(why) = self.remake_surface() {
+            if why == SURFACE_SHARED {
+                log::info!("presentation: the window's surface is shared (second camera), not made again for DLSS frame generation");
+            }
+            return false;
+        }
+        crate::present::configure(&self.surface, &self.device, &self.config);
+        log::info!("presentation: the window's surface made again for DLSS frame generation");
+        true
+    }
+
+    /// The window's surface let go and made afresh, not configured. Err,
+    /// with nothing changed, when it cannot be let go (`renew_surface`).
+    fn remake_surface(&mut self) -> Result<(), &'static str> {
+        let Some(window) = self.window.clone() else {
+            return Err("not on Wayland");
+        };
+        if self.lost.get() {
+            return Err("the device is lost");
+        }
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if self.xr_world.is_some() {
+            return Err("a VR session holds the window");
+        }
+        if Arc::strong_count(&self.surface) != 1 {
+            return Err(SURFACE_SHARED);
+        }
+        // A panic between the take and the write below (wgpu's drop of the
+        // old surface, on a device lost meanwhile) would unwind into
+        // `Drop` with the field moved out: abort instead, as below.
+        struct AbortOnUnwind;
+        impl Drop for AbortOnUnwind {
+            fn drop(&mut self) {
+                if std::thread::panicking() {
+                    log::error!("presentation: the window's surface panicked while let go");
+                    std::process::abort();
+                }
+            }
+        }
+        let unwind = AbortOnUnwind;
+        // SAFETY: the surface is taken out once and `self.surface` is
+        // written again below, on every path that does not abort (a panic
+        // meanwhile aborts: `unwind`), before anything reads it or `Drop`
+        // lets it go.
+        let old = unsafe { std::mem::ManuallyDrop::take(&mut self.surface) };
+        // (the only holder, checked above: the old Vulkan surface, with the
+        // driver's fifo and commit timer of the wl_surface, is gone before
+        // the new one asks for its own)
+        drop(old);
+        // SAFETY: this is the window's renderer (`window` is None for any
+        // other), and the host keeps the window until it is dropped.
+        match unsafe { window.surface() } {
+            Ok(surface) => self.surface = std::mem::ManuallyDrop::new(Arc::new(surface)),
+            Err(e) => {
+                // A Vulkan surface on a live window fails only for want of
+                // memory; with the old one gone there is nothing to present
+                // to, and nothing safe to leave in the field.
+                log::error!("presentation: the window's surface could not be made again: {e}");
+                std::process::abort();
+            }
+        }
+        drop(unwind);
+        Ok(())
+    }
+
+    /// The window configured at `config`, or with sl-ngx's presenter
+    /// running, its swapchain sized: the window is the presenter's then,
+    /// and no swapchain of wgpu's may be made on it.
+    fn configure_window(&self) {
+        #[cfg(all(feature = "dlss", target_os = "linux"))]
+        if let Some(presenter) = &self.fg_presenter {
+            presenter.resize(self.config.width, self.config.height);
+            return;
+        }
+        crate::present::configure(&self.surface, &self.device, &self.config);
+    }
+
+    /// Linux: sl-ngx's presenter started while frame generation runs, on
+    /// a window surface made afresh, and stopped when it ends; before the
+    /// presentation mode is set. Once it could not run, frame generation
+    /// presents the prototype's way until the setting is next off.
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    fn sync_fg_presenter(&mut self) {
+        use crate::dlss_fg::FgRefusal;
+        let want = !self.external && self.fg_on();
+        // (the second camera's hold on the surface ends: tried again)
+        if !want || (self.fg_present_refused == Some(FgRefusal::SecondCamera) && Arc::strong_count(&self.surface) == 1) {
+            self.fg_present_refused = None;
+        }
+        // (a mode forced for this launch, other than the presenter's Fifo,
+        // keeps the window the viewer's: it presents both frames in it)
+        if want
+            && self.fg_present_refused.is_none()
+            && crate::present::forced().is_some_and(|m| m != wgpu::PresentMode::Fifo && self.present_modes.contains(&m))
+        {
+            log::info!("DLSS frame generation: AURORA_PRESENT_MODE forces another mode than Fifo: sl-ngx's presenter does not start");
+            self.fg_present_refused = Some(FgRefusal::PresentMode);
+        }
+        let want = want && self.fg_present_refused.is_none();
+        if want == self.fg_presenter.is_some() {
+            return;
+        }
+        if !want {
+            self.stop_fg_presenter(None);
+            return;
+        }
+        if let Err(why) = self.remake_surface() {
+            self.fg_present_refused = Some(if why == SURFACE_SHARED {
+                FgRefusal::SecondCamera
+            } else {
+                FgRefusal::Failed(why.to_string())
+            });
+            log::info!(
+                "DLSS frame generation: sl-ngx's presenter cannot have the window ({why}): frame generation presents the prototype's way"
+            );
+            return;
+        }
+        match crate::dlss::Presenter::new(&self.device, &self.lost, &self.surface, &self.config) {
+            Ok(presenter) => {
+                self.fg_presenter = Some(presenter);
+                // (the ring made at the next frame)
+                self.fg = None;
+            }
+            Err(why) => {
+                log::warn!(
+                    "DLSS frame generation: sl-ngx's presenter did not start ({why:?}): frame generation presents the prototype's way"
+                );
+                self.fg_present_refused = Some(why);
+                crate::present::configure(&self.surface, &self.device, &self.config);
+            }
+        }
+    }
+
+    /// Linux: sl-ngx's presenter stopped (with the reason it failed, if
+    /// it did), its ring let go and the window configured again.
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    fn stop_fg_presenter(&mut self, failed: Option<crate::dlss_fg::FgRefusal>) {
+        if let Some(why) = failed {
+            log::error!("DLSS frame generation: sl-ngx's presenter stops: {why:?}; frame generation presents the prototype's way");
+            self.fg_present_refused = Some(why);
+        }
+        if let Some(mut presenter) = self.fg_presenter.take() {
+            // (every frame handed over released by it, before the images go)
+            if presenter.end() {
+                self.fg = None;
+            } else {
+                // Streamline's lock not had: the presenter may still read
+                // the ring, which is left to it (`Presenter::end`)
+                std::mem::forget(self.fg.take());
+            }
+            drop(presenter);
             crate::present::configure(&self.surface, &self.device, &self.config);
         }
+    }
+
+    /// Frame generation's images made at `size` (the ring handed to
+    /// sl-ngx's presenter, or the prototype's), under the video memory's
+    /// error scope. False, with none, when it refuses them: remembered for
+    /// that size, where frame generation stays off and the frame presents
+    /// as drawn. The images they replace go first (with the presenter, the
+    /// caller has paused it and seen every frame released).
+    fn make_fg(&mut self, size: (u32, u32), format: wgpu::TextureFormat, ring: bool) -> bool {
+        self.fg = None;
+        if self.fg_refused == Some((size, ring)) {
+            return false;
+        }
+        let (made, refused) = crate::gpu_alloc::scoped(&self.device, || {
+            crate::dlss_fg::FrameGen::new(&self.device, &self.queue, size, format, ring)
+        });
+        if self.memory_refused(refused) {
+            log::warn!(
+                "DLSS frame generation: the video memory refused its images at {}x{}: off at this size",
+                size.0,
+                size.1
+            );
+            self.fg_refused = Some((size, ring));
+            return false;
+        }
+        (self.fg, self.fg_refused) = (Some(made), None);
+        true
+    }
+
+    /// Windows: frame generation's image before the interface let go,
+    /// once Streamline is through with it: it reads it at the present, on
+    /// its own queue, which wgpu does not track ([`crate::dlss::after_streamline`]).
+    /// Only after the present that last named it, as every caller is.
+    #[cfg(windows)]
+    fn fg_hudless_drop(&mut self) {
+        if let Some(hudless) = self.fg_hudless.take() {
+            crate::dlss::after_streamline(&self.queue, hudless);
+        }
+    }
+
+    /// Linux: with sl-ngx's presenter, this frame's slot of the ring (made
+    /// or made again at the window's size), once the presenter has read
+    /// what it held. False without the presenter, or when it stopped.
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    fn fg_slot(&mut self) -> bool {
+        let Some(presenter) = &self.fg_presenter else {
+            return false;
+        };
+        let (size, format) = ((self.config.width, self.config.height), self.config.format);
+        if self.fg.as_ref().is_none_or(|fg| !fg.fits(size, format, true)) {
+            // (the old ring's images may still be read: the presenter
+            // paused, and every frame it took released, before they go)
+            // (a refused pause stopped the presenter: what it took is
+            // never released, so nothing is waited for)
+            let paused = presenter.pause();
+            let refused = paused.refused();
+            let settled = refused.is_none() && presenter.settle();
+            let made = settled && self.make_fg(size, format, true);
+            drop(paused);
+            if !made {
+                use crate::dlss_fg::FgRefusal;
+                let why = if let Some(r) = refused {
+                    FgRefusal::Failed(format!("slngxPresenterPause: {r}"))
+                } else if settled {
+                    FgRefusal::Failed(String::from("the video memory refused its images"))
+                } else {
+                    FgRefusal::Stalled
+                };
+                self.stop_fg_presenter(Some(why));
+                return false;
+            }
+        }
+        let (Some(presenter), Some(fg)) = (&self.fg_presenter, &mut self.fg) else {
+            return false;
+        };
+        let wait = fg.advance();
+        if wait != 0 && !presenter.wait_released(wait) {
+            self.stop_fg_presenter(Some(crate::dlss_fg::FgRefusal::Stalled));
+            return false;
+        }
+        true
+    }
+
+    /// Linux: this frame handed to sl-ngx's presenter, once submitted:
+    /// the generated frame as shown, if one was made, and the real one.
+    /// True when it was taken (it will be presented).
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    fn fg_hand_over(&mut self, generated: bool) -> bool {
+        let (Some(presenter), Some(fg)) = (&mut self.fg_presenter, &mut self.fg) else {
+            return false;
+        };
+        let size = fg.size();
+        let shown = fg.shown().filter(|_| generated).map(|t| (t, size));
+        let r = presenter.hand_over(&self.queue, shown, (fg.real(), size), FG_HAND_OVER_WAIT);
+        match r {
+            Ok(Some(value)) => {
+                fg.handed(value);
+                fg.presented_generated += u64::from(generated);
+                fg.presented_real += 1;
+                true
+            }
+            Ok(None) => {
+                fg.not_taken += 1;
+                false
+            }
+            Err(why) => {
+                self.stop_fg_presenter(Some(crate::dlss_fg::FgRefusal::Failed(why)));
+                false
+            }
+        }
+    }
+
+    /// Frame generation as it runs, for Preferences (`dlss_fg::status`):
+    /// published once a second while it runs on the window (`on`), and
+    /// taken back once it stops.
+    fn publish_fg_status(&mut self, on: bool) {
+        use crate::dlss_fg::{FgStatus, Meter};
+        if !on || self.external {
+            if self.fg_meter.take().is_some() {
+                crate::dlss_fg::set_status(None);
+            }
+            return;
+        }
+        let now = Instant::now();
+        if self.fg_meter.is_none() {
+            let totals = self.fg_totals();
+            self.fg_meter = Some(Meter::new(now, totals));
+            return;
+        }
+        if !self.fg_meter.as_mut().is_some_and(|m| m.frame(now)) {
+            return;
+        }
+        let totals = self.fg_totals();
+        let Some(measured) = self.fg_meter.as_mut().map(|m| m.take(now, totals)) else {
+            return;
+        };
+        #[allow(unused_mut)] // (set by platform below)
+        let mut status = FgStatus {
+            drawn_fps: measured.drawn_fps,
+            shown_fps: measured.shown_fps,
+            per_drawn: measured.per_drawn,
+            ..FgStatus::default()
+        };
+        #[cfg(target_os = "linux")]
+        {
+            use crate::dlss_fg::FgShown;
+            status.shown = FgShown::TwoPresents(None);
+            #[cfg(feature = "dlss")]
+            match &self.fg_presenter {
+                Some(presenter) => {
+                    status.shown = FgShown::Presenter;
+                    status.reflex = presenter.reflex() && presenter.stats().is_some_and(|st| st.low_latency != 0);
+                    status.reflex_failed = presenter.reflex_failed();
+                }
+                None => status.shown = FgShown::TwoPresents(self.fg_present_refused.clone()),
+            }
+        }
+        // (Windows: Streamline paces and counts its presents, `fg_totals`;
+        // Reflex in low-latency mode is what frame generation was allowed
+        // on. Off at this size for want of its image before the interface:
+        // the viewer holds it.)
+        #[cfg(windows)]
+        {
+            use crate::dlss_fg::{FgHeld, FgShown};
+            let size = wgpu::Extent3d {
+                width: self.config.width,
+                height: self.config.height,
+                depth_or_array_layers: 1,
+            };
+            status.shown = if self.fg_hudless_refused == Some(size) {
+                FgShown::StreamlineHeld(FgHeld::Memory)
+            } else {
+                self.taa
+                    .as_ref()
+                    .and_then(|t| t.dlss.as_ref())
+                    .map_or(FgShown::Streamline(None), |(d, _)| d.fg_shown())
+            };
+            status.reflex = true;
+        }
+        crate::dlss_fg::set_status(Some(status));
+    }
+
+    /// Frame generation's running totals of frames shown and of real
+    /// frames shown: on Linux sl-ngx's presenter's (what the screen showed,
+    /// with present timing; else what it presented), or the prototype's
+    /// presents; on Windows what Streamline presented, and the frames
+    /// drawn while it was asked on.
+    fn fg_totals(&self) -> Option<(u64, u64)> {
+        #[cfg(windows)]
+        if let Some((dlss, _)) = self.taa.as_ref().and_then(|t| t.dlss.as_ref()) {
+            return Some(dlss.fg_totals());
+        }
+        #[cfg(all(feature = "dlss", target_os = "linux"))]
+        if let Some(presenter) = &self.fg_presenter {
+            let st = presenter.stats()?;
+            return Some(if st.present_timing != 0 {
+                (st.generated_shown + st.real_shown, st.real_shown)
+            } else {
+                (st.generated_presented + st.real_presented, st.real_presented)
+            });
+        }
+        self.fg
+            .as_ref()
+            .filter(|_| cfg!(target_os = "linux"))
+            .map(|fg| (fg.presented_generated + fg.presented_real, fg.presented_real))
     }
 
     // ---------------------------------------------------------------- frame
@@ -8914,6 +10199,13 @@ impl Backend {
         }
         self.config.width = s.width;
         self.config.height = s.height;
+        // (a run of captures drawn without Ray Reconstruction's guides
+        // goes on: the window between them keeps super resolution's
+        // pipelines until none has followed for `DLSS_ASIDE`,
+        // `end_snapshot_rr_off`)
+        if let Some(released) = &mut self.snapshot_rr_off {
+            *released = None;
+        }
         self.gtao.photo = Some(s.photo);
         self.cube_step = s.cube.map(usize::from);
         if self.cube_step == Some(0)
@@ -8936,6 +10228,16 @@ impl Backend {
             self.prev_motion_view = None;
             if let Some(taa) = &mut self.taa {
                 taa.reset = true;
+            }
+            // Ray Reconstruction refused during the face before (its
+            // evaluate failed): super resolution draws the faces left, made
+            // again here since the targets stay
+            if self.taa.as_ref().is_some_and(|t| t.fsr.is_some() && t.dlss.is_none()) && self.dlss_wanted() && self.snapshot_rr_refused() {
+                let device = self.device.clone();
+                let (_, refused) = crate::gpu_alloc::scoped(&device, || self.remake_taa());
+                // (refused, the next try makes every target again, the TAA
+                // history with them)
+                first_use(&mut self.oom, "TAA history", true, refused && !self.lost.get());
             }
         } else {
             self.rebuild_targets();
@@ -8961,6 +10263,11 @@ impl Backend {
     fn release_snapshot(&mut self) {
         self.cube_hold = false;
         self.cube_keep = false;
+        // (the window keeps super resolution for a film's next frame,
+        // `end_snapshot_rr_off`)
+        if let Some(released) = &mut self.snapshot_rr_off {
+            *released = Some(Instant::now());
+        }
         let Some((w, h)) = self.snapshot_window.take() else {
             return;
         };
@@ -9027,6 +10334,7 @@ impl Backend {
                 )?;
                 self.vr.set_default_resolution(Some(session.default_resolution));
                 let mut init = (**seed).clone();
+                init.surface = Some(Arc::clone(&self.surface));
                 init.external = true;
                 init.xr = None;
                 init.width = session.width;
@@ -9048,6 +10356,10 @@ impl Backend {
             })();
             match created {
                 Ok(world) => {
+                    // (the mirror presents to the window: sl-ngx's
+                    // presenter gives it back first)
+                    #[cfg(all(feature = "dlss", target_os = "linux"))]
+                    self.stop_fg_presenter(None);
                     self.xr_world = Some(Box::new(world));
                     self.xr_retry = (0, None);
                     log::info!("XR world: independent eye renderers initialized");
@@ -9113,7 +10425,7 @@ impl Backend {
                     self.vr.finish(false);
                 }
                 self.motion_cut = true;
-                crate::present::configure(&self.surface, &self.device, &self.config);
+                self.configure_window();
                 return Err(Box::new(packet));
             }
         };
@@ -9199,6 +10511,7 @@ impl Backend {
             p.params.photo_tile = Mat4::IDENTITY;
             p.params.photo_scale = 1.0;
             p.params.photo_context = crate::types::PhotoContext::None;
+            p.params.photo_job = false;
             p.surface.width = world.session.width;
             p.surface.height = world.session.height;
             if let Some(gpu) = &mut p.lists.gpu {
@@ -9236,7 +10549,7 @@ impl Backend {
             self.adopt_eye_workers(&mut world);
             self.vr.finish(true);
             self.motion_cut = true;
-            crate::present::configure(&self.surface, &self.device, &self.config);
+            self.configure_window();
         } else {
             self.xr_world = Some(world);
         }
@@ -9384,6 +10697,7 @@ impl Backend {
                 return;
             };
             let mut init = (**seed).clone();
+            init.surface = Some(Arc::clone(&self.surface));
             init.external = true;
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             {
@@ -9462,6 +10776,7 @@ impl Backend {
             return;
         };
         let mut init = (**seed).clone();
+        init.surface = Some(Arc::clone(&self.surface));
         init.width = self.config.width;
         init.height = self.config.height;
         init.output_format = Some(self.config.format);
@@ -9473,6 +10788,10 @@ impl Backend {
         // is made again for the new one)
         self.drop_second_view();
         self.shed_world();
+        // (the new one configures the window: sl-ngx's presenter, which
+        // owns it, stopped first; the new one starts its own)
+        #[cfg(all(feature = "dlss", target_os = "linux"))]
+        self.stop_fg_presenter(None);
         // (how long a try holds the frame: the render thread makes the
         // whole renderer, its pipelines included)
         let started = Instant::now();
@@ -9493,11 +10812,14 @@ impl Backend {
                 // (a set still compiling is the new one's to wait for: the
                 // old one's drop would hold this frame for it)
                 fresh.adopt_pipeline_workers(self);
+                // (the device stays: its Streamline is the new one's)
+                self.closes_ngx = false;
                 *self = fresh;
             }
             Ok(mut refused) => {
                 log::info!("renderer: try refused ({took} ms)");
                 self.adopt_pipeline_workers(&mut refused);
+                refused.closes_ngx = false;
                 self.oom.targets_failed(Instant::now());
             }
             // (a lost device, which ends the viewer: egui's renderer stays
@@ -9522,7 +10844,7 @@ impl Backend {
             self.shadow_view = Self::make_shadow_atlas(&device, 512, 0);
             self.shadow_dims = crate::projector_shadows::atlas_size(512, 0);
             self.shadow_merge.atlas_changed(&device, &self.shadow_view, 512, SHADOW_FORMAT);
-            self.make_targets_now(false, Some((1, 1)));
+            let _ = self.make_targets_now(false, Some((1, 1)));
         });
     }
 
@@ -9626,8 +10948,18 @@ impl Backend {
         stats.present_mode = Some(self.config.present_mode);
         // (and at each frame while their pipelines compile: a set for another
         // G-buffer format leaves the settings as asked, with nothing held
-        // back to tell the frames apart, `apply_settings`)
-        if settings != self.settings || self.pipeline_build.is_some() {
+        // back to tell the frames apart, `apply_settings`. Streamline refusing
+        // Ray Reconstruction, or a retry forgetting that, changes what the
+        // settings ask for without changing them: the pipelines follow
+        // `rr_wanted` either way)
+        self.end_snapshot_rr_off();
+        self.capturing = cube_face
+            || params.photo_job
+            || params.photo_context != crate::types::PhotoContext::None
+            || matches!(&wanted, Some(Capture::Snapshot(s) | Capture::Film(_, Some(s), _)) if s.width > 0 && s.height > 0);
+        let held = self.capturing || self.snapshot_window.is_some();
+        self.rr_latched = (held && self.rr_latched) || crate::dlss::snapshot_rr_refused();
+        if settings != self.settings || self.pipeline_build.is_some() || self.rr_compiled != self.rr_here(&settings) {
             self.apply_frame_settings(settings);
         }
         // (at each frame until its worker is done, whatever else the
@@ -9635,6 +10967,8 @@ impl Backend {
         if self.rt_build.is_some() {
             self.follow_ray_tracing();
         }
+        self.retry_dlss_if_asked();
+        self.dlss_after_resize();
         // the start is over: made, and its settings applied, with nothing
         // refused
         if !self.remake {
@@ -9643,6 +10977,8 @@ impl Backend {
         // (none while their pipelines compile: `Renderer::settings_applied`)
         stats.settings = self.pipeline_build.is_none().then_some(self.settings);
         stats.snow_lying = self.rain_wet.snow > RAIN_WET_DRY;
+        // (the last upscale's: set here, so that a skipped frame says it too)
+        stats.dlss_drawing = self.dlss_drew;
         // the tiled photo is done: its context goes with the targets that
         // bind it
         if params.photo_context == crate::types::PhotoContext::None && self.gtao.drop_context() {
@@ -9729,7 +11065,44 @@ impl Backend {
                 writes_ms - replay_ms
             );
         }
+        // DLSS frame generation paces the window under Fifo: set before the
+        // window image is acquired (Linux's; Windows' Streamline paces its
+        // own presents). Not on a lost device: the frame is retired below,
+        // and neither the surface, the presenter nor Streamline is touched
+        if !self.lost.get() && output.is_none() && snapshot.is_none() {
+            // Linux: sl-ngx's presenter takes the window, or gives it back;
+            // its frame's token and Reflex's sleep, before the input
+            #[cfg(all(feature = "dlss", target_os = "linux"))]
+            {
+                self.sync_fg_presenter();
+                let token = self.fg_presenter.as_mut().and_then(|p| {
+                    p.begin(index);
+                    p.token()
+                });
+                if let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut()) {
+                    dlss.set_frame_token(token);
+                }
+            }
+            self.set_presentation(self.vsync, cfg!(target_os = "linux") && self.fg_on());
+            // Windows' frame generation: the frame's token, Reflex's
+            // sleep and its first markers, before the acquire
+            #[cfg(windows)]
+            if !self.external
+                && let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut())
+            {
+                dlss.fg_begin();
+            }
+        }
+        // (frame generation's state is the window's own frames' alone)
+        let window_frame = output.is_none() && snapshot.is_none() && !self.external;
         let t_acquire = Instant::now();
+        // Linux: with sl-ngx's presenter, the frame is drawn into its ring
+        // and handed over at its end, no window image acquired (never on a
+        // lost device: the ring is not made or waited on)
+        #[cfg(all(feature = "dlss", target_os = "linux"))]
+        let fg_presented = !self.lost.get() && output.is_none() && snapshot.is_none() && self.fg_slot();
+        #[cfg(not(all(feature = "dlss", target_os = "linux")))]
+        let fg_presented = false;
         let surface_tex = if self.lost.get() {
             // a lost device: nothing is drawn or presented until the app
             // replaces the renderer, and the frame is retired as a skipped
@@ -9777,12 +11150,20 @@ impl Backend {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             })))
+        } else if fg_presented {
+            self.fg.as_ref().map(|fg| FrameTarget::Offscreen(fg.real().clone()))
         } else {
             match self.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(FrameTarget::Surface(t)),
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                     if !self.external {
-                        crate::present::configure(&self.surface, &self.device, &self.config);
+                        // (Windows' frame generation off first: DLSS-G
+                        // guide §17, not while the swapchain is made again)
+                        #[cfg(windows)]
+                        if let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut()) {
+                            dlss.fg_off();
+                        }
+                        self.configure_window();
                     }
                     None
                 }
@@ -9804,10 +11185,36 @@ impl Backend {
             let capture = (wanted == Some(Capture::Full))
                 .then(|| self.encode_capture(&mut encoder, surface_tex.texture(), false))
                 .flatten();
+            // (sl-ngx's presenter: the interface alone, as the real frame)
+            if fg_presented && let Some(fg) = &self.fg {
+                fg.for_presenter(&mut encoder, false);
+            }
             cmds.push(encoder.finish());
             crate::device_lost::submit_tracked(&self.lost, &self.queue, index, upload_cmds.into_iter().chain(cmds));
+            #[cfg(all(feature = "dlss", target_os = "linux"))]
+            if fg_presented {
+                stats.presented = self.fg_hand_over(false);
+            }
             if let FrameTarget::Surface(t) = surface_tex {
+                // (Windows' frame generation: off for a present with no
+                // scene, and the frame's markers to its end)
+                #[cfg(windows)]
+                let mut fg_dlss = if self.external {
+                    None
+                } else {
+                    self.taa.as_mut().and_then(|t| t.dlss.as_mut()).map(|(d, _)| d)
+                };
+                #[cfg(windows)]
+                if let Some(dlss) = &mut fg_dlss {
+                    dlss.fg_off();
+                    dlss.fg_submitted();
+                    dlss.fg_presenting();
+                }
                 self.queue.present(t);
+                #[cfg(windows)]
+                if let Some(dlss) = fg_dlss {
+                    dlss.fg_end();
+                }
                 stats.presented = true;
             }
             let captured = capture.and_then(|capture| self.read_capture(capture, false));
@@ -9815,6 +11222,42 @@ impl Backend {
             let mut result = self.skip(index, stats, None, frame_uploads, spent);
             result.captured = captured;
             return result;
+        }
+        // ---- DLSS frame generation (`fg_on`, dlss_fg.rs): on Linux the
+        // frame is drawn aside, and the window image waits for its end; its
+        // images go when it stops. Windows' Streamline makes its frames at
+        // the present, from the window's image
+        let fg_on = self.fg_on();
+        // (the window's own frames only: a photo's or a caller's frame,
+        // drawn offscreen, leaves the window's frame generation as it is,
+        // its ring maybe still read by the presenter; the second camera
+        // never runs it, nor speaks for the window's frame cap)
+        let fg_linux = cfg!(target_os = "linux") && fg_on && window_frame;
+        if window_frame && !fg_linux && self.fg.take().is_some() {
+            log::info!("DLSS frame generation: stopped, images let go");
+        }
+        #[cfg(windows)]
+        if window_frame && !fg_on {
+            self.fg_hudless_drop();
+        }
+        let (surface_tex, fg_held) = match surface_tex {
+            FrameTarget::Surface(t) if fg_linux => {
+                let (size, format) = ((self.config.width, self.config.height), self.config.format);
+                if self.fg.as_ref().is_none_or(|fg| !fg.fits(size, format, false)) {
+                    self.make_fg(size, format, false);
+                }
+                match &self.fg {
+                    Some(fg) => (FrameTarget::Offscreen(fg.real().clone()), Some(t)),
+                    None => (FrameTarget::Surface(t), None),
+                }
+            }
+            other => (other, None),
+        };
+        // (and runs on it: through the presenter, or the prototype's two
+        // presents; not where the video memory refused its images)
+        let fg_linux = fg_linux && (fg_presented || fg_held.is_some());
+        if window_frame {
+            crate::dlss_fg::set_running(fg_linux);
         }
         // CPU encode time excludes waiting for the swapchain (vsync).
         let t0 = Instant::now();
@@ -10004,6 +11447,9 @@ impl Backend {
                 Some(_) => u64::from(crate::fsr::jitter_phase_count(world_size.0, post_size.0)),
                 None => 16,
             };
+            // Ray Reconstruction wants a sequence of 32 phases or more (its guide)
+            let rr_on = taa.dlss.as_ref().is_some_and(|(dlss, _)| dlss.rr_on());
+            let period = if rr_on { period.max(32) } else { period };
             let i = (self.frame_index % period) + 1;
             self.taa_jitter = glam::Vec2::new(halton(i, 2), -halton(i, 3));
             let jx = halton(i, 2) * 2.0 / world_size.0 as f32;
@@ -10714,10 +12160,13 @@ impl Backend {
         // skies without a probe ambiance, as no_post below)
         let hdr = self.settings.hdr;
         // FSR sharpens with its own RCAS: CAS on top of it turns FSR's
-        // faint sub-pixel pattern into a visible checkerboard
-        let cas = hdr && !matches!(self.settings.aa, AntiAliasing::Fsr(_));
-        let (post_sharpen, upscale_sharpen) = crate::rlva::resolution::sharpening(f.sharpen, cas, spatial_upscale);
-        let post = PostU {
+        // faint sub-pixel pattern into a visible checkerboard. DLSS has no
+        // sharpening of its own any more (NVIDIA's guide 3.11 has the
+        // viewer sharpen after it, with a setting): CAS does, as after TAA.
+        let dlss_on = self.taa.as_ref().and_then(|t| t.dlss.as_ref()).is_some_and(|(d, _)| d.on());
+        let cas = hdr && (dlss_on || !matches!(self.settings.aa, AntiAliasing::Fsr(_)));
+        let (post_sharpen, mut upscale_sharpen) = crate::rlva::resolution::sharpening(f.sharpen, cas, spatial_upscale);
+        let mut post = PostU {
             exposure: if hdr { f.exposure } else { 1.0 },
             // SMAA works on a gamma-encoded 8-bit image
             output_srgb: if self.surface_srgb && self.smaa_targets.is_none() {
@@ -11787,6 +13236,41 @@ impl Backend {
         // face in both lists writes the same depth twice)
         let n_blend = rg.blend.1 + rg.blend_under.1;
         let blend_in_ao_depth = self.blend_ao_depth && n_blend > 0 && self.targets.ao_depth.is_some();
+        // Ray Reconstruction's motion, the prepass's, before the passes
+        // below draw the blended faces into it (`RrInputs`), with no
+        // motion of their own where the impostor cards are nearer (they
+        // have no prepass): the cards' depth moves those pixels
+        if let (Some(rr), Some(motion)) = (&self.targets.rr_inputs, normals) {
+            encoder.copy_texture_to_texture(motion.texture().as_image_copy(), rr.motion.0.as_image_copy(), rr.motion.0.size());
+            if let (true, Some(still)) = (n_sprites > 0, &self.impostors.sprite_still) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("dlss rr impostor cards"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &rr.motion.1,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    // the prepass's depth, tested, not written
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.targets.depth_ss,
+                        depth_ops: None,
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.a);
+                pass.set_pipeline(still);
+                pass.set_bind_group(3, &self.impostors.bind_group, &[]);
+                pass.set_vertex_buffer(0, self.impostors.sprites.slice(..));
+                pass.draw(0..6, 0..n_sprites as u32);
+            }
+        }
         if let Some((tex, view)) = &self.targets.ao_depth {
             encoder.copy_texture_to_texture(
                 self.targets.depth_ss_tex.as_image_copy(),
@@ -11977,6 +13461,21 @@ impl Backend {
             }
             self.contact.encode(&mut encoder, t, more);
         }
+        // Ray Reconstruction denoises the traced passes itself
+        let rr_on = self
+            .taa
+            .as_ref()
+            .and_then(|taa| taa.dlss.as_ref())
+            .is_some_and(|(dlss, _)| dlss.rr_on());
+        // (the window's: an external renderer, the second camera's or an
+        // eye of VR, may draw DLSS super resolution but traces nothing
+        // (`rt_shadows::traced`), so it never draws Ray Reconstruction nor
+        // reads the raw traced passes, and its frames would undo the
+        // window's between them)
+        if !self.external {
+            crate::rt_shadows::set_raw(rr_on);
+        }
+
         // The depth the ray-traced mask is made from. Where `frame.contact.y`
         // tells a blended face solid to the eye that the mask is its own
         // (object.wgsl `contact_share`), it is the solid depth, which holds
@@ -12098,7 +13597,10 @@ impl Backend {
         // ---- FSR: the blended faces drawn over what lies behind them, even
         // faint glass, give their own depth and motion, so their edges keep
         // their history (the occlusion and the contact shadows have read
-        // that depth; GTAO those normals)
+        // that depth; GTAO those normals). Under DLSS too: its display
+        // depth is FSR's (`encode_depth`), which DOF and the other passes
+        // at the display size read; Ray Reconstruction's depth, motion and
+        // guides are its own copies, taken before (`RrInputs`)
         if let (pipe, Some((_, view)), true, true) = (
             &self.pipelines.fsr_blend_normal,
             &self.targets.ao_depth,
@@ -12480,6 +13982,7 @@ impl Backend {
         // the noise slice, the trace and the reconstruction (clouds.rs)
         let scene_samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
         let scene_gbuf = self.targets.gbuf.as_ref().map(|view| view.texture().format());
+        let scene_albedo = self.targets.albedo.is_some();
         // (until the noise is made `encode` generates it and allocates
         // nothing; after, it needs the targets made above)
         let clouds_encode = self.clouds_now || self.clouds.as_ref().is_some_and(|c| !c.ready());
@@ -12518,7 +14021,7 @@ impl Backend {
                 cloud_size,
                 still,
             );
-            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, DEPTH_FORMAT);
+            clouds.prepare(&self.device, scene_samples, scene_gbuf, scene_albedo, HDR_FORMAT, DEPTH_FORMAT);
         } else if let Some(clouds) = &mut self.clouds {
             clouds.skipped(still.is_some());
         }
@@ -12644,6 +14147,25 @@ impl Backend {
                         },
                     },
                 }));
+                if let Some(al) = &self.targets.albedo {
+                    let (av, ar) = match &self.targets.albedo_msaa {
+                        Some(m) => (m, Some(al)),
+                        None => (al, None),
+                    };
+                    atts.push(Some(wgpu::RenderPassColorAttachment {
+                        view: av,
+                        depth_slice: None,
+                        resolve_target: ar,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: if ar.is_some() {
+                                wgpu::StoreOp::Discard
+                            } else {
+                                wgpu::StoreOp::Store
+                            },
+                        },
+                    }));
+                }
             }
             // start from a prepass depth (early-z, no overdraw): the
             // single-sample one, or with MSAA the multisampled one above
@@ -12675,7 +14197,7 @@ impl Backend {
                 if self.clouds_now
                     && let Some(clouds) = &self.clouds
                 {
-                    clouds.draw(&mut pass, scene_samples, scene_gbuf);
+                    clouds.draw(&mut pass, scene_samples, scene_gbuf, scene_albedo);
                     // (the composite has its own group 0)
                     pass.set_bind_group(0, &self.groups.a, &[]);
                 }
@@ -12714,6 +14236,47 @@ impl Backend {
 
         prof.mark("scene_a");
         mark(&mut encoder, MARK_SCENE_A_END);
+        // Ray Reconstruction's depth: the surface scene pass A drew into the
+        // G-buffer, the impostor cards included, before the blended passes
+        // write theirs; then the blended faces opaque to the eye over it,
+        // into that depth and the motion, their normal marked for the
+        // guides (`RrInputs`)
+        if let Some(rr) = &self.targets.rr_inputs {
+            encoder.copy_texture_to_texture(
+                self.targets.depth_ss_tex.as_image_copy(),
+                rr.depth.0.as_image_copy(),
+                self.targets.depth_ss_tex.size(),
+            );
+            let faces = n_blend > 0 && normals.is_some() && !rr_inputs_behind();
+            if let (true, Some(rr_blend)) = (faces, &self.pipelines.rr_blend) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("dlss rr blended faces"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &rr.motion.1,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &rr.depth.1,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.a);
+                draw_sided(&mut pass, rr_blend, rg.blend, 0);
+                draw_under(&mut pass, rr_blend, rg.blend_under);
+            }
+        }
         // a cut-out photo: what shows through, from the depth the scene
         // pass ended with (cutout.rs)
         if f.cutout {
@@ -13064,6 +14627,9 @@ impl Backend {
             // sorted order)
             let history = match self.settings.aa {
                 AntiAliasing::Taa => crate::oit_stochastic::SceneHistory::Taa,
+                AntiAliasing::Fsr(_) if self.taa.as_ref().and_then(|t| t.dlss.as_ref()).is_some_and(|(d, _)| d.on()) => {
+                    crate::oit_stochastic::SceneHistory::Dlss
+                }
                 AntiAliasing::Fsr(_) => crate::oit_stochastic::SceneHistory::Fsr,
                 _ => crate::oit_stochastic::SceneHistory::None,
             };
@@ -13617,21 +15183,98 @@ impl Backend {
         // the history the TAA pass wrote; read below, once the passes are
         // recorded, through a shared borrow
         let mut taa_written = None;
+        // DLSS's frame: the encoder its inputs were drawn in and its own
+        // commands, submitted in that order with nothing between (dlss.rs)
+        let mut dlss_cmds = None;
+        // (what this frame's upscale picks: its stats say it, a skipped
+        // frame's the last one's, set at the frame's start)
+        self.dlss_drew = None;
+        stats.dlss_drawing = None;
         if let Some(taa) = &mut self.taa {
             if let Some((fsr, _)) = &mut taa.fsr {
-                // FSR 3.1 instead of the TAA pass, from the same inputs
-                fsr.encode(
-                    &self.queue,
-                    &mut encoder,
-                    &crate::fsr::FrameInputs {
-                        motion_reproj: main.motion_reproj,
-                        proj: f.proj,
-                        jitter: self.taa_jitter,
-                        reset: taa.reset || self.prev_view_proj.is_none(),
-                        motion_on: taa_motion_now(),
-                        sharpness: self.settings.fsr_sharpness,
-                    },
-                );
+                let reset = taa.reset || self.prev_view_proj.is_none();
+                let was_on = taa.dlss.as_ref().is_some_and(|(dlss, _)| dlss.on());
+                let drawn = taa.dlss.as_mut().filter(|(dlss, _)| dlss.on()).and_then(|(dlss, _)| {
+                    fsr.encode_depth(&self.queue, &mut encoder);
+                    dlss.encode(
+                        &self.queue,
+                        &mut encoder,
+                        &crate::dlss::Frame {
+                            motion_reproj: main.motion_reproj,
+                            jitter: self.taa_jitter,
+                            // a teleport or a region move: nothing of the old place is kept
+                            reset: reset || self.motion_cut,
+                            motion_on: taa_motion_now(),
+                            proj: f.proj,
+                            view: f.view,
+                            camera_pos: f.camera_pos,
+                            near: f.near,
+                            far: f.far,
+                            fov_y: f.fov_y,
+                        },
+                    )
+                });
+                // a snapshot's DLSS set aside and not asked for again:
+                // no film frame follows, and it holds its feature and
+                // textures at the photo's size
+                if self.snapshot_window.is_none() && self.dlss_aside.as_ref().is_some_and(|(_, at)| at.elapsed() > DLSS_ASIDE) {
+                    self.dlss_aside = None;
+                }
+                // a DLSS given up for this size lets go of its feature and
+                // its textures at the display size (once its frames are
+                // done, Dlss::retire): FSR draws until the targets are made
+                // again
+                // (a capture's Ray Reconstruction given up is refused for
+                // every capture, dlss.rs: the next one compiles super
+                // resolution's pipelines first, `rebuild_targets`, and the
+                // window's are left as they are; this frame is FSR's)
+                if taa.dlss.as_ref().is_some_and(|(dlss, _)| dlss.failed()) {
+                    taa.dlss = None;
+                }
+                if let Some(commands) = drawn {
+                    let inputs = std::mem::replace(
+                        &mut encoder,
+                        self.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame post") }),
+                    );
+                    dlss_cmds = Some((inputs, commands));
+                    // the scene's alpha over DLSS's, after its commands
+                    if let Some((dlss, _)) = &taa.dlss {
+                        dlss.encode_alpha(&mut encoder);
+                        self.dlss_drew = Some(if dlss.rr_on() {
+                            crate::DlssDrawing::Rr
+                        } else if dlss.dlaa() {
+                            crate::DlssDrawing::Dlaa
+                        } else {
+                            crate::DlssDrawing::Dlss
+                        });
+                        stats.dlss_drawing = self.dlss_drew;
+                    }
+                } else {
+                    // DLSS chosen at the frame's start but not drawn (its
+                    // evaluate failed, or it was given up): FSR's RCAS
+                    // sharpens this frame, so CAS chosen for DLSS above is
+                    // taken back, before the post pass is submitted
+                    if was_on && matches!(self.settings.aa, AntiAliasing::Fsr(_)) && (post.sharpen != 0.0 || upscale_sharpen != 0.0) {
+                        post.sharpen = 0.0;
+                        upscale_sharpen = 0.0;
+                        self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
+                    }
+                    // FSR 3.1 instead of the TAA pass, from the same inputs
+                    // (from nothing on the frame DLSS gave up)
+                    fsr.encode(
+                        &self.queue,
+                        &mut encoder,
+                        &crate::fsr::FrameInputs {
+                            motion_reproj: main.motion_reproj,
+                            proj: f.proj,
+                            jitter: self.taa_jitter,
+                            reset: reset || was_on,
+                            motion_on: taa_motion_now(),
+                            sharpness: self.settings.fsr_sharpness,
+                        },
+                    );
+                }
                 taa.reset = false;
             } else {
                 let w = taa.parity;
@@ -13677,8 +15320,16 @@ impl Backend {
         }
         if let Some(taa) = &self.taa {
             if let Some((fsr, fsr_post)) = &taa.fsr {
-                post_bg = fsr_post;
-                post_src = fsr.output();
+                match &taa.dlss {
+                    Some((dlss, dlss_post)) if dlss_cmds.is_some() => {
+                        post_bg = dlss_post;
+                        post_src = dlss.output();
+                    }
+                    _ => {
+                        post_bg = fsr_post;
+                        post_src = fsr.output();
+                    }
+                }
                 if let Some(depth) = fsr.display_depth() {
                     post_depth = depth;
                 }
@@ -14207,6 +15858,59 @@ impl Backend {
         let mut capture = None;
 
         prof.mark("post");
+        // ---- DLSS frame generation (dlss_fg.rs): the window's image
+        // before the interface. Only for a frame DLSS drew,
+        // and not under a modal's blur (the image before the interface is
+        // not blurred: all of it would differ, as if interface)
+        let fg_frame = (fg_held.is_some() || fg_presented) && dlss_cmds.is_some() && self.ui_blur.is_none();
+        if fg_frame {
+            if let Some(fg) = &self.fg {
+                fg.copy_hudless(&self.device, &mut encoder, &surface_view);
+            }
+            prof.mark("fg hudless");
+        } else if let Some(fg) = &mut self.fg {
+            fg.broken();
+        }
+        // Windows' frame generation: the window's image before the
+        // interface, copied as it is (same format, same size), under the
+        // same conditions
+        #[cfg(windows)]
+        let fg_hudless = match &surface_tex {
+            FrameTarget::Surface(t)
+                if fg_on
+                    && self.fg_hold == 0
+                    && dlss_cmds.is_some()
+                    && self.ui_blur.is_none()
+                    && self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) =>
+            {
+                let (size, format) = (t.texture.size(), t.texture.format());
+                let apart = crate::dlss_fg::interface_apart();
+                if self.fg_hudless.as_ref().is_none_or(|h| !h.fits(size, format, apart)) && self.fg_hudless_refused != Some(size) {
+                    // checked apart: refused, frame generation is off at
+                    // this size and the frame presents (the old image once
+                    // Streamline is through with it: `fg_hudless_drop`,
+                    // field by field as the frame's closures borrow `self`)
+                    if let Some(old) = self.fg_hudless.take() {
+                        crate::dlss::after_streamline(&self.queue, old);
+                    }
+                    let (made, refused) =
+                        crate::gpu_alloc::scoped(&self.device, || crate::dlss_fg::Interface::new(&self.device, size, format, apart));
+                    if self.memory_refused(refused) {
+                        log::warn!(
+                            "DLSS frame generation: the video memory refused the images before and of the interface: off at this size"
+                        );
+                        self.fg_hudless_refused = Some(size);
+                    } else {
+                        (self.fg_hudless, self.fg_hudless_refused) = (Some(made), None);
+                    }
+                }
+                self.fg_hudless.as_ref().is_some_and(|h| {
+                    h.copy_hudless(&mut encoder, &t.texture);
+                    true
+                })
+            }
+            _ => false,
+        };
         // ---- egui: its meshes, and what it painted for the world (name
         // tags, floating texts), which the HUD attachments cover
         let mut extra_cmds = Vec::new();
@@ -14583,9 +16287,127 @@ impl Backend {
         // for that helper to wake up, for the few commands of the last
         // encoder (finish 0.56 -> 0.51 ms, 1.9 -> 1.6 ms in the longest
         // frame of a second)
+        // ---- DLSS frame generation: the image as shown, then the frame
+        // between the last and this one, last in the frame (its commands
+        // follow the encoder's, which leaves its inputs in their layouts)
+        let mut fg_cmds = Vec::new();
+        let mut fg_generated = false;
+        let mut fg_ran = false;
+        if fg_frame
+            && let Some(fg) = &mut self.fg
+            && let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut())
+        {
+            fg.copy_back(&self.device, &mut encoder, &present_view);
+            let reset = !fg.chained(index);
+            match dlss.generate(&mut encoder, &fg.hudless, &fg.out, reset) {
+                Ok((commands, generated)) => {
+                    fg_ran = true;
+                    fg.runs += 1;
+                    fg.generated += u64::from(generated);
+                    fg_generated = generated;
+                    if fg.runs == 1 || fg.runs.is_multiple_of(600) {
+                        log::info!(
+                            "DLSS frame generation: {} runs, {} frames generated; presented {} generated, {} real; {} not taken by the presenter",
+                            fg.runs,
+                            fg.generated,
+                            fg.presented_generated,
+                            fg.presented_real,
+                            fg.not_taken
+                        );
+                        // (sl-ngx's presenter's own numbers)
+                        #[cfg(all(feature = "dlss", target_os = "linux"))]
+                        if let Some(st) = self.fg_presenter.as_ref().and_then(|p| p.stats()) {
+                            log::info!(
+                                "DLSS frame generation: the presenter took {}, skipped {}, presented {} generated and {} real, \
+                                 {} swapchains at {}x{}, copies {:.2} ms on the GPU, {:.1} ms between frames, {:.1} ms between \
+                                 the two presents, low latency {}, last error {}",
+                                st.frames_accepted,
+                                st.frames_skipped,
+                                st.generated_presented,
+                                st.real_presented,
+                                st.swapchains_made,
+                                st.width,
+                                st.height,
+                                st.copy_gpu_ms,
+                                st.interval_ms,
+                                st.present_half_ms,
+                                st.low_latency != 0,
+                                st.last_error
+                            );
+                        }
+                    }
+                    fg_cmds.push(commands);
+                }
+                Err(e) => {
+                    fg.broken();
+                    if fg.runs == 0 || fg.runs.is_multiple_of(600) {
+                        log::error!("DLSS frame generation failed after {} runs: {e}", fg.runs);
+                    }
+                }
+            }
+            prof.mark("fg");
+        }
+        // the window image of the frame's start takes the generated frame,
+        // under the real frame's interface, or the real one when none was made
+        if let (Some(held), Some(fg)) = (&fg_held, &mut self.fg) {
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("DLSS FG present"),
+            });
+            fg.present_into(&self.device, &mut encoder, &held.texture, fg_generated);
+            fg_cmds.push(encoder.finish());
+            if fg_ran {
+                fg_cmds.extend(fg.encode_dump(&self.device));
+            }
+        }
+        // with sl-ngx's presenter, the generated frame under the real
+        // frame's interface into the slot's, then both left for it to read
+        if fg_presented && let Some(fg) = &mut self.fg {
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("DLSS FG for the presenter"),
+            });
+            if fg_generated && let Some(shown) = fg.shown() {
+                fg.present_into(&self.device, &mut encoder, shown, true);
+            }
+            fg.for_presenter(&mut encoder, fg_generated);
+            fg_cmds.push(encoder.finish());
+            if fg_ran {
+                fg_cmds.extend(fg.encode_dump(&self.device));
+            }
+        }
+        // Windows' frame generation: the interface alone drawn from the
+        // frame as shown, then it and the image before the interface
+        // tagged and the present's options, after the frame's commands
+        // (off without them; its memory kept while the setting is on)
+        #[cfg(windows)]
+        let fg_interface = match (&surface_tex, &self.fg_hudless) {
+            (FrameTarget::Surface(t), Some(interface)) if fg_hudless => {
+                interface.encode_ui(&mut encoder, &t.texture);
+                Some(interface)
+            }
+            _ => None,
+        };
+        #[cfg(windows)]
+        if !self.external
+            && let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut())
+            && let Some(commands) = dlss.fg_present(
+                &mut encoder,
+                fg_interface.map(|i| i.hudless()),
+                fg_interface.and_then(|i| i.ui()),
+                fg_on,
+            )
+        {
+            fg_cmds.push(commands);
+        }
         let (pre, post, scene) = self.finishers.pair(enc_pre, encoder, move || enc_scene.finish());
         match (pre, post) {
-            (Some(pre), Some(post)) => extra_cmds.extend([pre, scene, post]),
+            (Some(pre), Some(post)) => {
+                extra_cmds.extend([pre, scene]);
+                if let Some((inputs, commands)) = dlss_cmds {
+                    extra_cmds.extend([inputs.finish(), commands]);
+                }
+                extra_cmds.push(post);
+                extra_cmds.extend(fg_cmds);
+            }
             _ => {
                 log::error!("render: a command encoder thread panicked");
                 let spent = Spent { writes, lists: draw_lists };
@@ -14615,6 +16437,12 @@ impl Backend {
             upload_cmds.into_iter().chain(extra_cmds).chain(output_transition),
         );
         self.gpu_frames.submitted(index, submission);
+        #[cfg(windows)]
+        if !self.external
+            && let Some((dlss, _)) = self.taa.as_mut().and_then(|t| t.dlss.as_mut())
+        {
+            dlss.fg_submitted();
+        }
         if self.gpu_frames.enabled {
             // the news as soon as a poll sees the frame done (the start of
             // the next frame's job): a GPU that is not the limit does not
@@ -14626,6 +16454,9 @@ impl Backend {
         self.motion_kept = self.motion_now;
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
+        if let Some(fg) = &mut self.fg {
+            fg.write_dump(&self.device);
+        }
         // (a face of a 360° capture is on the GPU, with nothing to read)
         let captured = capture.and_then(|capture| self.read_capture(capture, f.cutout));
         // a film frame's copy is submitted: its mapping can begin
@@ -14656,10 +16487,68 @@ impl Backend {
         self.part_pick.after_submit();
         prof.mark("submit");
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
-        if let FrameTarget::Surface(t) = surface_tex {
-            self.queue.present(t);
+        if fg_presented {
+            // sl-ngx's presenter: both frames, half a frame apart
+            #[cfg(all(feature = "dlss", target_os = "linux"))]
+            {
+                stats.presented = self.fg_hand_over(fg_generated);
+            }
+            prof.mark("fg hand over");
+            stats.input_ms = input_at.map(|at| at.elapsed().as_secs_f32() * 1000.0);
+        } else if let Some(held) = fg_held {
+            // DLSS frame generation: the generated frame, then the real one
+            // in a second window image (under Fifo, a refresh later)
+            self.queue.present(held);
+            if fg_generated {
+                prof.mark("fg present");
+                let second = self.surface.get_current_texture();
+                prof.mark("fg acquire");
+                match second {
+                    wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => {
+                        if let Some(fg) = &mut self.fg {
+                            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("DLSS FG present real"),
+                            });
+                            fg.present_into(&self.device, &mut encoder, &t.texture, false);
+                            crate::device_lost::submit_tracked(&self.lost, &self.queue, index, std::iter::once(encoder.finish()));
+                            fg.presented_generated += 1;
+                            fg.presented_real += 1;
+                        }
+                        self.queue.present(t);
+                    }
+                    wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost if !self.external => {
+                        self.configure_window();
+                    }
+                    _ => {}
+                }
+            } else if let Some(fg) = &mut self.fg {
+                fg.presented_real += 1;
+            }
             stats.presented = true;
             stats.input_ms = input_at.map(|at| at.elapsed().as_secs_f32() * 1000.0);
+        } else if let FrameTarget::Surface(t) = surface_tex {
+            // (Windows' frame generation: the present's markers around it,
+            // Streamline's frames made in it)
+            #[cfg(windows)]
+            let mut fg_dlss = if self.external {
+                None
+            } else {
+                self.taa.as_mut().and_then(|t| t.dlss.as_mut()).map(|(d, _)| d)
+            };
+            #[cfg(windows)]
+            if let Some(dlss) = &mut fg_dlss {
+                dlss.fg_presenting();
+            }
+            self.queue.present(t);
+            #[cfg(windows)]
+            if let Some(dlss) = fg_dlss {
+                dlss.fg_end();
+            }
+            stats.presented = true;
+            stats.input_ms = input_at.map(|at| at.elapsed().as_secs_f32() * 1000.0);
+        }
+        if window_frame {
+            self.publish_fg_status(if cfg!(windows) { fg_on } else { fg_linux });
         }
         self.lost.poll(&self.device);
         // a click answered by now goes back with this frame's result

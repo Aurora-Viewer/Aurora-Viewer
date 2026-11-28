@@ -25,6 +25,36 @@ mod cutout;
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;
 mod device_lost;
+mod dlss;
+mod dlss_fg;
+/// What the user runs to install NVIDIA's DLSS files (docs/DLSS.md).
+pub const DLSS_SETUP: &str = if cfg!(windows) { "dlss-setup.ps1" } else { "dlss-setup.sh" };
+/// Whether DLSS draws now: Preferences reads it each frame, since Streamline can
+/// refuse after the device opened for it (`DlssSupport::Failed`). Cheap
+/// once the device is open.
+pub fn dlss_support() -> DlssSupport {
+    dlss::support()
+}
+/// Tries DLSS again after Streamline refused it (Preferences' button,
+/// `DlssSupport::Failed`, or under Ray Reconstruction once refused):
+/// Streamline's start is asked again, Ray Reconstruction too, and each
+/// renderer makes its DLSS anew at its next frame. Preferences shows Ready again
+/// only once a feature is made.
+pub fn dlss_retry() {
+    dlss::retry();
+}
+/// DLSS draws in FSR's place: the setting (`RenderSettings::dlss`), unless
+/// `AURORA_DLSS` overrides it for this launch (dlss.rs). Preferences asks
+/// it too, so that its page names what draws.
+pub fn dlss_wanted(setting: bool) -> bool {
+    dlss::wanted(setting)
+}
+/// DLSS frame generation is wanted, for the setting given:
+/// `AURORA_DLSS_FG` wins over it (what `RenderSettings::frame_generation`
+/// asks), so that Preferences shows its status when the variable turns it on.
+pub fn dlss_fg_wanted(setting: bool) -> bool {
+    dlss::fg_wanted(setting)
+}
 pub use device_lost::{
     GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_drop, in_guarded_poll, in_guarded_start, in_guarded_ui_upload, is_drop_loss_panic,
     is_loss_panic, is_start_loss_panic, loss_details, start_guarded,
@@ -157,7 +187,103 @@ pub use hud::HudView;
 pub use label_depth::{WORLD_OVERLAY_NEAR_W, clip_world_line, world_label_at, world_line_at};
 pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use outside::{OutsideEvent, OutsideFrame, same_picture};
+/// The window's settings trace nothing for DLSS Ray Reconstruction
+/// (`RenderSettings::dlss_rr`) to clean up: Preferences says so when it is
+/// chosen and ready.
+pub use renderer::rr_untraced as dlss_rr_untraced;
 pub use renderer::{CASCADES, RenderError};
+
+/// DLSS frame generation can be chosen: Streamline, started on the
+/// device, supports it (Linux's sl-ngx with frame generation, Windows'
+/// Streamline with it loaded; dlss.rs).
+pub fn dlss_fg_ready() -> bool {
+    dlss::fg_ready()
+}
+/// Why DLSS frame generation cannot be chosen, when Streamline said why
+/// (dlss.rs): what Preferences says under it. None while it can, and in a
+/// build or start where Streamline was not asked.
+pub fn dlss_fg_unavailable() -> Option<DlssFgUnavailable> {
+    dlss::fg_unavailable()
+}
+/// The DLSS frame generation setting as the renderer is about to be made
+/// (before `Renderer::new`): on Windows, Streamline loads frame generation
+/// at its start only when it is wanted then.
+pub fn dlss_fg_at_start(setting: bool) {
+    dlss::set_fg_at_start(setting);
+}
+/// The DLSS frame generation setting `setting` takes effect only after a
+/// restart: on Windows, Streamline loaded frame generation, or not, at its
+/// start.
+pub fn dlss_fg_restart(setting: bool) -> bool {
+    dlss::fg_restart(setting)
+}
+/// DLSS frame generation runs in the window, under Fifo: the frame cap
+/// stands aside (dlss_fg.rs; Linux only, Windows' Streamline paces its
+/// own presents).
+pub use dlss_fg::running as dlss_fg_running;
+/// DLSS frame generation as it runs in the window, over the last second:
+/// what shows its frames, Reflex, frames shown per frame drawn and both
+/// rates (dlss_fg.rs), for Preferences.
+pub use dlss_fg::{
+    FgHeld as DlssFgHeld, FgRefusal as DlssFgRefusal, FgShown as DlssFgShown, FgStatus as DlssFgStatus, status as dlss_fg_status,
+};
+
+/// The DLSS folder's sl-ngx against this viewer's (Linux; dlss.rs): one
+/// built for another viewer version is updated in the background at the
+/// start, and used from the next.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DlssUpdate {
+    /// nothing to say: the folder has this viewer's sl-ngx, or no DLSS
+    None,
+    /// being built now
+    Running,
+    /// built: used from the next start
+    Done,
+    /// NVIDIA's licence changed since the install: the setup script, run
+    /// by hand, shows it
+    Licence,
+    /// not updated, with the script's last line or why it did not run
+    Failed(String),
+}
+
+/// sl-ngx's update for this viewer, for Preferences.
+pub fn dlss_update() -> DlssUpdate {
+    #[cfg(all(feature = "dlss", target_os = "linux"))]
+    {
+        use dlss::update::State;
+        match dlss::update::state() {
+            State::Unknown | State::Current => DlssUpdate::None,
+            State::Running => DlssUpdate::Running,
+            State::Done(_) => DlssUpdate::Done,
+            State::Licence => DlssUpdate::Licence,
+            State::Failed(why) => DlssUpdate::Failed(why),
+        }
+    }
+    #[cfg(not(all(feature = "dlss", target_os = "linux")))]
+    DlssUpdate::None
+}
+/// DLSS Ray Reconstruction can be chosen: the device was opened with its
+/// extensions and Streamline did not refuse it (dlss.rs).
+pub fn dlss_rr_ready() -> bool {
+    dlss::rr_ready()
+}
+/// The device was opened with DLSS Ray Reconstruction's extensions
+/// (dlss.rs).
+pub fn dlss_rr_device() -> bool {
+    dlss::rr_device()
+}
+/// Streamline offered DLSS Ray Reconstruction on this device, then refused it (its
+/// feature, or the video memory): [`dlss_retry`] asks again. Unlike Streamline
+/// saying it is not available there, which no retry changes (dlss.rs).
+pub fn dlss_rr_refused() -> bool {
+    dlss::rr_refused_here()
+}
+/// DLSS Ray Reconstruction refused for a photo or film frame on this device:
+/// the captures draw super resolution, the window keeps it, until
+/// [`dlss_retry`], another model or the next device (dlss.rs).
+pub fn dlss_rr_snapshot_refused() -> bool {
+    dlss::snapshot_rr_refused_here()
+}
 // What a tile of a photo draws around what it keeps for the soft shadows.
 pub use soft_shadows::tile_reach as soft_shadow_tile_reach;
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
@@ -254,6 +380,16 @@ mod shader_tests {
         if let Err(e) = v.validate(&module) {
             panic!("{}", e.emit_to_string(src));
         }
+    }
+
+    #[test]
+    fn dlss_fg_mix_shader_is_valid() {
+        validate(include_str!("shaders/dlss_fg_mix.wgsl"));
+    }
+
+    #[test]
+    fn dlss_fg_ui_shader_is_valid() {
+        validate(include_str!("shaders/dlss_fg_ui.wgsl"));
     }
 
     #[test]

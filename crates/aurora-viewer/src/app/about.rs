@@ -201,10 +201,7 @@ impl App {
                 None => vec![Row::key("about-os", "about-reading")],
             },
         });
-        let aa = ["none", "FXAA", "MSAA 2x", "MSAA 4x", "MSAA 8x", "TAA", "SMAA", "FSR 3.1"]
-            .get(s.antialiasing as usize)
-            .copied()
-            .unwrap_or("?");
+        let aa = aa_name(s.antialiasing, renderer.dlss_drawing());
         sections.push(Section {
             icon: "photo-filled",
             title: "about-section-graphics",
@@ -295,6 +292,22 @@ impl App {
 /// out, the server version kept (LLAppViewer::getViewerInfo with
 /// AboutPositionRLVShowLoc, indra/newview/llappviewer.cpp: "You are in
 /// [REGION]").
+/// The anti-aliasing a frame is drawn with, for Help › About and the
+/// Dev Toolbox: the setting's, except FSR 3.1's place taken by DLSS, which
+/// the setting cannot tell from the FSR that stands in for a DLSS that
+/// failed or is still being made (`Renderer::dlss_drawing`).
+pub(super) fn aa_name(antialiasing: u8, dlss: Option<aurora_render::DlssDrawing>) -> &'static str {
+    match (antialiasing, dlss) {
+        (7, Some(aurora_render::DlssDrawing::Dlss)) => "NVIDIA DLSS",
+        (7, Some(aurora_render::DlssDrawing::Dlaa)) => "NVIDIA DLAA",
+        (7, Some(aurora_render::DlssDrawing::Rr)) => "NVIDIA DLSS Ray Reconstruction",
+        _ => ["none", "FXAA", "MSAA 2x", "MSAA 4x", "MSAA 8x", "TAA", "SMAA", "FSR 3.1"]
+            .get(antialiasing as usize)
+            .copied()
+            .unwrap_or("?"),
+    }
+}
+
 pub(super) fn place_rows(hidden: bool, region: &str, at: glam::Vec3) -> Vec<Row> {
     if hidden {
         return vec![Row::key("about-region", "rlva-hidden-region")];

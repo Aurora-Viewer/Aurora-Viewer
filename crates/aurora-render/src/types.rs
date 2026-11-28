@@ -1407,6 +1407,138 @@ pub enum RayTracingSupport {
     Unsupported,
 }
 
+/// The model DLSS draws with (NVIDIA's render presets, Streamline's
+/// `sl::DLSSPreset`): NVIDIA's own choice per mode by
+/// default (K for DLAA, Quality and Balanced, M for Performance, L for
+/// Ultra Performance in SDK 310.6), which a driver update may change; a
+/// named one is pinned in every mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DlssModel {
+    #[default]
+    Default,
+    /// Preset K: the best image of the lighter models.
+    K,
+    /// Preset L: sharper and steadier, at a higher cost (RTX 40 and later).
+    L,
+    /// Preset M: close to L's image at nearer K's cost (RTX 40 and later).
+    M,
+}
+
+impl DlssModel {
+    /// Its `sl::DLSSPreset` value.
+    pub fn preset(self) -> u32 {
+        match self {
+            DlssModel::Default => 0,
+            DlssModel::K => 11,
+            DlssModel::L => 12,
+            DlssModel::M => 13,
+        }
+    }
+}
+
+/// The model DLSS Ray Reconstruction draws with (`RenderSettings::dlss_rr`;
+/// NVIDIA's `NVSDK_NGX_RayReconstruction_Hint_Render_Preset`
+/// in `nvsdk_ngx_defs_dlssd.h`): NVIDIA's own choice by default, F (RR 2)
+/// with driver 310.9.0 (DLSS's on-screen indicator); D
+/// and E are the first transformer models, E the one for a depth-of-field
+/// guide, which Aurora does not give it (its depth of field comes after the
+/// upscale). A, B and C were removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DlssRrModel {
+    #[default]
+    Default,
+    D,
+    E,
+    F,
+}
+
+impl DlssRrModel {
+    /// Its `NVSDK_NGX_RayReconstruction_Hint_Render_Preset` value.
+    pub fn preset(self) -> u32 {
+        match self {
+            DlssRrModel::Default => 0,
+            DlssRrModel::D => 4,
+            DlssRrModel::E => 5,
+            DlssRrModel::F => 6,
+        }
+    }
+}
+
+/// Whether DLSS can draw: what Preferences › Graphics › FSR shows of it.
+/// DLSS is in builds with the `dlss` feature only, from files the user
+/// adds (`dlss.rs`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DlssSupport {
+    /// The device was opened with the DLSS extensions: the setting applies at
+    /// once.
+    Ready,
+    /// `AURORA_DLSS=0` kept Streamline out for this run.
+    Off,
+    /// The user's files are there and the device was opened without Streamline
+    /// (not an NVIDIA card, or the driver refused it): the log says why.
+    NoDevice,
+    /// The user's files are not in the folder (`GpuInfo::dlss_folder`).
+    NoFiles,
+    /// The device was opened for DLSS, but Streamline would not start, make DLSS
+    /// or evaluate it: FSR draws, and the log says why. Changes while the
+    /// viewer runs ([`crate::dlss_support`]); Preferences' button tries
+    /// again ([`crate::dlss_retry`]).
+    Failed,
+    /// The user's files are there, but the VR headset's device was opened
+    /// without the DLSS extensions (Streamline's query failed for it): FSR draws
+    /// while the headset owns the device, and the log says why.
+    Vr,
+    /// The user's files are there, but the device was opened after a
+    /// device loss without Streamline: Streamline was still busy on the lost device, in
+    /// a call that had not returned, and is not called beside it; or a
+    /// render thread was left behind in a GPU call, its DLSS kept (for the
+    /// rest of the run). FSR draws until the viewer restarts (or, after a
+    /// loss, another device opens). On Windows also after a loss that left
+    /// Streamline started on the lost device: the next device opens with the
+    /// extensions, but DLSS stays off until the viewer restarts.
+    Busy,
+    /// A build without the `dlss` feature.
+    #[default]
+    NotBuilt,
+}
+
+/// Why Streamline said DLSS frame generation cannot run on this device
+/// (`slIsFeatureSupported`, and on Windows Reflex): what Preferences says
+/// under the setting in place of a reason it cannot know
+/// ([`crate::dlss_fg_unavailable`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DlssFgUnavailable {
+    /// Windows' hardware-accelerated GPU scheduling is off
+    /// (`eErrorOSDisabledHWS`).
+    GpuSchedulingOff,
+    /// Windows is older than 10 20H1 (`eErrorOSOutOfDate`).
+    WindowsOutOfDate,
+    /// The NVIDIA driver is too old for it (`eErrorDriverOutOfDate`).
+    DriverOutOfDate,
+    /// The DLSS folder has no frame generation library, or it would not
+    /// load (`eErrorFeatureMissing`, `eErrorFeatureFailedToLoad`).
+    FilesMissing,
+    /// The graphics card has no frame generation
+    /// (`eErrorAdapterNotSupported`, `eErrorFeatureNotSupported`).
+    Card,
+    /// Any other answer: its `sl::Result` name, for the user to pass on.
+    Other(&'static str),
+}
+
+/// What drew a frame in FSR's place ([`RenderStats::dlss_drawing`]): the
+/// setting still says FSR 3.1 (DLSS is a choice inside it, and FSR draws
+/// whenever DLSS cannot), so the reports name what drew instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DlssDrawing {
+    /// DLSS super resolution, from a smaller render size.
+    Dlss,
+    /// DLAA: DLSS at the display size (render scale 100 %).
+    Dlaa,
+    /// DLSS Ray Reconstruction, at any render size: it also denoises the
+    /// traced lighting.
+    Rr,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderSettings {
     /// Requested per-eye XR size, bounded by runtime limits.
@@ -1419,6 +1551,20 @@ pub struct RenderSettings {
     pub aa: AntiAliasing,
     /// With FSR: RCAS's strength (0..1), none without RCAS.
     pub fsr_sharpness: Option<f32>,
+    /// With FSR: NVIDIA DLSS draws the upscaled frame in FSR's place, when
+    /// the device was opened for it (`DlssSupport::Ready`).
+    pub dlss: bool,
+    /// With DLSS: its Ray Reconstruction denoises the ray-traced light in
+    /// the renderer's place, from guides the scene pass draws
+    /// ([`Self::rr_guides`]).
+    pub dlss_rr: bool,
+    /// With DLSS: its frame generation shows a frame made between each two
+    /// drawn, paced by the screen ([`Self::frame_generation`]).
+    pub dlss_fg: bool,
+    /// The model DLSS draws with.
+    pub dlss_model: DlssModel,
+    /// The model Ray Reconstruction draws with, when it draws.
+    pub dlss_rr_model: DlssRrModel,
     pub tonemapper: Tonemapper,
     /// "HDR and Emissive" (RenderDisableVintageMode, which drives
     /// RenderHDREnabled and RenderEnableEmissiveBuffer). Off, the Legacy
@@ -1483,9 +1629,37 @@ pub struct RenderSettings {
 }
 
 impl RenderSettings {
-    /// The frame draws the G-buffer (normal, roughness, metallic).
+    /// The frame draws the G-buffer (normal, roughness, metallic) for SSR
+    /// or the rain; the renderer draws it for Ray Reconstruction's guides
+    /// too (renderer.rs, `rr_wanted`).
     pub fn gbuffer(&self) -> bool {
         self.ssr || self.rain_surfaces
+    }
+
+    /// DLSS Ray Reconstruction is asked for (`dlss_rr`, unless
+    /// `AURORA_DLSS_RR` says otherwise): DLSS draws the FSR frames on a
+    /// device opened with Ray Reconstruction's extensions. The renderer
+    /// draws its guides, the G-buffer with a base colour beside it, when Streamline
+    /// has not refused it and something is traced (renderer.rs,
+    /// `rr_wanted`); super resolution draws otherwise.
+    pub fn rr_guides(&self) -> bool {
+        matches!(self.aa, AntiAliasing::Fsr(_))
+            && crate::dlss::wanted(self.dlss)
+            && crate::dlss::rr_wanted(self.dlss_rr)
+            && crate::dlss::rr_device()
+    }
+
+    /// DLSS frame generation runs (`dlss_fg`, unless `AURORA_DLSS_FG` says
+    /// otherwise): DLSS draws the FSR frames and Streamline, started on the
+    /// device, supports it. On Linux (sl-ngx, a prototype) the renderer
+    /// draws the frame aside and presents two, under Fifo (dlss_fg.rs); on
+    /// Windows Streamline, which loaded it at its start, makes the frames
+    /// at the present (dlss.rs, `Dlss::fg_present`).
+    pub fn frame_generation(&self) -> bool {
+        matches!(self.aa, AntiAliasing::Fsr(_))
+            && crate::dlss::wanted(self.dlss)
+            && crate::dlss::fg_wanted(self.dlss_fg)
+            && crate::dlss::fg_ready()
     }
 }
 
@@ -1501,6 +1675,11 @@ impl Default for RenderSettings {
             // for, not the viewer's default (SMAA, in its own settings)
             aa: AntiAliasing::Msaa(4),
             fsr_sharpness: Some(0.8),
+            dlss: false,
+            dlss_rr: false,
+            dlss_fg: false,
+            dlss_model: DlssModel::Default,
+            dlss_rr_model: DlssRrModel::Default,
             tonemapper: Tonemapper::KhronosNeutral,
             hdr: true,
             shadow_resolution: 2048,
@@ -1948,6 +2127,11 @@ pub struct FrameParams {
     pub photo_scale: f32,
     /// The whole photo's depth around the tiles (`PhotoContext`).
     pub photo_context: PhotoContext,
+    /// A photo is being drawn in parts (the viewer's photo job, from its
+    /// first part asked to its last taken), the frames between its parts
+    /// included: the renderer keeps the pipelines and the captures'
+    /// Ray Reconstruction state it began with until it is over.
+    pub photo_job: bool,
     pub camera_pos: Vec3,
     pub near: f32,
     pub far: f32,
@@ -2257,6 +2441,11 @@ pub struct RenderStats {
     /// Aurora Weather: snow lies on the ground (local or the region's), as
     /// the footprints' map and the snow cover read it.
     pub snow_lying: bool,
+    /// DLSS drew this frame (a skipped frame: the last one that reached
+    /// the upscale), and in which mode; None when FSR or another
+    /// anti-aliasing did (the setting alone cannot tell: FSR stands in
+    /// for a DLSS that failed or is still being made).
+    pub dlss_drawing: Option<DlssDrawing>,
     pub draws: u32,
     pub shadow_draws: u32,
     pub shadow: ShadowStats,

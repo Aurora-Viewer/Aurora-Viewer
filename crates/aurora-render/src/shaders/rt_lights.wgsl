@@ -118,6 +118,9 @@ struct Params {
     // the ray tracing quality's candidates and neighbours (`candidates`,
     // `neighbours`).
     tuning: vec4<f32>,
+    // x: the most frames the history averages, 0 for HISTORY's (1 under
+    // DLSS Ray Reconstruction's raw passes, which average them itself)
+    history: vec4<f32>,
 };
 
 // Candidates a pixel draws among the lights reaching it, at most, and
@@ -963,6 +966,9 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         if (light_changed(world)) {
             kept = min(kept, params.changes.z);
+        }
+        if (params.history.x > 0.0) {
+            kept = min(kept, params.history.x);
         }
         frames = min(h.a + 1.0, kept);
         var was_share = h.r;

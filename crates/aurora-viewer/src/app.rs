@@ -11787,6 +11787,7 @@ impl App {
         let photo_tile = photo.as_ref().map_or(glam::Mat4::IDENTITY, |f| f.tile);
         let photo_scale = photo.as_ref().map_or(1.0, |f| f.scale);
         let photo_context = photo.as_ref().map_or(aurora_render::PhotoContext::None, |f| f.context);
+        let photo_job = self.photo_job_open();
         let lod_height = photo.as_ref().map_or(h, |f| f.height);
         let frame_proj = |camera: &crate::camera::Camera| match &photo {
             // (a 360° snapshot's face: 90° high and wide, whatever the window)
@@ -13128,6 +13129,14 @@ impl App {
             env.sun_dir = sun;
         }
         self.options_ui.sky_tone_mapped = !env.sky.no_post;
+        // DLSS that Streamline refused after the device opened for it: FSR draws,
+        // and Preferences says so (the other states are fixed at the start)
+        if matches!(
+            self.options_ui.dlss,
+            aurora_render::DlssSupport::Ready | aurora_render::DlssSupport::Failed
+        ) {
+            self.options_ui.dlss = aurora_render::dlss_support();
+        }
         if in_world {
             // what the sky source is: region, day cycle, altitude track, preset
             let key = {
@@ -13438,6 +13447,7 @@ impl App {
             photo_tile,
             photo_scale,
             photo_context,
+            photo_job,
             camera_pos: render_eye,
             near: if studio_view.is_some() {
                 crate::avatar_studio::NEAR
@@ -14589,6 +14599,8 @@ impl App {
         self.screen_rate.poll(&gfx.window, Instant::now());
         let monitor_hz = self.screen_rate.hz();
         let timed = self.capture.is_some() || self.frame_profile.enabled();
+        gfx.renderer
+            .set_frame_generation_allowed(frame_generation_allowed(self.in_front(), timed));
         let cap = frame_cap(
             &self.settings,
             self.in_front(),
@@ -26950,12 +26962,54 @@ fn frame_cap(
     timed: bool,
     fps_limit: Option<u32>,
 ) -> f32 {
+    frame_cap_paced(
+        s,
+        aurora_render::dlss_fg_running(),
+        focused,
+        headset_engaged,
+        in_world,
+        monitor_hz,
+        timed,
+        fps_limit,
+    )
+}
+
+/// DLSS frame generation runs only while the viewer is in front (its window
+/// or one of its windows outside has the focus), or for a timed run (a
+/// capture, `AURORA_PROFILE`), which may stand behind. Left running behind
+/// another workspace, under Fifo, the window's first images once it was in
+/// front again waited up to 1 s each: the window froze for up to 11 s on
+/// 4 of 10 returns, against 0 of 13 with it stopped behind.
+fn frame_generation_allowed(in_front: bool, timed: bool) -> bool {
+    in_front || timed
+}
+
+/// [`frame_cap`] with DLSS frame generation running or not (`fg_paced`).
+#[allow(clippy::too_many_arguments)]
+fn frame_cap_paced(
+    s: &Settings,
+    fg_paced: bool,
+    focused: bool,
+    headset_engaged: bool,
+    in_world: bool,
+    monitor_hz: f32,
+    timed: bool,
+    fps_limit: Option<u32>,
+) -> f32 {
     // The OpenXR frame waiter paces VR. Desktop foreground/background limits
     // must not throttle simulation while the headset is presenting.
     if headset_engaged {
         return fps_limit.map_or(0.0, |limit| limit as f32);
     }
-    let mut cap = if s.fps_cap { s.fps_limit as f32 } else { f32::INFINITY };
+    // DLSS frame generation presents two frames for each drawn, under
+    // Fifo: the screen paces them, and the user's limit would only break
+    // the pairs (aurora-render dlss_fg.rs). The background, test and
+    // out-of-world limits still apply.
+    let mut cap = if s.fps_cap && !fg_paced {
+        s.fps_limit as f32
+    } else {
+        f32::INFINITY
+    };
     if let Some(limit) = fps_limit {
         cap = cap.min(limit as f32);
     }
@@ -27162,7 +27216,8 @@ pub fn restart_with_vr(mode: crate::camera::VrView) {
 #[cfg(test)]
 mod tests {
     use super::{
-        RightGesture, UiActions, WindowedGeometry, capture_files, exit_prompt_key, exit_prompt_modifiers, frame_cap, fullscreen_shortcut,
+        RightGesture, UiActions, WindowedGeometry, capture_files, exit_prompt_key, exit_prompt_modifiers, frame_cap, frame_cap_paced,
+        frame_generation_allowed, fullscreen_shortcut,
     };
     use crate::keybinds::Mods;
     use crate::settings::Settings;
@@ -27726,6 +27781,31 @@ mod tests {
         assert_eq!(frame_cap(&settings, false, true, true, 60.0, false, None), 0.0);
         assert_eq!(frame_cap(&settings, false, false, true, 60.0, false, None), 15.0);
         assert_eq!(frame_cap(&settings, false, true, true, 60.0, false, Some(120)), 120.0);
+    }
+
+    #[test]
+    fn frame_generation_waits_for_the_window_in_front() {
+        assert!(frame_generation_allowed(true, false));
+        assert!(!frame_generation_allowed(false, false), "behind: stopped");
+        assert!(frame_generation_allowed(false, true), "a timed run behind keeps it");
+    }
+
+    #[test]
+    fn frame_generation_sets_the_user_cap_aside() {
+        let capped = Settings {
+            fps_cap: true,
+            fps_limit: 90,
+            background_fps_cap: true,
+            background_fps_limit: 15,
+            ..Settings::default()
+        };
+        // in front, in world: the screen paces the pairs, no cap
+        assert_eq!(frame_cap_paced(&capped, true, true, false, true, 144.0, false, None), 0.0);
+        assert_eq!(frame_cap_paced(&capped, false, true, false, true, 144.0, false, None), 90.0);
+        // the background, out-of-world and process caps stay
+        assert_eq!(frame_cap_paced(&capped, true, false, false, true, 144.0, false, None), 15.0);
+        assert_eq!(frame_cap_paced(&capped, true, true, false, false, 144.0, false, None), 144.0);
+        assert_eq!(frame_cap_paced(&capped, true, true, false, true, 144.0, false, Some(60)), 60.0);
     }
 
     #[test]

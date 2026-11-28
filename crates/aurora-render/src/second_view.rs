@@ -155,6 +155,7 @@ pub(crate) fn packet(main: &FramePacket, job: &SecondViewJob) -> FramePacket {
     params.photo_tile = Mat4::IDENTITY;
     params.photo_scale = 1.0;
     params.photo_context = crate::types::PhotoContext::None;
+    params.photo_job = false;
     params.part_pick = None;
     // focused for the window's camera
     params.dof = None;
@@ -175,6 +176,7 @@ pub(crate) fn packet(main: &FramePacket, job: &SecondViewJob) -> FramePacket {
             width,
             height,
             vsync: main.surface.vsync,
+            fg_allowed: main.surface.fg_allowed,
         },
         settings: main.settings,
         hover: None,

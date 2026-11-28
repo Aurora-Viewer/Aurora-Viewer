@@ -151,6 +151,8 @@ ui-options-synchronizes-frames-with-the-monitor-refresh-rate-no-tearing = Synchr
 
 ui-options-blend-order-help = Standard sorts the transparent surfaces object by object, as the Legacy Viewer does: surfaces that cross or sit inside one another can show in the wrong order. Exact composes them in their true order at each pixel, whatever the object, for more GPU time and video memory. Its levels set how faint a layer must be to be mixed with its neighbours instead of placed one by one: Full places every layer, Fast costs the least. Stochastic estimates that order from 8 random samples per pixel averaged over the frames: close to Exact when still, with a faint grain and a softer image in motion; the only one of the two that also works with MSAA. Standard is used in place of Exact with MSAA
 
+ui-options-dlss-update-licence = sl-ngx was not updated: NVIDIA's DLSS licence changed since it was installed. Run { $script } to read it and update.
+
 ui-options-colored-sky-ambient = Coloured sky ambient
 
 ui-options-colored-sky-ambient-help = Lights with the sky's ambient colour at full strength, as the first PBR viewers did, instead of a softened ambient that linear and HDR skies turn grey: warm or tinted skies colour the interiors again. Classic skies keep their colour either way and only get a little brighter. Differs from the Legacy Viewer

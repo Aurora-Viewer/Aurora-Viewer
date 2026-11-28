@@ -2164,6 +2164,8 @@ pub(crate) mod tests {
             notice: None,
             vulkan: None,
             ray_tracing: Default::default(),
+            dlss: Default::default(),
+            dlss_folder: None,
         };
         let input = egui::RawInput {
             screen_rect: Some(screen),

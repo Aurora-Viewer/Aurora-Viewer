@@ -3,7 +3,7 @@
 //! reflections and Aurora's water, the image (anti-aliasing, tone mapping,
 //! depth of field), smoothness, parcel visibility and ray tracing.
 
-use super::super::cx::{Custom, Cx, Nothing, field};
+use super::super::cx::{Custom, Cx, Nothing, field, fields};
 use super::super::{COMBO_W, blend_order_choice, blend_precisions, preset_choice, stepped, toggle};
 use egui::RichText;
 
@@ -312,6 +312,130 @@ fn ray_tracing(cx: &mut Cx) {
             );
         });
     });
+}
+
+/// Why NVIDIA DLSS (aurora-render's dlss.rs) cannot be chosen: `None` in a
+/// build without the `dlss` feature (off by default),
+/// `Some(None)` when it draws, `Some(Some(reason))` when it does not: the
+/// user's files not installed, the device not opened for them, or NVIDIA's
+/// library refusing it while the viewer runs (the one reason that still
+/// lets DLSS be chosen, `dlss_choosable`).
+fn dlss_blocked(cx: &Cx) -> Option<Option<String>> {
+    use aurora_i18n::tr;
+    use aurora_render::DlssSupport as Support;
+    Some(match cx.st.dlss {
+        Support::NotBuilt => return None,
+        Support::Ready => None,
+        Support::Off => Some(tr!("ui-options-dlss-off").to_string()),
+        Support::NoDevice => Some(tr!("ui-options-dlss-no-device").to_string()),
+        Support::Failed => Some(tr!("ui-options-dlss-failed").to_string()),
+        Support::Vr => Some(tr!("ui-options-dlss-vr").to_string()),
+        Support::Busy => Some(tr!("ui-options-dlss-busy").to_string()),
+        Support::NoFiles => Some(tr!(
+            "ui-options-dlss-no-files",
+            folder = cx.st.dlss_folder.clone().unwrap_or_default(),
+            setup = aurora_render::DLSS_SETUP
+        )),
+    })
+}
+
+/// DLSS can be chosen: the device was opened for it. After NVIDIA's
+/// library refused it, it stays chosen while FSR draws, the note says why,
+/// and the button under the note tries again (`anti_aliasing`).
+fn dlss_choosable(cx: &Cx) -> bool {
+    matches!(cx.st.dlss, aurora_render::DlssSupport::Ready | aurora_render::DlssSupport::Failed)
+}
+
+/// The anti-aliasing list. NVIDIA DLSS, where the build has it, is its own
+/// choice but is kept in the settings file as FSR (7) with `dlss` on: DLSS
+/// takes FSR's place in the renderer, and a build without it, sharing the
+/// settings folder, then reads FSR rather than a value it does not know.
+fn anti_aliasing(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    const DLSS: u8 = 8;
+    let label = tr!("ui-options-anti-aliasing");
+    let hint = tr!("ui-options-msaa-sharp-but-costly-fxaa-lightweight-smaa-lightweight-and");
+    let none = tr!("common-none");
+    let base: [(u8, &str); 8] = [
+        (0, none),
+        (1, "FXAA"),
+        (2, "MSAA 2×"),
+        (3, "MSAA 4×"),
+        (4, "MSAA 8×"),
+        (5, "TAA"),
+        (6, "SMAA"),
+        (7, "FSR 3.1"),
+    ];
+    let Some(blocked) = dlss_blocked(cx) else {
+        // (a build without DLSS: an anti-aliasing chosen here ends the
+        // DLSS a DLSS build saved as FSR with `dlss` on, which that build
+        // would otherwise pick again; the page only opened keeps it)
+        let words: Vec<&str> = base.iter().map(|(_, l)| *l).collect();
+        cx.keywords(&words.join(" "));
+        cx.row(label, hint, &fields!(antialiasing, dlss), |ui, s| {
+            let changed = crate::ui::options::combo(ui, &mut s.antialiasing, &base);
+            if changed {
+                s.dlss = false;
+            }
+            changed
+        });
+        return;
+    };
+    let mut choices: Vec<(u8, &str, Option<&str>)> = base.iter().map(|&(v, l)| (v, l, None)).collect();
+    let greyed = if dlss_choosable(cx) { None } else { blocked.as_deref() };
+    let name = tr!("ui-options-dlss");
+    choices.push((DLSS, name, greyed));
+    let words: Vec<&str> = choices.iter().map(|(_, l, _)| *l).collect();
+    cx.keywords(&words.join(" "));
+    cx.row(label, hint, &fields!(antialiasing, dlss), |ui, s| {
+        // (`AURORA_DLSS` for a test overrides the setting: the list shows
+        // what draws, aurora_render::dlss_wanted)
+        let mut v = if s.antialiasing == 7 && aurora_render::dlss_wanted(s.dlss) {
+            DLSS
+        } else {
+            s.antialiasing
+        };
+        let changed = crate::ui::options::combo_blocked(ui, &mut v, &choices);
+        if changed {
+            (s.antialiasing, s.dlss) = if v == DLSS { (7, true) } else { (v, false) };
+        }
+        changed
+    });
+    // (DLSS saved but kept out by `AURORA_DLSS=0`: the list shows FSR, which
+    // draws, and the note still says why)
+    if let Some(why) = &blocked
+        && cx.s.antialiasing == 7
+        && (cx.s.dlss || aurora_render::dlss_wanted(cx.s.dlss))
+    {
+        cx.note(&tr!("ui-options-dlss-fallback", why = why.as_str()));
+        // NVIDIA's library refused it while the viewer runs: asked again
+        // on demand (a refused start is not asked again by itself,
+        // aurora-render's dlss.rs)
+        if cx.st.dlss == aurora_render::DlssSupport::Failed {
+            let p = cx.p;
+            cx.row_with(
+                tr!("ui-options-dlss-retry"),
+                tr!("ui-options-dlss-retry-help"),
+                &Nothing,
+                |ui, _, _, _| {
+                    use crate::ui::widgets::{ActionKind, action_button};
+                    if action_button(
+                        ui,
+                        &p,
+                        "refresh",
+                        tr!("ui-options-dlss-retry-button"),
+                        ActionKind::Flat,
+                        egui::Vec2::new(0.0, 24.0),
+                    )
+                    .clicked()
+                    {
+                        aurora_render::dlss_retry();
+                    }
+                    false
+                },
+            );
+        }
+    }
 }
 
 fn graphics_card(cx: &mut Cx) {
@@ -1110,21 +1234,7 @@ fn reflections_and_water(cx: &mut Cx) {
 fn image(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-anti-aliasing"), |cx| {
-        cx.combo(
-            tr!("ui-options-anti-aliasing"),
-            tr!("ui-options-msaa-sharp-but-costly-fxaa-lightweight-smaa-lightweight-and"),
-            &field!(antialiasing),
-            &[
-                (0, tr!("common-none")),
-                (1, "FXAA"),
-                (2, "MSAA 2×"),
-                (3, "MSAA 4×"),
-                (4, "MSAA 8×"),
-                (5, "TAA"),
-                (6, "SMAA"),
-                (7, "FSR 3.1"),
-            ],
-        );
+        anti_aliasing(cx);
         cx.toggle(
             tr!("ui-options-specular-aa"),
             tr!("ui-options-specular-aa-help"),
@@ -1151,29 +1261,211 @@ fn image(cx: &mut Cx) {
         );
     });
     // FSR's own settings (aurora_render fsr.rs), greyed under another
-    // anti-aliasing
-    cx.group(tr!("ui-options-fsr"), |cx| {
-        cx.note(tr!("ui-options-fsr-note"));
+    // anti-aliasing; DLSS's under its own name, where it draws instead
+    // (chosen and choosable: also while NVIDIA's library refuses it, so
+    // that its model can still be picked and the retry finds it; only the
+    // CAS below asks whether DLSS really draws)
+    let dlss = cx.s.antialiasing == 7 && aurora_render::dlss_wanted(cx.s.dlss) && dlss_choosable(cx);
+    let dlss_draws = dlss && matches!(dlss_blocked(cx), Some(None));
+    let title = if dlss { tr!("ui-options-dlss") } else { tr!("ui-options-fsr") };
+    cx.group(title, |cx| {
+        cx.note(if dlss {
+            tr!("ui-options-dlss-note")
+        } else {
+            tr!("ui-options-fsr-note")
+        });
         cx.greyed(cx.s.antialiasing != 7);
         cx.combo(
-            tr!("ui-options-fsr-quality"),
-            tr!("ui-options-fsr-quality-help"),
+            if dlss {
+                tr!("ui-options-dlss-quality")
+            } else {
+                tr!("ui-options-fsr-quality")
+            },
+            if dlss {
+                tr!("ui-options-dlss-quality-help")
+            } else {
+                tr!("ui-options-fsr-quality-help")
+            },
             &field!(fsr_quality),
             &[
-                (0, tr!("ui-options-fsr-native-aa")),
+                (
+                    0,
+                    if dlss {
+                        tr!("ui-options-dlss-dlaa")
+                    } else {
+                        tr!("ui-options-fsr-native-aa")
+                    },
+                ),
                 (1, tr!("ui-options-fsr-quality-mode")),
                 (2, tr!("ui-options-fsr-balanced")),
                 (3, tr!("ui-options-fsr-performance")),
                 (4, tr!("ui-options-fsr-ultra-performance")),
             ],
         );
-        cx.slider(
-            tr!("ui-options-fsr-sharpness"),
-            tr!("ui-options-fsr-sharpness-help"),
-            &field!(fsr_sharpness),
-            0..=100,
-            "%",
-        );
+        // DLSS's model (NVIDIA's render presets, dlss.rs)
+        cx.conditional(dlss, |cx| {
+            cx.combo(
+                tr!("ui-options-dlss-model"),
+                tr!("ui-options-dlss-model-help"),
+                &field!(dlss_model),
+                &[
+                    (0, tr!("ui-options-dlss-model-auto")),
+                    (1, tr!("ui-options-dlss-model-k")),
+                    (2, tr!("ui-options-dlss-model-l")),
+                    (3, tr!("ui-options-dlss-model-m")),
+                ],
+            );
+        });
+        // Ray Reconstruction (dlss.rs), experimental and off by default.
+        // Greyed only while off and not available; on, it can always be
+        // turned off, and why it does not draw is said below it
+        cx.conditional(dlss, |cx| {
+            let p = cx.p;
+            let on = cx.s.dlss_rr;
+            // Streamline offered it, then refused it: a retry may help (video
+            // memory freed); not when Streamline said it is not available here
+            let refused = aurora_render::dlss_rr_refused();
+            // refused for a photo or film frame alone: the window keeps
+            // it, the captures draw super resolution until a retry
+            let capture_refused = aurora_render::dlss_rr_snapshot_refused();
+            let blocked = (!aurora_render::dlss_rr_ready()).then(|| {
+                if refused {
+                    tr!("ui-options-dlss-rr-refused")
+                } else {
+                    tr!("ui-options-dlss-rr-unavailable")
+                }
+            });
+            let greyed = blocked.filter(|_| !on);
+            cx.experimental().row(
+                tr!("ui-options-dlss-rr"),
+                tr!("ui-options-dlss-rr-help"),
+                &field!(dlss_rr),
+                |ui, s| {
+                    let r = ui.add_enabled_ui(greyed.is_none(), |ui| toggle(ui, &p, &mut s.dlss_rr));
+                    if let Some(why) = &greyed {
+                        r.response.on_disabled_hover_text(*why);
+                    }
+                    r.inner
+                },
+            );
+            if let Some(why) = blocked.filter(|_| on) {
+                cx.note(why);
+            } else if on && blocked.is_none() && aurora_render::dlss_rr_untraced() {
+                // chosen and ready, but nothing traced to clean up (not
+                // said while it waits for anything else: a resize, the
+                // guides compiling, a snapshot, a DLSS failure); before a
+                // refusal for the captures, whose note says the view draws
+                // it, which it does not then
+                cx.note(tr!("ui-options-dlss-rr-idle"));
+            } else if on && capture_refused {
+                cx.note(tr!("ui-options-dlss-rr-snapshot-refused"));
+            }
+            // Try again whenever Streamline refused it for the window, chosen or
+            // not: off, the switch is greyed until a retry. Refused for the
+            // captures alone, only while it is chosen, as the note above
+            // is: off, nothing draws it, and switched on the row comes
+            // back (DLSS's own button, above, when DLSS itself failed)
+            if (refused || (capture_refused && on)) && cx.st.dlss != aurora_render::DlssSupport::Failed {
+                let p = cx.p;
+                cx.row_with(
+                    tr!("ui-options-dlss-retry"),
+                    tr!("ui-options-dlss-retry-help"),
+                    &Nothing,
+                    |ui, _, _, _| {
+                        use crate::ui::widgets::{ActionKind, action_button};
+                        if action_button(
+                            ui,
+                            &p,
+                            "refresh",
+                            tr!("ui-options-dlss-retry-button"),
+                            ActionKind::Flat,
+                            egui::Vec2::new(0.0, 24.0),
+                        )
+                        .clicked()
+                        {
+                            aurora_render::dlss_retry();
+                        }
+                        false
+                    },
+                );
+            }
+        });
+        // Ray Reconstruction's model, while it is chosen: picking another
+        // after Streamline refused one asks Streamline again with it
+        cx.conditional(dlss && cx.s.dlss_rr, |cx| {
+            cx.combo(
+                tr!("ui-options-dlss-rr-model"),
+                tr!("ui-options-dlss-rr-model-help"),
+                &field!(dlss_rr_model),
+                &[
+                    (0, tr!("ui-options-dlss-model-auto")),
+                    (1, tr!("ui-options-dlss-rr-model-d")),
+                    (2, tr!("ui-options-dlss-rr-model-e")),
+                    (3, tr!("ui-options-dlss-rr-model-f")),
+                ],
+            );
+        });
+        // Frame generation (dlss_fg.rs, dlss.rs), experimental, off by
+        // default: Linux's sl-ngx, Windows' Streamline. Greyed while off
+        // and not supported (an sl-ngx without it, or DLSS not started
+        // yet); on, it can always be turned off, and why it does not run
+        // is said below it. On Windows Streamline loads it at its start:
+        // a change says it waits for a restart, and frame generation not
+        // loaded is no reason to grey it (turned on, it would load at the
+        // restart: `dlss_fg_restart(true)`)
+        cx.conditional(dlss && cfg!(any(target_os = "linux", windows)), |cx| {
+            let p = cx.p;
+            // (`AURORA_DLSS_FG` for a test overrides the setting: the notes
+            // and the status follow what runs, as RenderSettings does)
+            let on = aurora_render::dlss_fg_wanted(cx.s.dlss_fg);
+            let ready = aurora_render::dlss_fg_ready();
+            let restart = aurora_render::dlss_fg_restart(on);
+            // (why it cannot: Streamline's reason when it gave one)
+            let unavailable = || fg_unavailable_text(aurora_render::dlss_fg_unavailable());
+            let blocked = (!ready && !restart).then(unavailable);
+            let greyed = (!on && !ready && !aurora_render::dlss_fg_restart(true)).then(unavailable);
+            let help = if cfg!(windows) {
+                tr!("ui-options-dlss-fg-help-windows")
+            } else {
+                tr!("ui-options-dlss-fg-help")
+            };
+            cx.experimental().row(tr!("ui-options-dlss-fg"), help, &field!(dlss_fg), |ui, s| {
+                let r = ui.add_enabled_ui(greyed.is_none(), |ui| toggle(ui, &p, &mut s.dlss_fg));
+                if let Some(why) = &greyed {
+                    r.response.on_disabled_hover_text(why.as_str());
+                }
+                r.inner
+            });
+            if let Some(why) = blocked.filter(|_| on) {
+                cx.note(&why);
+            }
+            if restart {
+                cx.note(tr!("ui-options-dlss-fg-restart"));
+            }
+            // what runs once it is on: what shows the frames (and, the
+            // fallback, why and what it costs), Reflex, and the frames
+            // shown against the drawn ones the viewer's frame rate counts
+            if on && ready && !restart {
+                for line in fg_status_lines(&aurora_render::dlss_fg_status()) {
+                    cx.note(&line);
+                }
+                cx.ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+            }
+            if let Some(line) = dlss_update_line(&aurora_render::dlss_update()) {
+                cx.note(&line);
+            }
+        });
+        // FSR's sharpening, hidden under DLSS, which the CAS below
+        // sharpens instead
+        cx.conditional(!dlss, |cx| {
+            cx.slider(
+                tr!("ui-options-fsr-sharpness"),
+                tr!("ui-options-fsr-sharpness-help"),
+                &field!(fsr_sharpness),
+                0..=100,
+                "%",
+            );
+        });
     });
     cx.group(tr!("ui-options-color-and-sharpness"), |cx| {
         // "HDR and Emissive" (RenderDisableVintageMode): off, the tone
@@ -1232,8 +1524,9 @@ fn image(cx: &mut Cx) {
             &field!(sharpen),
             |ui, s| {
                 // FSR's RCAS takes its place: both on top of each other
-                // turn FSR's faint sub-pixel pattern into a visible one
-                let fsr = s.antialiasing == 7;
+                // turn FSR's faint sub-pixel pattern into a visible one.
+                // DLSS has no sharpening of its own: CAS stays
+                let fsr = s.antialiasing == 7 && !dlss_draws;
                 let r = ui.add_enabled_ui(hdr && !fsr, |ui| {
                     ui.add(
                         egui::Slider::new(&mut s.sharpen, 0.0..=1.0)
@@ -1551,4 +1844,221 @@ fn parcel_rows<'a, T, K: egui::AsIdSalt>(
             }
         });
     remove
+}
+
+/// Preferences' lines under the frame generation switch, from what runs
+/// (`aurora_render::dlss_fg_status`): what shows the frames, Reflex, and
+/// the frames shown per second against the drawn ones.
+/// Why DLSS frame generation cannot be chosen: what Streamline said when
+/// the user can act on it (Windows' GPU scheduling or version, the driver,
+/// the DLSS folder) or its answer by name, else the general reason (no
+/// reason given, or the card has none).
+fn fg_unavailable_text(reason: Option<aurora_render::DlssFgUnavailable>) -> String {
+    use aurora_i18n::tr;
+    use aurora_render::DlssFgUnavailable as U;
+    match reason {
+        Some(U::GpuSchedulingOff) => tr!("ui-options-dlss-fg-unavailable-gpu-scheduling").to_owned(),
+        Some(U::WindowsOutOfDate) => tr!("ui-options-dlss-fg-unavailable-windows").to_owned(),
+        Some(U::DriverOutOfDate) => tr!("ui-options-dlss-fg-unavailable-driver").to_owned(),
+        Some(U::FilesMissing) => tr!("ui-options-dlss-fg-unavailable-files").to_owned(),
+        Some(U::Other(name)) => tr!("ui-options-dlss-fg-unavailable-other", reason = name),
+        Some(U::Card) | None => tr!("ui-options-dlss-fg-unavailable").to_owned(),
+    }
+}
+
+fn fg_status_lines(status: &aurora_render::DlssFgStatus) -> Vec<String> {
+    use aurora_i18n::tr;
+    use aurora_render::{DlssFgHeld, DlssFgRefusal, DlssFgShown};
+    let mut lines = Vec::new();
+    match &status.shown {
+        DlssFgShown::Off => {
+            lines.push(tr!("ui-options-dlss-fg-status-not-running").to_owned());
+            return lines;
+        }
+        DlssFgShown::Presenter => lines.push(tr!("ui-options-dlss-fg-status-presenter").to_owned()),
+        DlssFgShown::Streamline(None) => lines.push(tr!("ui-options-dlss-fg-status-streamline").to_owned()),
+        DlssFgShown::Streamline(Some(status)) => {
+            lines.push(tr!("ui-options-dlss-fg-status-streamline-off", status = status.as_str()));
+            return lines;
+        }
+        // (Windows: the viewer asked it off)
+        DlssFgShown::StreamlineHeld(held) => {
+            lines.push(match held {
+                DlssFgHeld::Small(min) => {
+                    let min = min.to_string();
+                    tr!("ui-options-dlss-fg-status-held-small", min = min.as_str())
+                }
+                DlssFgHeld::Memory => tr!("ui-options-dlss-fg-status-held-memory").to_owned(),
+                DlssFgHeld::NoCopy => tr!("ui-options-dlss-fg-status-held-no-copy").to_owned(),
+            });
+            return lines;
+        }
+        DlssFgShown::TwoPresents(why) => {
+            let why = match why {
+                // (a forced mode is not paced at half the refresh rate:
+                // a line of its own, not the fallback's)
+                Some(DlssFgRefusal::PresentMode) => None,
+                Some(DlssFgRefusal::OldSlNgx) => Some(tr!("ui-options-dlss-fg-why-old-sl-ngx").to_owned()),
+                Some(DlssFgRefusal::NoQueue) => Some(tr!("ui-options-dlss-fg-why-no-queue").to_owned()),
+                Some(DlssFgRefusal::SecondCamera) => Some(tr!("ui-options-dlss-fg-why-second-camera").to_owned()),
+                Some(DlssFgRefusal::Stalled) => Some(tr!("ui-options-dlss-fg-why-stalled").to_owned()),
+                Some(DlssFgRefusal::Failed(detail)) => Some(tr!("ui-options-dlss-fg-why-failed", detail = detail.as_str())),
+                None => Some(tr!("ui-options-dlss-fg-why-none").to_owned()),
+            };
+            lines.push(match why {
+                Some(why) => tr!("ui-options-dlss-fg-status-fallback", why = why.as_str()),
+                None => tr!("ui-options-dlss-fg-status-present-mode").to_owned(),
+            });
+        }
+    }
+    // (the fallback's line already says Reflex is off)
+    let presenter = status.shown == DlssFgShown::Presenter;
+    let fallback = matches!(status.shown, DlssFgShown::TwoPresents(_));
+    if status.reflex {
+        lines.push(tr!("ui-options-dlss-fg-status-reflex-on").to_owned());
+    } else if status.reflex_failed && !fallback {
+        lines.push(tr!("ui-options-dlss-fg-status-reflex-failed").to_owned());
+    } else if presenter {
+        lines.push(tr!("ui-options-dlss-fg-status-reflex-off").to_owned());
+    }
+    if status.per_drawn > 0.0 && status.shown_fps > 0.0 {
+        let mode = (status.per_drawn * 10.0).round() / 10.0;
+        let mode = if mode.fract() == 0.0 {
+            format!("{mode:.0}")
+        } else {
+            format!("{mode:.1}")
+        };
+        let (shown, drawn) = (format!("{:.0}", status.shown_fps), format!("{:.0}", status.drawn_fps));
+        lines.push(tr!(
+            "ui-options-dlss-fg-status-rate",
+            mode = mode.as_str(),
+            shown = shown.as_str(),
+            drawn = drawn.as_str(),
+        ));
+    } else {
+        lines.push(tr!("ui-options-dlss-fg-status-measuring").to_owned());
+    }
+    lines
+}
+
+/// Preferences' line on sl-ngx's update for this viewer
+/// (`aurora_render::dlss_update`), if there is one to say.
+fn dlss_update_line(update: &aurora_render::DlssUpdate) -> Option<String> {
+    use aurora_i18n::tr;
+    use aurora_render::DlssUpdate;
+    let script = aurora_render::DLSS_SETUP;
+    Some(match update {
+        DlssUpdate::None => return None,
+        DlssUpdate::Running => tr!("ui-options-dlss-update-running").to_owned(),
+        DlssUpdate::Done => tr!("ui-options-dlss-update-done").to_owned(),
+        DlssUpdate::Licence => tr!("ui-options-dlss-update-licence", script = script),
+        DlssUpdate::Failed(why) => tr!("ui-options-dlss-update-failed", why = why.as_str(), script = script),
+    })
+}
+
+#[cfg(test)]
+mod fg_status_tests {
+    use super::{dlss_update_line, fg_status_lines};
+    use aurora_render::{DlssFgHeld, DlssFgRefusal, DlssFgShown, DlssFgStatus, DlssUpdate};
+
+    #[test]
+    fn the_presenter_says_reflex_and_the_frames_shown_against_the_drawn() {
+        let status = DlssFgStatus {
+            shown: DlssFgShown::Presenter,
+            reflex: true,
+            reflex_failed: false,
+            per_drawn: 1.98,
+            drawn_fps: 59.6,
+            shown_fps: 118.4,
+        };
+        let lines = fg_status_lines(&status).join("\n");
+        assert!(lines.contains("presenter"), "{lines}");
+        assert!(lines.contains("Reflex: on"), "{lines}");
+        assert!(lines.contains("2×") && lines.contains("118") && lines.contains("60"), "{lines}");
+    }
+
+    #[test]
+    fn the_fallback_says_why_and_has_no_reflex_line() {
+        let status = DlssFgStatus {
+            shown: DlssFgShown::TwoPresents(Some(DlssFgRefusal::Failed(String::from("VK_ERROR_SURFACE_LOST_KHR")))),
+            ..DlssFgStatus::default()
+        };
+        let lines = fg_status_lines(&status);
+        assert!(lines[0].contains("VK_ERROR_SURFACE_LOST_KHR"), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.contains("Reflex: ")), "{lines:?}");
+    }
+
+    #[test]
+    fn streamline_off_at_this_size_says_only_that() {
+        let status = DlssFgStatus {
+            shown: DlssFgShown::Streamline(Some(String::from("eFailResolutionTooLow"))),
+            reflex: true,
+            ..DlssFgStatus::default()
+        };
+        let lines = fg_status_lines(&status);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("eFailResolutionTooLow"));
+    }
+
+    #[test]
+    fn frame_generation_held_by_the_viewer_says_why_alone() {
+        let held = |held| {
+            fg_status_lines(&DlssFgStatus {
+                shown: DlssFgShown::StreamlineHeld(held),
+                reflex: true,
+                ..DlssFgStatus::default()
+            })
+        };
+        let small = held(DlssFgHeld::Small(64));
+        assert_eq!(small.len(), 1, "{small:?}");
+        assert!(small[0].starts_with("Not running") && small[0].contains("64"), "{small:?}");
+        let memory = held(DlssFgHeld::Memory);
+        assert_eq!(memory.len(), 1, "{memory:?}");
+        assert!(memory[0].contains("video memory"), "{memory:?}");
+        let copy = held(DlssFgHeld::NoCopy);
+        assert_eq!(copy.len(), 1, "{copy:?}");
+        assert!(copy[0].contains("cannot be copied"), "{copy:?}");
+    }
+
+    #[test]
+    fn a_forced_present_mode_says_so_not_half_the_refresh_rate() {
+        let status = DlssFgStatus {
+            shown: DlssFgShown::TwoPresents(Some(DlssFgRefusal::PresentMode)),
+            ..DlssFgStatus::default()
+        };
+        let lines = fg_status_lines(&status);
+        assert!(lines[0].contains("AURORA_PRESENT_MODE"), "{lines:?}");
+        assert!(!lines[0].contains("half"), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.contains("Reflex: ")), "{lines:?}");
+    }
+
+    #[test]
+    fn reflex_says_a_failed_call_apart_from_a_driver_without_it() {
+        let status = |reflex_failed| DlssFgStatus {
+            shown: DlssFgShown::Presenter,
+            reflex_failed,
+            ..DlssFgStatus::default()
+        };
+        let failed = fg_status_lines(&status(true)).join("\n");
+        assert!(failed.contains("Reflex: off") && failed.contains("failed"), "{failed}");
+        assert!(!failed.contains("VK_NV_low_latency2"), "{failed}");
+        let driver = fg_status_lines(&status(false)).join("\n");
+        assert!(driver.contains("VK_NV_low_latency2") && !driver.contains("failed"), "{driver}");
+        // Windows: a failed call is said there too; the driver line is
+        // the presenter's alone
+        let streamline = |reflex_failed| DlssFgStatus {
+            shown: DlssFgShown::Streamline(None),
+            reflex_failed,
+            ..DlssFgStatus::default()
+        };
+        assert!(fg_status_lines(&streamline(true)).iter().any(|l| l.contains("failed")));
+        assert!(!fg_status_lines(&streamline(false)).iter().any(|l| l.contains("Reflex: ")));
+    }
+
+    #[test]
+    fn the_update_says_nothing_once_current() {
+        assert_eq!(dlss_update_line(&DlssUpdate::None), None);
+        assert!(dlss_update_line(&DlssUpdate::Done).is_some_and(|l| l.to_lowercase().contains("restart")));
+        assert!(dlss_update_line(&DlssUpdate::Licence).is_some_and(|l| l.contains(aurora_render::DLSS_SETUP)));
+    }
 }
