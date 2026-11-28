@@ -169,12 +169,13 @@ fn a_search_link_fills_the_search_as_typed_and_changes_no_setting() {
     assert!(st.counts.hits(Page::Graphics) > 0);
     assert!(results.iter().all(|r| !r.changed && !r.setting_unavailable));
     assert_eq!(serde_json::to_value(&settings).expect("settings as JSON"), before);
-    // the field has the keyboard: typing goes on with the search
+    // the field has the keyboard with the search selected, as every search
+    // field that takes it (`widgets::select_on_focus`): typing replaces it
     let mut open = true;
     frames.run(vec![egui::Event::Text("s".into())], |ui| {
         show(ui.ctx(), &p, &icons, &mut settings, &mut st, &mut open);
     });
-    assert_eq!(st.query, "draw distances");
+    assert_eq!(st.query, "s");
 }
 
 /// A right click at `at`: pressed, released, then two frames for the menu
