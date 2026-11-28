@@ -577,7 +577,11 @@ prose. On their yes, for each PR:
      was tested in may hold another PR ahead of it; GitHub regroups and
      runs it again on its own. Keep waiting while the script does.
    - **Left the queue**: `gh run view <id> --log-failed`. The PR's failure
-     on the code combined with `main`: step 6 (fix it or ask). Not the
+     on the code combined with `main`: step 6 (fix it or ask). The
+     queue's runs are listed with `gh run list --event merge_group`. They
+     build with debug assertions (`--profile ci`), which neither the PR's
+     CI nor `check.ps1` has: an egui test that drops a `run_ui` output
+     without `output.textures_delta.clear()` fails there only. Not the
      PR's (a runner lost, a job red on `main` too): queue it again once
      `main` is green, and tell your human.
 
