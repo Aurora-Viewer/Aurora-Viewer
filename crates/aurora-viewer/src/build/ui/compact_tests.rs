@@ -1401,6 +1401,9 @@ struct Inspector {
     escape_taken_first: bool,
     /// The keys the build tools are given as held.
     mods: Mods,
+    /// Object > Profile, drawn after the build tools when open: its General
+    /// is a second copy of the build window's rows.
+    profile: Option<crate::ui::context::ObjectProfileUi>,
     /// The camera's zoom the Focus tool's slider shows.
     zoom_fraction: f32,
 }
@@ -1438,6 +1441,7 @@ impl Inspector {
             native_pixels_per_point: 1.0,
             screen: egui::vec2(1280.0, 900.0),
             text_fonts: Vec::new(),
+            profile: None,
         }
     }
 
@@ -1485,6 +1489,10 @@ impl Inspector {
                 self.mods,
                 &mut env,
             );
+            if let Some(profile) = &mut self.profile {
+                let facts = Default::default();
+                profile.show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut self.world, &facts);
+            }
         });
         if let Some(drag) = &mut self.numeric_drag {
             drag.after(&self.ctx, &output.platform_output.events, true);

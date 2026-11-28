@@ -2261,7 +2261,8 @@ the next letters replace it. Click into Description, click the world, then
 that blank stretch again: Description is selected instead. A click on a
 tab, a checkbox or into the field itself does not select the whole line.
 Check both `AURORA_DEMO_BUILD_STYLE=aurora` and `legacy`. A read-only name
-(no modify right) selects the same way and does not change when typed on.
+(no modify right) is not focused by that click, nor is a Name scrolled out
+of view.
 Compare with `floater_tools.xml` and `panel_fs_tools_texture.xml`: the compact tool
 block ends with linked-part navigation, Link/Unlink and the ruler on one row;
 counters sit directly above the five tabs. General places sale before permissions.
