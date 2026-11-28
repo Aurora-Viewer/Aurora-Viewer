@@ -219,6 +219,17 @@ impl State {
         }
     }
 
+    /// A menu is shown (`finish_inventory_frame` has work).
+    pub(super) fn shown(&self) -> bool {
+        self.root.is_some()
+    }
+
+    /// Where the last menu drew a row or an icon cell (`slot:<zone>:<n>`).
+    #[cfg(test)]
+    pub(super) fn rect(&self, key: &str) -> Option<egui::Rect> {
+        self.rects.get(key).copied()
+    }
+
     pub(super) fn finish_inventory_frame(&mut self, ctx: &egui::Context, prefs: &mut super::menu_layout::Preferences) {
         if let Some((_, _, scope)) = &self.root
             && let Some(profile) = prefs.profiles.get_mut(scope)

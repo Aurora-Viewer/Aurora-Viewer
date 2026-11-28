@@ -213,8 +213,9 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             super::Command::Extra(Command::CopyFolderId(id)),
         );
     }
-    let folder_window = st.ui_id != super::super::listings::PANEL && !st.scope.is_nil() && st.scope != inv.root;
-    if (!trash && (st.result_view() || folder_window || st.ui_id == super::super::listings::PANEL)) || all {
+    let hosted = super::super::hosted_panel(st.ui_id);
+    let folder_window = !hosted && !st.scope.is_nil() && st.scope != inv.root;
+    if (!trash && (st.result_view() || folder_window || hosted)) || all {
         c.add(
             "show-main",
             TEXT,

@@ -4105,6 +4105,14 @@ pictures/media and outfit thumbnails retain their targets across live choices.
 Imported maps also restore their original local pixels on Cancel. Wearables
 and region terrain keep their existing specialized rollback sessions.
 Non-copyable inventory textures require confirmation, as in the Legacy Viewer.
+The picker's Inventory and Aurora Library rows open the inventory's own
+right-click menu (#4896) through `ui/inventory/picker_menu.rs`, a hosted
+inventory panel like the Marketplace listings' (independent selection and
+inline rename, shared clipboard, ordinary inventory dialogs). Every caller's
+picker shares it: `ui::inventory::show` takes it back into its windows at the
+start of its pass and lends it through the egui context at the end, so a
+picker drawn before or after that pass, in any viewport, draws the menu on its
+row; what the menu did reaches the inventory at its next pass.
 
 The `ui/inventory/move_to.rs` picker offers the destinations of
 "Move to…" for the original selection, with a filter by name and
