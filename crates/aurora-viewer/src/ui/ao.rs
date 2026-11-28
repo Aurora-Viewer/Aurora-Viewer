@@ -425,10 +425,40 @@ fn preview_edge(ui: &mut egui::Ui, p: &Palette, full: egui::Rect, width: f32) {
         ui.data_mut(|d| d.insert_persisted(id, width));
         ui.ctx().request_repaint();
     }
-    if response.hovered() || response.dragged() {
-        ui.painter()
-            .vline(x, full.y_range(), widgets::border_stroke(p, egui::Stroke::new(1.0, p.violet_light)));
+    let lit = ui.ctx().animate_bool(id.with("lit"), response.hovered() || response.dragged());
+    if lit > 0.0 {
+        let pointer = response.hover_pos().or(response.interact_pointer_pos()).map(|at| at.y);
+        let held = ui.data_mut(|d| {
+            let held = d.get_temp_mut_or(id.with("y"), full.center().y);
+            if let Some(y) = pointer {
+                *held = y;
+            }
+            *held
+        });
+        glow_line(ui, x, full.y_range(), held, p.violet_light.gamma_multiply(lit));
     }
+}
+
+/// A vertical line brightest at `at` and fainter away from it, never quite
+/// gone: the grip under the pointer.
+fn glow_line(ui: &egui::Ui, x: f32, span: egui::Rangef, at: f32, color: egui::Color32) {
+    const REACH: f32 = 140.0;
+    const FAINT: f32 = 0.12;
+    let mut mesh = egui::Mesh::default();
+    let steps = ((span.span() / 6.0).ceil() as u32).max(1);
+    for i in 0..=steps {
+        let y = span.min + span.span() * i as f32 / steps as f32;
+        let near = (-((y - at) / REACH).powi(2)).exp();
+        let c = color.gamma_multiply(FAINT + (1.0 - FAINT) * near);
+        mesh.colored_vertex(egui::pos2(x - 1.0, y), c);
+        mesh.colored_vertex(egui::pos2(x + 1.0, y), c);
+        if i > 0 {
+            let b = 2 * i;
+            mesh.add_triangle(b - 2, b - 1, b);
+            mesh.add_triangle(b - 1, b + 1, b);
+        }
+    }
+    ui.painter().add(egui::Shape::mesh(mesh));
 }
 
 /// One column of the window, laid out in its own rect and cut at its edges,

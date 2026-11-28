@@ -30,6 +30,8 @@ pub(super) struct Preview {
     layer: Option<(Uuid, usize)>,
     /// The stage was drawn this frame (taken by the app, `AoUi::take_stage`).
     shown: bool,
+    /// The animations the stage was framed for (`AoUi::preview_changed`).
+    framed: Vec<Uuid>,
 }
 
 impl Preview {
@@ -55,6 +57,15 @@ impl Preview {
 }
 
 impl AoUi {
+    /// Whether the previewed animations changed since the last call.
+    pub fn preview_changed(&mut self, assets: &[Uuid]) -> bool {
+        let changed = self.preview.framed != assets;
+        if changed {
+            self.preview.framed = assets.to_vec();
+        }
+        changed
+    }
+
     /// Whether the window drew its stage this frame: the app keeps the
     /// skeleton and the stage's model only then.
     pub fn take_stage(&mut self) -> bool {
@@ -124,6 +135,8 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, set: Option<&Set>, runtime: &
     // the picture blurred under the fade, more and more toward the bottom
     let from = (caption.top() - FADE - rect.top()) / rect.height().max(1.0);
     state.stage.veil = Some(aurora_render::preview::Veil { from, depth: VEIL_DEPTH });
+    // the figure stands between the title and the caption
+    state.stage.keep_bottom = bottom - caption.top() + 8.0;
     let spoken = aurora_i18n::tr!("ao-preview");
     let _ = state.stage.show(ui, p, rect, title_room, Default::default(), spoken, &|_| None);
     let y = rect.top() + title_room / 2.0;
@@ -188,7 +201,7 @@ fn saved_notice(ui: &egui::Ui, p: &Palette, state: &mut AoUi, right: egui::Pos2)
     }
     ui.ctx().request_repaint();
     let alpha = (age / SAVED_FADE).min((SAVED_FOR - age) / SAVED_FADE).clamp(0.0, 1.0);
-    let ink = p.success.gamma_multiply(alpha);
+    let ink = state.stage.success(p).gamma_multiply(alpha);
     let galley = ui.painter().layout_no_wrap(
         aurora_i18n::tr!("ao-saved").to_owned(),
         egui::FontId::new(12.0, super::super::fonts::semibold(ui.ctx())),
@@ -241,11 +254,10 @@ fn caption_text(
 ) {
     let mut y = area.top() + EYEBROW / 2.0;
     let eyebrow = egui::FontId::new(11.0, super::super::fonts::semibold(ui.ctx()));
-    let slot = ui
-        .painter()
-        .layout_no_wrap(state.state.label().to_uppercase(), eyebrow, p.violet_pale);
+    let accent = state.stage.accent(p);
+    let slot = ui.painter().layout_no_wrap(state.state.label().to_uppercase(), eyebrow, accent);
     let slot_w = slot.size().x;
-    widgets::paint_row_text(ui.painter(), slot, area.left(), y, p.violet_pale);
+    widgets::paint_row_text(ui.painter(), slot, area.left(), y, accent);
     let place = if names.is_empty() {
         aurora_i18n::tr!("ao-slot-default").to_owned()
     } else {
@@ -303,8 +315,8 @@ fn caption_text(
             let height = if response.hovered() { 5.0 } else { 3.0 };
             let bar = egui::Rect::from_center_size(hit.center(), Vec2::new(width, height));
             let fill = match i.cmp(&state.preview.index) {
-                std::cmp::Ordering::Equal => p.violet_pale,
-                std::cmp::Ordering::Less => p.violet_pale.gamma_multiply(0.42),
+                std::cmp::Ordering::Equal => accent,
+                std::cmp::Ordering::Less => accent.gamma_multiply(0.42),
                 std::cmp::Ordering::Greater => ink.gamma_multiply(0.18),
             };
             ui.painter().rect_filled(bar, ui.visuals().widgets.inactive.corner_radius, fill);

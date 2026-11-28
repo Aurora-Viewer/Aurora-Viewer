@@ -80,6 +80,13 @@ pub struct StageUi {
     /// The bar ends on its play / pause button and its hint; off, on its
     /// last tool (the AO window's preview plays what the window previews).
     pub player: bool,
+    /// What is shown stands upright in a tall view: framed by its height,
+    /// filling the view, rather than by the sphere around it (the AO window's
+    /// preview column).
+    pub upright: bool,
+    /// Room kept free at the view's bottom, over the bar, for what the caller
+    /// lays there (the AO window's caption).
+    pub keep_bottom: f32,
     /// The animation plays; None: it was not chosen (it does, unless motion is
     /// reduced).
     playing: Option<bool>,
@@ -133,6 +140,8 @@ impl Default for StageUi {
             bar_face: true,
             veil: None,
             player: true,
+            upright: false,
+            keep_bottom: 0.0,
             playing: None,
             live: None,
             joints: None,
@@ -155,6 +164,30 @@ impl Default for StageUi {
 }
 
 impl StageUi {
+    /// What is shown changed its pose (the AO preview's next entry): framed
+    /// again, standing on the floor, rather than followed from the last one.
+    pub fn reframe(&mut self) {
+        self.steady = None;
+    }
+
+    /// The accent, as it reads over the ground.
+    pub fn accent(&self, p: &Palette) -> Color32 {
+        if self.light {
+            p.violet.lerp_to_gamma(dark(p), 0.35)
+        } else {
+            p.violet_pale
+        }
+    }
+
+    /// The colour of a success, as it reads over the ground.
+    pub fn success(&self, p: &Palette) -> Color32 {
+        if self.light {
+            p.success.lerp_to_gamma(dark(p), 0.45)
+        } else {
+            p.success
+        }
+    }
+
     /// Other objects: the view starts over.
     pub fn restart(&mut self) {
         self.camera = CAMERA;
@@ -230,7 +263,7 @@ impl StageUi {
         let free = if controls {
             Rect::from_min_max(
                 egui::pos2(view_rect.left(), view_rect.top() + top),
-                egui::pos2(view_rect.right(), view_rect.bottom() - BAR - 8.0),
+                egui::pos2(view_rect.right(), view_rect.bottom() - BAR - 8.0 - self.keep_bottom),
             )
         } else {
             view_rect
@@ -373,7 +406,12 @@ impl StageUi {
     fn view(&self, p: &Palette, frame: &Frame, rect: Rect, free: Rect, middle: Vec2) -> View {
         let height = rect.height().max(1.0);
         // all of it in sight, whichever side is the shorter
-        let room = (height / free.height().max(1.0)).max(height / free.width().max(1.0));
+        let room = if self.upright {
+            // its height in the view's; its width about half its height
+            (height / free.height().max(1.0)).max(height * UPRIGHT_WIDTH / free.width().max(1.0))
+        } else {
+            (height / free.height().max(1.0)).max(height / free.width().max(1.0))
+        };
         View {
             yaw: self.camera.yaw,
             pitch: self.camera.pitch,
@@ -835,6 +873,10 @@ impl Camera {
 
 /// The darker and the lighter of the theme's text and ground: a light ground
 /// and its text, in any theme.
+/// How wide an upright figure frames, as a share of the sphere around it
+/// (`StageUi::upright`): arms at its sides, turned any way.
+const UPRIGHT_WIDTH: f32 = 0.5;
+
 fn dark(p: &Palette) -> Color32 {
     let (a, b) = (p.ink.to_opaque(), p.bar.to_opaque());
     if a.intensity() < b.intensity() { a } else { b }
