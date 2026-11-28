@@ -864,7 +864,7 @@ says how they are handled.
    requested`. A fix of yours is checked with `check.ps1` on the PR merged
    with the latest `main`, then pushed without a merge of `main` unless it
    needs one (a conflict, a fix that only works on today's `main`): as for
-   your own PR (step 1 below), no merge of `main` nobody needs. Rule 3
+   your own PR (step 1 above), no merge of `main` nobody needs. Rule 3
    keeps you off others' work in progress:
    only your human's choice, PR by PR and fix by fix, opens the author's
    branch or description to you, and the review says what you changed.

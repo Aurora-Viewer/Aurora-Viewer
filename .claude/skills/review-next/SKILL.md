@@ -37,7 +37,7 @@ scripts, as they are:
 | `check.ps1` | in the review worktree, on the PR merged with the latest `main` (step 5), and after a maintainer's fix (step 6) |
 | `automation-window-border.ps1` | the demo you drive alone, on Windows (step 5) |
 | `pr-captures.ps1` | the demo captures in the review (step 5) |
-| `end-task.ps1` | the review worktree, once the review is posted (steps 7 and 9) |
+| `end-task.ps1` | the review worktree, after the merge's outcome, or once the review is posted when nothing is merged (steps 7 and 9) |
 | `merge-pr.ps1` | the merge, on your human's yes (step 8) |
 | `issue-board.ps1` | the Status of the issues a merged PR closes (step 8) |
 
@@ -107,13 +107,15 @@ three parts:
 - **housekeeping**: the task folders of `work/` whose PR is merged, through
   `end-task.ps1`;
 - **your human's own PRs** (`gh pr list --author "@me"`): one without a
-  review, with red CI or out of the merge queue comes before anyone else's;
+  review, with red CI or out of the merge queue comes before anyone
+  else's: finish its review (section 11), then its merge (section 8,
+  step 9);
 - **the issues**: the open ones (`gh issue list`) and the new comments on
   those linked to your human's tasks and to the PRs reviewed in earlier
   sessions (`gh issue view <i> --json comments`), answered as section 15
   says.
 
- Work from fresh
+Work from fresh
 data (section 14): `git fetch origin` first, and GitHub read again rather
 than remembered.
 
