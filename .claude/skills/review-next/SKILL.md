@@ -96,6 +96,9 @@ PR and step once there are several (`#3935: CI approved, waiting`, `#4664:
 conflict fixed, pushed`, `check.ps1: #3935, #4664`), so the broader progress
 shows. Rewrite the list when a pick or an answer changes what is left.
 
+Dependabot's PRs are not this routine's: the queue leaves bots out, and
+AGENTS.md section 13 says how they are handled.
+
 ## 0. Follow-up first
 
 Once per session, before anything else, AGENTS.md section 8, step 0, all
@@ -143,8 +146,9 @@ The PRs whose last review is your human's, which every queue leaves out:
   - Before any merge, it is tested again on today's `main`, as a review is
     (an approval says nothing of what `main` became since): claim it, then
     steps 3 to 7 (the worktree, `check.ps1`, the demo and your human's
-    validation, the review naming the head), and only then its merge (step 8), asked in a
-    dialog of its own since step 1 ends before step 2.
+    validation, the review naming the head), and only then its merge
+    (step 8), asked in a dialog of its own since step 1 ends before
+    step 2.
 - `kind: decision`, their ⚠️ left a decision open: read what (a hand or grid
   test, a product choice) and put it in the dialog. With `head_reviewed:
   false`, re-review what changed since first, as above. Their answer is
@@ -223,10 +227,12 @@ For each PR claimed, before its CI is asked for:
   named in the CI question below: anything under `.github/`, `scripts/`,
   `.cargo/` or `packaging/`, a `Cargo.toml`, `Cargo.lock`, `build.rs` or
   `rust-toolchain.toml`.
-- **A conflict**: no CI can test the PR against `main`, so its CI is not
-  asked for while it stands: step 6 first. Before CI, a fix of yours is
-  offered only for a conflict outside the code (`TASKS.md`, docs), whose
-  resolution reads no code; a conflict in code goes to its author.
+- **A conflict**: no CI can test the PR against `main` while it stands
+  (GitHub cannot build the merge), so it goes to step 6 first, before any
+  CI question: fix it yourself or ask the author. Resolving a conflict in
+  code reads those files before the CI is green, which AGENTS.md section
+  11 forbids unless your human chooses that fix (the PR's change to rule
+  3): the question says so.
 - **CI waits for "Approve and run"** (note `CI waits for Approve and run`,
   or no run at all on the head): your human approves it (AGENTS.md section
   11). Ask once for every PR claimed, in one dialog, naming any that
@@ -258,7 +264,8 @@ once more: right after an approval the runs take a moment to start, and
 `gh pr checks --watch` can stop at once on the description check alone.
 Give each command the longest timeout your tool allows (Claude Code:
 600000 ms) and run it again while it is still going; with several PRs, one
-after the other. Meanwhile, start step 5's `check.ps1`.
+after the other. Nothing of the PR builds or runs here before its CI is
+green and its diff read: not `check.ps1`, not the viewer.
 
 - **Green**: the diff (below), then step 5.
 - **Red**: `gh run view <id> --log-failed`. The PR's failure: a finding of
@@ -276,25 +283,32 @@ sha from then on (`gh pr view <n> --json headRefOid`). A PR rebased since
 the last review is read with `git -C <W> range-diff <old base>..<old
 head> <new base>..<new head>` (each base: its `merge-base` with
 `origin/main`): the commits it shows changed, and those not reviewed yet,
-are read in full. Look first at what the tests and build scripts execute,
-then the rest, as AGENTS.md section 11 says, each rule where it is
-written:
+are read in full. Look first at what the tests and build scripts execute
+(they run here next), then every rule AGENTS.md sets for a change, each
+where it is written:
 - Legacy Viewer fidelity, against the sources in `../phoenix-firestorm`
   (section 2); a visible difference only when justified, and noted;
-- creators' permissions through the shared helpers, and no data of our
-  own in shared places (section 2);
+- creators' permissions through the shared helpers, the same rule in both
+  interface styles, and their unit tests for the cases section 2 lists;
+  no data of our own in shared places (section 2);
 - credits in NOTICE.md for ported code (section 2), and
   THIRD-PARTY-LICENSES.md regenerated when `Cargo.lock` changes
   (section 5);
 - code quality (section 5): no `unwrap`/`expect` on external data, a
   `// SAFETY:` comment on any `unsafe`, nothing heavy on the frame;
+  performance numbers before and after for a change that claims or risks
+  them; a new dependency maintained, GPL v3 compatible and justified;
+  `rust-toolchain.toml` unchanged (its own PRs only); a new guide in the
+  wiki's page table;
 - interface text through `tr!`, with its English, French and Japanese,
-  and `en-GB` / `en-AU` overrides for American spellings (section 1,
-  rule 6); the interface rules (section 7);
+  `en-GB` / `en-AU` overrides for American spellings, a removed or renamed
+  key gone from every catalogue, and no translation into the community
+  catalogues (section 1, rule 6); the interface rules (section 7);
 - "Legacy Viewer" in new text, no AI mention (section 10); no secret
-  or personal data (section 1, rule 2);
-- docs: README, ARCHITECTURE.md, TASKS.md, docs/TESTING.md for a new
-  `AURORA_*` variable (sections 4, 5, 6).
+  or personal data, no grid place named (section 1, rule 2);
+- its title (`type(area): summary`), labels and issue lines (section 9);
+- docs: README (command-line arguments), ARCHITECTURE.md, TASKS.md,
+  docs/TESTING.md for an `AURORA_*` variable (sections 4, 5, 6).
 
 A finding is one of step 6 (fix it or ask the author), before step 5.
 
@@ -309,11 +323,13 @@ the PR merged with the latest `main`, in the review worktree.
 pwsh -NoProfile -WorkingDirectory <W> -File ./scripts/check.ps1
 ```
 
-It runs what the CI runs (scripts, formatting, clippy, every test) and
-takes a build slot like any build of the PC (AGENTS.md section 5): one
-review's `check.ps1` at a time, never more than two heavy builds on the PC.
-Run it in the background if your tool would cut it short, and read its
-result before going on. A failure is a finding of step 6.
+Once CI is green and the diff read, never before. It runs what the CI runs
+(scripts, formatting, clippy, every test) and takes a build slot like any
+build of the PC (AGENTS.md section 5, `AURORA_BUILD_SLOTS`): one review's
+`check.ps1` at a time. Run it in the background if your tool would cut it
+short, and read its result before going on: the demo's checkouts below
+change the worktree it builds, so they wait for it. A failure is a finding
+of step 6.
 
 **The demo, yours** (AGENTS.md section 4, and the non-regression of section
 11 step 3): the demo scenarios the PR touches **and** those of the
@@ -382,42 +398,57 @@ so.
   for you, step 1 brings it back.
 - A test your human cannot run at all (another system, an OpenSim grid,
   hardware they lack): ask whether to leave it to the QA testers, to ask
-  another maintainer on the PR, or to leave it waiting. Left to the QA,
-  the review is a ✅ that says so, and the PR names its issue with `Refs`,
-  not `Closes` (AGENTS.md section 9: a validation stays pending), the
-  description changed by you or its author as step 6 says. Left waiting,
-  step 1 does not ask again in the same session.
+  another maintainer on the PR, or to leave it waiting. Left to the QA
+  (AGENTS.md section 11, step 5 of the queue's list): the review is a ✅
+  that says so, the PR's TASKS.md line stays 🟡 with its ⬜ QA line, and
+  the PR names its issue with `Refs`, not `Closes` (section 9), each of
+  these changed by you or its author as step 6 says. Left waiting, step 1
+  does not ask again in the same session.
 
 ## 6. Fix it or ask the author
 
-Anything the author has to change (a conflict, a test or `check.ps1` broken
-on the merge with `main`, a finding of the diff, a demo or a validation
-that fails, the issue line of its description) goes to your human in a
-dialog, before anything is posted, one fix per question. AGENTS.md rule 3
-keeps you off others' work in progress: only that choice opens the
-author's branch or description to you.
+Anything the author has to change, at any step (a conflict, a test or
+`check.ps1` broken on the merge with `main`, a finding of the diff, a demo
+or a validation that fails, the PR's own TASKS.md line, the issue line of
+its description) goes to your human in a dialog before anything is
+posted, one fix per question: fix it yourself, or a `## Changes
+requested`. AGENTS.md rule 3 keeps you off others' work in progress: only
+that choice, fix by fix, opens the author's branch or description to you
+(section 11, step 6 of the queue's list).
 
-- **Fix it yourself**, offered only when you may push to the PR's branch
-  (`gh pr view <n> --json isCrossRepository,maintainerCanModify,headRefName,headRepositoryOwner,headRepository`:
+- **Fix it yourself**, offered when you may push to the PR's branch (`gh
+  pr view <n> --json isCrossRepository,maintainerCanModify,headRefName,headRepositoryOwner,headRepository`:
   a branch of this repository, or a fork that allows maintainers' pushes)
-  and the fix is small and sure (a merge of `main` and its conflicts, a
-  field a test of `main` lacks, a typo). TASKS.md: in a conflict, keep
-  both sides as they are written; a change to the PR's own line (its
-  status, a sub-line) is a fix of its own, asked by itself, and never a
-  line of another task (AGENTS.md section 6, "Do not rewrite the lines of
-  other tasks"). In the review
-  worktree: resolve, commit (in your human's name, an English message in
-  the imperative, no AI mention: AGENTS.md section 10), then `check.ps1`
-  again: after every change
-  you make to a PR, however small, before it is pushed (a change to docs
-  alone excepted). Then push to the author's branch:
+  and the fix is small and sure. The question says what will be pushed:
+  - **the fix only**, on the PR's own head, for a fix that stands without
+    today's `main` (a typo, the PR's TASKS.md line, a field): `git -C <W>
+    checkout --detach <head>`, the fix, a commit, then `git -C <W> merge
+    --no-ff -m "Merge origin/main into <headRefName>" origin/main` again
+    for `check.ps1` only: that merge stays local, and the push sends the
+    fix's commit (`git -C <W> push <url> <fix commit>:refs/heads/<headRefName>`).
+    Main's section 11 asks the same of your own PRs: no merge of `main`
+    nobody needs (the merge queue tests the latest `main` anyway);
+  - **the merge of `main` and the fix**, for a conflict or a fix that only
+    works on today's `main` (a test `main` added): in the merged
+    worktree, resolve or fix, commit, and push `HEAD`. It changes the
+    author's branch more: their next pull brings `main`.
+
+  In `TASKS.md`, a conflict keeps both sides as they are written, and only
+  the PR's own line ever changes, as its own question (AGENTS.md section 6,
+  "Do not rewrite the lines of other tasks"). Commits in your human's name,
+  an English message in the imperative, no AI mention (section 10). Then
+  `check.ps1` again on the merged tree, after every change you make to a
+  PR, however small, before it is pushed (a change to docs alone
+  excepted). The push:
 
   ```
-  git -C <W> push https://github.com/<owner>/<repo>.git HEAD:refs/heads/<headRefName>
+  git -C <W> push https://github.com/<owner>/<repo>.git <commit>:refs/heads/<headRefName>
   ```
 
-  The pushed head is now the PR's: step 4 on it, and the review names it
-  and says what the maintainer pushed.
+  Any push restarts the PR's CI (on a fork it may wait for "Approve and
+  run" again): the pushed head is now the PR's, step 4 on it, and the
+  review names it and says what the maintainer pushed.
+
   The description (`Closes` → `Refs`, section 9) changes with `gh pr view
   <n> --json body`, the line edited in a file of `<W>/.scratch/`, then
   `gh pr edit <n> --body-file …`: a change to docs alone, no `check.ps1`.
@@ -454,14 +485,19 @@ gh pr comment <n> --repo Aurora-Viewer/Aurora-Viewer --body-file <W>/.scratch/re
   re-review did not need to read again says "unchanged since `<head>`,
   review of <date>", never "everything else as before" for several rows
   at once.
+- Then the template's `### Findings` (what was fixed, by whom; what is
+  for the human to decide, with the options) and `### Screenshots` (the
+  captures of step 5).
 - Posting it ends the claim: nothing to release.
 
-Then end the review worktree. `end-task.ps1` looks for a merged PR of the
-worktree's own branch, which a review never has: check first that nothing
-is left to push (`git -C <W> status --porcelain` empty, and no commit of
-yours outside the PR and `main`: `git -C <W> fetch origin pull/<n>/head`,
-then `git -C <W> rev-list --no-merges HEAD ^FETCH_HEAD ^origin/main`
-empty), then:
+**Ending the review worktree**, once nothing more can happen in it: after
+the merge's outcome for a ✅ (step 8: a PR that leaves the queue comes back
+to step 6 in it), right after posting otherwise. `end-task.ps1` looks for
+a merged PR of the worktree's own branch, which a review never has, so it
+takes `-Force`; first check that nothing you made is lost:
+`git -C <W> status --porcelain` empty, and each commit you chose to push
+is in the PR's head (`git -C <W> fetch origin pull/<n>/head`, then `git -C
+<W> merge-base --is-ancestor <commit> FETCH_HEAD` for each). Then:
 
 ```
 pwsh ./scripts/end-task.ps1 -Name review-<n> -Force
@@ -486,16 +522,20 @@ prose. On their yes, for each PR:
    --event merge_group`, then `gh run watch`), and read the outcome before
    the turn ends.
    - **Merged**: every issue it closes or names (`Closes`, `Refs`) gets
-     its confirmation comment (AGENTS.md section 15, "Reply and close"),
-     in a file of the review worktree's `.scratch/` or yours, then `gh
-     issue comment <i> --body-file …`: what was fixed, the PR and its merge
+     its confirmation comment (AGENTS.md section 15, "Reply and close"):
+     read its thread again first (`gh issue view <i> --json comments`;
+     section 15, "Read the thread again just before a mutation"), so the
+     comment repeats nothing already said; write it in a file of the
+     review worktree's `.scratch/` or yours, then `gh issue comment <i>
+     --body-file …`: what was fixed, the PR and its merge
      commit, how it was tested, what is still to check and by whom, and
      whether a release has it yet (`gh release list`, then `git
      merge-base --is-ancestor <merge> <tag>`: "not in a release yet, it
-     comes with the next one" until it is). Then its Status on the board
-     (`pwsh ./scripts/issue-board.ps1 -Issue <i>`): `Done` for an issue
-     the merge closed, `Waiting Review` for one whose check stays with the
-     QA or its reporter; never out of `Triage`. A PR that closes the last
+     comes with the next one" until it is). Then its Status on the board:
+     `pwsh ./scripts/issue-board.ps1 -Issue <i> -Status 'Done'` for an
+     issue the merge closed, `-Status 'Waiting Review'` for one whose
+     check stays with the QA or its reporter, never out of `Triage`; and
+     read it back (`-Issue <i>` alone). A PR that closes the last
      open sub-issue of an epic: tell your human (the project manager
      closes epics).
    - **A queue run fails while `merge-pr.ps1` still waits**: the group it
@@ -515,9 +555,8 @@ to complete, a CI approval refused:
 pwsh ./scripts/review-queue.ps1 -Release <n>
 ```
 
-then, if its review worktree exists, drop a merge still in conflict (`git
--C <W> merge --abort`) and end it (`pwsh ./scripts/end-task.ps1 -Name
-review-<n> -Force`, after step 7's check that nothing is left to push).
+then, only if its review worktree exists, drop a merge still in conflict
+(`git -C <W> merge --abort`) and end it as step 7 says.
 Tell your human why.
 
 ## 10. Report

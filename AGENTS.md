@@ -24,7 +24,8 @@ else's work.
    other is "a busy region", "a store", "a skybox"…
 3. **Never touch another agent's work in progress.** You work in your own
    worktree (section 3). If the build fails in code you did not change, do
-   not "fix" it: report it.
+   not "fix" it: report it. The one exception is a fix your human chooses,
+   fix by fix, on someone else's pull request (section 11).
 4. **The final test of a feature or a fix is validated by a human**, before
    any PR (section 8). Only exception: a PR with no effect on the viewer
    (documentation, CI, scripts) does not need it.
@@ -792,7 +793,8 @@ explain it to the human and propose 2–3 solutions.
 by hand: several maintainers review at once, and the queue keeps them off
 each other's PRs. The Claude Code routine `.claude/skills/review-next`
 follows the steps below; on Linux the scripts run as `pwsh
-./scripts/<script>.ps1`.
+./scripts/<script>.ps1`. Dependabot's PRs are not in the queue: section 13
+says how they are handled.
 
 ```powershell
 ./scripts/review-queue.ps1 -Pending   # first: your approvals to merge, your reviews left on a decision
@@ -832,8 +834,10 @@ follows the steps below; on Linux the scripts run as `pwsh
    `new-task.ps1` (`-Name review-<n>`), the PR's head with the latest
    `main` merged into it, for its conflicts, and the names of the files it
    changes, for what CI would run (`.github/`, scripts, build files); its
-   code is read once its CI is green (below). A conflict gets no CI:
-   GitHub cannot build the PR's merge.
+   code is read once its CI is green (below). A conflict gets no CI
+   (GitHub cannot build the PR's merge): it goes to step 6 first, and
+   resolving it yourself, which reads the conflicting files before CI, is
+   only your human's choice.
 4. **CI**, then the wait for it in the same turn, without handing back
    (below for an outside contributor's "Approve and run"); then the diff,
    read in full. Never end a turn on "I will review it once CI is green":
@@ -847,24 +851,30 @@ follows the steps below; on Linux the scripts run as `pwsh
    for them in demo or normal mode, what to test, where and what they
    should see, their answer awaited; on the grid, they log in). Never
    skipped: a validation they cannot do yet leaves a ⚠️ verdict until it
-   is done.
-6. **Whatever the author has to change** (a conflict, a test broken on the
-   merge with `main`, a finding, a failing test, the issue line of its
-   description): ask your human whether you fix it yourself on the
-   author's branch (when you may push to it: a branch of this repository,
-   or a fork that allows maintainers' pushes; and the fix is small and
-   sure: merge `main`, fix, `check.ps1`, push, wait for green) or post the
-   `## Changes requested`. Before its CI is green, the only fix of yours
-   is a conflict outside the code (`TASKS.md`, docs). Rule 3 keeps you off
-   others' work in progress:
+   is done. One they cannot do at all (another system, an OpenSim grid)
+   may be left to the QA testers, if they choose so: a ✅ that says so,
+   the PR's `TASKS.md` line 🟡 with its ⬜ QA line, and `Refs` for its
+   issue (section 9).
+6. **Whatever the author has to change**, at any step (a conflict, a test
+   broken on the merge with `main`, a finding, a failing test, the PR's
+   own `TASKS.md` line, the issue line of its description): ask your human
+   whether you fix it yourself on the author's branch (when you may push
+   to it: a branch of this repository, or a fork that allows maintainers'
+   pushes; and the fix is small and sure) or post the `## Changes
+   requested`. A fix of yours is checked with `check.ps1` on the PR merged
+   with the latest `main`, then pushed without a merge of `main` unless it
+   needs one (a conflict, a fix that only works on today's `main`): as for
+   your own PR (step 1 below), no merge of `main` nobody needs. Rule 3
+   keeps you off others' work in progress:
    only your human's choice, PR by PR and fix by fix, opens the author's
    branch or description to you, and the review says what you changed.
    In `TASKS.md`, a conflict keeps both sides as written, and only the
    PR's own line changes, as its own question (section 6).
 7. **Post the review yourself** (below), naming the PR's head it read
-   (never the worktree's local merge), then end the review worktree
-   (`end-task.ps1 -Name review-<n> -Force`, once nothing is left to
-   push).
+   (never the worktree's local merge). End the review worktree
+   (`end-task.ps1 -Name review-<n> -Force`, once every commit you pushed
+   is in the PR) after the merge's outcome, or right after posting when
+   there is nothing to merge.
 8. **The merge** of a ✅ PR is a question your human answers (rule 5),
    then `merge-pr.ps1`; once merged, a confirmation comment on every issue
    it closes or names, and their Status (`issue-board.ps1`; section 15,
