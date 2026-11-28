@@ -1658,10 +1658,7 @@ impl World {
         let (left, sent): (Vec<usize>, Vec<usize>) = self.objects.children_of(&key).iter().copied().partition(|i| stale(self, i));
         // the items of the objects the region did send: a left-behind copy
         // of one of them is a ghost of what the region rezzed again
-        let arrived: HashSet<Uuid> = sent
-            .iter()
-            .filter_map(|i| self.objects.get(*i)?.attachment_item_id())
-            .collect();
+        let arrived: HashSet<Uuid> = sent.iter().filter_map(|i| self.objects.get(*i)?.attachment_item_id()).collect();
         let linked: Option<HashSet<Uuid>> = outfit::current_outfit_objects(&self.inventory).map(|ids| ids.into_iter().collect());
         let mut gone = Vec::new();
         let mut asked = Vec::new();
