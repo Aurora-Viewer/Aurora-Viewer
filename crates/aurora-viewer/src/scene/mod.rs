@@ -1018,7 +1018,7 @@ pub struct Scene {
     geom_trash: jobs::Trash<Arc<GpuGeom>>,
     /// Bounds of the objects for the hover search, and its kept answer
     /// (hover.rs).
-    pick: hover::PickIndex,
+    pub(crate) pick: hover::PickIndex,
     /// Drawn world volumes with the Ignore Object click action.
     ignored_draws: FastSet<usize>,
     pub hover: hover::HoverCache,

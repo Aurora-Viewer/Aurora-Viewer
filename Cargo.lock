@@ -609,6 +609,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-mcp"
+version = "0.1.0"
+dependencies = [
+ "aurora-version",
+ "base64 0.23.1",
+ "image",
+ "log",
+ "parking_lot 0.13.0",
+ "png",
+ "regex",
+ "roxmltree 0.21.2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "aurora-media"
 version = "0.1.0"
 dependencies = [
@@ -753,6 +773,7 @@ dependencies = [
  "aurora-editor-sync",
  "aurora-i18n",
  "aurora-llsd",
+ "aurora-mcp",
  "aurora-media",
  "aurora-net",
  "aurora-prim",

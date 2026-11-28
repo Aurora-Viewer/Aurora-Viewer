@@ -887,6 +887,18 @@ impl Imports {
             self.load_files(jobs, ctx, options, choice, false, Selection::Paths(vec![path]));
         }
     }
+    /// Loads explicit file `paths` on the background job pool without opening a native file dialog.
+    pub(crate) fn load_paths(
+        &mut self,
+        jobs: &crate::scene::jobs::Jobs,
+        ctx: &egui::Context,
+        options: import_texture::Options,
+        choice: Choice,
+        local: bool,
+        paths: Vec<PathBuf>,
+    ) {
+        self.load_files(jobs, ctx, options, choice, local, Selection::Paths(paths));
+    }
     /// Loads `paths`, or the files chosen in a dialog filtered on `choice`.
     fn load_files(
         &mut self,
@@ -964,10 +976,37 @@ pub(super) fn load_paths(
     local: bool,
     filters: [bool; 5],
 ) -> Vec<Entry> {
+    // As a folder import and the Legacy Viewer's one pick: a mesh picked with
+    // its own _LOD2/_LOD1/_LOD0/_PHYS files takes them as its levels,
+    // and they do not become entries of their own.
+    let mut consumed = HashSet::new();
+    let order = lods::order(&paths, prefs);
+    let paths: Vec<PathBuf> = order.into_iter().map(|i| paths[i].clone()).collect();
     let mut entries = Vec::new();
     for path in paths {
+        if consumed.contains(&lods::identity(&path)) {
+            continue;
+        }
         match load_selected(&path, choice, options, sound_limit, prefs, local, filters) {
-            Ok(mut loaded) => entries.append(&mut loaded),
+            Ok(mut loaded) => {
+                let own = lods::identity(&path);
+                for entry in &loaded {
+                    if let Some(Source::Mesh(draft)) = &entry.source {
+                        for companion in draft.lods[..3]
+                            .iter()
+                            .filter(|lod| lod.file.is_some())
+                            .filter_map(|lod| lod.path.as_ref())
+                            .chain(draft.physics_path.iter().filter(|_| draft.physics_file.is_some()))
+                        {
+                            let companion = lods::identity(companion);
+                            if companion != own {
+                                consumed.insert(companion);
+                            }
+                        }
+                    }
+                }
+                entries.append(&mut loaded);
+            }
             Err(error) => entries.push(Entry::new(path, Err(load_error(error)), options)),
         }
     }

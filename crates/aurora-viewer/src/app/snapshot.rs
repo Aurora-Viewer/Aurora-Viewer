@@ -2786,6 +2786,10 @@ LUT_3D_SIZE {n}
     /// turns the switch off.
     pub(super) fn photo_free_camera(&mut self) {
         let flying = self.camera.free().is_some();
+        if self.camera.free_for_agent() {
+            // an agent's shot (MCP camera): not this window's to end
+            return;
+        }
         if self.snapshots.free_flying && !flying {
             log::info!("free camera: ended by the camera (mouselook or teleport)");
             self.photo_free_finish();

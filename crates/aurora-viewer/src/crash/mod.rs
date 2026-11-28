@@ -621,6 +621,9 @@ fn preserve(dir: &Path, exit_code: u32) -> anyhow::Result<()> {
 }
 
 fn recover() {
+    if crate::cli::get().headless {
+        return;
+    }
     recover_in(&root(), |dir| {
         let _ = spawn_helper(dir, "--crash-show");
     });

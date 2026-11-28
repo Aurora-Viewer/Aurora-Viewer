@@ -9862,7 +9862,7 @@ hud-move-locked = Lock quick movement
 hud-local-scale-reset = Reset to 100%
 hud-local-scale-forget = Forget saved size
 hud-local-scale-help = Hold the HUD key: left drag to move, wheel to resize, Shift for finer steps. Size is saved on this PC by name and creator, for this account. While editing a HUD, the wheel without this key zooms the view of all HUDs.
-cli-help = { "Aurora Viewer\u000A\u000AUsage: aurora-viewer [--title <text>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <name>]\u000A                     [--login <first> <last> <password>] [--version] [--uninstall] [<slurl>]\u000A\u000A  --title <text>   Name this window (\"Aurora Viewer <version> - <text>\") and its log\u000A                   file (aurora-<text>.log, aurora-demo-<text>.log in demo mode)\u000A  --fps-limit <fps>  Cap this process at 1..500 FPS without saving preferences\u000A  --language <code>  Override this process's UI language (" }{ $languages }{ ")\u000A  --grid <name>    Start on agni, aditi, a saved grid name or a login URI (also --loginuri <uri>)\u000A  --login <first> <last> <password>  Log in with this account at once\u000A  <slurl>, --url <slurl>  Start at this place; nothing after it is read. A viewer\u000A                   already running receives it instead\u000A  --vr             Enter VR once the world shows (headset connected)\u000A  -V, --version   Show the compiled viewer version without starting it\u000A  --uninstall      Remove what Aurora registered outside its folders (link handler,\u000A                   credential store, Blender add-on), print it and the folders left, then exit\u000A  -h, --help       Show this help\u000A\u000ATest switches are environment variables (AURORA_DEMO=1, AURORA_CAPTURE=...):\u000Asee README.md." }
+cli-help = { "Aurora Viewer\u000A\u000AUsage: aurora-viewer [--title <text>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <name>]\u000A                     [--login <first> <last> <password>] [--autologin] [--mcp] [--mcp-port <port>]\u000A                     [--headless] [--offscreen-gpu] [--version] [--uninstall] [<slurl>]\u000A\u000A  --title <text>   Name this window (\"Aurora Viewer <version> - <text>\") and its log\u000A                   file (aurora-<text>.log, aurora-demo-<text>.log in demo mode)\u000A  --fps-limit <fps>  Cap this process at 1..500 FPS without saving preferences\u000A  --language <code>  Override this process's UI language (" }{ $languages }{ ")\u000A  --grid <name>    Start on agni, aditi, a saved grid name or a login URI (also --loginuri <uri>)\u000A  --login <first> <last> <password>  Log in with this account at once\u000A  --autologin      Log in immediately using the active remembered account\u000A  --mcp            Start the local Model Context Protocol (MCP) server (default port 3847)\u000A  --mcp-port <port>  Port for the local MCP server (implies --mcp)\u000A  --headless       Run without a window or GPU renderer (implies --mcp)\u000A  --offscreen-gpu  Run headless with a windowless offscreen GPU renderer (implies --mcp)\u000A  <slurl>, --url <slurl>  Start at this place; nothing after it is read. A viewer\u000A                   already running receives it instead\u000A  --vr             Enter VR once the world shows (headset connected)\u000A  -V, --version   Show the compiled viewer version without starting it\u000A  --uninstall      Remove what Aurora registered outside its folders (link handler,\u000A                   credential store, Blender add-on), print it and the folders left, then exit\u000A  -h, --help       Show this help\u000A\u000ATest switches are environment variables (AURORA_DEMO=1, AURORA_CAPTURE=...):\u000Asee README.md." }
 demo-media-page = { "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Aurora media</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='Clicked!'\" style='font-size:48px;padding:10px 40px'>Click</button><br><input placeholder='Type here' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>" }
 demo-nearby-media-page-cinema = { "data:text/html;charset=utf-8,<html><head><title>Plaza cinema</title></head><body style='margin:0;height:100vh;background:%23402060;color:white;font:64px sans-serif;text-align:center'><h1 style='margin-top:180px'>Cinema</h1></body></html>" }
 demo-nearby-media-page-next-door = { "data:text/html;charset=utf-8,<html><head><title>Parcel next door</title></head><body style='margin:0;height:100vh;background:%23205040;color:white;font:64px sans-serif;text-align:center'><h1 style='margin-top:180px'>Next door</h1></body></html>" }
@@ -16543,6 +16543,24 @@ joystick-layout-positional = Positional
 
 joystick-layout-auto = Automatic
 joystick-layout-xinput = XInput
+
+## The agents' control bar (ui/agent_control.rs)
+agent-control-approval = MCP approval: { $tool }
+agent-control-asks = { $agent } asks to use the viewer
+agent-control-no-purpose = (no reason given)
+agent-control-minutes = For about { $minutes } min
+agent-control-allow = Allow
+agent-control-not-now = Not now
+agent-control-auto-in = Goes ahead in { $seconds } s if you do not answer
+agent-control-working = { $agent } is using the viewer
+agent-control-left = { $minutes } min left
+agent-control-take-back = Take back
+agent-control-take-back-hint = End its turn now and keep agents out until you choose Ask me or Let agents in
+agent-control-held = Agents are on hold
+agent-control-waiting = Waiting: { $agents }
+agent-control-mode-ask = Ask me
+agent-control-mode-auto = Let agents in
+agent-control-mode-hold = Hold
 
 bug-copy-version = Copy viewer version
 

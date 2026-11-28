@@ -9867,7 +9867,7 @@ hud-move-locked = Verrouiller le déplacement rapide
 hud-local-scale-reset = Revenir à 100 %
 hud-local-scale-forget = Oublier le réglage mémorisé
 hud-local-scale-help = Maintenez la touche des HUDs : clic gauche pour déplacer, molette pour changer la taille, Maj pour affiner. La taille est mémorisée sur ce PC par nom et créateur, pour ce compte. En édition d’un HUD, la molette sans cette touche zoome la vue de tous les HUDs.
-cli-help = { "Aurora Viewer\u000A\u000AUsage : aurora-viewer [--title <texte>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <nom>]\u000A                      [--login <prénom> <nom> <mot de passe>] [--version] [--uninstall] [<slurl>]\u000A\u000A  --title <texte>  Nomme cette fenêtre et son journal (aurora-<texte>.log,\u000A                  aurora-demo-<texte>.log en démo)\u000A  --fps-limit <fps>  Limite cette instance à 1..500 FPS sans enregistrer le réglage\u000A  --language <code>  Force la langue de cette instance (" }{ $languages }{ ")\u000A  --grid <nom>    Démarre sur agni, aditi, une grille enregistrée ou une adresse de connexion (aussi --loginuri <uri>)\u000A  --login <prénom> <nom> <mot de passe>  Se connecte tout de suite avec ce compte\u000A  <slurl>, --url <slurl>  Démarre à ce lieu ; rien n'est lu après. Un viewer déjà\u000A                  ouvert le reçoit à la place\u000A  --vr             Passer en VR dès que le monde s'affiche (casque connecté)\u000A  -V, --version   Affiche la version compilée puis quitte\u000A  --uninstall     Retire ce qu'Aurora a enregistré hors de ses dossiers (liens,\u000A                  coffre d'identifiants, module Blender), l'affiche avec les dossiers restants, puis quitte\u000A  -h, --help      Affiche cette aide\u000A\u000ALes scénarios de test utilisent des variables (AURORA_DEMO=1, AURORA_CAPTURE=...) :\u000Avoir README.md." }
+cli-help = { "Aurora Viewer\u000A\u000AUsage : aurora-viewer [--title <texte>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <nom>]\u000A                      [--login <prénom> <nom> <mot de passe>] [--autologin] [--mcp] [--mcp-port <port>]\u000A                      [--headless] [--offscreen-gpu] [--version] [--uninstall] [<slurl>]\u000A\u000A  --title <texte>  Nomme cette fenêtre et son journal (aurora-<texte>.log,\u000A                  aurora-demo-<texte>.log en démo)\u000A  --fps-limit <fps>  Limite cette instance à 1..500 FPS sans enregistrer le réglage\u000A  --language <code>  Force la langue de cette instance (" }{ $languages }{ ")\u000A  --grid <nom>    Démarre sur agni, aditi, une grille enregistrée ou une adresse de connexion (aussi --loginuri <uri>)\u000A  --login <prénom> <nom> <mot de passe>  Se connecte tout de suite avec ce compte\u000A  --autologin      Se connecte immédiatement avec le compte mémorisé actif\u000A  --mcp            Démarre le serveur local Model Context Protocol (MCP, port 3847 par défaut)\u000A  --mcp-port <port>  Port du serveur MCP local (implique --mcp)\u000A  --headless       Exécute sans fenêtre ni rendu GPU (implique --mcp)\u000A  --offscreen-gpu  Exécute sans fenêtre avec un rendu GPU hors écran (implique --mcp)\u000A  <slurl>, --url <slurl>  Démarre à ce lieu ; rien n'est lu après. Un viewer déjà\u000A                  ouvert le reçoit à la place\u000A  --vr             Passer en VR dès que le monde s'affiche (casque connecté)\u000A  -V, --version   Affiche la version compilée puis quitte\u000A  --uninstall     Retire ce qu'Aurora a enregistré hors de ses dossiers (liens,\u000A                  coffre d'identifiants, module Blender), l'affiche avec les dossiers restants, puis quitte\u000A  -h, --help      Affiche cette aide\u000A\u000ALes scénarios de test utilisent des variables (AURORA_DEMO=1, AURORA_CAPTURE=...) :\u000Avoir README.md." }
 demo-media-page = { "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Aurora media</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='Cliqu%C3%A9 !'\" style='font-size:48px;padding:10px 40px'>Cliquer</button><br><input placeholder='Taper ici' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>" }
 demo-nearby-media-page-cinema = { "data:text/html;charset=utf-8,<html><head><title>Cinéma de la place</title></head><body style='margin:0;height:100vh;background:%23402060;color:white;font:64px sans-serif;text-align:center'><h1 style='margin-top:180px'>Cinéma</h1></body></html>" }
 demo-nearby-media-page-next-door = { "data:text/html;charset=utf-8,<html><head><title>Parcelle voisine</title></head><body style='margin:0;height:100vh;background:%23205040;color:white;font:64px sans-serif;text-align:center'><h1 style='margin-top:180px'>Chez le voisin</h1></body></html>" }
@@ -16549,6 +16549,24 @@ joystick-layout-positional = Positionnelle
 
 joystick-layout-auto = Automatique
 joystick-layout-xinput = XInput
+
+## The agents' control bar (ui/agent_control.rs)
+agent-control-approval = Approbation MCP : { $tool }
+agent-control-asks = { $agent } demande à utiliser le viewer
+agent-control-no-purpose = (aucune raison donnée)
+agent-control-minutes = Pour environ { $minutes } min
+agent-control-allow = Autoriser
+agent-control-not-now = Pas maintenant
+agent-control-auto-in = Continue dans { $seconds } s sans réponse
+agent-control-working = { $agent } utilise le viewer
+agent-control-left = { $minutes } min restantes
+agent-control-take-back = Reprendre
+agent-control-take-back-hint = Termine son tour maintenant et tient les agents à l'écart jusqu'à ce que vous choisissiez Me demander ou Laisser entrer
+agent-control-held = Agents en attente
+agent-control-waiting = En attente : { $agents }
+agent-control-mode-ask = Me demander
+agent-control-mode-auto = Laisser entrer
+agent-control-mode-hold = Bloquer
 
 bug-copy-version = Copier la version du viewer
 

@@ -373,6 +373,15 @@ impl AutoPilot {
         }
     }
 
+    /// The same walk ending within `stop_distance` metres (an MCP walk's own
+    /// stop distance); non-positive or non-finite keeps the default.
+    pub fn with_stop_distance(mut self, stop_distance: f32) -> Self {
+        if stop_distance.is_finite() && stop_distance > 0.0 {
+            self.stop_distance = stop_distance;
+        }
+        self
+    }
+
     /// startAutoPilotGlobal with a stop distance and a finish callback.
     pub fn start_to(from: Vec3, target: Vec3, stop_distance: f32, arrival: Arrival, now: Instant) -> AutoPilot {
         AutoPilot {
