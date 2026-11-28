@@ -14384,8 +14384,6 @@ ao-underwater-swimming-fallback = ここにアニメーションが割り当て�
 
 ao-quick-manager = 設定
 ao-mini-title = ミニＡＯ
-ao-now-playing = { $state }：{ $name }
-ao-now-playing-none = { $state }：アニメーション未選択
 ao-quick-pin = ミニＡＯウィンドウを開く
 ao-quick-previous = 前のアニメーション（{ $state }）
 ao-quick-next = 次のアニメーション（{ $state }）
@@ -16774,3 +16772,8 @@ ao-next-in = あと{ $seconds }秒
 ao-stop-seconds = { $count }秒
 ao-stop-minutes = { $count }分
 ao-stop-auto = 自動
+ao-mini-close = ミニAOを閉じる
+ao-cycle-off = オフ
+ao-switches-every = { $time }ごとに切り替え
+ao-tile-swimming = 水泳
+ao-tile-water-walk = 水上歩行

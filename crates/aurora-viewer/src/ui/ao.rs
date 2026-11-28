@@ -273,29 +273,6 @@ fn push(out: &mut Vec<Action>, state: &mut AoUi, result: Result<Mutation, String
     }
 }
 
-pub(super) fn toggle(ui: &mut egui::Ui, p: &Palette, key: &'static str, value: &mut bool) -> bool {
-    ui.horizontal(|ui| {
-        let changed = widgets::switch(ui, p, value).changed();
-        let label = ui.add(egui::Label::new(aurora_i18n::text(key)).sense(egui::Sense::click()));
-        if label.clicked() {
-            *value = !*value;
-            true
-        } else {
-            changed
-        }
-    })
-    .inner
-}
-
-pub(super) fn enabled(ui: &mut egui::Ui, p: &Palette, runtime: &mut Runtime, account: &mut Account) -> bool {
-    let changed = toggle(ui, p, "ao-enabled", &mut account.enabled);
-    if changed && account.enabled {
-        runtime.stands = true;
-        runtime.paused = false;
-    }
-    changed
-}
-
 /// Width of the left column, and of the preview on the right.
 const SIDEBAR: f32 = 252.0;
 const PREVIEW: f32 = 340.0;

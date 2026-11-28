@@ -822,10 +822,9 @@ pub struct Floater<'a> {
     /// No title bar: its close cross in a small box against its right edge
     /// (see `headless`).
     pub headless: bool,
-    /// The alpha of its glass's tint, in place of the theme's: a lighter
-    /// glass that shows more of the blurred world behind (the mini AO
-    /// strip). Kept solid when the theme's windows are.
-    pub glass_alpha: Option<u8>,
+    /// Its glass tinted as the toolbars' (`Palette::bar`) instead of the
+    /// windows' (the mini AO strip, laid over the world like a bar).
+    pub bar_glass: bool,
     /// Its body's margins in place of the floater's own (`margin`).
     pub margin: Option<egui::Margin>,
     /// A window without a title bar shows no close cross, and Ctrl+W passes
@@ -873,7 +872,7 @@ impl<'a> Floater<'a> {
             aspect: None,
             order: egui::Order::Middle,
             headless: false,
-            glass_alpha: None,
+            bar_glass: false,
             margin: None,
             closable: true,
             cascade: None,
@@ -1031,9 +1030,9 @@ impl<'a> Floater<'a> {
         self
     }
 
-    /// A lighter glass (`glass_alpha`).
-    pub fn glass(mut self, alpha: u8) -> Self {
-        self.glass_alpha = Some(alpha);
+    /// The toolbars' glass (`bar_glass`).
+    pub fn bar_glass(mut self) -> Self {
+        self.bar_glass = true;
         self
     }
 
@@ -1140,12 +1139,12 @@ impl<'a> Floater<'a> {
         }
         let opacity = super::surface_opacity::window(ctx, self.id, self.chat);
         let shadow = ctx.global_style().visuals.window_shadow;
-        // (a lighter glass only over glass windows: a solid theme stays solid)
-        let alpha = self.glass_alpha.filter(|_| p.panel_alpha < 255).unwrap_or(p.panel_alpha);
-        let glass_palette = Palette { panel_alpha: alpha, ..*p };
+        // (the toolbars' tint for one laid over the world like a bar)
+        let glass_palette = if self.bar_glass { Palette { panel: p.bar, ..*p } } else { *p };
+        let tint = glass_palette.panel;
         let fill = super::surface_opacity::frame_fill(
             &glass_palette,
-            Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), alpha),
+            Color32::from_rgba_unmultiplied(tint.r(), tint.g(), tint.b(), p.panel_alpha),
             opacity,
         );
         let frame = egui::Frame::new()

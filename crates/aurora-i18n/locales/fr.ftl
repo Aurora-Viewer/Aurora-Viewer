@@ -14560,8 +14560,6 @@ ao-underwater-swimming-fallback = Utilise la liste de nage en surface tant qu’
 
 ao-quick-manager = Paramètres
 ao-mini-title = Mini AO
-ao-now-playing = { $state } : { $name }
-ao-now-playing-none = { $state } : aucune animation sélectionnée
 ao-quick-pin = Ouvrir la fenêtre mini AO
 ao-quick-previous = Animation précédente ({ $state })
 ao-quick-next = Animation suivante ({ $state })
@@ -16982,3 +16980,8 @@ ao-next-in = suivante dans { $seconds } s
 ao-stop-seconds = { $count } s
 ao-stop-minutes = { $count } min
 ao-stop-auto = Auto
+ao-mini-close = Fermer le mini AO
+ao-cycle-off = Arrêt
+ao-switches-every = Change toutes les { $time }
+ao-tile-swimming = Nage
+ao-tile-water-walk = Marcher sur l’eau

@@ -1097,15 +1097,15 @@ fn quick_controls_share_preferences_and_preserve_water_mode_exclusion() {
     let generation = f.inv.generation;
     f.runtime.paused = true;
     f.runtime.stands = false;
-    assert!(matches!(f.click(aurora_i18n::tr!("ao-enabled")).as_slice(), [Action::Preferences]));
+    assert!(matches!(f.click_icon("power").as_slice(), [Action::Preferences]));
     assert!(f.account.enabled && !f.runtime.paused && f.runtime.stands);
-    f.click(aurora_i18n::tr!("movement-swimming"));
+    f.click(aurora_i18n::tr!("ao-tile-swimming"));
     assert!(f.movement_prefs.swimming && !f.movement_prefs.water_walk);
-    f.click(aurora_i18n::tr!("movement-water-walk"));
+    f.click(aurora_i18n::tr!("ao-tile-water-walk"));
     assert!(f.movement_prefs.water_walk && !f.movement_prefs.swimming);
-    f.click(aurora_i18n::tr!("movement-water-walk"));
+    f.click(aurora_i18n::tr!("ao-tile-water-walk"));
     assert!(!f.movement_prefs.water_walk && !f.movement_prefs.swimming);
-    f.click(aurora_i18n::tr!("ao-quick-manager"));
+    f.click_icon("settings-filled");
     assert!(f.manager_open);
     assert!(!f.quick.as_ref().expect("quick").open);
     assert_eq!(f.inv.generation, generation, "quick controls must not mutate inventory");
@@ -1114,18 +1114,18 @@ fn quick_controls_share_preferences_and_preserve_water_mode_exclusion() {
 #[test]
 fn quick_popup_names_the_selected_animation_and_tracks_manual_steps() {
     let mut f = quick_fixture(true);
+    // (with the AO off the card says the default animations play)
+    f.account.enabled = true;
     f.runtime.current = Some(State::Standing);
     let set = f.catalog.selected(f.account.selected).expect("set").clone();
-    let selected_name = set.animation_config(State::Standing).expect("stands").steps[0].name.clone();
-    let selected_text = aurora_i18n::tr!("ao-now-playing", state = State::Standing.label(), name = selected_name);
+    let selected_text = set.animation_config(State::Standing).expect("stands").steps[0].name.clone();
     let mut shapes = f.draw(Vec::new()).1;
     assert!(
         shapes.iter_mut().any(|shape| contains_text(&shape.shape, &selected_text)),
         "{selected_text}"
     );
     f.runtime.step(&set, State::Standing, true);
-    let next_name = set.animation_config(State::Standing).expect("stands").steps[1].name.clone();
-    let next_text = aurora_i18n::tr!("ao-now-playing", state = State::Standing.label(), name = next_name);
+    let next_text = set.animation_config(State::Standing).expect("stands").steps[1].name.clone();
     let mut shapes = f.draw(Vec::new()).1;
     assert!(
         shapes.iter_mut().any(|shape| contains_text(&shape.shape, &next_text)),
@@ -1137,7 +1137,7 @@ fn quick_popup_names_the_selected_animation_and_tracks_manual_steps() {
 fn quick_pin_opens_the_persistent_mini_window() {
     let mut f = quick_fixture(true);
     assert!(!f.account.mini_open);
-    f.click(aurora_i18n::tr!("ao-quick-pin"));
+    f.click_icon("pin-filled");
     assert!(f.account.mini_open);
     assert!(!f.quick.as_ref().expect("quick").open);
 }
@@ -1147,27 +1147,41 @@ fn shows_text(f: &mut Fixture, text: &str) -> bool {
     shapes.iter_mut().any(|shape| contains_text(&shape.shape, text))
 }
 
-/// The popup's pin is LLFloaterReg::showInstance; it is hidden while the
-/// mini window is shown. The strip cannot be folded: a mini window left
-/// minimized by an older layout comes back whole, without its pin.
+/// The panel's pin opens the mini window (LLFloaterReg::showInstance); lit
+/// while the strip is shown, it closes it. The strip cannot be folded: a
+/// mini window left minimized by an older layout comes back whole.
 #[test]
-fn quick_pin_hides_while_the_mini_window_is_shown_and_an_old_minimized_strip_expands() {
+fn quick_pin_opens_and_closes_the_mini_window_and_an_old_minimized_strip_expands() {
     let mut f = quick_fixture(true);
-    let pin = aurora_i18n::tr!("ao-quick-pin");
-    f.click(pin);
+    f.click_icon("pin-filled");
     assert!(f.account.mini_open);
     f.settle();
-    f.click("AO");
-    f.settle();
-    assert!(f.quick.as_ref().is_some_and(|q| q.open));
-    assert!(!shows_text(&mut f, pin), "no pin while the mini window is shown");
     super::super::widgets::minimize_floater(&f.ctx, mini::WINDOW);
     f.settle();
     assert!(
         !super::super::widgets::floater_minimized(&f.ctx, mini::WINDOW),
         "the strip expands itself"
     );
-    assert!(!shows_text(&mut f, pin));
+    f.click("AO");
+    f.settle();
+    assert!(f.quick.as_ref().is_some_and(|q| q.open));
+    // the panel's pin, at the right of its header (the strip has its own
+    // buttons, none of them a pin)
+    f.click_icon("pin-filled");
+    assert!(!f.account.mini_open, "the lit pin closes the strip");
+}
+
+/// The strip has no close button: its right-click menu closes it.
+#[test]
+fn the_mini_strip_closes_from_its_menu() {
+    let mut f = Fixture::new();
+    f.account.mini_open = true;
+    f.manager_open = false;
+    f.settle();
+    let name = f.catalog.selected(f.account.selected).expect("set").name.to_uppercase();
+    click_with(&mut f, &name, egui::PointerButton::Secondary, Default::default());
+    f.click(aurora_i18n::tr!("ao-mini-close"));
+    assert!(!f.account.mini_open);
 }
 
 /// Unlike FloaterAO::onClickMore, which turns its one floater into the full
@@ -1372,7 +1386,7 @@ fn quick_cycle_without_interval_arms_a_timer() {
 #[test]
 fn quick_set_combo_stays_open_and_invalid_swimming_is_disabled() {
     let mut f = quick_fixture(true);
-    f.click(aurora_i18n::tr!("movement-swimming"));
+    f.click(aurora_i18n::tr!("ao-tile-swimming"));
     assert!(f.movement_prefs.swimming);
     let old_name = f.catalog.selected(f.account.selected).expect("set").name.clone();
     let other = Set::new("Other set".into());
@@ -1387,7 +1401,7 @@ fn quick_set_combo_stays_open_and_invalid_swimming_is_disabled() {
     f.settle();
     assert!(f.quick.as_ref().expect("quick").open, "child combo selection keeps its parent");
     assert!(!f.movement_prefs.swimming);
-    assert!(f.click(aurora_i18n::tr!("movement-swimming")).is_empty());
+    assert!(f.click(aurora_i18n::tr!("ao-tile-swimming")).is_empty());
     assert!(!f.movement_prefs.swimming);
     f.click("AO");
     assert!(!f.quick.as_ref().expect("quick").open, "second toolbar click dismisses the panel");

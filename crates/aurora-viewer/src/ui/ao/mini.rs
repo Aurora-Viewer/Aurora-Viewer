@@ -33,11 +33,15 @@ use egui::{RichText, Vec2};
 pub const WINDOW: &str = "ao_mini";
 /// One icon button of the strip.
 const BUTTON: Vec2 = Vec2::new(30.0, 30.0);
-/// The strip's width; its height follows its line.
-const WIDTH: f32 = 540.0;
-/// The alpha of its glass: lighter than a window's, the world blurred
-/// behind it (`Floater::glass`).
-const GLASS: u8 = 150;
+/// What plays now: its width and height.
+const FIELD: Vec2 = Vec2::new(176.0, 34.0);
+/// The grip at its left end.
+const GRIP: f32 = 12.0;
+/// The room between two of its parts, and its margins.
+const GAP: f32 = 3.0;
+const MARGIN: f32 = 5.0;
+/// The strip's width, from its parts; its height follows its line.
+const WIDTH: f32 = 2.0 * MARGIN + GRIP + FIELD.x + 8.0 * BUTTON.x + 11.0 * GAP + 6.0;
 
 #[allow(clippy::too_many_arguments)]
 pub fn show(
@@ -62,20 +66,36 @@ pub fn show(
     }
     let before = prefs.clone();
     let mut open = account.mini_open;
-    Floater::new(
+    let mut close = false;
+    // no close button: its right-click menu, its set list and the toolbar
+    // panel's pin close it
+    let mut floater = Floater::new(
         WINDOW,
         aurora_i18n::tr!("ao-mini-title"),
         egui::pos2(260.0, 420.0),
-        Vec2::new(WIDTH, 40.0),
+        Vec2::new(WIDTH, 44.0),
     )
     .headless()
-    .glass(GLASS)
+    .bar_glass()
     .fixed()
-    .margin(egui::Margin::same(5))
-    .show(ctx, p, &mut open, |ui| {
-        strip(ui, p, catalog, inv, runtime, account, prefs, manager_open, busy, &mut out);
+    .margin(egui::Margin::same(MARGIN as i8));
+    floater.closable = false;
+    floater.show(ctx, p, &mut open, |ui| {
+        strip(
+            ui,
+            p,
+            catalog,
+            inv,
+            runtime,
+            account,
+            prefs,
+            manager_open,
+            busy,
+            &mut close,
+            &mut out,
+        );
     });
-    account.mini_open = open;
+    account.mini_open = open && !close;
     prefs.sanitize();
     if *prefs != before {
         out.push(Action::MovementPreferences);
@@ -94,6 +114,7 @@ fn strip(
     prefs: &mut Preferences,
     manager_open: &mut bool,
     busy: bool,
+    close: &mut bool,
     out: &mut Vec<Action>,
 ) {
     // A failed save of Override sits stays shown under the strip, as the
@@ -101,13 +122,12 @@ fn strip(
     let message_id = egui::Id::unique(("ao_mini_set", "message"));
     let ready = quick::swimming_guard(catalog, account, prefs);
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 3.0;
-        widgets::glyph(ui, "grip-vertical", p.muted_dim, 13.0);
-        // (from the strip's own width: a window not laid out yet offers the
-        // whole screen)
-        let buttons = 8.0 * BUTTON.x + 12.0 * ui.spacing().item_spacing.x + 4.0;
-        let width = (WIDTH - 10.0 - 13.0 - buttons).max(120.0);
-        now_playing(ui, p, catalog, runtime, account, busy, manager_open, width, out);
+        ui.spacing_mut().item_spacing.x = GAP;
+        // the grip, in the line's middle
+        let (grip, _) = ui.allocate_exact_size(Vec2::new(GRIP, FIELD.y), egui::Sense::hover());
+        widgets::paint_glyph(ui.painter(), "grip-vertical", grip.center(), 13.0, p.muted_dim);
+        let field = now_playing(ui, p, catalog, runtime, account, busy, manager_open, close, out);
+        strip_menu(&field, p, manager_open, close);
         let tip = aurora_i18n::text(if account.enabled { "ao-turn-off" } else { "ao-turn-on" });
         if toggle_button(ui, p, "power", tip, account.enabled, true).clicked() {
             account.enabled = !account.enabled;
@@ -118,7 +138,10 @@ fn strip(
             out.push(Action::Preferences);
         }
         let set = catalog.selected(account.selected);
-        quick::cycle_buttons(ui, p, set, inv, runtime, account.enabled, busy, BUTTON, true, out);
+        let mut draw = |ui: &mut egui::Ui, icon: &str, _word: Option<&str>, tip: &str, on: bool, enabled: bool| {
+            quick::icon_toggle(ui, p, icon, tip, on, enabled, BUTTON)
+        };
+        quick::cycle_buttons(ui, set, inv, runtime, account.enabled, busy, &mut draw, out);
         let sits = set.is_some_and(|s| s.sits);
         if toggle_button(ui, p, "armchair", aurora_i18n::tr!("ao-sits"), sits, !busy && set.is_some()).clicked()
             && let Some(set) = set
@@ -157,9 +180,21 @@ fn strip(
     }
 }
 
+/// The strip's right-click menu: the full AO window, and closing the strip.
+fn strip_menu(response: &egui::Response, p: &Palette, manager_open: &mut bool, close: &mut bool) {
+    super::super::menu::context_menu(response, p, |ui| {
+        if super::super::menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ao-quick-manager")) {
+            widgets::open_floater(ui.ctx(), "ao", manager_open);
+        }
+        if super::super::menu::item(ui, p, "x", aurora_i18n::tr!("ao-mini-close")) {
+            *close = true;
+        }
+    });
+}
+
 /// An icon button of the strip: bare on its glass, lit while `on`.
 fn toggle_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool, enabled: bool) -> egui::Response {
-    quick::icon_toggle(ui, p, icon, tip, on, enabled, BUTTON, true)
+    quick::icon_toggle(ui, p, icon, tip, on, enabled, BUTTON)
 }
 
 /// The set and the state on a small line, the animation playing below; a
@@ -173,11 +208,11 @@ fn now_playing(
     account: &mut Account,
     busy: bool,
     manager_open: &mut bool,
-    width: f32,
+    close: &mut bool,
     out: &mut Vec<Action>,
-) {
+) -> egui::Response {
     let set = catalog.selected(account.selected);
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, BUTTON.y), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(FIELD, egui::Sense::click());
     let radius = ui.visuals().widgets.inactive.corner_radius;
     // a pane of the glass, lit under the pointer
     let pane = if response.hovered() {
@@ -190,7 +225,7 @@ fn now_playing(
     let playing = quick::now_playing(set, runtime);
     let state = playing.map_or(runtime.current.unwrap_or(State::Standing), |(s, _)| s);
     let live = account.enabled && !runtime.paused && playing.is_some();
-    let top = inner.top() + 8.0;
+    let top = inner.top() + 9.5;
     ui.painter()
         .circle_filled(egui::pos2(inner.left() + 3.0, top), 3.0, if live { p.teal } else { p.muted_dim });
     let small = egui::FontId::new(9.5, super::super::fonts::semibold(ui.ctx()));
@@ -227,7 +262,7 @@ fn now_playing(
     widgets::paint_elided(
         ui,
         &name,
-        egui::pos2(inner.left(), inner.bottom() - 8.5),
+        egui::pos2(inner.left(), inner.bottom() - 10.0),
         inner.width(),
         egui::FontId::new(12.5, super::super::fonts::semibold(ui.ctx())),
         p.ink,
@@ -235,7 +270,7 @@ fn now_playing(
     let response = response.on_hover_text(aurora_i18n::tr!("ao-mini-sets-tip"));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !busy, &name));
     if busy || catalog.sets.is_empty() {
-        return;
+        return response;
     }
     // in the order "Your sets" gives them
     let sets = account.ordered(&catalog.sets);
@@ -258,5 +293,9 @@ fn now_playing(
         if super::super::menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ao-manage-sets")) {
             widgets::open_floater(ui.ctx(), "ao", manager_open);
         }
+        if super::super::menu::item(ui, p, "x", aurora_i18n::tr!("ao-mini-close")) {
+            *close = true;
+        }
     });
+    response
 }
