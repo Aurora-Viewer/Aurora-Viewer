@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use aurora_prim::extra::EXTENDED_MESH_ANIMATED;
 use uuid::Uuid;
 
-use super::{SelectType, select_type};
+use super::{BuildSettings, SelectType, passes_select_filters, select_type};
 use crate::world::World;
 use crate::world::objects::ObjKey;
 
@@ -40,6 +40,41 @@ pub fn paused_skeletons(world: &World, selection: &[ObjKey]) -> HashSet<Uuid> {
         }
     }
     paused
+}
+
+/// Skeletons to pause for another avatar's attachment that the open
+/// right-click menu is about. Aurora does not put it in the build
+/// selection, but the Legacy Viewer's right click selects it for as long as
+/// the menu is open (LLToolPie::handleRightClickPick ->
+/// LLToolSelect::handleObjectSelection, temp_select), so its wearer stands
+/// still on our screen only, as [`paused_skeletons`] does for a selection.
+/// LLSelectMgr::canSelectObject refuses it under "Select only my objects" /
+/// "Select only movable objects", and then nobody pauses.
+pub fn menu_paused_skeletons(world: &World, s: &BuildSettings, attachment: Option<Uuid>) -> HashSet<Uuid> {
+    let Some(idx) = attachment.and_then(|id| world.objects.index_of_uuid(&id)) else {
+        return HashSet::new();
+    };
+    let Some(key) = world.objects.get(idx).map(|o| o.key) else {
+        return HashSet::new();
+    };
+    if !passes_select_filters(world, s, idx) {
+        return HashSet::new();
+    }
+    paused_skeletons(world, &[key])
+}
+
+/// Skeletons to pause for the linksets an open Inspect window shows.
+/// LLFloaterInspect::onOpen keeps the selection (`mObjectSelection`), so
+/// LLSelectMgr::deselectUnused does not drop it when the menu closes: the
+/// wearer of an inspected attachment (ours or someone's) and an inspected
+/// animated object stay still until the window closes.
+pub fn held_skeletons(world: &World, ids: &[Uuid]) -> HashSet<Uuid> {
+    let keys: Vec<ObjKey> = ids
+        .iter()
+        .filter_map(|id| world.objects.index_of_uuid(id))
+        .filter_map(|idx| world.objects.get(idx).map(|o| o.key))
+        .collect();
+    paused_skeletons(world, &keys)
 }
 
 fn avatar_ancestor(world: &World, mut idx: usize) -> Option<Uuid> {
@@ -158,5 +193,82 @@ mod tests {
         assert_eq!(select_type(&world, root), SelectType::Hud);
         let key = world.objects.get(root).unwrap().key;
         assert!(paused_skeletons(&world, &[key]).is_empty());
+    }
+
+    /// Another demo resident wearing the backpack (demo::worn::worn_by).
+    fn worn_by_other(world: &mut World) -> (Uuid, Uuid) {
+        let (local_id, wearer) = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.is_avatar() && o.full_id != world.agent_id)
+            .map(|(_, o)| (o.key.local_id, o.full_id))
+            .expect("another avatar in the demo");
+        world.apply(crate::demo::worn::worn_by(local_id, wearer));
+        let id = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.key.local_id == crate::demo::worn::OTHER_ROOT)
+            .map(|(_, o)| o.full_id)
+            .expect("the backpack worn by another avatar");
+        (wearer, id)
+    }
+
+    #[test]
+    fn a_menu_on_someone_elses_attachment_pauses_its_wearer_only() {
+        let mut world = world();
+        let (wearer, attachment) = worn_by_other(&mut world);
+        let s = BuildSettings::default();
+        assert_eq!(menu_paused_skeletons(&world, &s, Some(attachment)), HashSet::from([wearer]));
+        // menu closed, or opened on the avatar's body: nobody
+        assert!(menu_paused_skeletons(&world, &s, None).is_empty());
+        // an object that is gone pauses nobody
+        assert!(menu_paused_skeletons(&world, &s, Some(Uuid::from_u128(0xDEAD))).is_empty());
+    }
+
+    #[test]
+    fn someone_elses_animated_attachment_pauses_both_skeletons() {
+        let mut world = world();
+        let (wearer, attachment) = worn_by_other(&mut world);
+        let idx = world.objects.index_of_uuid(&attachment).unwrap();
+        world.objects.get_mut(idx).unwrap().extra.extended_mesh_flags = Some(EXTENDED_MESH_ANIMATED);
+        let s = BuildSettings::default();
+        assert_eq!(
+            menu_paused_skeletons(&world, &s, Some(attachment)),
+            HashSet::from([wearer, attachment])
+        );
+    }
+
+    #[test]
+    fn select_filters_that_refuse_the_attachment_pause_nobody() {
+        // LLSelectMgr::canSelectObject: SelectOwnedOnly, SelectMovableOnly
+        let mut world = world();
+        let (_, attachment) = worn_by_other(&mut world);
+        let owned = BuildSettings {
+            select_owned_only: true,
+            ..BuildSettings::default()
+        };
+        assert!(menu_paused_skeletons(&world, &owned, Some(attachment)).is_empty());
+        let movable = BuildSettings {
+            select_movable_only: true,
+            ..BuildSettings::default()
+        };
+        assert!(menu_paused_skeletons(&world, &movable, Some(attachment)).is_empty());
+    }
+
+    #[test]
+    fn an_open_inspect_window_keeps_the_wearer_still() {
+        // LLFloaterInspect holds the selection after the menu closes
+        let mut world = world();
+        let (wearer, attachment) = worn_by_other(&mut world);
+        assert_eq!(held_skeletons(&world, &[attachment]), HashSet::from([wearer]));
+        assert!(held_skeletons(&world, &[]).is_empty());
+        // a world object of the demo pauses nobody
+        let object = world
+            .objects
+            .iter()
+            .find(|(i, o)| !o.is_avatar() && o.parent_id == 0 && select_type(&world, *i) == SelectType::World)
+            .map(|(_, o)| o.full_id)
+            .expect("a world object of the demo");
+        assert!(held_skeletons(&world, &[object]).is_empty());
     }
 }

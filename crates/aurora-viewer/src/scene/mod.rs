@@ -6261,13 +6261,15 @@ impl Scene {
             motions.set_synchronized(self.synchronize_animations);
             // The static layer freezes the displayed pose, while normal motion
             // clocks keep running so Stop restores the current animation phase.
-            motions.set_paused(
-                self.pause_all_skeletons
-                    || self.paused_skeletons.contains(&owner)
-                    || (owner == world.agent_id && self.ik_edit.active)
-                    || self.ik_edit_others.get(&owner).is_some_and(|edit| edit.active),
-                now,
-            );
+            let held_by_other = self.pause_all_skeletons
+                || (owner == world.agent_id && self.ik_edit.active)
+                || self.ik_edit_others.get(&owner).is_some_and(|edit| edit.active);
+            let selected = self.paused_skeletons.contains(&owner);
+            // a pause held by a selection alone catches up when it ends
+            if selected || held_by_other {
+                motions.set_pause_catches_up(!held_by_other);
+            }
+            motions.set_paused(selected || held_by_other, now);
             motions.ik.edit = if owner == world.agent_id {
                 self.ik_edit.clone()
             } else {

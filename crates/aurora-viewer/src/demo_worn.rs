@@ -46,6 +46,26 @@ fn linkset(root_id: u32, point: u8) -> Vec<ObjectUpdate> {
     vec![root, child]
 }
 
+/// The backpack of `AURORA_DEMO_WORN=freeze-other`, worn on the chest of
+/// another resident (`wearer`, its avatar's local id; `owner`, its id), in
+/// view of a camera that faces them: not ours, not movable, nothing in our
+/// inventory.
+pub const OTHER_ROOT: u32 = 9310;
+
+pub fn worn_by(wearer: u32, owner: Uuid) -> NetEvent {
+    // Chest, in front of it
+    let mut objects = linkset(OTHER_ROOT, 1);
+    objects[0].position.x = -objects[0].position.x;
+    for o in &mut objects {
+        o.owner_id = owner;
+        // touch only (object_flags.h FLAGS_HANDLE_TOUCH)
+        o.update_flags &= 1 << 7;
+    }
+    objects[0].parent_id = wearer;
+    objects[0].name_values = String::new();
+    NetEvent::ObjectUpdates { handle: HANDLE, objects }
+}
+
 pub fn root() -> ObjectUpdate {
     linkset(ROOT, POINT).swap_remove(0)
 }

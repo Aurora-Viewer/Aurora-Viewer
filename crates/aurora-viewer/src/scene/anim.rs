@@ -680,6 +680,9 @@ pub struct Controller {
     /// Pose frozen since then (LLCharacter::requestPause).
     paused_at: Option<Instant>,
     paused_real_at: Option<Instant>,
+    /// The pause comes from a selection only ([`Self::set_pause_catches_up`]):
+    /// its release catches up instead of resuming from the frozen point.
+    pause_catches_up: bool,
     /// Default motion joint states of the last frame, held during a pause
     /// (LLMotionController::updateIdleActiveMotions does not run them).
     held_procedural: Vec<ProceduralState>,
@@ -1080,7 +1083,7 @@ impl Controller {
                 let real_at = self.paused_real_at.take().unwrap_or(now);
                 let duration = animation_now.saturating_duration_since(at);
                 let real_duration = now.saturating_duration_since(real_at);
-                if !self.synchronized {
+                if !self.synchronized && !self.pause_catches_up {
                     for m in &mut self.motions {
                         m.activation += duration;
                         m.continuous_activation += duration;
@@ -1093,6 +1096,20 @@ impl Controller {
             }
             _ => {}
         }
+    }
+
+    /// Whether the current pause only holds a selected attachment or object
+    /// still (build/anim_pause.rs), set before [`Self::set_paused`] each
+    /// frame. Its release then catches up to where the animations would be,
+    /// as the Legacy Viewer shows on the grid (an avatar frozen by a right
+    /// click or Inspect jumps back in step with its dance or AO stand: human
+    /// video, 2026-11-21). LLMotionController's source as read stops
+    /// `mAnimTime` while paused and does not explain the jump: the visible
+    /// behaviour is followed. Other pauses (photo freeze, IK edit) resume
+    /// from the frozen point.
+    pub fn set_pause_catches_up(&mut self, catch_up: bool) {
+        // a pause held for another reason at any time resumes in place
+        self.pause_catches_up = catch_up && (self.paused_at.is_none() || self.pause_catches_up);
     }
 
     /// Head/eye interpolation resumes smoothly in either playback mode.
@@ -2566,6 +2583,31 @@ mod tests {
             c.set_paused(false, at(1.75));
             c.sync(&playing, at(2.0), |_| Some(animation.clone()));
             let expected = if synchronized { 1.0 } else { 0.25 };
+            assert!((c.motions[0].local_time(at(2.0)) - expected).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn a_selection_pause_catches_up_on_release() {
+        // the Legacy Viewer on the grid: a resident frozen by a right click
+        // or Inspect is back in step with the dance when released
+        let rig = rig();
+        let animation = swing(&rig);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let playing = [signal(Uuid::from_u128(81), 1, t0)];
+        for (selection_only, expected) in [(true, 2.0), (false, 0.5)] {
+            let mut c = Controller::default();
+            c.sync(&playing, t0, |_| Some(animation.clone()));
+            c.set_pause_catches_up(true);
+            c.set_paused(true, at(0.5));
+            // a photo freeze or an IK edit joins the pause for a while
+            c.set_pause_catches_up(selection_only);
+            c.set_paused(true, at(1.0));
+            c.set_pause_catches_up(true);
+            c.set_paused(true, at(1.5));
+            c.set_paused(false, at(2.0));
+            c.sync(&playing, at(2.0), |_| Some(animation.clone()));
             assert!((c.motions[0].local_time(at(2.0)) - expected).abs() < 1e-6);
         }
     }
