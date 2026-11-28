@@ -34,6 +34,8 @@ mod credentials;
 mod cursors;
 mod deep_profile;
 mod demo;
+#[cfg(target_os = "linux")]
+mod desktop_entry;
 mod destination_guide;
 mod dev_toolbox;
 mod director;
@@ -208,6 +210,10 @@ fn main() -> anyhow::Result<()> {
     {
         return Ok(());
     }
+    // Linux: the menu entry and the icon the window's app_id points to,
+    // before the first window (the splash) maps; logged once the log is up
+    #[cfg(target_os = "linux")]
+    let desktop_entry = desktop_entry::install();
     // on screen at once, while the renderer prepares (splash/)
     splash::start();
     aurora_i18n::select("default", cli::get().language.as_deref());
@@ -221,6 +227,8 @@ fn main() -> anyhow::Result<()> {
     // the interface language file, read with the settings before the log
     language_file::report();
     splash::settings();
+    #[cfg(target_os = "linux")]
+    desktop_entry::report(desktop_entry);
     // started by an update: its helper waits while the start moves on
     splash::report_to_update();
     splash::test_slow_start();

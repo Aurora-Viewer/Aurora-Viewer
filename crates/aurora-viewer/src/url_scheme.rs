@@ -268,12 +268,12 @@ mod xdg {
         home_dir("XDG_CONFIG_HOME", ".config")
     }
 
-    fn data_home() -> Option<PathBuf> {
+    pub(crate) fn data_home() -> Option<PathBuf> {
         home_dir("XDG_DATA_HOME", ".local/share")
     }
 
     /// The `applications` folders, the user's first.
-    fn application_dirs() -> Vec<PathBuf> {
+    pub(crate) fn application_dirs() -> Vec<PathBuf> {
         data_home()
             .into_iter()
             .chain(dirs("XDG_DATA_DIRS", "/usr/local/share:/usr/share"))
@@ -366,7 +366,7 @@ mod xdg {
 
     /// The program of an `Exec` value as the file holds it, its escapes and
     /// quoting undone (Desktop Entry Specification, "The Exec key").
-    pub(super) fn exec_program(exec: &str) -> Option<String> {
+    pub(crate) fn exec_program(exec: &str) -> Option<String> {
         let exec = exec.replace("\\\\", "\\").replace("%%", "%");
         let exec = exec.trim();
         let program = match exec.strip_prefix('"') {
@@ -394,9 +394,16 @@ mod xdg {
     /// (escaped once for the quoting and once more for the file's string
     /// values); only the desktops' own openers (GLib, KDE) read it then.
     pub(super) fn exec_line(exe: &str) -> String {
+        format!("{} -url %u", exec_command(exe))
+    }
+
+    /// `exe` as the program of an `Exec` value: bare when it can be,
+    /// quoted and escaped otherwise ([`exec_line`]). The menu entry
+    /// (`desktop_entry.rs`) starts the viewer with it too.
+    pub(crate) fn exec_command(exe: &str) -> String {
         const RESERVED: &str = " \t\n\"'\\><~|&;$*?#()`";
         if !exe.is_empty() && !exe.contains(|c| RESERVED.contains(c)) {
-            return format!("{} -url %u", exe.replace('%', "%%"));
+            return exe.replace('%', "%%");
         }
         let mut quoted = String::from("\"");
         for c in exe.chars() {
@@ -411,7 +418,7 @@ mod xdg {
             }
         }
         quoted.push('"');
-        format!("{quoted} -url %u")
+        quoted
     }
 
     pub(super) fn desktop_entry(exe: &str) -> String {
@@ -448,7 +455,7 @@ mod xdg {
     /// viewer (a rebuild, a package upgrade), Linux reports it with
     /// " (deleted)" appended: the new file at the same path is the one a
     /// link must start.
-    pub(super) fn live_exe(exe: PathBuf) -> PathBuf {
+    pub(crate) fn live_exe(exe: PathBuf) -> PathBuf {
         if exe.exists() {
             return exe;
         }
@@ -663,6 +670,8 @@ mod xdg {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) use xdg::{application_dirs, data_home, exec_command, exec_program, live_exe};
 #[cfg(target_os = "linux")]
 pub use xdg::{register, registrations, unregister};
 

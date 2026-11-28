@@ -63,22 +63,26 @@ cd Aurora-Viewer-vX.Y.Z-linux-x64
 ./aurora-viewer
 ```
 
-To start it from your desktop's menu, with its icon in the panel and the
-dock, install the desktop entry and the icon of the archive, from its
-folder. The entry gets the viewer's real path, quoted and escaped as the
-desktop entry specification asks, so a folder name with spaces or symbols
-works:
+The first start puts the viewer in your desktop's menu, with its icon in
+the panel, the dock and the task switcher: it writes its desktop entry
+(`~/.local/share/applications/aurora-viewer.desktop`, with the viewer's
+path) and its icon (`~/.local/share/icons/hicolor/scalable/apps/aurora-viewer.svg`).
+If you move the folder, the next start points the entry to the new place,
+and a deleted or outdated icon is put back. An `aurora-viewer.desktop` you
+installed yourself is left as it is (delete it to let the viewer manage
+it); when a distribution's package installed later brings its own entry,
+the viewer removes the one it wrote so the package's answers. Deleting the
+two files does not take the viewer out of the menu for good: the next start
+writes them again. To keep it out, put your own entry in place, which the
+viewer never touches:
 
 ```bash
-install -Dm644 aurora-viewer.svg ~/.local/share/icons/hicolor/scalable/apps/aurora-viewer.svg
-mkdir -p ~/.local/share/applications
-exe=$(printf '%s' "$PWD/aurora-viewer" | sed -e 's/[\\"`$]/\\&/g' -e 's/\\/\\\\/g' -e 's/%/%%/g')
-EXEC="\"$exe\"" awk '/^Exec=/ { print "Exec=" ENVIRON["EXEC"]; next } 1' aurora-viewer.desktop > ~/.local/share/applications/aurora-viewer.desktop
+printf '[Desktop Entry]\nType=Application\nName=Aurora Viewer\nHidden=true\n' > ~/.local/share/applications/aurora-viewer.desktop
 ```
 
-Run the last two lines again if you move the folder. Avoid a `%` in the
-folder's path: GNOME and other GLib desktops then refuse the entry. The
-window identifies itself as `aurora-viewer` (Wayland app_id and X11
+Avoid a `%` in the folder's path: GNOME and other GLib desktops refuse such
+an entry. The archive still holds `aurora-viewer.desktop` and
+`aurora-viewer.svg` for packagers. The window identifies itself as `aurora-viewer` (Wayland app_id and X11
 `WM_CLASS`), the name of the entry and its `StartupWMClass`: that is how
 the desktop puts the window under the entry's icon. Compositor rules can
 match it too (Hyprland: `class:^(aurora-viewer)$`; KDE: window class
