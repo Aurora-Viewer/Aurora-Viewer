@@ -73,10 +73,6 @@ impl App {
         if self.ao_preview_body.is_some_and(|(_, shows)| shows) {
             roots.insert(0, w.agent_id);
         }
-        // a new entry stands on the floor again, framed afresh (followed,
-        // the floor kept what a jump or a flight had moved)
-        let changed = self.ao_ui.preview_changed(&assets);
-        let w = &self.world;
         let group = |root: &Uuid| super::inspect::stage_group(w, root);
         let stage = &mut self.ao_ui.stage;
         stage.stage.update(w, &self.scene, &roots, group, Place::Worn(own), ctx, now);
@@ -86,9 +82,6 @@ impl App {
         stage.bar_face = false;
         stage.player = false;
         stage.upright = true;
-        if changed {
-            stage.reframe();
-        }
         // the stage's ground, light or dark, shared with Inspect's: a change
         // made in the window is kept, as Inspect keeps it (app/inspect.rs)
         if self.ao_preview_light.is_some_and(|given| given != stage.light) {

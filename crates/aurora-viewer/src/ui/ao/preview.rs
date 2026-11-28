@@ -30,8 +30,6 @@ pub(super) struct Preview {
     layer: Option<(Uuid, usize)>,
     /// The stage was drawn this frame (taken by the app, `AoUi::take_stage`).
     shown: bool,
-    /// The animations the stage was framed for (`AoUi::preview_changed`).
-    framed: Vec<Uuid>,
 }
 
 impl Preview {
@@ -57,16 +55,6 @@ impl Preview {
 }
 
 impl AoUi {
-    /// Whether the previewed animations changed since the last call: the
-    /// stage then glides to the new pose's framing (`StageUi::reframe`).
-    pub fn preview_changed(&mut self, assets: &[Uuid]) -> bool {
-        let changed = self.preview.framed != assets;
-        if changed {
-            self.preview.framed = assets.to_vec();
-        }
-        changed
-    }
-
     /// Whether the window drew its stage this frame: the app keeps the
     /// skeleton and the stage's model only then.
     pub fn take_stage(&mut self) -> bool {
@@ -136,8 +124,10 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, set: Option<&Set>, runtime: &
     // the picture blurred under the fade, more and more toward the bottom
     let from = (caption.top() - FADE - rect.top()) / rect.height().max(1.0);
     state.stage.veil = Some(aurora_render::preview::Veil { from, depth: VEIL_DEPTH });
-    // the figure stands between the title and the caption
-    state.stage.keep_bottom = bottom - caption.top() + 8.0;
+    // the figure stands between the title and the caption; the same room
+    // for every slot and entry (with or without segments or layers), so
+    // that the camera never moves
+    state.stage.keep_bottom = EYEBROW + HERO + SEGMENTS + 6.0 + 8.0;
     let spoken = aurora_i18n::tr!("ao-preview");
     let _ = state.stage.show(ui, p, rect, title_room, Default::default(), spoken, &|_| None);
     let y = rect.top() + title_room / 2.0;
@@ -194,6 +184,21 @@ const SAVED_FADE: f32 = 0.35;
 /// "Set saved" for a moment after an edit is saved, right-aligned at
 /// `right` on the entry name's line; the room it takes from that line.
 fn saved_notice(ui: &egui::Ui, p: &Palette, state: &mut AoUi, right: egui::Pos2) -> f32 {
+    // an edit on its way first, breathing, then "Set saved"
+    if state.busy() {
+        ui.ctx().request_repaint();
+        let breath = 0.65 + 0.35 * (ui.input(|i| i.time) as f32 * 3.0).sin();
+        let ink = state.stage.muted(p).gamma_multiply(breath);
+        let galley = ui.painter().layout_no_wrap(
+            aurora_i18n::tr!("ao-saving").to_owned(),
+            egui::FontId::new(12.0, super::super::fonts::semibold(ui.ctx())),
+            ink,
+        );
+        let text_w = galley.size().x;
+        widgets::paint_row_text(ui.painter(), galley, right.x - text_w, right.y, ink);
+        widgets::paint_glyph(ui.painter(), "refresh", egui::pos2(right.x - text_w - 10.0, right.y), 13.0, ink);
+        return text_w + 28.0;
+    }
     let Some(at) = state.saved_at else { return 0.0 };
     let age = at.elapsed().as_secs_f32();
     if age >= SAVED_FOR {

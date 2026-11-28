@@ -1820,3 +1820,69 @@ fn a_set_dragged_in_your_sets_keeps_its_new_place() {
     assert_eq!(order.last(), Some(&first.name), "moved to the end: {order:?}");
     assert_eq!(f.account.selected, first.id, "a drag does not change the set in use");
 }
+
+/// A dropped entry shows in its new place at once, while it is saved; a
+/// move made during that save waits its turn and is sent once it is back.
+#[test]
+fn a_dropped_entry_stays_put_and_a_move_during_a_save_waits() {
+    let mut f = Fixture::new();
+    fn top(f: &mut Fixture, name: &str) -> f32 {
+        let mut rects = Vec::new();
+        for shape in f.draw(Vec::new()).1 {
+            text_rects(&shape.shape, name, &mut rects);
+        }
+        rects.iter().map(|r| r.top()).fold(f32::MAX, f32::min)
+    }
+    let press = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let drag = |f: &mut Fixture, from: &str, to: &str| {
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        for shape in f.draw(Vec::new()).1 {
+            text_rects(&shape.shape, from, &mut a);
+            text_rects(&shape.shape, to, &mut b);
+        }
+        let (from, to) = (a[0].center(), b[0].center());
+        let mut out = Vec::new();
+        out.extend(f.draw(vec![egui::Event::PointerMoved(from), press(from, true)]).0);
+        out.extend(f.draw(vec![egui::Event::PointerMoved(from + egui::vec2(9.0, 0.0))]).0);
+        out.extend(f.draw(vec![egui::Event::PointerMoved(to)]).0);
+        out.extend(f.draw(vec![press(to, false)]).0);
+        out
+    };
+    let out = drag(&mut f, "Aurora Stand B", "Aurora Stand A");
+    let [Action::Edit(first, None)] = out.as_slice() else {
+        panic!("one edit sent")
+    };
+    // the app takes it: a save under way
+    f.state.pending = Some(Pending {
+        request: Uuid::from_u128(9),
+        refresh: Vec::new(),
+        select: None,
+        editor: None,
+    });
+    for _ in 0..20 {
+        f.draw(Vec::new());
+    }
+    assert!(
+        top(&mut f, "Aurora Stand B") < top(&mut f, "Aurora Stand A"),
+        "shown where it was dropped"
+    );
+    // another move while it saves: nothing sent yet
+    let out = drag(&mut f, "Aurora Stand A", "Aurora Stand B");
+    assert!(out.is_empty(), "waits its turn");
+    for _ in 0..20 {
+        assert!(f.draw(Vec::new()).0.is_empty());
+    }
+    // the first save comes back: the waiting move goes
+    crate::world::inventory::actions::demo_mutate(&mut f.inv, Uuid::from_u128(1), first.clone()).expect("ack");
+    f.catalog.invalidate();
+    f.catalog.refresh(&mut f.inv);
+    f.state.pending = None;
+    let out = f.draw(Vec::new()).0;
+    assert!(matches!(out.as_slice(), [Action::Edit(_, None)]), "the waiting move is sent");
+}

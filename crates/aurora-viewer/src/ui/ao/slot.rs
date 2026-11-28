@@ -27,6 +27,9 @@ const ROW: f32 = 34.0;
 const ROW_GAP: f32 = 5.0;
 /// The turns card: the height of each of its lines and of its order button.
 const TURNS_LINE: f32 = 22.0;
+/// How long a dropped order is shown after its save, waiting for the
+/// inventory to bring it back (a failed save then shows the saved one).
+const HELD_FOR: std::time::Duration = std::time::Duration::from_secs(3);
 const ORDER_H: f32 = 26.0;
 /// The tabs over a slot's lists: their height, inner padding and gap.
 const TAB_H: f32 = 30.0;
@@ -211,6 +214,25 @@ fn in_world(ui: &egui::Ui, response: &egui::Response) -> bool {
     response.double_clicked() || (response.clicked() && ui.input(|i| i.modifiers.shift))
 }
 
+/// A list's order as dropped, until its save comes back.
+pub(super) struct HeldOrder {
+    set: Uuid,
+    state: State,
+    list: List,
+    keys: Vec<Uuid>,
+    at: std::time::Instant,
+}
+
+/// A move of an entry waiting for the edit before it to be saved.
+pub(super) struct QueuedMove {
+    set: Uuid,
+    state: State,
+    list: List,
+    source: Uuid,
+    target: Uuid,
+    after: bool,
+}
+
 struct Editor<'a> {
     p: &'a Palette,
     inv: &'a Inventory,
@@ -223,6 +245,34 @@ struct Editor<'a> {
 impl Editor<'_> {
     fn busy(&self) -> bool {
         self.state.busy()
+    }
+
+    /// The order a list is shown in, as indexes into `ids` (its saved order):
+    /// the order just dropped while its save is under way, then the saved
+    /// one once it matches (or the save failed).
+    fn shown_order(&mut self, list: List, ids: &[Uuid]) -> Vec<usize> {
+        let saved: Vec<usize> = (0..ids.len()).collect();
+        let Some(held) = self
+            .state
+            .held_order
+            .as_ref()
+            .filter(|h| h.set == self.set.id && h.state == self.state.state && h.list == list)
+        else {
+            return saved;
+        };
+        let waiting = self.busy()
+            || self
+                .state
+                .queued_moves
+                .iter()
+                .any(|m| m.set == held.set && m.state == held.state && m.list == list);
+        let same_entries = held.keys.len() == ids.len() && held.keys.iter().all(|k| ids.contains(k));
+        let done = held.keys.as_slice() == ids || !same_entries || (!waiting && held.at.elapsed() > HELD_FOR);
+        if done {
+            self.state.held_order = None;
+            return saved;
+        }
+        held.keys.iter().filter_map(|k| ids.iter().position(|id| id == k)).collect()
     }
 
     /// Plays that entry of a list (`owner`: its folder) in the world; the
@@ -598,10 +648,11 @@ impl Editor<'_> {
     /// the world (FloaterAO's list click, `AOEngine::selectAnimation`).
     fn main_list(&mut self, ui: &mut egui::Ui, c: &StateConfig) {
         let playing = self.runtime.index(self.state.state, c.folder);
-        let specs: Vec<RowSpec<'_>> = c
-            .steps
+        // (in the order just dropped while it is being saved)
+        let order = self.shown_order(List::Main, &c.steps.iter().map(|s| s.id).collect::<Vec<_>>());
+        let specs: Vec<RowSpec<'_>> = order
             .iter()
-            .enumerate()
+            .map(|&index| (index, &c.steps[index]))
             .map(|(index, step)| RowSpec {
                 id: step.id,
                 names: if step.group {
@@ -615,7 +666,8 @@ impl Editor<'_> {
             })
             .collect();
         let rows = self.rows(ui, List::Main, &specs);
-        for (index, (step, (response, remove))) in c.steps.iter().zip(rows).enumerate() {
+        for (&index, (response, remove)) in order.iter().zip(rows) {
+            let step = &c.steps[index];
             if remove {
                 self.remove(ui, step.id);
             }
@@ -701,10 +753,11 @@ impl Editor<'_> {
     /// entry, a double click or Shift+click plays it in the world.
     fn members(&mut self, ui: &mut egui::Ui, track: &Track) {
         let playing = self.runtime.index(self.state.state, track.id);
-        let specs: Vec<RowSpec<'_>> = track
-            .members
+        let list = List::Members(track.id);
+        let order = self.shown_order(list, &track.members.iter().map(|m| m.link).collect::<Vec<_>>());
+        let specs: Vec<RowSpec<'_>> = order
             .iter()
-            .enumerate()
+            .map(|&index| (index, &track.members[index]))
             .map(|(index, member)| RowSpec {
                 id: member.link,
                 names: vec![member.name.as_str()],
@@ -713,8 +766,9 @@ impl Editor<'_> {
                 previewed: self.state.preview.previews(Some(track.id), index),
             })
             .collect();
-        let rows = self.rows(ui, List::Members(track.id), &specs);
-        for (index, (member, (response, remove))) in track.members.iter().zip(rows).enumerate() {
+        let rows = self.rows(ui, list, &specs);
+        for (&index, (response, remove)) in order.iter().zip(rows) {
+            let member = &track.members[index];
             if remove {
                 self.remove(ui, member.link);
             }
@@ -766,7 +820,8 @@ impl Editor<'_> {
             .inner;
         let keys: Vec<Uuid> = specs.iter().map(|s| s.id).collect();
         let id = ui.scope_id().with(("ao_rows", format!("{list:?}")));
-        let layout = widgets::reorder::update(ui, id, &keys, &responses, !busy, None);
+        // (a drag while a save is under way waits its turn: `queue_move`)
+        let layout = widgets::reorder::update(ui, id, &keys, &responses, true, None);
         let mut out = Vec::with_capacity(specs.len());
         for (i, spec) in specs.iter().enumerate() {
             let rect = layout.rect(i, responses[i].rect);
@@ -790,10 +845,40 @@ impl Editor<'_> {
         if let Some((from, to)) = layout.moved
             && let (Some(&source), Some(&target)) = (keys.get(from), keys.get(to))
         {
-            match inventory::editor::reorder(self.inv, self.set, self.state.state, list, source, target, to > from) {
-                Ok(change) if !change.operations.is_empty() => self.out.push(Action::Edit(change, None)),
-                Ok(_) => {}
-                Err(reason) => self.state.message = reason,
+            // shown where it was dropped at once, saved behind
+            let mut order = keys.clone();
+            let moved = order.remove(from);
+            order.insert(to, moved);
+            self.state.held_order = Some(HeldOrder {
+                set: self.set.id,
+                state: self.state.state,
+                list,
+                keys: order,
+                at: std::time::Instant::now(),
+            });
+            self.state.queued_moves.push(QueuedMove {
+                set: self.set.id,
+                state: self.state.state,
+                list,
+                source,
+                target,
+                after: to > from,
+            });
+        }
+        // one move saved at a time, each against the list as saved
+        if !busy {
+            let next = self
+                .state
+                .queued_moves
+                .iter()
+                .position(|m| m.set == self.set.id && m.state == self.state.state && m.list == list);
+            if let Some(next) = next {
+                let m = self.state.queued_moves.remove(next);
+                match inventory::editor::reorder(self.inv, self.set, m.state, m.list, m.source, m.target, m.after) {
+                    Ok(change) if !change.operations.is_empty() => self.out.push(Action::Edit(change, None)),
+                    Ok(_) => {}
+                    Err(reason) => self.state.message = reason,
+                }
             }
         }
         out

@@ -105,6 +105,10 @@ pub struct AoUi {
     /// activates its set first).
     active_set: Uuid,
     use_set: Option<Uuid>,
+    /// A list's order as just dropped, shown while it is saved, and the moves
+    /// waiting for their turn to be saved (one edit at a time).
+    held_order: Option<slot::HeldOrder>,
+    queued_moves: Vec<slot::QueuedMove>,
     /// Only the six slots everyone notices (`page::ESSENTIALS`).
     essentials: bool,
     /// The "Your sets" panel replaces the groups in the left column.
@@ -347,6 +351,8 @@ pub fn show(
     let selected_id = selected.map_or(Uuid::nil(), |s| s.id);
     if state.selected_set != selected_id {
         state.selected_set = selected_id;
+        state.held_order = None;
+        state.queued_moves.clear();
         state.picker = None;
         state.container = None;
         state.cycle_edit = None;
@@ -506,9 +512,7 @@ fn notices(ui: &mut egui::Ui, p: &Palette, inv: &mut Inventory, catalog: &invent
     } else if catalog.loading || state.startup_loading {
         ui.label(RichText::new(aurora_i18n::tr!("ao-loading")).color(p.muted));
     }
-    if state.busy() {
-        ui.label(RichText::new(aurora_i18n::tr!("ao-saving")).color(p.muted));
-    }
+    // (saving is said over the preview, where "Set saved" follows it)
     if !state.message.is_empty() {
         ui.label(RichText::new(&state.message).color(p.warn));
     }

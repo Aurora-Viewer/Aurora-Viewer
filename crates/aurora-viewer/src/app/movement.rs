@@ -642,6 +642,8 @@ impl App {
             let saved = self.settings.ao.accounts.entry(self.world.agent_id).or_default();
             saved.enabled = account.enabled;
             saved.selected = account.selected;
+            // (the order "Your sets" was dragged into)
+            saved.set_order = account.set_order.clone();
         }
         if prior_mini_open != account.mini_open {
             self.settings.ao.accounts.entry(self.world.agent_id).or_default().mini_open = account.mini_open;
