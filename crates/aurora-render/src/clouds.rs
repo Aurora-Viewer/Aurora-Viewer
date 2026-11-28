@@ -467,7 +467,7 @@ pub(crate) struct Clouds {
     prev_camera_km: [f64; 2],
     frame: u32,
     layout: wgpu::BindGroupLayout,
-    composite: Vec<((u32, bool), wgpu::RenderPipeline)>,
+    composite: Vec<((u32, Option<wgpu::TextureFormat>), wgpu::RenderPipeline)>,
     composite_group: Option<wgpu::BindGroup>,
 }
 
@@ -954,14 +954,14 @@ impl Clouds {
     }
 
     /// Makes the composite pipeline for the scene pass's sample count and
-    /// G-buffer, if not made yet: before the pass begins.
+    /// G-buffer (`gbuf`: its format), if not made yet: before the pass
+    /// begins.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
         samples: u32,
-        gbuf: bool,
+        gbuf: Option<wgpu::TextureFormat>,
         color: wgpu::TextureFormat,
-        gbuf_format: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
     ) {
         if self.composite.iter().any(|(k, _)| *k == (samples, gbuf)) {
@@ -987,9 +987,9 @@ impl Clouds {
             blend: Some(blend),
             write_mask: wgpu::ColorWrites::COLOR,
         })];
-        if gbuf {
+        if let Some(format) = gbuf {
             targets.push(Some(wgpu::ColorTargetState {
-                format: gbuf_format,
+                format,
                 blend: None,
                 write_mask: wgpu::ColorWrites::empty(),
             }));
@@ -1018,7 +1018,7 @@ impl Clouds {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &self.module,
-                entry_point: Some(if gbuf { "fs_clouds_g" } else { "fs_clouds" }),
+                entry_point: Some(if gbuf.is_some() { "fs_clouds_g" } else { "fs_clouds" }),
                 compilation_options: Default::default(),
                 targets: &targets,
             }),
@@ -1030,7 +1030,7 @@ impl Clouds {
 
     /// Draws the clouds over the sky in scene pass A, if [`Self::encode`]
     /// made them this frame. `prepare` has been called for these `samples`.
-    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32, gbuf: bool) {
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32, gbuf: Option<wgpu::TextureFormat>) {
         let (Some(group), Some((_, pipeline))) = (&self.composite_group, self.composite.iter().find(|(k, _)| *k == (samples, gbuf))) else {
             return;
         };

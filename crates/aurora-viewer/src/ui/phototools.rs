@@ -297,7 +297,7 @@ impl PhototoolsUi {
                         out.photo_changed |= env.light.env != before;
                         ui.add_space(4.0);
                         if widgets::flat_button(ui, p, tr!("common-personal-lighting")).clicked() {
-                            *env.lighting = true;
+                            widgets::open_floater(ui.ctx(), "personal_lighting", env.lighting);
                         }
                     }
                     None => env

@@ -6,6 +6,7 @@
 
 pub mod backup;
 pub(crate) mod cx;
+pub mod legacy_lists;
 mod pages;
 /// The rows of the Phototools window, borrowed from the pages.
 mod phototools;
@@ -15,6 +16,7 @@ pub use phototools::{PhotoLayer, PhotoState, Section as PhotoSection};
 mod saved_graphics;
 mod scale;
 
+pub(crate) use pages::aurora::{Look, set_all as set_look};
 pub use pages::privacy;
 pub(crate) use pages::sound::{ear_choice, noise_choice};
 pub(crate) use scale::keyboard as scale_keyboard;
@@ -429,6 +431,19 @@ struct Undo {
 /// How long "Undo" stays after a reset.
 const UNDO_SECONDS: f64 = 8.0;
 
+/// A Legacy Viewer's folder picked for the transcripts, waiting for the
+/// user's yes to share it (Preferences › Chat › History).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShareOffer {
+    /// The folder of the Legacy Viewer's accounts (what is saved as the
+    /// transcripts' folder).
+    pub root: std::path::PathBuf,
+    /// The account's folder in it.
+    pub folder: String,
+    /// The transcripts already in it.
+    pub count: usize,
+}
+
 #[derive(Default)]
 pub struct OptionsUi {
     saved_graphics: saved_graphics::Editor,
@@ -436,6 +451,9 @@ pub struct OptionsUi {
     pub selected_parcel: Option<crate::world::parcel_visibility::Entry>,
     pub rlva_tools: super::rlva::Tools,
     pub rlva_restrictions: Vec<(uuid::Uuid, String)>,
+    /// RLVa's switch differs from what runs and waits for the next start
+    /// (world/rlva/switch.rs): its row says so.
+    pub rlva_waits: bool,
     pub rlva_camera_preset_locked: bool,
     pub rlva_camera_fov_locked: bool,
     /// RLVa `@sendim`: the Do Not Disturb response is an IM, its field greyed.
@@ -584,13 +602,24 @@ pub struct OptionsUi {
     /// Folder of the conversation transcripts of the account logged in
     /// (set by the app; none on the login screen).
     pub chat_log_dir: Option<std::path::PathBuf>,
-    /// What the last erasing of the transcripts did (set by the app).
+    /// What the last folder pick, move or erasing of the transcripts did
+    /// (set by the app).
     pub chat_log_status: String,
+    /// True when `chat_log_status` is a refusal, busy notice or error that
+    /// should stand out as a warning callout.
+    pub chat_log_status_warn: bool,
     /// The transcripts are in a folder the user chose (set by the app).
     pub chat_log_custom: bool,
     /// The transcripts are in the Legacy layout, shared with the Legacy
     /// Viewer: no import nor erasing (set by the app).
     pub chat_log_shared: bool,
+    /// When a chosen folder belonged to another account and its parent root
+    /// holds a matching subfolder `(viewer_root, folder_name)` for this
+    /// account, offer switching to it.
+    pub chat_log_switch_offer: Option<(std::path::PathBuf, String)>,
+    /// A Legacy Viewer's folder was picked: whether to share it, asked with
+    /// Share and Cancel until answered (set by the app).
+    pub chat_log_share_offer: Option<ShareOffer>,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
     /// Preferences › Network › Proxy: the credentials being typed and the
@@ -605,6 +634,12 @@ pub struct OptionsUi {
     reset_confirmed: Option<ResetAsk>,
     /// The import of a Legacy Viewer's chat history (set by the app).
     pub chat_import: ChatImportUi,
+    /// The import of a Legacy Viewer's lists (set by the app).
+    pub legacy_lists: legacy_lists::State,
+    /// What the last one did.
+    pub legacy_lists_status: String,
+    /// An account is logged in: its lists can be imported (set by the app).
+    pub legacy_lists_ready: bool,
     /// Files done and files to do of the import under way (set by the app).
     pub chat_log_importing: Option<(usize, usize)>,
     pub restart_voice: bool,
@@ -630,6 +665,16 @@ impl OptionsUi {
             self.gpus.clone_from(&from.gpus);
         }
         self.gpu_notice = from.gpu_notice;
+    }
+
+    pub fn set_chat_log_status(&mut self, text: impl Into<String>, warn: bool) {
+        self.chat_log_status = text.into();
+        self.chat_log_status_warn = warn;
+    }
+
+    pub fn clear_chat_log_status(&mut self) {
+        self.chat_log_status.clear();
+        self.chat_log_status_warn = false;
     }
 
     pub fn joystick_capturing(&self) -> bool {
@@ -805,6 +850,12 @@ pub struct OptionsResult {
     /// Choose another folder for the cache or the transcripts, or go back
     /// to the default one (the app asks for the folder and moves the files).
     pub folder: Option<(Folder, FolderChoice)>,
+    /// Switch to the offered matching subfolder found in the rejected
+    /// folder's parent root (`chat_log_switch_offer`).
+    pub accept_chat_log_offer: bool,
+    /// Share the Legacy Viewer's folder of `chat_log_share_offer` (its
+    /// Share button; Cancel only drops the offer).
+    pub share_chat_log: Option<ShareOffer>,
     /// Erase the conversation transcripts of the account (confirmed).
     pub erase_chat_logs: bool,
     /// Clear the conversation log of the account (confirmed,
@@ -814,6 +865,10 @@ pub struct OptionsResult {
     pub find_legacy_logs: bool,
     /// Import from these folders.
     pub import_legacy_logs: Option<Vec<std::path::PathBuf>>,
+    /// The lists' import window opened: read the Legacy Viewers' folders.
+    pub find_legacy_lists: bool,
+    /// Import these lists from the folder found at this index.
+    pub import_legacy_lists: Option<(usize, crate::world::legacy_lists::Parts)>,
     /// The content rating chosen (SIM_ACCESS_*), to send to the server.
     pub maturity: Option<u8>,
     /// An account setting of Privacy changed, to send to the server.
@@ -1600,6 +1655,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     clear_conversation_log_modal(ctx, p, st, &mut r, *open);
     reset_modal(ctx, p, st, *open);
     chat_import_modal(ctx, p, st, &mut r, *open);
+    legacy_lists::modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
     saved_graphics::confirm(ctx, p, s, st, &mut r, *open);
     st.defaults = Some(d);
@@ -2212,7 +2268,9 @@ fn page_area(
     ui.add_space(10.0);
     if !searching && !modified_view && tabs.len() > 1 {
         let labels: Vec<(&str, bool)> = tabs.iter().map(|t| (*t, true)).collect();
-        if super::widgets::tabs(&mut ui, p, &mut st.tab, &labels) {
+        // whole names on a second row in a narrow window, where the strip
+        // cut them down to "…" (#4935)
+        if super::widgets::wrapping_tabs(&mut ui, p, &mut st.tab, &labels) {
             st.cancel_capture();
             st.flash = None;
         }
@@ -2244,7 +2302,11 @@ fn page_area(
     // Its animated appearance otherwise changes the cells' width, invalidates
     // their control measurements and can alternate short/tall rows forever.
     let rows_width = (super::widgets::scrolled_width(&ui) - 6.0).max(0.0);
-    egui::ScrollArea::vertical()
+    // The rows are laid out at the window's width; a control wider than
+    // that (a row of fixed buttons, a long translation) scrolls into view
+    // sideways instead of being cut off under the scrollbar in a narrow
+    // window (#4935).
+    egui::ScrollArea::both()
         .id_salt(scroll_id)
         .auto_shrink([false, false])
         .max_height(rows_h)

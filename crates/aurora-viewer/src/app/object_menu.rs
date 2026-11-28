@@ -147,11 +147,13 @@ impl App {
     }
 
     /// The right click opened the menu on `target`: what the entries of
-    /// the object menus read from the pick itself.
+    /// the object menus read from the pick itself. Its touch is read on
+    /// `touch_ray` when given (`Scene::surface_ray`), else on `ray`.
     pub(super) fn object_menu_pick(
         &mut self,
         picked: Option<usize>,
         ray: Option<(Vec3, Vec3)>,
+        touch_ray: Option<(Vec3, Vec3)>,
         particles: Vec<crate::scene::particles::ParticleHit>,
         particle_only: bool,
     ) {
@@ -176,7 +178,10 @@ impl App {
             && let Some(o) = self.world.objects.get(idx)
             && !o.is_avatar()
         {
-            m.touch = self.scene.touch_surface(&self.world, idx, (origin, dir)).map(|s| (o.key, s));
+            m.touch = self
+                .scene
+                .touch_surface(&self.world, idx, touch_ray.unwrap_or((origin, dir)))
+                .map(|s| (o.key, s));
         }
     }
 

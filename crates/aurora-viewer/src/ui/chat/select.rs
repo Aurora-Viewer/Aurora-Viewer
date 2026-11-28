@@ -290,7 +290,7 @@ pub(crate) fn label_with_sense(ui: &mut egui::Ui, text: egui::WidgetText, sense:
     let (pos, visual, resp) = if !laid_out && bidi::has_rtl(&shown) {
         bidi_label(ui, text, sense)
     } else {
-        let (pos, galley, resp) = egui::Label::new(text).wrap().selectable(false).sense(sense).layout_in_ui(ui);
+        let (pos, galley, resp) = wrapping_label(ui, text, egui::TextWrapMode::Wrap, sense);
         (pos, Visual::plain(galley), resp)
     };
     let len = shown.chars().count();
@@ -341,33 +341,91 @@ pub(crate) fn label_with_sense(ui: &mut egui::Ui, text: egui::WidgetText, sense:
     resp
 }
 
+/// `egui::Label::new(text).wrap_mode(wrap).selectable(false).sense(sense)
+/// .layout_in_ui(ui)`, with the click areas of `allocate_rows` in a
+/// wrapping row of widgets: a link or a name that wraps whole onto the next
+/// row leaves the ones before it their hover and clicks.
+pub(crate) fn wrapping_label(
+    ui: &mut egui::Ui,
+    text: egui::WidgetText,
+    wrap: egui::TextWrapMode,
+    sense: egui::Sense,
+) -> (Pos2, Arc<egui::Galley>, egui::Response) {
+    if wrap != egui::TextWrapMode::Wrap || !in_wrapping_row(ui) || matches!(text, egui::WidgetText::Galley(_)) {
+        return egui::Label::new(text)
+            .wrap_mode(wrap)
+            .selectable(false)
+            .sense(sense)
+            .layout_in_ui(ui);
+    }
+    let job = text.into_layout_job(ui.style(), egui::FontSelection::Default, ui.text_valign());
+    let mut job = Arc::unwrap_or_clone(job);
+    start_after_previous_widget(ui, &mut job);
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    let pos = egui::pos2(ui.max_rect().left(), ui.cursor().top());
+    let response = allocate_rows(ui, &galley, pos, sense);
+    (pos, galley, response)
+}
+
+/// Label::layout_in_ui's test for its wrapping branch (egui 0.37,
+/// widgets/label.rs): a left-to-right row of widgets that wraps.
+fn in_wrapping_row(ui: &egui::Ui) -> bool {
+    ui.layout().main_dir() == egui::Direction::LeftToRight && ui.layout().main_wrap() && ui.available_width().is_finite()
+}
+
+/// Label::layout_in_ui's settings for that branch: the text starts after
+/// the previous widget (its first row's leading space) and goes on on the
+/// rows below, from the row's left edge.
+fn start_after_previous_widget(ui: &egui::Ui, job: &mut egui::text::LayoutJob) {
+    let available = ui.available_width();
+    job.wrap.max_width = available;
+    job.first_row_min_height = ui.cursor().height();
+    job.halign = egui::Align::Min;
+    job.justify = false;
+    if let Some(first) = job.sections.first_mut() {
+        first.leading_space = available - ui.available_size_before_wrap().x;
+    }
+}
+
+/// One click area per row of a label laid out after the previous widget
+/// (`start_after_previous_widget`, drawn at `pos`), as Label::layout_in_ui
+/// allocates them, except a first row without a glyph: its first word did
+/// not fit after the previous widget and went to the next row. egui gives
+/// that row `rect_without_leading_space`, which starts at the row's left
+/// edge when there is no glyph (epaint 0.37, PlacedRow): a box over every
+/// widget before it on the row, allocated after them, that took their hover
+/// and clicks. It takes no area here, so the label's rect (a selected link's
+/// background, `atom_end`) does not cover them either.
+fn allocate_rows(ui: &mut egui::Ui, galley: &egui::Galley, pos: Pos2, sense: egui::Sense) -> egui::Response {
+    let skip = usize::from(galley.rows.len() > 1 && galley.rows[0].glyphs.is_empty());
+    let mut response: Option<egui::Response> = None;
+    for (i, row) in galley.rows.iter().enumerate().skip(skip) {
+        let rect = if i == 0 { row.rect_without_leading_space() } else { row.rect() };
+        let r = ui.allocate_rect(rect.translate(pos.to_vec2()), sense);
+        response = Some(match response {
+            Some(all) => all | r,
+            None => r,
+        });
+    }
+    let mut response = response.expect("a galley has at least one row");
+    response.set_intrinsic_size(galley.intrinsic_size());
+    response
+}
+
 /// `Label::layout_in_ui` for a text with right-to-left characters, in
 /// display order (`bidi`): in a wrapping row of widgets it starts after the
 /// previous one and goes on on the rows below, as a label does.
 fn bidi_label(ui: &mut egui::Ui, text: egui::WidgetText, sense: egui::Sense) -> (Pos2, Visual, egui::Response) {
     let job = text.into_layout_job(ui.style(), egui::FontSelection::Default, ui.text_valign());
     let mut job = Arc::unwrap_or_clone(job);
-    let available = ui.available_width();
-    if ui.layout().main_dir() == egui::Direction::LeftToRight && ui.layout().main_wrap() && available.is_finite() {
-        // (Label::layout_in_ui's own rules for a wrapping layout)
-        job.wrap.max_width = available;
-        job.first_row_min_height = ui.cursor().height();
-        job.halign = egui::Align::Min;
-        job.justify = false;
-        if let Some(first) = job.sections.first_mut() {
-            first.leading_space = available - ui.available_size_before_wrap().x;
-        }
+    if in_wrapping_row(ui) {
+        start_after_previous_widget(ui, &mut job);
         let visual = ui.fonts_mut(|f| bidi::layout(f, job, bidi::Base::Auto));
         let pos = egui::pos2(ui.max_rect().left(), ui.cursor().top());
-        let mut rows = visual.galley.rows.iter();
-        let first = rows.next().map_or(Rect::NOTHING, |r| r.rect_without_leading_space());
-        let mut response = ui.allocate_rect(first.translate(pos.to_vec2()), sense);
-        for row in rows {
-            response |= ui.allocate_rect(row.rect().translate(pos.to_vec2()), sense);
-        }
+        let response = allocate_rows(ui, &visual.galley, pos, sense);
         return (pos, visual, response);
     }
-    job.wrap.max_width = available;
+    job.wrap.max_width = ui.available_width();
     job.halign = ui.layout().horizontal_placement();
     let visual = ui.fonts_mut(|f| bidi::layout(f, job, bidi::Base::Auto));
     let (rect, response) = ui.allocate_exact_size(visual.galley.size(), sense);

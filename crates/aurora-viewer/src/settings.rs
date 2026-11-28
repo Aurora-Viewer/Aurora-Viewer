@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 pub mod area_search;
 pub mod autotune;
 pub mod backup;
+mod chat_log;
 pub mod draw_stepping;
 mod hover_height;
 pub mod registry;
@@ -87,6 +88,19 @@ pub enum ChatThumbnails {
     #[default]
     ChatBar,
     TopRight,
+}
+
+/// Which way the nearby chat lines over the world stand from the chat bar
+/// they follow (Preferences › Chat, `ui::chat::LinesPlace`). Aurora's own:
+/// the Legacy Viewer's console stays at the bottom left, its chat bar too.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ChatLinesDirection {
+    /// Above the bar, or under it when there is more room there (a bar
+    /// moved to the top of the screen).
+    #[default]
+    Auto,
+    Up,
+    Down,
 }
 
 /// The nearby chat bar (Preferences › Chat, #2696): at the bottom always,
@@ -696,6 +710,8 @@ pub struct Settings {
     pub world_look: crate::snapshot::looks::WorldLook,
     /// Depth of field (Preferences › Graphics).
     pub dof: crate::dof::Settings,
+    /// Motion blur (Preferences › Graphics), Aurora's own.
+    pub motion_blur: crate::motion_blur::Settings,
     pub shape_show_hints: bool,
     pub shape_height_feet: bool,
     /// AppearanceCameraMovement (llpaneleditwearable.cpp): frame the edited
@@ -866,8 +882,12 @@ pub struct Settings {
     /// FSUseStandalonePlaceDetailsFloater: landmarks, place links and history
     /// entries open in their own window instead of the Places window.
     pub standalone_place_details: bool,
-    /// FSInspectColumnConfig: columns of the Inspect window (ui/inspect.rs).
+    /// FSInspectColumnConfig: columns of the Inspect window's Details table (ui/inspect).
     pub inspect_columns: u32,
+    /// The same for what an avatar wears.
+    pub inspect_avatar_columns: u32,
+    /// The 3D views have a light ground.
+    pub stage_light: bool,
     /// LandmarksSortedByDate: the Landmarks tab of Places sorted by date.
     pub landmarks_by_date: bool,
     /// FSTPHistoryTZ: the time zone of the teleport history's days, chosen
@@ -1025,10 +1045,6 @@ pub struct Settings {
     /// The same row with the Legacy chat style: off, as the Legacy Viewer's
     /// row starts closed behind its arrow (the human's choice, 2026-11-09).
     pub show_recent_emojis_legacy: bool,
-    /// Favourite emojis, kept by a right-click on an emoji: first in the
-    /// recent row and a star tab in the picker. Off (the human's choice,
-    /// 2026-11-09; an Aurora addition); Preferences > Chat.
-    pub favorite_emojis: bool,
     /// Our own objects' script errors in the nearby chat, with a red
     /// warning sign, instead of opening the Script debug window, which
     /// still keeps them (ShowScriptErrorsLocation 0; on, the human's choice
@@ -1224,6 +1240,8 @@ pub struct Settings {
     pub chat_toast_seconds: f32,
     /// Wrapped text rows above the chat bar (ConsoleMaxLines, 40; 0 hides them).
     pub chat_console_max_lines: u32,
+    /// Which way those rows stand from the chat bar they follow.
+    pub chat_lines_direction: ChatLinesDirection,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
     /// The same notices as a line of nearby chat (OnlineOfflinetoNearbyChat;
@@ -1258,6 +1276,10 @@ pub struct Settings {
     /// Points between two stacked toasts, in both notification styles
     /// (ToastGap, 7, its slider 0–30; LLScreenChannel::redrawToasts).
     pub toast_gap: f32,
+    /// Width of Aurora's notification center (px, 0 = its default: the
+    /// width of the system and bell islands, or 360 under the Legacy
+    /// bars), dragged on its left edge (`ui::notification_center`).
+    pub notification_width: f32,
     /// Write instant messages, group chats and conferences to text files in
     /// the account's folder (Firestorm KeepConversationLogTranscripts = 2).
     pub log_im: bool,
@@ -1285,9 +1307,12 @@ pub struct Settings {
     /// (an Aurora addition): moving between the two viewers keeps the
     /// history, and a notice says what came in.
     pub log_import_at_login: bool,
-    /// The transcripts in the Legacy Viewer's own layout under the chosen
-    /// folder (`<folder>/<first_last>`), so that both viewers share them. An
-    /// Aurora addition, off by default: Aurora then only appends lines there.
+    /// The user said yes to sharing the Legacy Viewer's folder chosen as the
+    /// transcripts' folder: the account's files are then in its own layout
+    /// (`<folder>/<first_last>`), so that both viewers read and add to the
+    /// same history (an Aurora addition, off until asked and answered when
+    /// such a folder is picked). Per account, like the folder
+    /// (`settings/chat_log.rs`).
     pub log_legacy_layout: bool,
     /// Ask before opening a web link outside the trusted domains (the box
     /// "Do not warn me again" of the warning turns it off).
@@ -1640,6 +1665,12 @@ pub struct Settings {
     /// standing, 0 (the default lag) to 100 % (world/body.rs; Debug Settings
     /// only).
     pub avatar_turn_speed: f32,
+    /// AvatarRotateThresholdSlow: minimum body-facing difference at low
+    /// movement speeds, in degrees (Legacy Viewer; Debug Settings only).
+    pub avatar_rotate_threshold_slow: f32,
+    /// AvatarRotateThresholdFast: minimum body-facing difference at high
+    /// movement speeds, in degrees (Legacy Viewer; Debug Settings only).
+    pub avatar_rotate_threshold_fast: f32,
     /// Hold Up to start flying (agent_jump, indra/newview/llviewerinput.cpp).
     /// Aurora splits AutomaticFly into independent takeoff/landing choices;
     /// both default to on.
@@ -1792,6 +1823,13 @@ pub struct Settings {
     /// default until tried on modest GPUs, and left alone by the two buttons
     /// of Preferences › Aurora, as the water effects once were.
     pub volumetric_clouds: bool,
+    /// The sun's and the moon's shafts (aurora-render sun_shafts.rs): the
+    /// sky's light around them streaked across the image, cut by what stands
+    /// in front, with no visible mist. An Aurora feature (the Legacy Viewer
+    /// has none), off by default.
+    pub sun_rays: bool,
+    /// Their strength, 0.05..1.
+    pub sun_rays_strength: f32,
     /// 0 Khronos PBR Neutral, 1 ACES (RenderTonemapType: ACES by default,
     /// like the Legacy Viewer)
     pub tonemapper: u8,
@@ -1926,6 +1964,11 @@ pub struct Settings {
     pub display_name_notices: bool,
     /// Screen-space reflections.
     pub ssr: bool,
+    /// The precision of the normals the reflections read: 0 Automatic (High
+    /// with the ray-traced reflections, Standard otherwise), 1 Standard,
+    /// 2 High (aurora-render `NormalPrecision`). Apart from the graphics
+    /// levels, like the ray tracing quality.
+    pub normal_precision: u8,
     /// Preferences › Graphics › Ray tracing.
     pub ray_tracing: RayTracingSettings,
     /// The warning of Deluxe (RT) was shown and accepted once
@@ -1960,6 +2003,19 @@ pub struct Settings {
     /// The folder holding the conversation transcripts, one folder per
     /// account inside, "" for the default one (InstantMessageLogPath).
     pub chat_log_location: String,
+    /// Each account's transcripts folder and yes to sharing, per grid
+    /// (`chat_log::account_key`, `<grid>/<agent id>`); None keeps the former
+    /// shared transcript folder & layout until the first login.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) chat_log_accounts: Option<std::collections::BTreeMap<String, chat_log::Preferences>>,
+    /// Former pre-split global folder & layout preserved so every account that
+    /// upgrades without an entry inherits them instead of losing the folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) chat_log_legacy_default: Option<chat_log::Preferences>,
+    /// Runtime transcript folder & layout belong to this account after login
+    /// (its key in `chat_log_accounts`).
+    #[serde(skip)]
+    pub(crate) chat_log_account: Option<String>,
     /// The most the simulators may send, all channels together, in kb/s
     /// (Firestorm's ThrottleBandwidthKBPS; the default and the top of the
     /// range are Aurora's, `aurora_net::throttle::DEFAULT_KBPS`).
@@ -1988,6 +2044,13 @@ pub struct Settings {
     /// None delays migration until the first account enters the world.
     #[serde(rename = "toolbar_common", default)]
     pub toolbar: Option<crate::ui::toolbar::ToolbarSettings>,
+    /// Preset identity and its last confirmed snapshot; never exported in a notecard.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::ui::toolbar::selection::or_none"
+    )]
+    pub(crate) toolbar_selection: Option<crate::ui::toolbar::selection::Selection>,
     /// Keep the earlier per-account layouts through saves made before login.
     #[serde(rename = "toolbar", default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub(crate) legacy_toolbars: std::collections::HashMap<uuid::Uuid, crate::ui::toolbar::ToolbarSettings>,
@@ -2059,6 +2122,10 @@ pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 pub(crate) const PLANET_RADIUS_KM: f32 = aurora_render::curvature::EARTH_RADIUS / 1000.0;
 pub(crate) const PLANET_RADIUS_KM_RANGE: std::ops::RangeInclusive<f32> =
     aurora_render::curvature::RADIUS_MIN / 1000.0..=aurora_render::curvature::RADIUS_MAX / 1000.0;
+
+/// The sun's and the moon's rays' strength (`Settings::sun_rays_strength`).
+pub(crate) const SUN_RAYS_STRENGTH_DEFAULT: f32 = 0.5;
+pub(crate) const SUN_RAYS_STRENGTH: std::ops::RangeInclusive<f32> = 0.05..=1.0;
 
 /// RenderTonemapMix's default (settings.xml).
 pub(crate) const TONEMAP_MIX: f32 = 0.7;
@@ -2583,6 +2650,8 @@ impl Default for Settings {
             show_movement_controls: false,
             standalone_place_details: false,
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
+            inspect_avatar_columns: crate::ui::inspect::AVATAR_COLUMNS,
+            stage_light: false,
             landmarks_by_date: true,
             tp_history_zone: HistoryZone::Slt,
             confirm_teleports: true,
@@ -2634,6 +2703,7 @@ impl Default for Settings {
             snapshot: Default::default(),
             world_look: Default::default(),
             dof: Default::default(),
+            motion_blur: Default::default(),
             loading_backdrop: true,
             mouse_sensitivity: 1.0,
             window_width: 1600,
@@ -2652,7 +2722,6 @@ impl Default for Settings {
             show_chat_channel: false,
             show_recent_emojis: false,
             show_recent_emojis_legacy: false,
-            favorite_emojis: false,
             script_errors_in_chat: true,
             script_errors_to_channel: false,
             script_errors_channel: 1,
@@ -2714,6 +2783,7 @@ impl Default for Settings {
             system_notifications_when_active: false,
             chat_toast_seconds: 20.0,
             chat_console_max_lines: 40,
+            chat_lines_direction: ChatLinesDirection::Auto,
             toast_friends_online: true,
             friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
@@ -2725,6 +2795,7 @@ impl Default for Settings {
             im_toast_seconds: 30.0,
             tip_toast_seconds: 10.0,
             toast_gap: TOAST_GAP,
+            notification_width: 0.0,
             log_im: true,
             log_nearby: false,
             log_conversations: true,
@@ -2856,6 +2927,8 @@ impl Default for Settings {
             walk_backwards_without_turning: false,
             turn_to_selected: true,
             avatar_turn_speed: 0.0,
+            avatar_rotate_threshold_slow: 60.0,
+            avatar_rotate_threshold_fast: 2.0,
             automatic_fly: true,
             automatic_land: true,
             fly_after_teleport: false,
@@ -2899,6 +2972,8 @@ impl Default for Settings {
             specular_aa: true,
             colored_sky_ambient: false,
             volumetric_clouds: false,
+            sun_rays: false,
+            sun_rays_strength: SUN_RAYS_STRENGTH_DEFAULT,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
             hdr_emissive: true,
@@ -2948,6 +3023,7 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
+            normal_precision: NORMAL_PRECISION_AUTO,
             ray_tracing: RayTracingSettings::OFF,
             deluxe_rt_warned: false,
             rt_sun_softness: RT_SOFTNESS,
@@ -2961,6 +3037,9 @@ impl Default for Settings {
             cache_size_mb: 20480,
             cache_location: String::new(),
             chat_log_location: String::new(),
+            chat_log_accounts: None,
+            chat_log_legacy_default: None,
+            chat_log_account: None,
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
             download_connections: DownloadConnections::Automatic,
             no_neighbour_regions: false,
@@ -2969,6 +3048,7 @@ impl Default for Settings {
             chat_bar_width: 0.0,
             chat_island_width: 0.0,
             toolbar: Default::default(),
+            toolbar_selection: None,
             legacy_toolbars: Default::default(),
             audio: AudioSettings::default(),
             media: Default::default(),
@@ -3773,6 +3853,9 @@ impl Settings {
         self.ssao = self.ssao.min(2);
         self.ao_method = self.ao_method.min(1);
         self.gtao_quality = self.gtao_quality.min(3);
+        if self.normal_precision > NORMAL_PRECISION_HIGH {
+            self.normal_precision = NORMAL_PRECISION_AUTO;
+        }
         self.water_reflections = self.water_reflections.min(4);
         self.mirrors = self.mirrors.min(4);
         self.anisotropy = match self.anisotropy {
@@ -3807,6 +3890,7 @@ impl Settings {
         // switch the world filters on with no edit
         crate::snapshot::looks::sanitize(&mut self.world_look.looks);
         self.dof.sanitize();
+        self.motion_blur.sanitize();
         self.game_control.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
         self.screen_indirect_intensity = if self.screen_indirect_intensity.is_finite() {
@@ -3850,6 +3934,16 @@ impl Settings {
             self.avatar_turn_speed.clamp(0.0, 100.0)
         } else {
             0.0
+        };
+        self.avatar_rotate_threshold_slow = if self.avatar_rotate_threshold_slow.is_finite() {
+            self.avatar_rotate_threshold_slow.clamp(0.0, 180.0)
+        } else {
+            60.0
+        };
+        self.avatar_rotate_threshold_fast = if self.avatar_rotate_threshold_fast.is_finite() {
+            self.avatar_rotate_threshold_fast.clamp(0.0, 180.0)
+        } else {
+            2.0
         };
         // the ranges of the Legacy Viewer's Build preferences
         let b = &mut self.build;
@@ -3944,6 +4038,9 @@ impl Settings {
             10.0
         };
         self.toast_gap = toast_gap(self.toast_gap);
+        if !self.notification_width.is_finite() || self.notification_width < 0.0 {
+            self.notification_width = 0.0;
+        }
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
             self.name_tag_show_seconds.clamp(1.0, 60.0)
@@ -3965,6 +4062,7 @@ impl Settings {
         if let Some(toolbar) = &mut self.toolbar {
             changed |= toolbar.migrate_vr_button();
             changed |= toolbar.migrate_director_button();
+            changed |= toolbar.migrate_build_icons();
         }
         if !self.legacy_toolbars.is_empty() {
             self.legacy_toolbars.clear();
@@ -3996,11 +4094,24 @@ impl Settings {
             newer_file: old.newer_file,
             // Named profiles are user content, like separate preset files.
             graphics_saved: old.graphics_saved,
-            // Reset this avatar's hover options while keeping other accounts.
+            // Reset this avatar's hover and transcript folder options while keeping other accounts.
             hover_height_accounts: old.hover_height_accounts,
             hover_height_account: old.hover_height_account,
+            chat_log_accounts: old.chat_log_accounts,
+            chat_log_account: old.chat_log_account,
+            chat_log_legacy_default: old.chat_log_legacy_default,
             ..Settings::default()
         };
+    }
+
+    /// "Show recent emojis" of the chat style in use (Preferences > Chat
+    /// shows that one alone): the Legacy style keeps its own.
+    pub fn recent_emojis_switch(&mut self) -> &mut bool {
+        if self.chat_style == ChatStyle::Legacy {
+            &mut self.show_recent_emojis_legacy
+        } else {
+            &mut self.show_recent_emojis
+        }
     }
 
     /// The settings as they are now, written by a save thread (saves.rs):
@@ -4040,6 +4151,7 @@ impl Settings {
     pub(crate) fn to_saved(&self) -> Settings {
         let mut copy = self.clone();
         copy.remember_hover_account();
+        copy.remember_chat_log_account();
         if let Some(mut held) = copy.photo_held.take() {
             // a setting changed since the last frame is the user's too
             held.sync(&copy);
@@ -4191,6 +4303,24 @@ impl Settings {
         }
     }
 
+    /// "Reflection precision" as the renderer takes it.
+    fn normal_precision(&self) -> aurora_render::NormalPrecision {
+        match self.normal_precision {
+            NORMAL_PRECISION_STANDARD => aurora_render::NormalPrecision::Standard,
+            NORMAL_PRECISION_HIGH => aurora_render::NormalPrecision::High,
+            _ => aurora_render::NormalPrecision::Auto,
+        }
+    }
+
+    /// Whether the reflections, once on, keep their normals in 16 bits
+    /// (aurora-render `NormalPrecision::high`), for the photo quality's
+    /// memory estimate: Automatic counts the ray-traced reflections where
+    /// they are asked, whatever the graphics card traces.
+    pub fn normals_high(&self) -> bool {
+        let traced = self.shadow_quality > 0 && self.ray_tracing.enabled && self.ray_tracing.reflections;
+        self.normal_precision().high(true, traced)
+    }
+
     pub fn render_settings(&self) -> aurora_render::RenderSettings {
         use aurora_render::{AntiAliasing, AoMethod, FsrQuality, Tonemapper};
         let mut water_effects = self.water_effects.render();
@@ -4243,6 +4373,7 @@ impl Settings {
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
+            normal_precision: self.normal_precision(),
             ray_tracing: self.ray_tracing.render(),
             rt_tuning: self.rt_tuning(),
             // set each frame by the app while it rains
@@ -4370,6 +4501,11 @@ pub const RT_SOFTNESS: f32 = 0.2;
 /// The ray tracing quality's levels (`Settings::rt_quality`): Low, Medium,
 /// High, the default.
 pub const RT_QUALITY_HIGH: u8 = 2;
+/// The reflections' normal precision (`Settings::normal_precision`):
+/// Automatic, the default, Standard and High.
+pub const NORMAL_PRECISION_AUTO: u8 = 0;
+pub const NORMAL_PRECISION_STANDARD: u8 = 1;
+pub const NORMAL_PRECISION_HIGH: u8 = 2;
 /// The most lamps that cast traced shadows (aurora-render's
 /// `MAX_TRACED_LIGHTS`).
 pub const RT_SHADOW_LAMPS_MAX: u8 = 64;
@@ -4545,6 +4681,47 @@ mod tests {
         assert!(!old.avatars);
         assert!(old.enabled);
         assert!(!old.all_objects);
+    }
+
+    #[test]
+    fn avatar_rotation_thresholds_default_persist_and_sanitize() {
+        let defaults = Settings::default();
+        assert_eq!(defaults.avatar_rotate_threshold_slow, 60.0);
+        assert_eq!(defaults.avatar_rotate_threshold_fast, 2.0);
+
+        let mut old = serde_json::to_value(&defaults).expect("serialize defaults");
+        old.as_object_mut().expect("settings object").remove("avatar_rotate_threshold_slow");
+        old.as_object_mut().expect("settings object").remove("avatar_rotate_threshold_fast");
+
+        let migrated: Settings = serde_json::from_value(old).expect("load older settings");
+        assert_eq!(migrated.avatar_rotate_threshold_slow, 60.0);
+        assert_eq!(migrated.avatar_rotate_threshold_fast, 2.0);
+
+        let mut changed = Settings {
+            avatar_rotate_threshold_slow: 13.5,
+            avatar_rotate_threshold_fast: 37.25,
+            ..Settings::default()
+        };
+
+        let saved = serde_json::to_value(&changed).expect("save custom thresholds");
+        let loaded: Settings = serde_json::from_value(saved).expect("reload custom thresholds");
+        assert_eq!(loaded.avatar_rotate_threshold_slow, 13.5);
+        assert_eq!(loaded.avatar_rotate_threshold_fast, 37.25);
+
+        changed.avatar_rotate_threshold_slow = -10.0;
+        changed.avatar_rotate_threshold_fast = 200.0;
+        let clamped = changed.sanitized();
+        assert_eq!(clamped.avatar_rotate_threshold_slow, 0.0);
+        assert_eq!(clamped.avatar_rotate_threshold_fast, 180.0);
+
+        let invalid = Settings {
+            avatar_rotate_threshold_slow: f32::NAN,
+            avatar_rotate_threshold_fast: f32::INFINITY,
+            ..Settings::default()
+        };
+        let repaired = invalid.sanitized();
+        assert_eq!(repaired.avatar_rotate_threshold_slow, 60.0);
+        assert_eq!(repaired.avatar_rotate_threshold_fast, 2.0);
     }
 
     #[test]
@@ -4744,6 +4921,77 @@ mod tests {
         assert!(old.rt_gi_probes);
         let off: Settings = serde_json::from_str(r#"{"rt_gi_probes":false}"#).expect("preferences");
         assert!(!off.render_settings().rt_tuning.probes);
+    }
+
+    #[test]
+    fn the_normal_precision_defaults_to_automatic_and_reaches_the_renderer() {
+        use super::{NORMAL_PRECISION_AUTO, NORMAL_PRECISION_HIGH, NORMAL_PRECISION_STANDARD, Settings};
+        use aurora_render::NormalPrecision;
+        assert_eq!(Settings::default().normal_precision, NORMAL_PRECISION_AUTO);
+        // preferences saved before the setting existed
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert_eq!(old.normal_precision, NORMAL_PRECISION_AUTO);
+        assert_eq!(old.render_settings().normal_precision, NormalPrecision::Auto);
+        // (a value no level has is read as Automatic)
+        for (saved, drawn) in [
+            (NORMAL_PRECISION_AUTO, NormalPrecision::Auto),
+            (NORMAL_PRECISION_STANDARD, NormalPrecision::Standard),
+            (NORMAL_PRECISION_HIGH, NormalPrecision::High),
+            (9, NormalPrecision::Auto),
+        ] {
+            let s = Settings {
+                normal_precision: saved,
+                ..Settings::default()
+            };
+            assert_eq!(s.render_settings().normal_precision, drawn, "{saved}");
+        }
+        let unknown = Settings {
+            normal_precision: 9,
+            ..Settings::default()
+        };
+        assert_eq!(unknown.sanitized().normal_precision, NORMAL_PRECISION_AUTO);
+        // what the photo quality's memory estimate counts
+        let traced = Settings {
+            shadow_quality: 2,
+            ray_tracing: super::RayTracingSettings {
+                enabled: true,
+                reflections: true,
+                ..Settings::default().ray_tracing
+            },
+            ..Settings::default()
+        };
+        assert!(traced.normals_high());
+        assert!(
+            !Settings {
+                shadow_quality: 0,
+                ..traced.clone()
+            }
+            .normals_high()
+        );
+        assert!(!Settings::default().normals_high());
+        assert!(
+            Settings {
+                normal_precision: NORMAL_PRECISION_HIGH,
+                ..Settings::default()
+            }
+            .normals_high()
+        );
+        assert!(
+            !Settings {
+                normal_precision: NORMAL_PRECISION_STANDARD,
+                ..traced
+            }
+            .normals_high()
+        );
+        // the graphics levels leave it alone
+        for level in crate::graphics_presets::Preset::ALL {
+            let mut s = Settings {
+                normal_precision: NORMAL_PRECISION_HIGH,
+                ..Settings::default()
+            };
+            level.apply(&mut s);
+            assert_eq!(s.normal_precision, NORMAL_PRECISION_HIGH, "{level:?}");
+        }
     }
 
     #[test]
@@ -5417,8 +5665,6 @@ mod tests {
         let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
         assert!(!old.show_recent_emojis);
         assert!(!old.show_recent_emojis_legacy);
-        assert!(!Settings::default().favorite_emojis, "favourites off by default");
-        assert!(!old.favorite_emojis);
         let original = Settings {
             show_recent_emojis: true,
             ..Settings::default()
@@ -5426,6 +5672,25 @@ mod tests {
         let saved = serde_json::to_vec(&original).expect("serialize synthetic preference");
         let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic preference");
         assert!(loaded.sanitized().show_recent_emojis);
+        // a profile that kept the favourites' switch of 0.9.x, removed since
+        // (favourites are always there): it loads, the switch is dropped
+        let kept: Settings = serde_json::from_str(r#"{"favorite_emojis":true}"#).expect("a profile with the removed switch");
+        assert!(!serde_json::to_string(&kept).expect("serialize").contains("favorite_emojis"));
+    }
+
+    /// The arrow beside the emoji buttons turns the switch of the chat style
+    /// in use, as Preferences › Chat shows that one alone.
+    #[test]
+    fn the_recent_emojis_switch_is_the_one_of_the_chat_style_in_use() {
+        let mut settings = Settings::default();
+        assert_ne!(settings.chat_style, ChatStyle::Legacy);
+        *settings.recent_emojis_switch() = true;
+        assert!(settings.show_recent_emojis && !settings.show_recent_emojis_legacy);
+        settings.chat_style = ChatStyle::Legacy;
+        assert!(!*settings.recent_emojis_switch());
+        *settings.recent_emojis_switch() = true;
+        settings.show_recent_emojis = false;
+        assert!(*settings.recent_emojis_switch(), "the Legacy style keeps its own");
     }
 
     #[test]

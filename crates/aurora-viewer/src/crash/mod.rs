@@ -565,6 +565,39 @@ pub fn take_gpu_trouble() -> bool {
     std::fs::remove_file(root().join(GPU_TROUBLE)).is_ok()
 }
 
+/// How long the watcher of a viewer an update started waits for the
+/// update's helper to say it rolled the update back.
+#[cfg(windows)]
+const UPDATE_ROLLBACK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A viewer an update's helper ended itself, when no first frame came within
+/// its wait: the helper then restores the previous version, which says that
+/// the update did not complete. That is no crash: nothing is reported. Only
+/// the helper's own end (`TerminateProcess` leaves exit code 1), with no
+/// record of the viewer's own ([`own_record`]), and `ended` (the helper's rollback
+/// note, `aurora_updater::install::ended_by_update`). The "ended from
+/// outside, window never shown, 90 s" reports were these. Windows only, as
+/// the helper is; the tests run it everywhere.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn ended_by_update(dir: &Path, exit_code: u32, ended: impl FnOnce() -> bool) -> bool {
+    exit_code == 1 && !own_record(dir) && ended()
+}
+
+/// Whether the session holds a record of its own end: the `failed` marker
+/// (written empty on purpose), or a trace with something in it. Every session
+/// opens `panic.txt`, `native.txt` and `oom.txt` empty at start, as the
+/// crash window and the report read an empty one as none (`len() > 0`). A GPU
+/// stall before the first frame (`gpu-stall.txt`, after 6 s) or a freeze is
+/// the viewer's too: its report and the safe graphics offered at the next
+/// start must stay.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn own_record(dir: &Path) -> bool {
+    dir.join("failed").exists()
+        || ["panic.txt", "native.txt", "oom.txt", "gpu-stall.txt", "freeze.txt"]
+            .iter()
+            .any(|name| std::fs::metadata(dir.join(name)).is_ok_and(|m| m.len() > 0))
+}
+
 /// A viewer stopped by Windows ending the session (shutdown, restart, sign
 /// out) did not crash: nothing to report.
 fn should_report(dir: &Path, exit_code: u32) -> bool {
@@ -1050,6 +1083,36 @@ mod tests {
         assert!(should_report(&dir, 0xC0000005));
         std::fs::write(dir.join("failed"), []).unwrap();
         assert!(should_report(&dir, 0));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_an_update_helpers_own_end_is_kept_from_the_reports() {
+        let dir = std::env::temp_dir().join(format!("aurora-crash-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        // ended by the helper, which rolled the update back
+        assert!(ended_by_update(&dir, 1, || true));
+        // the traces every session opens empty at start are no record
+        for name in ["panic.txt", "native.txt", "oom.txt"] {
+            std::fs::write(dir.join(name), []).unwrap();
+        }
+        assert!(ended_by_update(&dir, 1, || true), "the empty traces of a start");
+        // no rollback said, or another exit code (a crash's exception)
+        assert!(!ended_by_update(&dir, 1, || false));
+        assert!(!ended_by_update(&dir, 0xC0000005, || true));
+        assert!(!ended_by_update(&dir, 0, || true));
+        // the viewer's own crash, panic, out-of-memory, GPU stall or freeze,
+        // even then: a trace with something in it, or the `failed` marker
+        for name in ["native.txt", "panic.txt", "oom.txt", "gpu-stall.txt", "freeze.txt"] {
+            std::fs::write(dir.join(name), b"trace").unwrap();
+            assert!(!ended_by_update(&dir, 1, || true), "{name}");
+            std::fs::write(dir.join(name), []).unwrap();
+        }
+        std::fs::write(dir.join("failed"), []).unwrap();
+        assert!(!ended_by_update(&dir, 1, || true), "failed");
+        std::fs::remove_file(dir.join("failed")).unwrap();
+        // the helper is not even asked when the exit already says no
+        assert!(!ended_by_update(&dir, 3, || panic!("not asked")));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

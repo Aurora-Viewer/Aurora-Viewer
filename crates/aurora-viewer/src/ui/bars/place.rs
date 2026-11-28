@@ -234,6 +234,10 @@ pub fn layout(ui: &egui::Ui, st: &StatusInfo, span: Rect) -> (Rect, Detail) {
     (Rect::from_min_size(span.min, Vec2::new(width.max(0.0), span.height())), detail)
 }
 
+pub(super) fn minimum_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
+    measure(ui, st).fixed + 40.0
+}
+
 /// The place island at `rect`. Returns the action of a click.
 pub fn island(
     ui: &mut egui::Ui,
@@ -358,6 +362,7 @@ fn options_body(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut Op
             rights_text: !look.rights_text,
         });
     }
+    crate::ui::toolbar::native_context::fallback(ui, p);
 }
 
 /// The landmark star of the island (LLLocationInputCtrl's add landmark
@@ -408,6 +413,14 @@ fn place(
     rect: Rect,
     detail: Detail,
 ) -> Option<BarAction> {
+    if panels.nav_edit.is_some() {
+        let mut field = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect.shrink2(Vec2::new(LOC_LEFT, 3.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        return super::location_field(&mut field, p, panels, st, &st.slurl, (rect.width() - LOC_LEFT * 2.0).max(1.0));
+    }
     let mut action = None;
     let resp = ui.interact(rect, Id::unique("bars_place_location"), Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
@@ -509,7 +522,8 @@ fn place(
         if r.on_hover_text(aurora_i18n::tr!("ui-parcel-icons-click-about-land", value0 = it.tip.to_string()))
             .clicked()
         {
-            panels.about_land = !panels.about_land;
+            let id = crate::ui::land::window_id(panels.about_land_classic);
+            crate::ui::widgets::toggle_floater(ui.ctx(), id, &mut panels.about_land);
         }
     }
 
@@ -614,7 +628,8 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     )
     .clicked()
     {
-        panels.about_land = !panels.about_land;
+        let id = crate::ui::land::window_id(panels.about_land_classic);
+        crate::ui::widgets::toggle_floater(ui.ctx(), id, &mut panels.about_land);
         ui.close();
     }
     ui.add_space(6.0);
@@ -749,6 +764,49 @@ pub fn recent(items: &[HistoryItem]) -> Vec<HistoryItem> {
 
 fn recent_label(title: &str) -> (&str, &str) {
     title.rsplit_once(", ").unwrap_or((title, ""))
+}
+
+#[cfg(test)]
+mod address_tests {
+    use super::*;
+
+    #[test]
+    fn the_island_renders_and_focuses_the_requested_slurl_and_keeps_it_under_showloc() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut st = super::super::islands::tests::status(true, false);
+        st.slurl = "secondlife://Aurora%20Demo/132/126/33".into();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        panels.nav_edit = Some(st.slurl.clone());
+        panels.nav_edit_new = true;
+        let rect = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(600.0, SLOT));
+        for frame in 0..5 {
+            ctx.run_ui(
+                egui::RawInput {
+                    time: Some(f64::from(frame) * 0.1),
+                    ..Default::default()
+                },
+                |ui| {
+                    place(ui, &p, &Icons::default(), &mut panels, &st, rect, Detail::Bare);
+                },
+            )
+            .textures_delta
+            .clear();
+        }
+        let id = Id::unique("nav_location_edit");
+        assert!(ctx.read_response(id).is_some(), "the SLURL is an actual editable field");
+        assert!(ctx.memory(|memory| memory.has_focus(id)));
+        assert_eq!(panels.nav_edit.as_deref(), Some(st.slurl.as_str()));
+        assert!(!panels.nav_edit_new);
+        st.location_hidden = true;
+        ctx.run_ui(Default::default(), |ui| {
+            place(ui, &p, &Icons::default(), &mut panels, &st, rect, Detail::Bare);
+        })
+        .textures_delta
+        .clear();
+        // like the navigation bar (LLLocationInputCtrl): the field stays open
+        assert!(panels.nav_edit.is_some(), "@showloc keeps the field open");
+    }
 }
 
 #[cfg(test)]

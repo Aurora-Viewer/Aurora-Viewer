@@ -222,9 +222,9 @@ fn status(live: &mut Live, ui: &mut egui::Ui, p: &Palette) -> bool {
     let mut start = false;
     let connected = live.server.as_ref().is_some_and(|server| server.shared.status.lock().connected);
     let (label, color) = if connected {
-        (aurora_i18n::tr!("blender-live-connected"), p.teal)
+        (aurora_i18n::tr!("livemesh-plugin-connected"), p.teal)
     } else if live.running() {
-        (aurora_i18n::tr!("blender-live-waiting"), p.amber)
+        (aurora_i18n::tr!("livemesh-waiting-plugin"), p.amber)
     } else {
         (aurora_i18n::tr!("blender-live-stopped"), p.muted)
     };
@@ -1054,21 +1054,21 @@ fn avatar(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
         ui,
         p,
         "blender_live_shape",
-        aurora_i18n::tr!("blender-live-shape-section"),
+        aurora_i18n::tr!("livemesh-shape-section"),
         true,
         |ui| {
             for (action, label, tooltip, blocked, kind) in [
                 (
                     shape::Action::Create,
                     aurora_i18n::tr!("blender-shape-send"),
-                    aurora_i18n::tr!("blender-shape-tooltip"),
+                    aurora_i18n::tr!("livemesh-shape-tooltip"),
                     &live.shape.blocked,
                     ActionKind::Primary,
                 ),
                 (
                     shape::Action::Apply,
                     aurora_i18n::tr!("blender-shape-apply"),
-                    aurora_i18n::tr!("blender-shape-apply-tooltip"),
+                    aurora_i18n::tr!("livemesh-shape-apply-tooltip"),
                     &live.shape.apply_blocked,
                     ActionKind::Flat,
                 ),
@@ -1308,4 +1308,32 @@ fn plugins(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
             }
         },
     );
+    maya(live, ui, p);
+}
+
+/// The Maya plug-in, laid out like the Blender part above: its version with
+/// the save action, then how to install it. No detection or installer runs
+/// from here: Maya installs it itself from the dropped install.mel.
+fn maya(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
+    let busy = live.maya_addon.busy;
+    let mut save = false;
+    list_heading(
+        ui,
+        p,
+        &aurora_i18n::tr!("blender-live-maya-version", version = super::addon::maya_version()),
+        |ui| {
+            save = ui
+                .add_enabled_ui(!busy, |ui| widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-save-maya")))
+                .inner
+                .clicked();
+        },
+    );
+    live.save_maya_addon |= save;
+    note(ui, p, aurora_i18n::tr!("blender-live-maya-instructions"));
+    if live.maya_addon.saved {
+        ui.colored_label(p.success, aurora_i18n::tr!("blender-live-maya-saved"));
+    }
+    if let Some(error) = &live.maya_addon.error {
+        ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-addon-error", error = error.as_str()));
+    }
 }

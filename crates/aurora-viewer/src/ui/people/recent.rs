@@ -1,4 +1,4 @@
-//! People â€º Recent in Aurora's look (the People mock-up v2): the residents
+//! People › Recent in Aurora's look (the People mock-up v2): the residents
 //! we dealt with lately (`world/recent.rs`, LLRecentPeople; the recent tab
 //! of LLPanelPeople, panel_people.xml) as Near you's rows, newest first,
 //! with how long ago and the region we were in. The menu is the avatar
@@ -19,14 +19,25 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &
     super::split(ui, c, data, st, "people-recent-list", list, super::person_sheet);
 }
 
+/// LLAvatarListItem::formatSeconds (indra/newview/llavatarlistitem.cpp):
+/// use the largest whole unit, with fixed 30-day months and 365-day years.
 fn elapsed_text(seconds: u64) -> String {
-    let hours = seconds / 3600;
-    if hours < 24 {
-        super::nearby::seen_text(seconds as f64)
-    } else if hours.is_multiple_of(24) {
-        aurora_i18n::tr!("people-recent-days", days = (hours / 24) as i64)
+    const DAY: u64 = 86_400;
+    let days = seconds / DAY;
+    if days >= 365 {
+        aurora_i18n::tr!("profile-age-years", count = (days / 365) as i64)
+    } else if days >= 30 {
+        aurora_i18n::tr!("profile-age-months", count = (days / 30) as i64)
+    } else if days >= 7 {
+        aurora_i18n::tr!("profile-age-weeks", count = (days / 7) as i64)
+    } else if days >= 1 {
+        aurora_i18n::tr!("profile-age-days", count = days as i64)
+    } else if seconds >= 3600 {
+        aurora_i18n::tr!("people-recent-hours", count = (seconds / 3600) as i64)
+    } else if seconds >= 60 {
+        aurora_i18n::tr!("people-recent-minutes", count = (seconds / 60) as i64)
     } else {
-        aurora_i18n::tr!("people-recent-days-hours", days = (hours / 24) as i64, hours = (hours % 24) as i64)
+        aurora_i18n::tr!("people-recent-seconds", count = seconds as i64)
     }
 }
 
@@ -42,7 +53,7 @@ fn interaction_time(when: std::time::SystemTime, zone: crate::settings::ClockZon
     ))
 }
 
-/// "12 min ago Â· Ahern". Under RLVa @showloc a region the agent is
+/// "12 min ago · Ahern". Under RLVa @showloc a region the agent is
 /// connected to is "(Hidden region)", as every list names it
 /// (RlvUtil::isNearbyRegion, rlvcommon.cpp); one met there under the
 /// restriction was kept without its name (`World::met`).
@@ -52,9 +63,9 @@ fn ago(met: &Met, world: &crate::world::World) -> String {
     if met.region.is_empty() {
         when
     } else if world.rlva_hides_region(&met.region) {
-        format!("{when} Â· {}", aurora_i18n::tr!("rlva-hidden-region"))
+        format!("{when} · {}", aurora_i18n::tr!("rlva-hidden-region"))
     } else {
-        format!("{when} Â· {}", met.region)
+        format!("{when} · {}", met.region)
     }
 }
 
@@ -173,15 +184,9 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     }
     rows::person_menu(&resp, p, world, NameScope::Roster, &st.sel, id);
     let detail = (cut && resp.hover_pos().is_some_and(|at| at.x <= end.names_right)).then_some(name);
-    resp.on_hover_ui(|ui| {
-        if let Some(name) = detail {
-            ui.label(name);
-        }
+    rows::contact_tip(resp, detail, || {
         use crate::ui::bars::clock;
-        if let Some(stamp) = interaction_time(met.when, clock::zone(), clock::chat_twelve_hours()) {
-            ui.label(stamp);
-        }
-        ui.label(aurora_i18n::tr!("people-edit-contact-hold"));
+        interaction_time(met.when, clock::zone(), clock::chat_twelve_hours())
     });
 }
 
@@ -210,13 +215,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recent_age_changes_units_at_midnight_and_keeps_remaining_hours() {
-        assert_eq!(elapsed_text(86_399), super::super::nearby::seen_text(86_399.0));
-        assert_eq!(elapsed_text(86_400), aurora_i18n::tr!("people-recent-days", days = 1));
-        assert_eq!(
-            elapsed_text(2_332 * 3600),
-            aurora_i18n::tr!("people-recent-days-hours", days = 97, hours = 4)
-        );
+    fn recent_age_uses_the_largest_complete_unit() {
+        let day = 86_400;
+        for (seconds, expected) in [
+            (59, aurora_i18n::tr!("people-recent-seconds", count = 59)),
+            (60, aurora_i18n::tr!("people-recent-minutes", count = 1)),
+            (3600, aurora_i18n::tr!("people-recent-hours", count = 1)),
+            (day - 1, aurora_i18n::tr!("people-recent-hours", count = 23)),
+            (day, aurora_i18n::tr!("profile-age-days", count = 1)),
+            (7 * day, aurora_i18n::tr!("profile-age-weeks", count = 1)),
+            (30 * day - 1, aurora_i18n::tr!("profile-age-weeks", count = 4)),
+            (30 * day, aurora_i18n::tr!("profile-age-months", count = 1)),
+            (2_332 * 3600, aurora_i18n::tr!("profile-age-months", count = 3)),
+            (365 * day - 1, aurora_i18n::tr!("profile-age-months", count = 12)),
+            (365 * day, aurora_i18n::tr!("profile-age-years", count = 1)),
+        ] {
+            assert_eq!(elapsed_text(seconds), expected, "{seconds} seconds");
+        }
     }
 
     #[test]

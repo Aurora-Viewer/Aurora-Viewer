@@ -437,7 +437,7 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut
         let mut more = More::default();
         more_menu(ui, p, v, world, &parcel_for_group(parcel, v, world), &mut more);
         if more.scripts {
-            s.scripts.open();
+            s.scripts.open(ui.ctx());
         }
         if more.buy_for_group {
             world.land.request_buy(true);

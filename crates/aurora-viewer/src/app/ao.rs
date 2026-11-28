@@ -50,6 +50,20 @@ impl App {
                     self.panels.ao = false;
                     self.toolbar_ui.ao_quick.open = true;
                 }
+                Some("unavailable") => {
+                    // The catalogue has already loaded #Aurora. OpenSim's
+                    // Hypergrid rename keeps the id and the parent.
+                    let brand = inventory::child(&self.world.inventory, self.world.inventory.root, "#Aurora");
+                    if let Some(mut info) = brand.and_then(|id| self.world.inventory.folders.get(&id)).map(|f| f.info.clone()) {
+                        info.name = "#Aurora (Unavailable)".into();
+                        info.version = -1;
+                        self.world.inventory.server_updated(vec![info], Vec::new());
+                    }
+                    self.panels.inventory = true;
+                    self.inventory_ui
+                        .open_folders([Some(self.world.inventory.root), brand].into_iter().flatten());
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(90.0, 80.0), egui::vec2(600.0, 710.0));
+                }
                 Some("folder-names" | "folder-names-wait") => {
                     self.panels.inventory = true;
                     let inv = &self.world.inventory;
@@ -502,7 +516,7 @@ impl App {
             },
             Action::ShowRecovery(id) => {
                 self.inventory_ui.show_folder(&self.world.inventory, id);
-                self.panels.inventory = true;
+                crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             Action::Edit(change, select) => self.queue_ao_edit(change, select, None),
             Action::EditContainer(change, target) => self.queue_ao_edit(change, None, Some(target)),

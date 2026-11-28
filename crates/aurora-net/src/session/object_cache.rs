@@ -375,6 +375,7 @@ mod tests {
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
+            inventory_reads: None,
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: inventory_copies::Pending::default(),

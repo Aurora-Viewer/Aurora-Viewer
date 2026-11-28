@@ -13,6 +13,8 @@ mod admin;
 mod admin_tests;
 pub mod align;
 pub mod anim_pause;
+#[cfg(test)]
+mod bar_click_tests;
 pub mod contents;
 pub mod contents_drop;
 pub mod costs;
@@ -47,12 +49,15 @@ mod save_to_contents_tests;
 pub mod script_queue;
 #[cfg(test)]
 mod selection_tests;
+#[cfg(test)]
+mod shape_capture_tests;
 pub mod shapes;
 pub mod silhouette;
 #[cfg(test)]
 mod take_tests;
 pub mod task_inventory;
 pub mod texture_copy;
+mod tool_windows;
 pub mod ui;
 
 use crate::scene::Scene;
@@ -233,10 +238,16 @@ pub struct BuildSettings {
     /// RenderReflectionProbeVolumes: off at each start (Persist=0).
     #[serde(skip)]
     pub show_probe_volumes: bool,
-    /// Create tool: shape (index in `shapes::SHAPES`).
+    /// Create tool: shape (`shapes::captured_index` says how it counts).
     pub create_shape: usize,
+    /// The shapes captured from prims by the Aurora Create window's picker,
+    /// after the tree and the grass (`BuildTool::capture_shape`).
+    pub captured_shapes: Vec<shapes::CapturedShape>,
     /// CreateToolKeepSelected.
     pub keep_tool: bool,
+    /// The Aurora Create window shows its options under the shapes (the
+    /// section folds; Aurora's own).
+    pub create_options_shown: bool,
     /// Firestorm RezUnderLandGroup, enabled by default.
     pub rez_under_land_group: bool,
     /// New prim size (FSBuildPrefs_X/Y/Zsize).
@@ -293,10 +304,23 @@ pub struct BuildSettings {
     pub select_surrounding: bool,
     /// FSBuildToolDecimalPrecision: decimals of the Object tab numbers.
     pub decimal_precision: u8,
-    /// CreateToolCopySelection / CopyCenters / CopyRotates.
+    /// CreateToolCopySelection / CopyCenters / CopyRotates (the Legacy
+    /// style's Create options).
     pub copy_selection: bool,
     pub copy_centers: bool,
     pub copy_rotates: bool,
+    /// The Aurora Create window's placement options, for every shape it
+    /// makes (human requests, 2026-11-25; `creation_pose`). On a prim
+    /// clicked, `create_centers` ("Center on prim") and `create_rotates`
+    /// ("Copy prim rotation") do what "Copy selection"'s Center and Rotate
+    /// do for a copy: on the middle of the face clicked, and the prim's
+    /// rotation. `create_aligns` ("Align to surface", Aurora's own) turns
+    /// the shape to stand on the surface clicked, a prim's or the
+    /// ground's; it and `create_rotates` are one or the other. All off, as
+    /// the Legacy Viewer's Create tool places a prim.
+    pub create_centers: bool,
+    pub create_rotates: bool,
+    pub create_aligns: bool,
     /// LastSelectedTree / LastSelectedGrass: species name, empty = random.
     pub last_tree: String,
     pub last_grass: String,
@@ -397,6 +421,82 @@ impl BuildSettings {
         }
     }
 
+    /// The prim the Create tool rezzes, None for a tree or grass: its
+    /// shape, its placement rotation and its own size (a captured shape's;
+    /// the others take `new_prim_size`).
+    pub fn create_volume(&self) -> Option<(aurora_prim::RawShape, Quat, Option<Vec3>)> {
+        let all = shapes::shapes();
+        if let Some(sh) = all.get(self.create_shape) {
+            return Some((sh.raw(), sh.rotation(), None));
+        }
+        let captured = self.captured_shapes.get(shapes::captured_index(self.create_shape)?)?;
+        Some((captured.shape, Quat::IDENTITY, Some(Vec3::from_array(captured.scale))))
+    }
+
+    /// Where the Create tool's prim of `scale`, turned by its shape's own
+    /// `rotation`, goes for the click `hit`: its centre and its rotation. It
+    /// rests on the point, upright, as the region places LLToolPlacer's
+    /// prim. On a prim, "Center on prim" and "Copy prim rotation" do what
+    /// "Copy selection"'s Center and Rotate do for a copy
+    /// (ObjectDuplicateOnRay's CopyCenters and CopyRotates, which the
+    /// region applies): on the middle of the face clicked, beside the prim
+    /// and centred on it, and the prim's rotation; on the ground they do
+    /// nothing, as for a copy. "Align to surface" turns it to stand on the
+    /// surface clicked, the ground's too.
+    pub fn creation_pose(&self, rotation: Quat, scale: Vec3, hit: CreationHit) -> (Vec3, Quat) {
+        let half_along = |rotation: Quat, dir: Vec3| {
+            let axes = glam::Mat3::from_quat(rotation);
+            Vec3::new(axes.x_axis.dot(dir), axes.y_axis.dot(dir), axes.z_axis.dot(dir))
+                .abs()
+                .dot(scale)
+                * 0.5
+        };
+        let upright = (hit.point + Vec3::Z * half_along(rotation, Vec3::Z), rotation);
+        let prim = hit.prim.filter(|_| self.create_centers || self.create_rotates);
+        if prim.is_none() && !self.create_aligns {
+            return upright;
+        }
+        let normal = hit.normal.normalize_or(Vec3::Z);
+        let rotation = match prim {
+            _ if self.create_aligns => (Quat::from_rotation_arc(Vec3::Z, normal) * rotation).normalize(),
+            Some(prim) if self.create_rotates => (prim.rotation * rotation).normalize(),
+            _ => rotation,
+        };
+        let pose = match prim.filter(|_| self.create_centers) {
+            Some(prim) => {
+                // the face clicked, as one of the prim's own axes (the
+                // face's axis-aligned normal the region uses for a centred
+                // copy)
+                let local = prim.rotation.inverse() * normal;
+                let axis = (0..3).max_by(|&a, &b| local[a].abs().total_cmp(&local[b].abs())).unwrap_or(2);
+                let mut face = Vec3::ZERO;
+                face[axis] = local[axis].signum();
+                let face = (prim.rotation * face).normalize_or(Vec3::Z);
+                prim.center + face * (prim.scale[axis] * 0.5 + half_along(rotation, face))
+            }
+            None => hit.point + normal * half_along(rotation, normal),
+        };
+        if pose.is_finite() && rotation.is_finite() {
+            (pose, rotation)
+        } else {
+            upright
+        }
+    }
+
+    /// Removes the captured shape `k`; the choice follows its shape, or
+    /// goes back to the cube when it was that one.
+    pub fn remove_captured(&mut self, k: usize) {
+        if k >= self.captured_shapes.len() {
+            return;
+        }
+        self.captured_shapes.remove(k);
+        match shapes::captured_index(self.create_shape) {
+            Some(chosen) if chosen == k => self.create_shape = 0,
+            Some(chosen) if chosen > k => self.create_shape -= 1,
+            _ => {}
+        }
+    }
+
     /// MaxSelectDistance while LimitSelectDistance is on.
     pub fn select_limit(&self) -> Option<f32> {
         self.limit_select_distance
@@ -427,6 +527,24 @@ fn sane_distance(value: f32, default: f32) -> f32 {
 #[cfg(test)]
 mod worn_tests;
 
+/// What is under the Create tool's click: the point, the surface's normal
+/// toward the camera, and the prim clicked, if one was (`place::creation_hit`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CreationHit {
+    pub point: Vec3,
+    pub normal: Vec3,
+    pub prim: Option<CreationPrim>,
+}
+
+/// The prim under the Create tool's click: its centre and rotation in the
+/// world, and its size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CreationPrim {
+    pub center: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
+}
+
 /// LLManipTranslate / Rotate / Scale::canAffectSelection (Firestorm): the
 /// simulator's effective flags apply before any local transform. Moving a
 /// whole no-modify object is allowed; linked edits and stretching need Modify.
@@ -437,7 +555,7 @@ pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) ->
     }
     // LLSelectMgr::selectGetEditMoveLinksetPermissions: the seat the agent is
     // held on under @unsit or @sittp neither moves nor changes.
-    if world.rlva_restrained_seat(idx) {
+    if world.rlva_restrained_seat(idx) || worn_by_other(world, idx) {
         return false;
     }
     use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
@@ -445,6 +563,23 @@ pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) ->
         return false;
     };
     root.update_flags & OBJECT_MOVE != 0 && (!(linked || mode == EditMode::Stretch) || root.update_flags & OBJECT_MODIFY != 0)
+}
+
+/// LLSelectMgr::canUndo / canRedo (indra/newview/llselectmgr.cpp): Undo
+/// needs Modify, or Move on an object that is not permanent
+/// (getFirstUndoEnabledObject); Redo needs Modify (getFirstEditableObject).
+/// Read on the root's flags, as `can_transform` does. Another avatar's
+/// attachment is never undone, whatever its flags (`worn_by_other`).
+pub fn undo_allowed(world: &World, idx: usize, redo: bool) -> bool {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    if worn_by_other(world, idx) {
+        return false;
+    }
+    let root = root_of(world, idx);
+    let Some(flags) = world.objects.get(root).map(|o| o.update_flags) else {
+        return false;
+    };
+    flags & OBJECT_MODIFY != 0 || !redo && flags & OBJECT_MOVE != 0 && !linking::permanent(world, root)
 }
 
 /// A copy of this object can be rezzed: its root has Copy and it is not
@@ -808,6 +943,8 @@ impl Default for BuildSettings {
             show_probe_volumes: false,
             create_shape: 0,
             keep_tool: false,
+            create_options_shown: true,
+            captured_shapes: Vec::new(),
             rez_under_land_group: true,
             new_prim_size: [0.5; 3],
             new_prim_material: 3,
@@ -835,6 +972,9 @@ impl Default for BuildSettings {
             copy_selection: false,
             copy_centers: true,
             copy_rotates: false,
+            create_centers: false,
+            create_rotates: false,
+            create_aligns: false,
             last_tree: String::new(),
             last_grass: String::new(),
             expanded: true,
@@ -905,7 +1045,7 @@ pub enum GrabMode {
     Spin,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct Mods {
     pub shift: bool,
@@ -960,6 +1100,12 @@ pub struct BuildTool {
     /// The build floater is open (build mode).
     pub open: bool,
     pub tool: Tool,
+    /// The Aurora style's main window is shown (the Edit tool's: its
+    /// sections); the Legacy style's single window, whenever `open`.
+    pub main_open: bool,
+    /// The Aurora style's tool windows shown (Camera, Move, Create,
+    /// Land), in the order they opened (tool_windows.rs).
+    tool_windows: Vec<Tool>,
     pub edit_mode: EditMode,
     pub focus_mode: FocusMode,
     pub grab_mode: GrabMode,
@@ -1043,9 +1189,21 @@ pub struct BuildTool {
     /// Objects created / duplicated with FLAGS_CREATE_SELECTED: select them
     /// when they arrive (LLViewerObjectList). (Sent at, objects already flagged.)
     pending_create: Option<(Instant, HashSet<Uuid>)>,
+    /// The Create window's picker is armed: the next world click captures
+    /// the shape of the prim under it (`capture_shape`); Escape, the
+    /// window closed or the picker's button again put it down.
+    pub shape_capture: bool,
     /// Prims the Create tool asked for whose new objects' look is still to
     /// be given (new_defaults.rs).
     new_defaults_pending: u32,
+    /// For each of those, the place and rotation it is put at once it
+    /// arrives, when the Aurora window's Center or Rotate chose them (the
+    /// region's own placement is not exact: FSFloaterImport::
+    /// processPrimCreated sends the position again the same way).
+    new_poses: std::collections::VecDeque<Option<(RegionHandle, Vec3, Quat)>>,
+    /// What is under the Create tool's click (`place::creation_hit`), given
+    /// by the app with the click.
+    pub creation_hit: Option<CreationHit>,
     /// Selection rectangle being dragged (start, current in pixels, extend).
     pub rect: Option<((f32, f32), (f32, f32), bool)>,
     /// The press behind `rect`, until it is known to be a click: the object
@@ -1057,9 +1215,9 @@ pub struct BuildTool {
     /// outside "Select face": Ctrl+Shift, or Shift / Ctrl set to select a
     /// face (face_buttons.rs).
     press_face: Option<(u8, face_buttons::FaceClick)>,
-    /// The rectangle being dragged started in HUD space, which it keeps
-    /// after the drag has cleared the selection that said so.
-    rect_hud: bool,
+    /// Space of the object under the press. A press on empty space can
+    /// extend the current selection in its own space.
+    rect_space: Option<SelectType>,
     /// The press has left the click's slop (`rect_dragged`): a rectangle
     /// until its release, even if the cursor comes back.
     rect_walked: bool,
@@ -1081,6 +1239,8 @@ impl Default for BuildTool {
             keep_material_tab: false,
             open: false,
             tool: Tool::Edit,
+            main_open: false,
+            tool_windows: Vec::new(),
             edit_mode: EditMode::Move,
             focus_mode: FocusMode::Zoom,
             grab_mode: GrabMode::Move,
@@ -1121,11 +1281,14 @@ impl Default for BuildTool {
             land: land::LandTool::default(),
             silhouettes: silhouette::Cache::default(),
             pending_create: None,
+            shape_capture: false,
             new_defaults_pending: 0,
+            new_poses: Default::default(),
+            creation_hit: None,
             rect: None,
             press: None,
             press_face: None,
-            rect_hud: false,
+            rect_space: None,
             rect_walked: false,
             tab: 6,
             status: String::new(),
@@ -1186,8 +1349,9 @@ pub fn rlva_selectable(world: &World, idx: usize) -> bool {
     world.rlva_can_edit(idx) && (!world.rlva.has("interact") || world.hud_root(idx).is_some())
 }
 
-/// World objects and what our avatar wears, HUDs included; the attachments
-/// of other avatars cannot be edited.
+/// World objects and what avatars wear, our HUDs included. The attachments of
+/// other avatars can be selected to be looked at, never changed
+/// ([`worn_by_other`]).
 pub fn selectable(world: &World, idx: usize) -> bool {
     world.rlva_within_fartouch(idx) && selectable_within(world, idx)
 }
@@ -1217,8 +1381,28 @@ pub fn rlva_keeps_menu_selection(world: &World, idx: usize) -> bool {
     !world.rlva.has("interact") || world.hud_root(idx).is_some()
 }
 
+/// `idx` hangs from an avatar that is not ours. LLSelectNode::allowOperationOnNode
+/// (indra/newview/llselectmgr.cpp): "only owners can move or modify their
+/// attachments, no proxy allowed", whatever rights the simulator reports (a
+/// friend's modify right, a group). `can_transform`, `can_modify`, Align and
+/// Undo / Redo refuse such an object. The manipulators' lock is stricter than
+/// the Legacy Viewer, whose LLManipTranslate::canAffectSelection only reads
+/// the simulator's permMove / permModify. The Contents tab keeps its god
+/// exception (`contents_modifiable`, as LLPanelContents::getState).
+pub fn worn_by_other(world: &World, mut idx: usize) -> bool {
+    for _ in 0..64 {
+        let Some(o) = world.objects.get(idx) else { return false };
+        let Some(parent) = world.objects.parent_of(o) else { return false };
+        if let Some(p) = world.objects.get(parent).filter(|p| p.is_avatar()) {
+            return p.full_id != world.agent_id;
+        }
+        idx = parent;
+    }
+    false
+}
+
 /// An object of a kind that can be selected: a prim or a tree, in the world
-/// or worn by our avatar.
+/// or worn by an avatar.
 fn selectable_kind(world: &World, idx: usize) -> bool {
     let mut i = idx;
     for _ in 0..64 {
@@ -1239,7 +1423,12 @@ fn selectable_kind(world: &World, idx: usize) -> bool {
                 if let Some(parent) = world.objects.get(p)
                     && parent.is_avatar()
                 {
-                    return parent.full_id == world.agent_id;
+                    // Another avatar's attachment is selectable too
+                    // (LLSelectMgr::canSelectObject only refuses avatars); what
+                    // may be changed is `worn_by_other`'s to refuse. Its HUDs
+                    // are never ours to pick (cursorIntersect with a HUD pick
+                    // only takes our own).
+                    return parent.full_id == world.agent_id || !(31..=38).contains(&o.attachment_point());
                 }
                 i = p;
             }
@@ -1300,6 +1489,13 @@ const CLICK_SLOP_POINTS: f32 = 10.0;
 fn rect_dragged(a: (f32, f32), b: (f32, f32), ppp: f32) -> bool {
     let (dx, dy) = ((a.0 - b.0) / ppp, (a.1 - b.1) / ppp);
     dx * dx + dy * dy >= CLICK_SLOP_POINTS * CLICK_SLOP_POINTS
+}
+
+/// LLToolSelectRect::handleMouseUp and `draw` (indra/newview/lltoolselectrect.cpp,
+/// originally LGPL 2.1): Ctrl alone, `mask == MASK_CONTROL`, makes the
+/// rectangle deselect and paints it red; Shift, or Ctrl with it, still adds.
+fn rect_deselect(mods: Mods) -> bool {
+    mods.ctrl && !mods.shift && !mods.alt
 }
 
 /// Object indices of a selection with their highlight (true = root color):
@@ -1422,11 +1618,20 @@ impl BuildTool {
         .is_some_and(|frame| self.manip.pick(&self.cam, &frame, mode, cursor).is_some())
     }
 
+    /// Opens the build tools on `tool`, which becomes the one in use: in
+    /// the Aurora style the main window for Edit, the tool's own window
+    /// for the others (tool_windows.rs); the Legacy style's single window.
     pub fn open_build(&mut self, tool: Tool) {
         self.open = true;
         // a right-click selection becomes the build selection
         self.menu_selection = false;
         self.set_tool(tool);
+        if self.ui.legacy() || tool == Tool::Edit {
+            self.main_open = true;
+        } else {
+            self.tool_windows.retain(|t| *t != tool);
+            self.tool_windows.push(tool);
+        }
     }
 
     /// LLFloaterTools::onClose: everything is deselected, the tools reset
@@ -1436,10 +1641,13 @@ impl BuildTool {
             self.status = aurora_i18n::tr!("replace-waiting-server").into();
             return;
         }
+        self.shape_capture = false;
         self.cancel_replacement(world);
         self.cancel_color_picker(world);
         self.commit_color_edit();
         self.open = false;
+        self.main_open = false;
+        self.tool_windows.clear();
         self.place.stop();
         self.manip.cancel();
         self.land.cancel();
@@ -1714,7 +1922,14 @@ impl BuildTool {
         for (handle, ids) in self.wire_ids(world, keys, self.selection_linked) {
             self.send(BuildCmd::Deselect { handle, local_ids: ids });
         }
-        self.selection.retain(|k| !keys.contains(k));
+        match keys {
+            [] => {}
+            [key] => self.selection.retain(|k| k != key),
+            _ => {
+                let removed: HashSet<_> = keys.iter().copied().collect();
+                self.selection.retain(|k| !removed.contains(k));
+            }
+        }
     }
 
     /// A restriction takes these out of the selection: a drag of them stops
@@ -1785,8 +2000,10 @@ impl BuildTool {
     }
 
     pub fn hud_selected(&self, world: &World) -> bool {
-        if self.rect.is_some() && self.rect_hud {
-            return true;
+        if self.rect.is_some()
+            && let Some(space) = self.rect_space
+        {
+            return space == SelectType::Hud;
         }
         self.selection
             .first()
@@ -1795,10 +2012,20 @@ impl BuildTool {
             .is_some_and(|(_, _, hud)| hud)
     }
 
+    /// A rectangle started on an object in a different selection space.
+    fn rect_crosses_spaces(&self, world: &World) -> bool {
+        !self.selection.is_empty() && self.rect_space.is_some_and(|space| space != self.select_type(world))
+    }
+
     /// LLSelectMgr::updateSelectionCenter / resetAgentHUDZoom
     /// (indra/newview/llselectmgr.cpp): leaving HUD editing restores 100%.
     /// Track the transition so World > HUDs zoom still works outside editing.
     pub fn sync_hud_zoom(&mut self, world: &mut World) {
+        // A rectangle can be drawn in the other space while Ctrl keeps
+        // the original selection. Only its release can end that HUD edit.
+        if self.rect.is_some() && self.rect_crosses_spaces(world) {
+            return;
+        }
         let editing = self.open && self.hud_selected(world);
         if self.hud_editing && !editing {
             world.hud_zoom = 1.0;
@@ -2192,15 +2419,29 @@ impl BuildTool {
         self.costs_stale();
     }
 
-    /// Ctrl+Z / Ctrl+Y: the simulator's undo history of the selected roots.
-    pub fn undo(&mut self, world: &World, redo: bool) {
-        let units: Vec<usize> = if self.selection_linked {
+    /// What Undo / Redo would send: the selected roots, or the highlighted
+    /// prims with Edit linked parts (SEND_ONLY_ROOTS / SEND_CHILDREN_FIRST).
+    fn undo_units(&self, world: &World) -> Vec<usize> {
+        if self.selection_linked {
             self.highlighted(world).into_iter().map(|(i, _)| i).collect()
         } else {
             self.roots(world)
-        };
+        }
+    }
+
+    /// LLSelectMgr::canUndo / canRedo: one selected object the rule allows
+    /// enables the button.
+    pub fn can_undo(&self, world: &World, redo: bool) -> bool {
+        self.undo_units(world).into_iter().any(|i| undo_allowed(world, i, redo))
+    }
+
+    /// Ctrl+Z / Ctrl+Y: the simulator's undo history of the selected roots.
+    /// Only the objects `undo_allowed` accepts are sent: stricter than
+    /// LLSelectMgr::undo, which sends the whole selection once canUndo holds
+    /// for one of them, so that another avatar's attachment is never sent.
+    pub fn undo(&mut self, world: &World, redo: bool) {
         let mut by_region: HashMap<RegionHandle, Vec<Uuid>> = HashMap::new();
-        for i in units {
+        for i in self.undo_units(world).into_iter().filter(|&i| undo_allowed(world, i, redo)) {
             if let Some(o) = world.objects.get(i) {
                 by_region.entry(o.key.region).or_default().push(o.full_id);
             }
@@ -2282,7 +2523,13 @@ impl BuildTool {
     /// LLSelectMgr::updateSelectionSilhouette roots the rect selection.
     /// Without `scene` (tests) or geometry yet, a prim across the edge is
     /// taken only without "Select by surrounding".
-    fn rect_select(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, a: (f32, f32), b: (f32, f32), extend: bool) {
+    /// `deselect` is `LLToolSelectRect::handleMouseUp`'s `mask == MASK_CONTROL`
+    /// (indra/newview/lltoolselectrect.cpp, originally LGPL 2.1), whose
+    /// `deselectHighlightedObjects` takes the highlighted objects out of the
+    /// selection: only the selected roots the highlighted set holds leave, as
+    /// `highlightObjectOnly` applies the picking filters in both modes
+    /// (indra/newview/llselectmgr.cpp).
+    fn rect_select(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, a: (f32, f32), b: (f32, f32), deselect: bool) {
         // a press that left the slop, or a rectangle given whole
         if !(std::mem::take(&mut self.rect_walked) || rect_dragged(a, b, self.cam.ppp)) {
             return; // a click, handled by `mouse_up`
@@ -2292,28 +2539,34 @@ impl BuildTool {
         if world.rlva_drops_picks() {
             return;
         }
+        if self.rect_crosses_spaces(world) {
+            // Ctrl kept the selection in its original space when the drag
+            // started. If released before the button, start adding in the
+            // rectangle's space. A subtraction there has nothing to remove.
+            if deselect {
+                return;
+            }
+            self.deselect_all(world);
+        }
         // …and under @fartouch its distance stands for MaxSelectDistance,
         // whether "Limit select distance" is on or not, farther or nearer
         let limit = world.rlva_select_limit().or(s.select_limit());
         let rect = egui::Rect::from_two_pos(egui::pos2(a.0, a.1), egui::pos2(b.0, b.1));
         let now = Instant::now();
         self.selection_linked = s.edit_linked;
-        let mut units = Vec::new();
-        let mut seen = HashSet::new();
-        for (idx, o) in world.objects.iter() {
+        let covered_unit = |idx| -> Option<ObjKey> {
+            let o = world.objects.get(idx)?;
             if o.is_avatar() || (!s.select_probes && o.extra.reflection_probe.is_some()) {
-                continue;
+                return None;
             }
-            let Some((p, rot, hud)) = Scene::object_transform(world, idx, now, 0) else {
-                continue;
-            };
+            let (p, rot, hud) = Scene::object_transform(world, idx, now, 0)?;
             if hud != self.cam.hud.is_some() || (!hud && limit.is_some_and(|max| p.distance(world.agent.position) > max)) {
-                continue;
+                return None;
             }
             // what avatars wear is left out of a rectangle drawn in the
             // world (LLToolSelectRect::handleRectangleSelection skips isAttachment)
             if !hud && select_type(world, idx) != SelectType::World {
-                continue;
+                return None;
             }
             let drawn = scene
                 .and_then(|scene| scene.drawn_geometry(world, idx, now))
@@ -2340,19 +2593,41 @@ impl BuildTool {
                     )
                 }),
             };
-            if taken
-                && passes_rect_filters(world, s, idx)
-                && let Some(u) = Self::unit_of(world, idx, s.edit_linked)
-                && seen.insert(u)
-            {
-                units.push(u);
+            if !taken || !passes_rect_filters(world, s, idx) {
+                return None;
             }
-        }
-        if !extend && units.is_empty() {
-            return;
-        }
-        for u in units.into_iter().take(1024) {
-            self.add(world, u);
+            Self::unit_of(world, idx, s.edit_linked)
+        };
+        if deselect {
+            // LLToolSelectRect::handleRectangleSelection skips unselected
+            // prims. A single covered part removes its selected linkset.
+            let units: Vec<_> = self
+                .selection
+                .iter()
+                .copied()
+                .filter(|unit| {
+                    let Some(idx) = world.objects.index_of(unit) else { return false };
+                    if covered_unit(idx) == Some(*unit) {
+                        return true;
+                    }
+                    !s.edit_linked
+                        && !world.objects.children_of(unit).is_empty()
+                        && family(world, idx).into_iter().skip(1).any(|part| covered_unit(part) == Some(*unit))
+                })
+                .collect();
+            self.deselect(world, &units);
+        } else {
+            let mut seen = HashSet::new();
+            let units: Vec<_> = world
+                .objects
+                .iter()
+                .filter_map(|(idx, _)| covered_unit(idx))
+                .filter(|unit| seen.insert(*unit))
+                .take(1024)
+                .collect();
+            for u in units {
+                self.add(world, u);
+            }
         }
     }
 
@@ -2461,7 +2736,7 @@ impl BuildTool {
                         self.send_stretch_materials(world, scene, idx, s.scale_stretch_textures);
                     }
                 }
-                self.drag_rect(world, cursor);
+                self.drag_rect(world, cursor, mods);
             }
             Tool::Grab => self.grab_hover(world, cursor, mods),
             Tool::Land => {
@@ -2471,39 +2746,33 @@ impl BuildTool {
                     self.send(c);
                 }
             }
-            Tool::Create | Tool::Focus => self.drag_rect(world, cursor),
+            Tool::Create | Tool::Focus => self.drag_rect(world, cursor, mods),
         }
     }
 
-    /// LLToolSelectRect::handleHover: a press that leaves the slop is a
-    /// rectangle and not a click; without Shift or Ctrl it starts from an
-    /// empty selection. With them it keeps the selection, unless the press
-    /// is in another space: a selection never mixes them, as
-    /// LLToolSelect::handleObjectSelection's click would have decided.
-    fn drag_rect(&mut self, world: &World, cursor: (f32, f32)) {
+    /// LLToolSelectRect::handleHover reads Shift and Ctrl when the cursor
+    /// first leaves the slop. Only an additive rectangle changes spaces.
+    fn drag_rect(&mut self, world: &World, cursor: (f32, f32), mods: Mods) {
         let ppp = self.cam.ppp;
         let Some(r) = self.rect.as_mut() else { return };
         r.1 = cursor;
         self.rect_walked |= rect_dragged(r.0, r.1, ppp);
-        let (dragged, extend) = (self.rect_walked, r.2);
-        if dragged && let Some(pick) = self.press.take() {
+        if self.rect_walked && self.press.take().is_some() {
             self.press_face = None;
-            let other_space = pick
-                .and_then(|key| world.objects.index_of(&key))
-                .is_some_and(|idx| select_type(world, idx) != self.select_type(world));
-            if !extend || other_space {
+            if (!mods.shift && !mods.ctrl) || (!rect_deselect(mods) && self.rect_crosses_spaces(world)) {
                 self.deselect_all(world);
             }
         }
     }
 
-    /// The press is abandoned without its release, as the focus going ends
-    /// the mouse capture (LLToolSelect::onMouseCaptureLost): it selects
-    /// nothing. A rectangle already dragged is left to its release.
+    /// LLToolSelect::onMouseCaptureLost: the real button release will not
+    /// arrive. Discard both a pending click and a rectangle in progress.
     pub fn drop_press(&mut self) {
-        if self.press.take().is_some() {
-            self.rect = None;
-        }
+        self.press = None;
+        self.press_face = None;
+        self.rect = None;
+        self.rect_space = None;
+        self.rect_walked = false;
     }
 
     /// Left press in the world while building. `hit` is the picked surface
@@ -2588,7 +2857,7 @@ impl BuildTool {
                         self.press_face = face_buttons::FaceClick::of(s, mods)
                             .zip(surface.and_then(|s| u8::try_from(s.face).ok()))
                             .map(|(click, face)| (face, click));
-                        self.rect_hud = pick.is_some_and(|idx| select_type(world, idx) == SelectType::Hud);
+                        self.rect_space = pick.map(|idx| select_type(world, idx));
                         self.rect = Some((cursor, cursor, extend));
                         self.rect_walked = false;
                         true
@@ -2740,7 +3009,12 @@ impl BuildTool {
     }
 
     /// `scene` gives the selection rectangle the drawn vertices of the prims.
-    pub fn mouse_up(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>) {
+    /// The modifiers of the release decide, as LLToolSelectRect::handleMouseUp:
+    /// `mods` is the mask of the mouse-up event.
+    pub fn mouse_up(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, cursor: (f32, f32), mods: Mods) {
+        // A fast drag can finish before a frame updates the rectangle or
+        // even before the GPU resolves the original press.
+        self.drag_rect(world, cursor, mods);
         if let Some((a, b, extend)) = self.rect.take() {
             match self.press.take() {
                 Some(pick) => {
@@ -2750,8 +3024,9 @@ impl BuildTool {
                         _ => self.click_select(world, s, pick, extend),
                     }
                 }
-                None => self.rect_select(world, s, scene, a, b, extend),
+                None => self.rect_select(world, s, scene, a, b, rect_deselect(mods)),
             }
+            self.rect_space = None;
         }
         let mut cmds = Vec::new();
         self.manip.release(world, s, self.selection_linked, &mut cmds);
@@ -2821,6 +3096,7 @@ impl BuildTool {
         let random = Uuid::new_v4().as_u128() as u32;
         let n = shapes::shapes().len();
         let plant = s.create_shape == n || s.create_shape == n + 1;
+        let mut exact = None;
         let (pcode, shape, rotation, state, scale, flags) = if plant {
             // trees and grass: not created selected (LLToolPlacer)
             let tree = s.create_shape == n;
@@ -2843,13 +3119,29 @@ impl BuildTool {
             };
             (pcode, aurora_prim::RawShape::default(), glam::Quat::IDENTITY, state, scale, 0)
         } else {
-            let sh = &shapes::shapes()[s.create_shape.min(n - 1)];
+            let Some((shape, rotation, own_size)) = s.create_volume() else {
+                return;
+            };
+            let scale = world.prim_limits().clamp3(own_size.unwrap_or(Vec3::from_array(s.new_prim_size)));
+            let hit = self
+                .creation_hit
+                .take()
+                .filter(|hit| hit.point.abs_diff_eq(point, 1e-3))
+                .unwrap_or(CreationHit {
+                    point,
+                    normal: Vec3::Z,
+                    prim: None,
+                });
+            let (center, rotation) = s.creation_pose(rotation, scale, hit);
+            if s.create_aligns || (hit.prim.is_some() && (s.create_centers || s.create_rotates)) {
+                exact = Some((handle, center - off, rotation));
+            }
             (
                 aurora_prim::params::LL_PCODE_VOLUME,
-                sh.raw(),
-                sh.rotation(),
+                shape,
+                rotation,
                 0,
-                world.prim_limits().clamp3(Vec3::from_array(s.new_prim_size)),
+                scale,
                 FLAGS_CREATE_SELECTED,
             )
         };
@@ -2874,7 +3166,7 @@ impl BuildTool {
         if !plant {
             self.expect_created(world);
             // (trees and grass are not created selected: no look of their own)
-            self.expect_new_defaults();
+            self.expect_new_defaults(exact);
         }
         // LLToolPlacer::addObject
         world.ui_sounds.push(crate::ui_sound::UiSound::ObjectCreate);
@@ -2882,6 +3174,55 @@ impl BuildTool {
             self.set_tool(Tool::Edit);
             self.edit_mode = EditMode::Move;
         }
+    }
+
+    /// The Create window's picker: the shape of the prim `idx` clicked
+    /// becomes a shape of its own, chosen (Aurora's own, human request
+    /// 2026-11-24). The Legacy Viewer's rule for copying a prim's shape,
+    /// LLPanelObject::onCopyParams and its button's state in
+    /// LLPanelObject::getState: a prim we may modify, not a mesh. Stricter:
+    /// no sculpted prim either (ObjectAdd carries no sculpt map), and not
+    /// while RLVa forbids editing it (RlvActions::canEdit). False when
+    /// refused, with the reason in `status`.
+    pub fn capture_shape(&mut self, world: &World, s: &mut BuildSettings, idx: usize) -> bool {
+        let Some(o) = world.objects.get(idx) else { return false };
+        let refused = if o.pcode != aurora_prim::params::LL_PCODE_VOLUME {
+            Some(aurora_i18n::tr!("build-capture-shape-not-a-prim"))
+        } else if o.volume.sculpt.is_some() {
+            Some(aurora_i18n::tr!("build-capture-shape-mesh-or-sculpt"))
+        } else if !self.can_modify(world, idx) || !world.rlva_can_edit(idx) {
+            Some(aurora_i18n::tr!("build-capture-shape-no-modify"))
+        } else {
+            None
+        };
+        if let Some(reason) = refused {
+            self.status = reason.into();
+            return false;
+        }
+        let mut volume = o.volume;
+        // a flexible prim's path is a line once rezzed without its flexible
+        // parameters (LLPanelObject::onPasteParams' rule)
+        if volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE {
+            volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+        }
+        let captured = shapes::CapturedShape {
+            shape: volume.to_raw(),
+            scale: o.scale.to_array(),
+        };
+        let k = match s.captured_shapes.iter().position(|c| *c == captured) {
+            Some(k) => k,
+            None if s.captured_shapes.len() >= shapes::MAX_CAPTURED => {
+                self.status = aurora_i18n::tr!("build-capture-shape-full").into();
+                return false;
+            }
+            None => {
+                s.captured_shapes.push(captured);
+                s.captured_shapes.len() - 1
+            }
+        };
+        s.create_shape = shapes::shapes().len() + 2 + k;
+        s.copy_selection = false;
+        true
     }
 
     /// "Copy selection": ObjectDuplicateOnRay of the selected roots
@@ -2976,7 +3317,8 @@ impl BuildTool {
             && !self.replacement_active()
             && !self.ui.color_picker.pipette
             && !s.copy_selection
-            && s.create_shape < shapes::shapes().len()
+            && !self.shape_capture
+            && s.create_volume().is_some()
             && !over_ui
             && !(mods.shift || mods.ctrl || mods.alt)
     }
@@ -3152,15 +3494,18 @@ impl BuildTool {
         if let Some((a, b, _)) = self.rect
             && self.rect_walked
         {
+            // LLToolSelectRect::draw (lltoolselectrect.cpp): the rectangle
+            // turns red while the Ctrl that deselects is held
+            let (fill, border) = if rect_deselect(mods) {
+                (draw::fade(pal.danger, 0.1), pal.danger)
+            } else {
+                (draw::rgba(1.0, 1.0, 1.0, 0.06), draw::rgba(1.0, 1.0, 1.0, 0.8))
+            };
             let k = 1.0 / cam.ppp;
             let r = egui::Rect::from_two_pos(egui::pos2(a.0 * k, a.1 * k), egui::pos2(b.0 * k, b.1 * k));
-            p.painter.rect_filled(r, 0.0, draw::rgba(1.0, 1.0, 1.0, 0.06));
-            p.painter.rect_stroke(
-                r,
-                0.0,
-                egui::Stroke::new(1.0, draw::rgba(1.0, 1.0, 1.0, 0.8)),
-                egui::StrokeKind::Inside,
-            );
+            p.painter.rect_filled(r, 0.0, fill);
+            p.painter
+                .rect_stroke(r, 0.0, egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
         }
     }
 
