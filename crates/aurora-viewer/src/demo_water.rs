@@ -362,6 +362,10 @@ pub fn update(
         } else if mode.contains("sea-roof") {
             // off the four walls of `sea-roof`, from the open sea
             (Vec3::new(1.0, 112.0, 24.5), Vec3::new(16.0, 112.0, 20.6))
+        } else if mode.contains("sea-spray") {
+            // low beside the dock's seaward pilings: the spray thrown up on
+            // them and off the crests breaking round the camera, close
+            (Vec3::new(49.0, 118.0, 21.0), Vec3::new(44.0, 123.5, 20.3))
         } else if mode.contains("sea-crash") {
             // off the breakwater's seaward face: the swell crashing on it
             (Vec3::new(14.0, 96.0, 23.5), Vec3::new(27.0, 108.0, 20.5))

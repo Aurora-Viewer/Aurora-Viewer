@@ -2795,10 +2795,26 @@ fn vs_water_crest_mist(@builtin(vertex_index) vertex: u32, @builtin(instance_ind
     o.seed=fract(r2.x*7.0+puff*0.31);
     return o;
 }
+// The white water of a splash (kind 13), drawn here rather than taken from
+// a texture: billows at three scales, each layer turned from the last and
+// the whole warped, so that cut at a threshold it leaves round lumps and
+// torn wisps. (One layer of the value noise cut so read as a muddy blotch
+// with square bites out of it.)
+fn water_spray_billows(p: vec2<f32>, seed: f32) -> f32 {
+    let o=vec2<f32>(seed*17.0,seed*29.0);
+    let warp=vec2<f32>(water_fx_noise(p*1.7+o),water_fx_noise(p*1.7+o.yx+vec2<f32>(5.2,1.3)))-0.5;
+    let q=p+warp*0.9;
+    let a=water_fx_noise(q*2.7+o);
+    let b=water_fx_noise(vec2<f32>(q.x*0.6-q.y*0.8,q.x*0.8+q.y*0.6)*5.9+o.yx);
+    let c=water_fx_noise(vec2<f32>(q.x*0.28+q.y*0.96,q.y*0.28-q.x*0.96)*12.7+vec2<f32>(3.1,o.x));
+    return a*0.52+b*0.31+c*0.17;
+}
 // The colour of a crash's particles (water_crash_particle): its sheets
 // (water_crash_sheet_color), droplets, and the white water it leaves, lit
-// by the sun and greyed by the sky's light under.
-fn water_crash_color(in: WaterParticleOut) -> vec4<f32> {
+// by the sun and greyed by the sky's light under. `foot`: how much of the
+// quad's uv a pixel spans (taken at the fragment's entry, where the
+// derivatives are allowed).
+fn water_crash_color(in: WaterParticleOut, foot: f32) -> vec4<f32> {
     if(in.life<=0.001){discard;}
     if(in.kind==11u){return water_crash_sheet_color(in);}
     let sun=normalize(frame.sun_dir.xyz);
@@ -2809,9 +2825,10 @@ fn water_crash_color(in: WaterParticleOut) -> vec4<f32> {
     // in the sun's shadow (taken once here, out of the branches below)
     let shade=sun_shadow(in.world,vec3<f32>(0.0,0.0,1.0),distance(in.world,frame.camera_pos.xyz),in.clip.xy);
     // the loose drops of water thrown off a crest (kind 13), drawn as
-    // beads of clear water over its white core (premultiplied, and how
-    // much of the view they cover)
-    var bead=vec3<f32>(0.0);var bead_a=0.0;
+    // beads of clear water over its white core: the light they send
+    // (`bead`, weighed by `bead_l`, how much of the pixel they fill) and
+    // how much of what is behind them they hide (`bead_a`)
+    var bead=vec3<f32>(0.0);var bead_l=0.0;var bead_a=0.0;
     // how much brighter the sun makes the fine mist (kind 12) than as foam
     var forward=1.0;
     if(in.kind==9u) {
@@ -2839,40 +2856,70 @@ fn water_crash_color(in: WaterParticleOut) -> vec4<f32> {
         // cluster of drops, denser than the mist, with a few loose drops
         // round it; breaking up into drops as it fades (GodotOceanWaves'
         // dissolve: fewer of its blobs clear the noise's rising cut)
-        // (its blobs drifting outward as it opens up; no edge to the quad)
+        // (its billows drifting outward as it opens up; no edge to the quad)
         let opened=in.uv*mix(0.75,1.0,in.life);
-        let n=water_fx_noise(opened*3.1+vec2<f32>(in.seed*17.0,0.0))*0.55+water_fx_noise(opened*7.3+vec2<f32>(2.0,in.seed*9.0))*0.45;
-        let cut=mix(0.78,0.42,in.life);
-        let edge=1.0-smoothstep(0.35,1.0,r);
-        alpha=edge*edge*smoothstep(cut,cut+0.2,n)*0.55;
+        let edge=1.0-smoothstep(0.55,1.0,r);
+        // denser toward its heart, so that it breaks up from its rim in as
+        // the cut rises; the cut's edge as soft as a pixel's span of the
+        // billows (some three of their units per unit of uv), so that far
+        // off it does not crawl
+        let heart=exp(-r*r*1.8)*0.45;
+        let dense=water_spray_billows(opened,in.seed)+heart-0.45;
+        let cut=mix(0.5,0.16,in.life);
+        let soft=0.04+foot*3.0;
+        let cover=smoothstep(cut-soft,cut+soft+0.1,dense);
+        let thick=smoothstep(cut,cut+0.35,dense);
+        alpha=edge*cover*(0.4+0.4*thick);
+        // Lit from the sun's side: a step toward the sun as it is seen,
+        // into thinner water, is the sunlit side of a billow, into denser
+        // water its shaded side. Its thin wisps glow with the sun behind
+        // them (drops scatter forward, as the mist does), and are dim with
+        // the sun behind the camera. (Lit alike all over, it was a flat
+        // grey patch.)
+        let toward=vec2<f32>(dot(sun,frame.cam_right.xyz),dot(sun,frame.cam_up.xyz));
+        let sideways=min(length(toward),1.0);
+        let nudge=toward/max(length(toward),1e-4)*0.16;
+        let rs=length(in.uv+nudge);
+        let sunward=water_spray_billows(opened+nudge,in.seed)+exp(-rs*rs*1.8)*0.45-0.45;
+        let side=clamp(0.5+(dense-sunward)*3.0,0.0,1.0);
+        let thin=1.0-thick;
+        forward=1.0+(min(water_hg_phase(dot(-sun,view),0.7)*4.0*PI,6.0)-1.0)*0.6*thin;
+        lit=0.85*mix(1.0,0.45+1.1*side,0.8*sideways);up=0.9;
         // The loose drops round it are water, not foam: clear beads a few
         // millimetres across that mirror the sky at their rims (Fresnel),
-        // show what is behind them bent (a sphere of water is a strong
+        // show the sky bent through them (a sphere of water is a strong
         // lens), and catch the sun as a sharp glint, and as a glow when it
         // is behind them. (Drawn white as the foam is, they read as flecks
         // of foam thrown up.) Each bead's surface as a sphere facing the
         // camera, its quad's way across the view taken as the camera's.
+        // What is behind a bead is the pixel under it, left to the blend
+        // (what it hides, `bead_a`): the scene's copy lacks the water and
+        // all drawn after it, and showed through the beads as dark specks.
         let q=opened*6.0+vec2<f32>(in.seed*31.0,in.seed*17.0);
         let cell=floor(q);
         let at=water_fx_hash(cell);
         let d=(fract(q)-0.5-(at-0.5)*0.6)/0.12;
-        let rr=length(d);
-        let drop=(1.0-smoothstep(0.6,1.05,rr))*step(0.55,water_fx_hash(cell+vec2<f32>(3.7,1.3)).x)*edge;
+        // A bead is some 0.04 of the uv across; under two pixels it is
+        // drawn as a soft point of two, as faint as it is small (sharp and
+        // smaller than a pixel, the beads crawled as a pepper of specks)
+        let px=0.04/max(foot,1e-5);
+        let grow=clamp(2.0/px,1.0,3.0);
+        let rr=length(d)/grow;
+        let faint=min(px/2.0,1.0);
+        let drop=(1.0-smoothstep(0.5,1.05,rr))*step(0.55,water_fx_hash(cell+vec2<f32>(3.7,1.3)).x)*edge*faint*faint;
         if(drop>0.0) {
-            let n=normalize(frame.cam_right.xyz*d.x+frame.cam_up.xyz*d.y+view*sqrt(max(1.0-min(rr*rr,1.0),0.0)));
+            let dn=d/grow;
+            let n=normalize(frame.cam_right.xyz*dn.x+frame.cam_up.xyz*dn.y+view*sqrt(max(1.0-min(rr*rr,1.0),0.0)));
             let fresnel=0.02037+0.97963*pow(1.0-max(dot(n,view),0.0),5.0);
             let refl=reflect(-view,n);
             let sky=sky_color(vec3<f32>(refl.xy,abs(refl.z)));
             let glint=frame.sun_color.rgb*frame.sun_dir.w*pow(max(dot(refl,sun),0.0),90.0)*4.0*shade;
             // the sun through it from behind, focused toward the camera
             let through=frame.sun_color.rgb*frame.sun_dir.w*pow(max(dot(-view,sun),0.0),6.0)*0.6*shade;
-            // (what is behind, flipped and bent: a few pixels' shift)
-            let suv=clamp(screen_uv(in.clip.xy)-vec2<f32>(d.x,-d.y)*0.004,vec2<f32>(0.001),vec2<f32>(0.999));
-            let behind=textureSampleLevel(scene_tex,lin_clamp,suv,0.0).rgb*vec3<f32>(0.85,0.93,0.95);
-            bead=mix(behind,sky,fresnel)+glint+through;
-            bead_a=drop*0.9;
+            bead=sky*(0.15+0.85*fresnel)+frame.sky_horizon.rgb*0.08+glint+through;
+            bead_l=drop;
+            bead_a=drop*(0.2+0.6*fresnel);
         }
-        lit=0.85;up=0.9;
     } else if(in.kind==12u) {
         // spindrift and the crests' fuzz: a soft, torn puff of fine mist
         // (water_spindrift_particle, vs_water_crest_mist), with a grain of
@@ -2900,22 +2947,22 @@ fn water_crash_color(in: WaterParticleOut) -> vec4<f32> {
         lit=0.8;up=0.8;
     }
     alpha*=in.life;
-    bead_a*=in.life;
+    bead_l*=in.life;bead_a*=in.life;
     // (faded where it meets what is solid, over a few decimetres: lying on
     // a rock's uneven face it went in and out of it, flickering)
     let solid_depth=scene_depth_at(screen_uv(in.clip.xy));
     if(solid_depth>0.0) {
         let solid=world_from_depth(screen_uv(in.clip.xy),solid_depth);
         let near=clamp((distance(solid,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.35,0.0,1.0);
-        alpha*=near;bead_a*=near;
+        alpha*=near;bead_l*=near;bead_a*=near;
     }
-    if(alpha<0.004 && bead_a<0.004){discard;}
+    if(alpha<0.004 && bead_l<0.004){discard;}
     // lit as the foam on the water is (water_pixel's foam_light), in the
     // sun's shadow: brighter, it stood out as if fullbright
     let color=(frame.sky_horizon.rgb*(0.25+0.15*up)+frame.sun_color.rgb*(0.04+lit/PI)*forward*shade*day)*0.8;
     // (the beads behind the white of the core where it covers them)
     let out_a=alpha+bead_a*(1.0-alpha);
-    return vec4<f32>(apply_fog(color,in.world)*alpha+apply_fog(bead,in.world)*bead_a*(1.0-alpha),out_a);
+    return vec4<f32>(apply_fog(color,in.world)*alpha+apply_fog(bead,in.world)*bead_l*(1.0-alpha),out_a);
 }
 // A sheet of a crash (water_crash_particle): water first, see-through and
 // mirroring the sky, going white as it is torn and aerated toward its rim
@@ -3012,9 +3059,9 @@ fn water_drip_color(in: WaterParticleOut) -> vec4<f32> {
     // (covering what is behind up to some half at its core: DRIP_BODY)
     return vec4<f32>(apply_fog(color,in.world)*alpha,alpha*DRIP_BODY);
 }
-fn water_particle_color(in: WaterParticleOut) -> vec4<f32> {
+fn water_particle_color(in: WaterParticleOut, foot: f32) -> vec4<f32> {
     if(in.kind>=7u) {
-        return water_crash_color(in);
+        return water_crash_color(in,foot);
     }
     if(in.kind==6u) {
         return water_drip_color(in);
@@ -3058,8 +3105,10 @@ fn water_particle_color(in: WaterParticleOut) -> vec4<f32> {
 }
 @fragment
 fn fs_water_particle(in: WaterParticleOut) -> @location(0) vec4<f32> {
+    // (how much of the quad a pixel spans, before anything is discarded)
+    let foot=max(fwidth(in.uv.x),fwidth(in.uv.y));
     if(!camera_underwater() && in.world.z<in.level){discard;}
-    return water_particle_color(in)*water_particle_unhidden(in);
+    return water_particle_color(in,foot)*water_particle_unhidden(in);
 }
 // How much of a particle seen from above the water the sea in front of it
 // leaves visible: the water writes no depth, so without this a crest or its
@@ -3076,8 +3125,9 @@ fn water_particle_unhidden(in: WaterParticleOut) -> f32 {
 }
 @fragment
 fn fs_water_particle_under(in: WaterParticleOut) -> @location(0) vec4<f32> {
+    let foot=max(fwidth(in.uv.x),fwidth(in.uv.y));
     if(camera_underwater() || in.world.z>=in.level){discard;}
-    return water_particle_color(in);
+    return water_particle_color(in,foot);
 }
 
 // ------------------------------------------------------------ rain (prototype)
