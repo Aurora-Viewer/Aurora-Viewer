@@ -896,6 +896,69 @@ impl Session<'_> {
 mod tests {
     use super::*;
 
+    /// A Properties change on a grid without AIS: the masks and the sale
+    /// info packed as LLViewerInventoryItem::packMessage does, and the
+    /// checksum following them (LLInventoryItem::getCRC32).
+    #[test]
+    fn a_properties_change_over_the_circuit_packs_its_masks_sale_and_checksum() {
+        use crate::inventory::operations::{Known, Operation, UdpEdit, udp_edits};
+        let item = InvItem {
+            id: Uuid::from_u128(1),
+            parent: Uuid::from_u128(2),
+            asset_type: 7,
+            inv_type: 7,
+            name: "Note".into(),
+            owner_mask: 0x7fff_ffff,
+            base_mask: 0x7fff_ffff,
+            next_owner_mask: 0x7fff_ffff,
+            ..Default::default()
+        };
+        let known = Known {
+            items: std::collections::HashMap::from([(item.id, item.clone())]),
+            ..Default::default()
+        };
+        let body = aurora_llsd::llsd_map! {
+            "name" => "Note", "desc" => "",
+            "permissions" => aurora_llsd::llsd_map! { "next_owner_mask" => 0x0008_2000, "group_mask" => 0x0000_4000, "everyone_mask" => 0x0000_8000 },
+            "sale_info" => aurora_llsd::llsd_map! { "sale_type" => 2, "sale_price" => 10 }
+        };
+        let edits = udp_edits(
+            &Operation::Patch {
+                id: item.id,
+                folder: false,
+                body,
+            },
+            &known,
+        )
+        .expect("fits the circuit");
+        let [UdpEdit::UpdateItem(edited)] = edits.as_slice() else {
+            panic!("{edits:?}");
+        };
+        let rights = crate::inventory::upload::Permissions {
+            next_owner: edited.next_owner_mask,
+            group: edited.group_mask,
+            everyone: edited.everyone_mask,
+        };
+        let sent = permission_update(edited, rights, 0);
+        assert_eq!(
+            (sent.next_owner_mask, sent.group_mask, sent.everyone_mask),
+            (0x0008_2000, 0x0000_4000, 0x0000_8000)
+        );
+        assert_eq!((sent.sale_type, sent.sale_price), (2, 10));
+        let before = permission_update(
+            &item,
+            crate::inventory::upload::Permissions {
+                next_owner: 0,
+                group: 0,
+                everyone: 0,
+            },
+            0,
+        );
+        // the group and everyone masks count, the next owner's does not
+        // (LLPermissions::getCRC32), the sale info as LLSaleInfo::getCRC32
+        assert_eq!(sent.crc, before.crc.wrapping_add(0x0000_4000 + 0x0000_8000 + 10 + 2 * 0x0707_3096));
+    }
+
     #[test]
     fn material_save_error_keeps_the_server_reason() {
         assert_eq!(
