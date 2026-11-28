@@ -17005,3 +17005,38 @@ ao-cycle-off = Arrêt
 ao-switches-every = Change toutes les { $time }
 ao-tile-swimming = Nage
 ao-tile-water-walk = Marcher sur l’eau
+
+# Camera precision and eight quick views
+camera-precision = Caméra de précision
+camera-precision-tip = Petites impulsions et boutons maintenus plus lents ; commandes photo et caméra libre au quart de la vitesse.
+camera-quick-views = Vues rapides de la caméra
+camera-quick-tip = Enregistrer remplace cet emplacement par la position actuelle dans le monde, le roulis et le zoom de l’objectif (Ctrl-0 / Ctrl-8). Le nom est enregistré avec la vue.
+camera-quick-name = Vue { $slot }
+camera-quick-save = Enregistrer la vue actuelle dans cet emplacement
+camera-quick-load = Charger cette vue enregistrée
+camera-account-title = Vues de caméra de ce compte
+camera-account-loading = Chargement des vues de caméra de ce compte…
+camera-account-login = Connectez-vous pour utiliser les vues de caméra de votre compte.
+camera-account-load-error = Impossible de lire ces vues de caméra. Le fichier enregistré n’a pas été modifié.
+camera-account-save-error = Impossible d’enregistrer les vues de caméra. Vos modifications restent disponibles pour cette session ; réessayez avant de fermer le viewer.
+camera-account-retry = Réessayer
+camera-legacy-source = Dossier du compte source : { $folder }
+camera-legacy-invalid = { $count ->
+    [one] { $count } vue de caméra illisible a été ignorée.
+   *[other] { $count } vues de caméra illisibles ont été ignorées.
+    }
+camera-legacy-slot = Vue { $slot } : { $name }
+camera-legacy-replace = Vue { $slot } : { $name } (remplace { $old })
+camera-legacy-applying = Sauvegarde et importation des vues de caméra…
+camera-legacy-confirm = Importer les vues sélectionnées
+camera-legacy-failed = L’importation a échoué. Vos vues actuelles n’ont pas été modifiées.
+camera-legacy-done = { $count ->
+    [one] { $count } vue de caméra importée dans ce compte.
+   *[other] { $count } vues de caméra importées dans ce compte.
+    }
+camera-aperture-import = Importer des vues de caméra Aperture…
+camera-aperture-help = Choisissez le fichier settings_per_account.xml d’un compte compatible avec Aperture contenant des vues APStoredCamera. Sélectionnez les vues à copier dans ce compte Aurora. Le fichier source reste inchangé et les vues Aurora actuelles sont sauvegardées avant l’importation.
+camera-aperture-none = Ce fichier ne contient aucune vue de caméra Aperture enregistrée.
+camera-aperture-xml = Paramètres XML
+camera-account-not-ready = Les vues de caméra ne sont pas prêtes. Ouvrez les commandes de caméra pour réessayer le chargement.
+camera-account-retry-open = Réessayer le stockage des vues de caméra

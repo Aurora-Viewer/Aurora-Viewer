@@ -72,6 +72,7 @@ pub(super) fn is_this_pc(key: &str) -> bool {
 /// An account's files that are preferences. Only these names are read from
 /// a backup: a name in the file is never taken as a path.
 const ACCOUNT_FILES: &[&str] = &[
+    crate::camera::account_slots::FILE,
     crate::world::contact_sets::CONTACT_SETS_FILE,
     crate::world::groups::FAVORITE_GROUPS_FILE,
     crate::world::calls::VOLUMES_FILE,
@@ -528,6 +529,7 @@ mod tests {
             let dir = from.join("accounts").join(id.to_string());
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join(crate::world::contact_sets::CONTACT_SETS_FILE), format!("sets of {id}")).unwrap();
+            std::fs::write(dir.join(crate::camera::account_slots::FILE), "{\"version\":1,\"slots\":[]}").unwrap();
             // a transcript is not a preference
             std::fs::write(dir.join("notification_history.json"), "[]").unwrap();
         }
@@ -556,6 +558,10 @@ mod tests {
             format!("sets of {first}")
         );
         assert!(!first_dir.join("notification_history.json").exists());
+        assert_eq!(
+            std::fs::read_to_string(first_dir.join(crate::camera::account_slots::FILE)).unwrap(),
+            "{\"version\":1,\"slots\":[]}"
+        );
         assert!(!to.join("accounts").join(second.to_string()).exists());
         assert!(!to.join("skins/escape.json").exists() && !to.join("escape.txt").exists());
         let _ = std::fs::remove_dir_all(from);

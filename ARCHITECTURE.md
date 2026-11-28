@@ -278,6 +278,25 @@ worn outfit through the partial-wear fallback.
 group notice bodies, in group profiles and notification cards. It retains
 selection for the Copy menu without replacing clickable links or emoji.
 
+`camera/account_slots.rs` owns the eight quick views of the logged-in avatar
+in `accounts/<agent UUID>/camera_quick_views.json`. A sequential worker loads
+and atomically saves the versioned file; generation tags discard replies from
+previous accounts. A missing file starts with empty slots; existing account
+files are loaded without falling back to shared settings. Demo account files
+use an owned temporary directory removed after pending writes finish.
+`app/camera_presets.rs` combines
+the account slots with shared ordinary presets for every menu and clears the
+cached names on account changes. Settings backups include the account file.
+`camera/legacy_slots.rs` reads only the eight quick-view fields and names from
+Aperture-compatible per-account LLSD XML. `app/camera_slot_import.rs` owns the
+explicit picker, preview, selection and pre-import backup; it writes selected
+views through the account slot worker after a write barrier. An imported view
+keeps global camera/focus coordinates and an optional focus-object UUID without
+changing Aurora's object-relative `Anchor::Object`. At load time an available
+focus object is tracked; otherwise the saved world pose is used.
+
+`camera/precision.rs` shares the optional fine button rate and continuous photo-pad scale. `CameraShot` keeps optional roll, quick-view lens FOV and a quick-slot index; quick views use the existing capture, preset list, sanitization and restore path. Quick-view FOV is separate from the photo lens bundle so loading it leaves DOF and exposure alone; older slots without it leave zoom alone. The Controls window exposes eight editable names with Save/Load in both layouts. Quick-view roll is restored only after successful placement; ordinary photo lens presets retain upstream tilt restoration.
+
 Static local mesh assemblies are baked by `imports/local/scene.rs` on the
 import worker, preserving every instance transform and face slot across LODs.
 Their render-only asset uses `import_mesh::encode::local_asset` (45 faces);

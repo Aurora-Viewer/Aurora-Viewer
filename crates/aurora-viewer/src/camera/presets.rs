@@ -117,6 +117,17 @@ impl Include {
     }
 }
 
+/// Only numbered quick views keep position roll. Ordinary avatar presets
+/// level the camera (LLFloaterSaveCameraPreset); their optional photo lens
+/// still applies its own tilt afterwards. Failed placement keeps current roll.
+pub fn position_roll(shot: &CameraShot, placed: bool) -> Option<f32> {
+    if placed && shot.quick_slot.is_some() && shot.anchor.is_some() {
+        shot.roll
+    } else {
+        None
+    }
+}
+
 /// Render-space `p` in global metres, the main region's corner at `origin`.
 pub fn to_global(origin: (u32, u32), p: Vec3) -> [f64; 3] {
     [origin.0 as f64 + p.x as f64, origin.1 as f64 + p.y as f64, p.z as f64]
@@ -137,10 +148,13 @@ pub fn out_of_frame(position: Vec3, rotation: Quat, local: [f32; 3]) -> Vec3 {
     position + rotation * Vec3::from(local)
 }
 
-/// Save `shot` in `list`: a preset of the same name is replaced where it is,
-/// a new one goes last (LLFloaterSaveCameraPreset's replace).
+/// Save `shot` in `list`: quick views replace their slot; ordinary presets
+/// replace their name. The two never overwrite each other by name.
 pub fn store(list: &mut Vec<CameraShot>, shot: CameraShot) {
-    match list.iter_mut().find(|s| s.name == shot.name) {
+    match list.iter_mut().find(|s| match shot.quick_slot {
+        Some(slot) => s.quick_slot == Some(slot),
+        None => s.quick_slot.is_none() && s.name == shot.name,
+    }) {
         Some(old) => *old = shot,
         None => list.push(shot),
     }
@@ -167,7 +181,24 @@ fn finite3<T: Copy + Into<f64>>(v: [T; 3]) -> bool {
 /// environment does not parse).
 pub fn sanitize(list: &mut Vec<CameraShot>) {
     list.retain(|s| !s.name.trim().is_empty());
+    let mut slots = [false; 8];
     for shot in list {
+        shot.quick_slot = shot.quick_slot.filter(|slot| {
+            if let Some(seen) = slots.get_mut(usize::from(*slot)) {
+                !std::mem::replace(seen, true)
+            } else {
+                false
+            }
+        });
+        shot.roll = shot
+            .roll
+            .filter(|roll| roll.is_finite())
+            .map(|roll| (roll + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI);
+        shot.quick_fov = shot
+            .quick_fov
+            .filter(|fov| fov.is_finite())
+            .map(|fov| fov.clamp(5.0f32.to_radians(), 175.0f32.to_radians()));
+        shot.quick_focus_object = shot.quick_focus_object.filter(|id| !id.is_nil() && shot.quick_slot.is_some());
         if !finite3(shot.camera_offset) || !finite3(shot.focus_offset) {
             shot.camera_offset = super::CameraSettings::default().camera_offset;
             shot.focus_offset = super::CameraSettings::default().focus_offset;
@@ -222,10 +253,30 @@ mod tests {
     }
 
     #[test]
+    fn only_quick_views_restore_position_roll_after_successful_placement() {
+        let mut shot = CameraShot::at_avatar("View".into(), [0.0; 3], [0.0; 3]);
+        shot.roll = Some(0.4); // Older private builds also wrote this on ordinary presets.
+        assert_eq!(position_roll(&shot, true), None);
+        shot.quick_slot = Some(0);
+        assert_eq!(position_roll(&shot, true), Some(0.4));
+        assert_eq!(position_roll(&shot, false), None);
+        shot.anchor = None;
+        assert_eq!(position_roll(&shot, true), None);
+        shot.anchor = Some(Anchor::World {
+            camera: [1.0; 3],
+            focus: [2.0; 3],
+        });
+        shot.roll = None;
+        assert_eq!(position_roll(&shot, true), None);
+    }
+
+    #[test]
     fn positions_saved_before_presets_are_presets_on_the_avatar() {
         let old = r#"{"name":"Close up","camera_offset":[-1.0,0.0,0.5],"focus_offset":[0.5,0.0,0.8]}"#;
         let s: CameraShot = serde_json::from_str(old).unwrap();
         assert_eq!(s.anchor, Some(Anchor::Avatar));
+        assert_eq!((s.quick_slot, s.roll), (None, None));
+        assert_eq!(s.quick_fov, None);
         assert!(s.lens.is_none() && s.looks.is_none() && s.light.is_none());
         assert_eq!(s.camera_offset, [-1.0, 0.0, 0.5]);
     }
@@ -233,6 +284,8 @@ mod tests {
     #[test]
     fn a_preset_keeps_every_part_through_the_settings_file() {
         let mut s = shot("Product");
+        s.roll = Some(0.4);
+        s.quick_slot = Some(7);
         s.anchor = Some(Anchor::Object {
             id: Uuid::from_u128(7),
             name: "Chair".into(),
@@ -292,6 +345,54 @@ mod tests {
         // the object moved and turned back: the camera goes with it
         let moved = out_of_frame(Vec3::new(50.0, 0.0, 5.0), Quat::IDENTITY, local);
         assert!((moved - Vec3::new(53.0, 0.0, 6.0)).length() < 1e-4);
+    }
+
+    #[test]
+    fn quick_slots_replace_by_slot_without_overwriting_same_named_presets() {
+        let mut list = vec![shot("Portrait")];
+        for slot in 0..8 {
+            let mut s = shot("Portrait");
+            s.quick_slot = Some(slot);
+            s.quick_fov = Some(0.3 + f32::from(slot) * 0.1);
+            store(&mut list, s);
+        }
+        let mut replacement = shot("Renamed");
+        replacement.quick_slot = Some(3);
+        replacement.roll = Some(-0.7);
+        replacement.quick_fov = Some(0.45);
+        store(&mut list, replacement);
+        store(&mut list, shot("Portrait"));
+        assert_eq!(list.len(), 9);
+        assert_eq!(list[0].quick_slot, None);
+        assert_eq!(list[4].name, "Renamed");
+        assert_eq!(list[4].roll, Some(-0.7));
+        assert_eq!(list[4].quick_fov, Some(0.45));
+        list.remove(1);
+        assert_eq!(list.iter().find(|s| s.quick_slot == Some(3)).unwrap().name, "Renamed");
+        let back: Vec<CameraShot> = serde_json::from_str(&serde_json::to_string(&list).unwrap()).unwrap();
+        assert_eq!(back, list);
+    }
+
+    #[test]
+    fn corrupt_slot_metadata_and_nonfinite_roll_do_not_break_named_presets() {
+        let mut list = vec![shot("A"), shot("B"), shot("C")];
+        list[0].quick_slot = Some(7);
+        list[0].roll = Some(3.0 * std::f32::consts::PI);
+        list[0].quick_fov = Some(0.0);
+        list[1].quick_slot = Some(7);
+        list[1].roll = Some(f32::NAN);
+        list[1].quick_fov = Some(f32::NAN);
+        list[2].quick_slot = Some(255);
+        list[2].quick_fov = Some(100.0);
+        sanitize(&mut list);
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].quick_slot, Some(7));
+        assert!(list[0].roll.unwrap().abs() <= std::f32::consts::PI);
+        assert_eq!((list[1].quick_slot, list[1].roll), (None, None));
+        assert_eq!(list[2].quick_slot, None);
+        assert_eq!(list[0].quick_fov, Some(5.0f32.to_radians()));
+        assert_eq!(list[1].quick_fov, None);
+        assert_eq!(list[2].quick_fov, Some(175.0f32.to_radians()));
     }
 
     #[test]

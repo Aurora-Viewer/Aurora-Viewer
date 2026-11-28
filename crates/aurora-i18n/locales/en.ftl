@@ -16999,3 +16999,38 @@ ao-cycle-off = Off
 ao-switches-every = Switches every { $time }
 ao-tile-swimming = Swimming
 ao-tile-water-walk = Walk on water
+
+# Camera precision and eight quick views
+camera-precision = Precision camera
+camera-precision-tip = Gentle taps and slower held camera buttons; quarter-speed photo pads and free-camera movement.
+camera-quick-views = Quick camera views
+camera-quick-tip = Save replaces this slot with the current world position, roll and lens zoom (Ctrl-0 / Ctrl-8). Names are saved with the view.
+camera-quick-name = View { $slot }
+camera-quick-save = Save current view to this slot
+camera-quick-load = Load this saved view
+camera-account-title = Camera views for this account
+camera-account-loading = Loading this account’s camera slots…
+camera-account-login = Log in to use your account’s camera slots.
+camera-account-load-error = These camera slots could not be read. The saved file has been left untouched.
+camera-account-save-error = Camera slots could not be saved. Your changes are still available in this session; retry before closing the viewer.
+camera-account-retry = Retry
+camera-legacy-source = Source account folder: { $folder }
+camera-legacy-invalid = { $count ->
+    [one] { $count } unreadable camera slot was skipped.
+   *[other] { $count } unreadable camera slots were skipped.
+    }
+camera-legacy-slot = Slot { $slot }: { $name }
+camera-legacy-replace = Slot { $slot }: { $name } (replaces { $old })
+camera-legacy-applying = Backing up and importing camera slots…
+camera-legacy-confirm = Import selected slots
+camera-legacy-failed = The import could not be completed. Your current slots were not changed.
+camera-legacy-done = { $count ->
+    [one] Imported { $count } camera slot into this account.
+   *[other] Imported { $count } camera slots into this account.
+    }
+camera-aperture-import = Import Aperture camera slots…
+camera-aperture-help = Choose an Aperture-compatible account’s settings_per_account.xml containing APStoredCamera slots. Select the slots to copy into this Aurora account. The source stays unchanged, and the current Aurora slots are backed up first.
+camera-aperture-none = This file has no saved Aperture camera slots.
+camera-aperture-xml = XML settings
+camera-account-not-ready = Camera slots are not ready. Open Camera controls to retry loading.
+camera-account-retry-open = Retry camera slot storage

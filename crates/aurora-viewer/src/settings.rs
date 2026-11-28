@@ -660,6 +660,10 @@ pub struct Settings {
     pub build: crate::build::BuildSettings,
     /// Camera (Firestorm "Move & View › View").
     pub camera: crate::camera::CameraSettings,
+    /// Quick-view demo overrides: keep the original precision, FOV and style
+    /// on every save, including preset loads and shutdown (AGENTS.md section 4).
+    #[serde(skip)]
+    pub(crate) quick_demo_original: Option<(bool, f32, bool)>,
     /// The crosshair in mouselook (ShowCrosshairs; #1166).
     pub crosshair: crate::ui::crosshair::Settings,
     /// LLViewerJoystick: device, axis mapping and separate avatar/flycam tuning.
@@ -2563,6 +2567,7 @@ impl Default for Settings {
             dev_toolbox: None,
             build: Default::default(),
             camera: Default::default(),
+            quick_demo_original: None,
             crosshair: Default::default(),
             joystick: Default::default(),
             gamepad: crate::joystick::Settings::gamepad_defaults(),
@@ -4173,6 +4178,11 @@ impl Settings {
         if let Some(hold) = copy.autotune_hold.take() {
             hold.restore(&mut copy);
         }
+        if let Some((precision, fov, classic)) = copy.quick_demo_original.take() {
+            copy.camera.precision = precision;
+            copy.camera.fov = fov;
+            copy.classic_controls = classic;
+        }
         if !copy.remember_username {
             copy.username.clear();
             copy.last_login = None;
@@ -4634,6 +4644,40 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn quick_view_demo_overrides_never_enter_saved_settings() {
+        for precision in [false, true] {
+            for classic in [false, true] {
+                let mut settings = super::Settings::default();
+                settings.camera.precision = precision;
+                settings.camera.fov = 0.9;
+                settings.classic_controls = classic;
+                settings.quick_demo_original = Some((precision, 0.9, classic));
+                settings.camera.precision = true;
+                settings.classic_controls = !classic;
+                // Both the initial zoom and a later quick-load/shutdown save
+                // must preserve the values from before the scenario.
+                for fov in [0.7, 1.1] {
+                    settings.camera.fov = fov;
+                    let saved = settings.to_saved();
+                    assert_eq!(saved.camera.precision, precision);
+                    assert_eq!(saved.camera.fov, 0.9);
+                    assert_eq!(saved.classic_controls, classic);
+                    assert!(saved.quick_demo_original.is_none());
+                    assert_eq!(settings.camera.fov, fov);
+                    assert!(settings.quick_demo_original.is_some());
+                }
+            }
+        }
+        let mut settings = super::Settings::default();
+        settings.camera.precision = true;
+        settings.camera.fov = 0.7;
+        settings.classic_controls = true;
+        let saved = settings.to_saved();
+        assert!(saved.camera.precision && saved.classic_controls);
+        assert_eq!(saved.camera.fov, 0.7);
+    }
+
     /// A settings file whose world filters break the stack's rules (more
     /// than 8 looks, a strength past 100) is brought back to them on load,
     /// as the photo stack is, and stays off.
