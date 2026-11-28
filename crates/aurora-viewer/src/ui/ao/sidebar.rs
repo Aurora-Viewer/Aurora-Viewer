@@ -289,10 +289,14 @@ fn essentials_switch(ui: &mut egui::Ui, p: &Palette, essentials: bool, total: us
             _ => p.muted,
         };
         let font = egui::FontId::new(12.5, super::super::fonts::semibold(ui.ctx()));
-        let name = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
         let figure = ui
             .painter()
             .layout_no_wrap(count.to_string(), egui::FontId::proportional(11.0), ink.gamma_multiply(0.75));
+        // the name shortened to its half, so that a longer translation
+        // ("Tous les emplacements") stays on its side, whole on hover
+        let room = side.width() - 16.0 - 6.0 - figure.size().x;
+        let name = widgets::elided_galley(ui, RichText::new(label).font(font).color(ink), room);
+        let response = if name.elided { response.on_hover_text(label) } else { response };
         let width = name.size().x + 6.0 + figure.size().x;
         let x = side.center().x - width / 2.0;
         let name_w = name.size().x;
