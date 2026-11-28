@@ -125,7 +125,7 @@ pub(super) fn shown(ui: &egui::Ui, which: Which, response: &egui::Response, edit
         return;
     }
     let now = Shown {
-        pass: ui.ctx().cumulative_pass_nr(),
+        pass: ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT),
         chars: value.chars().count(),
         editable,
         visible: response.interact_rect.is_positive(),
@@ -203,7 +203,7 @@ pub(super) fn apply(ctx: &egui::Context) {
     let Some(shown) = ctx.data(|d| d.get_temp::<Shown>(shown_key(which))) else {
         return;
     };
-    if shown.pass != ctx.cumulative_pass_nr() || !shown.visible || !shown.editable {
+    if shown.pass != ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT) || !shown.visible || !shown.editable {
         return;
     }
     let id = inspector_field(which);
