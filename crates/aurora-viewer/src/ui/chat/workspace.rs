@@ -290,7 +290,7 @@ pub(super) fn pane(
     ui.painter().rect_filled(pane, radius, p.field.gamma_multiply(0.55));
     let width = pane.width();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
-    drops(ui, p, pane, st, kind, actions);
+    drops(ui, p, world, pane, st, kind, actions);
     let members_room = !narrow && members_room_now(st.layout_members_room, width);
     st.layout_members_room = Some(members_room);
     // the panel's width eases to its new one when the room comes or goes
@@ -365,6 +365,7 @@ pub(super) fn pane(
                 icons,
                 emoji,
                 pics,
+                images,
                 world: w,
                 own_name: &own_name,
                 height: lines_h,
@@ -423,6 +424,7 @@ pub(super) fn pane(
 pub(super) fn drops(
     ui: &mut egui::Ui,
     p: &Palette,
+    world: &World,
     pane: egui::Rect,
     st: &ChatUi,
     kind: Option<sidebar::Kind>,
@@ -461,6 +463,49 @@ pub(super) fn drops(
             actions.push(ConvAction::GiveItems { to: conversation, items });
         }
     }
+    // A group has no inventory-offer protocol in chat. Share a texture by
+    // its ordinary asset UUID, the same value used by a prim's texture slot.
+    // The drop applies the Legacy Viewer's full-permission UUID rule before
+    // anything is sent (LLViewerInventoryItem::getProtectedAssetUUID).
+    if kind == Some(sidebar::Kind::Group)
+        && let Some(items) = crate::ui::inventory::drag::carried_ids(ui.ctx())
+        && zone.contains_pointer()
+    {
+        let asset = (items.len() == 1).then(|| shareable_texture(world, items[0])).flatten();
+        crate::ui::inventory::drag::feedback(
+            ui.ctx(),
+            if asset.is_some() {
+                egui::CursorIcon::Copy
+            } else {
+                egui::CursorIcon::NotAllowed
+            },
+        );
+        if asset.is_some() {
+            outline(ui);
+        }
+        if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
+            egui::DragAndDrop::clear_payload(ui.ctx());
+            if let Some(asset) = asset {
+                actions.push(ConvAction::Im {
+                    to: conversation,
+                    text: asset.to_string(),
+                });
+            }
+        }
+    }
+}
+
+/// The dragged inventory item itself must hold all three rights. Links to a
+/// texture resolve through the shared inventory rule before that check.
+fn shareable_texture(world: &World, dragged: Uuid) -> Option<Uuid> {
+    use crate::world::inventory::actions as permissions;
+    let item_id = permissions::original(&world.inventory, dragged)?;
+    let item = world.inventory.items.get(&item_id)?;
+    (item.asset_type == 0
+        && !item.asset_id.is_nil()
+        && permissions::held(&world.inventory, item) & permissions::FULL == permissions::FULL
+        && permissions::asset_uuid_shown(&world.inventory, item.asset_id))
+    .then_some(item.asset_id)
 }
 
 /// `AURORA_DEMO_CONV_GIVE=away|over|many|drop|give` (with `AURORA_DEMO_CONV=aurora`).

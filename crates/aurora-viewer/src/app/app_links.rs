@@ -101,6 +101,7 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             AppLink::InventoryShow => ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
+            AppLink::Texture(asset) => self.texture_library.open_shared_texture(&self.egui_ctx, &self.world, asset),
             AppLink::Preferences(path) => {
                 self.options_ui.open_setting(path);
                 ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);

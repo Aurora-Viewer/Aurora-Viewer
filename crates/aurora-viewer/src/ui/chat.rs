@@ -2098,6 +2098,16 @@ thread_local! {
 
 /// A text cut into plain text and links.
 fn segments(text: &str) -> Vec<Seg<'_>> {
+    // A texture shared by dragging a full-permission inventory item is
+    // sent as its ordinary, canonical asset UUID. Keep that exact chat text
+    // and make it open the viewer's existing texture preview on click.
+    if text.len() == 36
+        && let Ok(id) = uuid::Uuid::parse_str(text)
+        && !id.is_nil()
+        && id.to_string().eq_ignore_ascii_case(text)
+    {
+        return vec![Seg::App(text, crate::slapp::AppLink::Texture(id))];
+    }
     let links = if text.len() < CACHED_TEXT {
         link_spans(text)
     } else {
@@ -3515,6 +3525,7 @@ struct Lines<'a> {
     icons: &'a super::icons::Icons,
     emoji: &'a mut super::emoji::Emoji,
     pics: &'a HashMap<uuid::Uuid, egui::TextureHandle>,
+    images: &'a HashMap<uuid::Uuid, egui::TextureHandle>,
     world: &'a World,
     own_name: &'a str,
     /// The height they take.
@@ -3536,6 +3547,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         icons,
         emoji,
         pics,
+        images,
         world: w,
         own_name,
         height,
@@ -3578,6 +3590,9 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         icons,
         emoji,
         pics,
+        images: Some(images),
+        wanted_images: Some(&mut st.wanted_images),
+        share_texture_previews: st.selected.is_some_and(|id| w.groups.sessions.get(&id).is_some_and(|s| s.group)),
         world: w,
         names: conversation_names(st.selected.as_ref()),
         want_names: &mut st.wanted_names,
@@ -3766,6 +3781,10 @@ pub(crate) struct LineEnv<'a> {
     pub icons: &'a super::icons::Icons,
     pub emoji: &'a mut super::emoji::Emoji,
     pub pics: &'a HashMap<uuid::Uuid, egui::TextureHandle>,
+    /// Texture assets requested by live group-chat UUID messages.
+    pub images: Option<&'a HashMap<uuid::Uuid, egui::TextureHandle>>,
+    pub wanted_images: Option<&'a mut HashSet<uuid::Uuid>>,
+    pub share_texture_previews: bool,
     pub world: &'a World,
     /// The names the conversation shows under `@shownames`
     /// (`conversation_names`).
@@ -3796,6 +3815,56 @@ pub(crate) struct LineEnv<'a> {
     /// conference's), whose lines take their style
     /// (`conversation_options::moderator`); None elsewhere.
     pub moderators: Option<&'a HashSet<uuid::Uuid>>,
+}
+
+/// The in-message thumbnail stays small; the text UUID remains the fallback
+/// when the asset is not available or RLVa forbids viewing textures.
+const SHARED_TEXTURE_THUMBNAIL_MAX: f32 = 128.0;
+
+fn shared_texture_asset(world: &World, group: bool, live: bool, text: &str) -> Option<uuid::Uuid> {
+    if !group || !live || !world.inventory.can_preview(0) {
+        return None;
+    }
+    match segments(text).as_slice() {
+        [Seg::App(_, crate::slapp::AppLink::Texture(asset))] => Some(*asset),
+        _ => None,
+    }
+}
+
+/// A canonical texture UUID in a live group message also shows its image.
+/// The normal asset streamer supplies the pixels; the UUID link and thumbnail
+/// both open the same full-resolution preview.
+pub(super) fn shared_texture_thumbnail(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLine) {
+    let Some(asset) = shared_texture_asset(
+        env.world,
+        env.share_texture_previews,
+        line.origin == crate::world::Origin::Live,
+        &line.text,
+    ) else {
+        return;
+    };
+    let Some(wanted) = env.wanted_images.as_deref_mut() else {
+        return;
+    };
+    wanted.insert(asset);
+    let Some(image) = env.images.and_then(|images| images.get(&asset)) else {
+        return;
+    };
+    let pixels = image.size_vec2();
+    let longest = pixels.x.max(pixels.y);
+    if !longest.is_finite() || longest <= 0.0 {
+        return;
+    }
+    let side = SHARED_TEXTURE_THUMBNAIL_MAX.min(ui.available_width().max(1.0));
+    let size = pixels * (side / longest);
+    ui.add_space(4.0);
+    let response = ui
+        .add(egui::Image::new(image).fit_to_exact_size(size).sense(egui::Sense::click()))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(aurora_i18n::tr!("texture-library-preview"));
+    if response.clicked() {
+        super::context::request(ui.ctx(), super::context::CtxAction::AppLink(crate::slapp::AppLink::Texture(asset)));
+    }
 }
 
 /// One line of a conversation: the day when it changes, the sender's header
@@ -4004,6 +4073,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     );
                 }
             }
+            shared_texture_thumbnail(ui, env, line);
             // Aurora also offers its previews in Lines (#976), extending
             // LLChatHistory::appendMessage (indra/newview/llchathistory.cpp).
             previews::cards(ui, env, line, &text);
@@ -4583,7 +4653,7 @@ pub fn show(
                 return;
             }
             // ---- conversation pane
-            ui.vertical(|ui| classic_pane(ui, p, icons, emoji, pics, gestures, world, st, &mut actions, h, &own_name));
+            ui.vertical(|ui| classic_pane(ui, p, icons, emoji, pics, images, gestures, world, st, &mut actions, h, &own_name));
         });
         if !st.contacts && !minimized {
             press_focuses_field(ui, focus_before, egui::Id::unique(("conv_input", st.selected)));
@@ -4679,6 +4749,7 @@ fn classic_pane(
     icons: &super::icons::Icons,
     emoji: &mut super::emoji::Emoji,
     pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
+    images: &HashMap<uuid::Uuid, egui::TextureHandle>,
     gestures: &crate::gestures::Manager,
     world: &mut World,
     st: &mut ChatUi,
@@ -4690,7 +4761,7 @@ fn classic_pane(
     popout::pickers_follow_view(st);
     let pane = ui.available_rect_before_wrap();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
-    workspace::drops(ui, p, pane, st, kind, actions);
+    workspace::drops(ui, p, world, pane, st, kind, actions);
     // who the conversation is with, and its actions
     header::show(ui, p, icons, pics, world, st, actions);
     ui.add_space(4.0);
@@ -4775,6 +4846,7 @@ fn classic_pane(
                 icons,
                 emoji,
                 pics,
+                images,
                 world: w,
                 own_name,
                 height: lines_h,
@@ -7022,6 +7094,27 @@ mod tests {
     }
 
     #[test]
+    fn shared_texture_thumbnails_are_live_group_only_and_respect_viewtexture() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let asset = uuid::Uuid::from_u128(0x2A);
+        let text = asset.to_string();
+        assert_eq!(shared_texture_asset(&world, true, true, &text), Some(asset));
+        assert_eq!(shared_texture_asset(&world, false, true, &text), None, "not in a group");
+        assert_eq!(shared_texture_asset(&world, true, false, &text), None, "not a live message");
+        assert_eq!(
+            shared_texture_asset(&world, true, true, &format!("{text} ")),
+            None,
+            "not an exact UUID"
+        );
+        world.inventory.rlva_preview_mask = 1;
+        assert_eq!(
+            shared_texture_asset(&world, true, true, &text),
+            None,
+            "@viewtexture blocks the image"
+        );
+    }
+
+    #[test]
     fn a_mention_of_the_agent_is_found_and_written_as_a_name() {
         let (me, jane) = (uuid::Uuid::from_u128(5), uuid::Uuid::from_u128(6));
         let t = format!("secondlife:///app/agent/{me}/mention see secondlife:///app/agent/{jane}/about at https://example.org");
@@ -8798,6 +8891,9 @@ mod tests {
                         icons: &icons,
                         emoji: &mut emoji,
                         pics: &pics,
+                        images: None,
+                        wanted_images: None,
+                        share_texture_previews: false,
                         world: &world,
                         names: NameScope::World,
                         want_names: &mut names,

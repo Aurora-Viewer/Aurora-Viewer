@@ -196,6 +196,7 @@ pub(super) fn tooltip(link: &AppLink) -> &'static str {
         AppLink::ObjectIm(_) => aurora_i18n::tr!("ui-chat-applink-object-tip"),
         AppLink::Inventory { .. } => aurora_i18n::tr!("ui-chat-applink-inventory-select-tip"),
         AppLink::InventoryShow => aurora_i18n::tr!("ui-chat-applink-inventory-show-tip"),
+        AppLink::Texture(_) => aurora_i18n::tr!("texture-library-preview"),
         AppLink::Experience(_) => aurora_i18n::tr!("ui-chat-applink-experience-tip"),
         AppLink::Classified(_) => aurora_i18n::tr!("ui-chat-applink-classified-tip"),
         AppLink::Event(_) => aurora_i18n::tr!("ui-chat-applink-event-tip"),
@@ -293,6 +294,11 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
                 }
                 copy_label(ui, aurora_i18n::tr!("ui-chat-applink-copy-name"));
             }
+            AppLink::Texture(_) => {
+                if menu::item(ui, p, "photo", aurora_i18n::tr!("texture-library-preview")) {
+                    run();
+                }
+            }
             // menu_url_experience.xml: the SLurl only
             AppLink::Experience(_) => {}
             AppLink::WorldMap { region, pos } => {
@@ -309,16 +315,18 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
                 }
             }
         }
-        if !matches!(link, AppLink::Experience(_)) {
+        if !matches!(link, AppLink::Experience(_) | AppLink::Texture(_)) {
             menu::separator(ui, p);
         }
-        if menu::item_if(
-            ui,
-            p,
-            "link-filled",
-            aurora_i18n::tr!("common-copy-slurl"),
-            world.rlva_filter_text(url) == url,
-        ) {
+        if !matches!(link, AppLink::Texture(_))
+            && menu::item_if(
+                ui,
+                p,
+                "link-filled",
+                aurora_i18n::tr!("common-copy-slurl"),
+                world.rlva_filter_text(url) == url,
+            )
+        {
             ui.ctx().copy_text(url.to_owned());
         }
     });
