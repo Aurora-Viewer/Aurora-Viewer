@@ -1,12 +1,32 @@
 //! Region Tracker window (the Legacy Viewer's ALFloaterRegionTracker,
 //! floater_region_tracker.xml): label, maturity, region and avatar count of
 //! the regions the account watches, redrawn every 5 s while it is open.
+//!
+//! The list opens sorted by Label from A to Z and keeps the sort chosen
+//! between sessions, as the Legacy Viewer's `region_list` does
+//! (`sort_column="0"`, `persist_sort_order`; settings `region_tracker_sort`).
+//! A click on a column header sorts on it, again for the other direction.
+//! Deliberate differences from the Legacy Viewer's scroll list
+//! (`LLScrollListCtrl::onClickColumn`, which sorts every column ascending on
+//! the first click, only toggles the direction after, and compares the text
+//! shown with `LLStringUtil::compareDict`):
+//! - Avatars sorts the most first on its first click;
+//! - a third click goes back to the order the regions were saved in, as in
+//!   the Blacklist window;
+//! - a count or a maturity not known yet, and an offline region's maturity,
+//!   stay last in both directions (the Legacy Viewer sorts `"..."` before
+//!   the counts);
+//! - Maturity sorts by rating (General, Moderate, Adult), not by the text
+//!   or icon shown;
+//! - an empty label (Aurora allows one) sorts as its region's name.
 
 use super::widgets::{self, Floater};
+use crate::settings::{RegionTrackerColumn as Column, RegionTrackerSort};
 use crate::theme::Palette;
 use crate::world::{
     World,
     region_tracker::{RegionState, RegionStatus, status},
+    worldmap::SIM_ACCESS_DOWN,
 };
 use egui::{Pos2, RichText, Sense, Vec2};
 use std::time::{Duration, Instant};
@@ -26,12 +46,84 @@ struct Row {
     status: RegionStatus,
 }
 
+impl Column {
+    const ALL: [Column; 4] = [Column::Label, Column::Maturity, Column::Region, Column::Avatars];
+
+    fn title(self) -> &'static str {
+        match self {
+            Column::Label => aurora_i18n::tr!("region-tracker-label"),
+            Column::Maturity => aurora_i18n::tr!("region-rules-maturity"),
+            Column::Region => aurora_i18n::tr!("region-tracker-region"),
+            Column::Avatars => aurora_i18n::tr!("region-tracker-avatars"),
+        }
+    }
+
+    /// The direction of a first click: the most avatars first, the other
+    /// columns from A to Z.
+    fn first_descending(self) -> bool {
+        self == Column::Avatars
+    }
+}
+
+/// The sort after a click on `column`: its first direction, then the other
+/// one, then none (the saved order).
+fn next_sort(sort: Option<(Column, bool)>, column: Column) -> Option<(Column, bool)> {
+    match sort {
+        Some((c, descending)) if c == column => (descending == column.first_descending()).then_some((column, !descending)),
+        _ => Some((column, column.first_descending())),
+    }
+}
+
+/// The sort kept in the settings, as the window holds it.
+fn from_saved(saved: RegionTrackerSort) -> Option<(Column, bool)> {
+    saved.column.map(|c| (c, saved.descending))
+}
+
+/// The window's sort, as the settings keep it.
+fn to_saved(sort: Option<(Column, bool)>) -> RegionTrackerSort {
+    RegionTrackerSort {
+        column: sort.map(|(c, _)| c),
+        descending: sort.is_some_and(|(_, d)| d),
+    }
+}
+
+/// Orders `rows` on `sort` (None keeps them as given). A count or a
+/// maturity not known yet, and an offline region's maturity, go last in
+/// either direction; an empty label sorts as its region's name; equal rows
+/// keep the region's name order.
+fn sort_rows(rows: &mut [Row], sort: Option<(Column, bool)>) {
+    let Some((column, descending)) = sort else {
+        return;
+    };
+    let text = crate::natural_order::cmp;
+    fn label(r: &Row) -> &str {
+        if r.label.is_empty() { &r.name } else { &r.label }
+    }
+    rows.sort_by(|a, b| {
+        let known = |r: &Row| match column {
+            Column::Maturity => r.status.access.is_some_and(|a| a != SIM_ACCESS_DOWN),
+            Column::Avatars => r.status.agents.is_some(),
+            Column::Label | Column::Region => true,
+        };
+        let order = match column {
+            Column::Label => text(label(a), label(b)),
+            Column::Maturity => a.status.access.cmp(&b.status.access),
+            Column::Region => text(&a.name, &b.name),
+            Column::Avatars => a.status.agents.cmp(&b.status.agents),
+        };
+        let order = if descending { order.reverse() } else { order };
+        known(b).cmp(&known(a)).then(order).then_with(|| text(&a.name, &b.name))
+    });
+}
+
 #[derive(Default)]
 pub struct RegionTrackerUi {
     name: String,
     label: String,
     selected: Option<String>,
     rows: Vec<Row>,
+    /// The column sorted on and whether descending; None: the saved order.
+    sort: Option<(Column, bool)>,
     /// When the rows were last rebuilt; None while closed, so that opening
     /// asks the regions at once (ALFloaterRegionTracker::onOpen).
     refreshed: Option<Instant>,
@@ -66,6 +158,7 @@ impl RegionTrackerUi {
                 status: status(&world.map, &r.name, own),
             })
             .collect();
+        sort_rows(&mut self.rows, self.sort);
         // the name as the list keeps it: "ahern" added again selects the
         // tracked "Ahern"
         self.selected = self
@@ -87,11 +180,22 @@ impl RegionTrackerUi {
         widgets::show_floater(ctx, "worldmap", map_open);
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, world: &mut World, open: &mut bool, map_open: &mut bool) {
+    /// `saved`: the sort kept between sessions, written back when a header
+    /// is clicked.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        world: &mut World,
+        open: &mut bool,
+        map_open: &mut bool,
+        saved: &mut RegionTrackerSort,
+    ) {
         if !*open {
             self.refreshed = None;
             return;
         }
+        self.sort = from_saved(*saved);
         if self.refreshed.is_none_or(|t| t.elapsed() >= REDRAW) {
             self.rebuild(world);
         }
@@ -146,28 +250,43 @@ impl RegionTrackerUi {
             ui.add_space(4.0);
             let list = ui.scope_id().with("region_tracker_rows");
             let width = widgets::header_width(ui, list);
+            let mut resort = false;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                for (column, label) in [
-                    aurora_i18n::tr!("region-tracker-label"),
-                    aurora_i18n::tr!("region-rules-maturity"),
-                    aurora_i18n::tr!("region-tracker-region"),
-                    aurora_i18n::tr!("region-tracker-avatars"),
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(width * WEIGHTS[column], 22.0), Sense::hover());
+                for (i, column) in Column::ALL.into_iter().enumerate() {
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width * WEIGHTS[i], 22.0), Sense::click());
+                    let sorted = self.sort.filter(|(c, _)| *c == column);
+                    let color = if sorted.is_some() || resp.hovered() { p.ink } else { p.muted };
+                    let room = rect.width() - if sorted.is_some() { 22.0 } else { 8.0 };
                     widgets::paint_elided(
                         ui,
-                        label,
+                        column.title(),
                         egui::pos2(rect.left() + 4.0, rect.center().y),
-                        rect.width() - 8.0,
+                        room,
                         egui::FontId::proportional(12.0),
-                        p.muted,
+                        color,
                     );
+                    if let Some((_, descending)) = sorted
+                        && let Some(texture) = crate::ui::icons::global(if descending { "caret-down-filled" } else { "caret-up-filled" })
+                    {
+                        let at = egui::Rect::from_center_size(egui::pos2(rect.right() - 10.0, rect.center().y), Vec2::splat(8.0));
+                        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                        ui.painter().image(texture.id(), at, uv, p.violet_light);
+                    }
+                    if resp.clicked() {
+                        self.sort = next_sort(self.sort, column);
+                        *saved = to_saved(self.sort);
+                        resort = true;
+                    }
                 }
             });
+            if resort {
+                if self.sort.is_some() {
+                    sort_rows(&mut self.rows, self.sort);
+                } else {
+                    changed = true;
+                }
+            }
             // the list takes the room the buttons leave, measured, not guessed
             let (mut rows_ui, footer) = widgets::above_footer(ui);
             let mut open_region = None;
@@ -271,7 +390,7 @@ mod tests {
             &[Vec2::new(620.0, 420.0), Vec2::new(420.0, 260.0)],
             aurora_i18n::tr!("common-world-map"),
             RegionTrackerUi::default,
-            |ui, ctx, p| ui.show(ctx, p, &mut world, &mut true, &mut false),
+            |ui, ctx, p| ui.show(ctx, p, &mut world, &mut true, &mut false, &mut RegionTrackerSort::default()),
         );
     }
 
@@ -291,6 +410,146 @@ mod tests {
             "its search takes the keyboard"
         );
         assert!(world.map.focus_track);
+    }
+
+    fn row(name: &str, label: &str, agents: Option<u32>, access: Option<u8>) -> Row {
+        Row {
+            name: name.to_owned(),
+            label: label.to_owned(),
+            status: RegionStatus {
+                state: if agents.is_some() {
+                    RegionState::Online
+                } else {
+                    RegionState::Unknown
+                },
+                agents,
+                access,
+            },
+        }
+    }
+
+    fn names(rows: &[Row]) -> Vec<&str> {
+        rows.iter().map(|r| r.name.as_str()).collect()
+    }
+
+    /// Avatars sort the most first, then the fewest first, then back to the
+    /// saved order; a count not known yet stays last.
+    #[test]
+    fn avatars_sort_the_most_first_and_unknown_counts_last() {
+        let mut rows = vec![
+            row("Region 1", "b", Some(3), Some(13)),
+            row("Region 2", "a", None, None),
+            row("Region 3", "c", Some(12), Some(21)),
+            row("Region 4", "", Some(0), Some(42)),
+        ];
+        let first = next_sort(None, Column::Avatars);
+        assert_eq!(first, Some((Column::Avatars, true)));
+        sort_rows(&mut rows, first);
+        assert_eq!(names(&rows), ["Region 3", "Region 1", "Region 4", "Region 2"]);
+        let second = next_sort(first, Column::Avatars);
+        sort_rows(&mut rows, second);
+        assert_eq!(names(&rows), ["Region 4", "Region 1", "Region 3", "Region 2"]);
+        assert_eq!(
+            next_sort(second, Column::Avatars),
+            None,
+            "a third click goes back to the saved order"
+        );
+    }
+
+    /// Names sort from A to Z first, in natural order and whatever the case.
+    #[test]
+    fn regions_and_labels_sort_from_a_to_z_first() {
+        let mut rows = vec![
+            row("region 10", "Zed", Some(1), None),
+            row("Region 9", "alpha", Some(1), None),
+            row("Abbot", "Mid", Some(1), None),
+        ];
+        let by_region = next_sort(None, Column::Region);
+        assert_eq!(by_region, Some((Column::Region, false)));
+        sort_rows(&mut rows, by_region);
+        assert_eq!(names(&rows), ["Abbot", "Region 9", "region 10"]);
+        sort_rows(&mut rows, next_sort(by_region, Column::Region));
+        assert_eq!(names(&rows), ["region 10", "Region 9", "Abbot"]);
+        sort_rows(&mut rows, next_sort(by_region, Column::Label));
+        assert_eq!(names(&rows), ["Region 9", "Abbot", "region 10"]);
+    }
+
+    /// An empty label sorts as its region's name, not ahead of every label.
+    #[test]
+    fn an_empty_label_sorts_as_its_region_name() {
+        let mut rows = vec![
+            row("Region 1", "Zed", Some(1), None),
+            row("Moor", "", Some(1), None),
+            row("Region 2", "Alpha", Some(1), None),
+        ];
+        sort_rows(&mut rows, Some((Column::Label, false)));
+        assert_eq!(names(&rows), ["Region 2", "Moor", "Region 1"]);
+        sort_rows(&mut rows, Some((Column::Label, true)));
+        assert_eq!(names(&rows), ["Region 1", "Moor", "Region 2"]);
+    }
+
+    /// Maturity sorts by rating (General, Moderate, Adult); a rating not
+    /// known yet and an offline region stay last in both directions.
+    #[test]
+    fn maturity_sorts_by_rating_and_unknown_or_offline_last() {
+        use crate::world::worldmap::{SIM_ACCESS_ADULT, SIM_ACCESS_MATURE, SIM_ACCESS_PG};
+        let mut rows = vec![
+            row("Region 1", "", Some(1), Some(SIM_ACCESS_ADULT)),
+            row("Region 2", "", None, None),
+            row("Region 3", "", Some(1), Some(SIM_ACCESS_PG)),
+            row("Region 4", "", Some(0), Some(SIM_ACCESS_DOWN)),
+            row("Region 5", "", Some(1), Some(SIM_ACCESS_MATURE)),
+        ];
+        let up = next_sort(None, Column::Maturity);
+        assert_eq!(up, Some((Column::Maturity, false)));
+        sort_rows(&mut rows, up);
+        assert_eq!(names(&rows), ["Region 3", "Region 5", "Region 1", "Region 2", "Region 4"]);
+        sort_rows(&mut rows, next_sort(up, Column::Maturity));
+        assert_eq!(names(&rows)[..3], ["Region 1", "Region 5", "Region 3"]);
+        let mut last = names(&rows)[3..].to_vec();
+        last.sort_unstable();
+        assert_eq!(last, ["Region 2", "Region 4"], "unknown and offline stay last going down too");
+    }
+
+    /// The sort holds when the list is rebuilt every 5 s.
+    #[test]
+    fn the_sort_holds_across_rebuilds() {
+        let mut world = world();
+        let mut ui = RegionTrackerUi {
+            sort: Some((Column::Region, true)),
+            ..Default::default()
+        };
+        ui.rebuild(&mut world);
+        assert_eq!(ui.rows.first().map(|r| r.name.as_str()), Some("Region 29"));
+        assert_eq!(ui.rows.last().map(|r| r.name.as_str()), Some("Region 0"));
+    }
+
+    /// The window opens on the kept sort (Label from A to Z by default), and
+    /// a header click writes the new one back, the saved order included.
+    #[test]
+    fn the_window_opens_on_the_kept_sort_and_writes_clicks_back() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for (name, label) in [("Region 1", "Shop"), ("Region 2", "Beach"), ("Region 3", "Club")] {
+            world.region_tracker.add(name, label);
+        }
+        let p = crate::theme::Theme::default().palette();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let mut ui = RegionTrackerUi::default();
+        let mut saved = RegionTrackerSort::default();
+        frames.run(Vec::new(), |ctx_ui| {
+            ui.show(ctx_ui.ctx(), &p, &mut world, &mut true, &mut false, &mut saved)
+        });
+        assert_eq!(names(&ui.rows), ["Region 2", "Region 3", "Region 1"]);
+        // two more clicks on Label: Z to A, then the saved order
+        let mut sort = ui.sort;
+        assert_eq!(sort, Some((Column::Label, false)));
+        for expected in [Some((Column::Label, true)), None] {
+            sort = next_sort(sort, Column::Label);
+            assert_eq!(sort, expected);
+            saved = to_saved(sort);
+            assert_eq!(from_saved(saved), expected);
+        }
+        assert_eq!(saved.column, None, "the saved order is kept as no column");
     }
 
     /// A region added again under another case keeps the list's spelling

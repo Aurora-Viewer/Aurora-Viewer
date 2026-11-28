@@ -344,6 +344,38 @@ pub enum PlacesSort {
     Created,
 }
 
+/// A column of the Region Tracker (`ui/region_tracker.rs`), in the order
+/// shown.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RegionTrackerColumn {
+    #[default]
+    Label,
+    Maturity,
+    Region,
+    Avatars,
+}
+
+/// The Region Tracker's sort, kept between sessions as the Legacy Viewer's
+/// `region_list` keeps it (`persist_sort_order`, saved in
+/// `region_tracker_region_list_sortorder` by `LLScrollListCtrl`). Label
+/// from A to Z by default (its `sort_column="0"`); `column` None is the
+/// order the regions were saved in, which a third click on a header gives.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct RegionTrackerSort {
+    pub column: Option<RegionTrackerColumn>,
+    pub descending: bool,
+}
+
+impl Default for RegionTrackerSort {
+    fn default() -> Self {
+        Self {
+            column: Some(RegionTrackerColumn::Label),
+            descending: false,
+        }
+    }
+}
+
 /// What a plain, Shift or Ctrl left click on another avatar's name plate
 /// does (Preferences › Avatars). Each gesture chooses an avatar-menu action
 /// independently; Nothing, the default, leaves the click to the world.
@@ -1627,6 +1659,8 @@ pub struct Settings {
     pub classic_places: bool,
     /// The order of Aurora's "Places" lists.
     pub places_sort: PlacesSort,
+    /// The Region Tracker's sort (`ui/region_tracker.rs`).
+    pub region_tracker_sort: RegionTrackerSort,
     /// The Destinations window's look.
     pub destinations_style: DestinationsStyle,
     /// Aurora's Destinations window in its wide view (rail, cards and
@@ -2916,6 +2950,7 @@ impl Default for Settings {
             outfit_portrait: Default::default(),
             classic_places: false,
             places_sort: PlacesSort::Visit,
+            region_tracker_sort: RegionTrackerSort::default(),
             destinations_style: DestinationsStyle::Aurora,
             destinations_wide: true,
             invert_mouse: false,
@@ -4789,6 +4824,41 @@ mod tests {
                 let restored: Settings = serde_json::from_slice(&bytes).expect("restart");
                 assert_eq!((restored.appearance_camera_movement, restored.customize_animation), (camera, pose));
             }
+        }
+    }
+
+    /// The Region Tracker opens sorted by Label from A to Z, as the Legacy
+    /// Viewer's region_list (`sort_column="0"`), also for older
+    /// preferences; a chosen sort, the saved order included, comes back.
+    #[test]
+    fn the_region_tracker_sorts_by_label_by_default_and_keeps_its_sort() {
+        use super::{RegionTrackerColumn, RegionTrackerSort, Settings};
+        let label = RegionTrackerSort {
+            column: Some(RegionTrackerColumn::Label),
+            descending: false,
+        };
+        assert_eq!(Settings::default().region_tracker_sort, label);
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert_eq!(old.region_tracker_sort, label);
+        let partial: Settings = serde_json::from_str(r#"{"region_tracker_sort":{"descending":true}}"#).expect("partial sort");
+        assert_eq!(partial.region_tracker_sort.column, Some(RegionTrackerColumn::Label));
+        for sort in [
+            RegionTrackerSort {
+                column: Some(RegionTrackerColumn::Avatars),
+                descending: true,
+            },
+            RegionTrackerSort {
+                column: None,
+                descending: false,
+            },
+        ] {
+            let settings = Settings {
+                region_tracker_sort: sort,
+                ..Settings::default()
+            };
+            let bytes = serde_json::to_vec(&settings.to_saved()).expect("save preferences");
+            let restored: Settings = serde_json::from_slice(&bytes).expect("restart");
+            assert_eq!(restored.region_tracker_sort, sort);
         }
     }
 
