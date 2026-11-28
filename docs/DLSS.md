@@ -366,6 +366,10 @@ Reflex keeping input latency down. Not yet run on Windows.
   start; `DLSS frame generation: on` when it is first asked for; then at the
   first present with it, each 600th and at each change, its status (`ok`,
   or what Streamline refused) and the frames presented per frame drawn.
+- **Not available.** Preferences says why under the setting when Streamline
+  said why: GPU scheduling off, Windows too old, an old driver, or frame
+  generation's files missing from the DLSS folder (`eErrorFeatureMissing`:
+  run `dlss-setup.ps1` again); any other answer by name.
 - Other windows of the viewer that present (a window sent outside it) go
   through Streamline's proxy too; only the main window is given frame
   generation.

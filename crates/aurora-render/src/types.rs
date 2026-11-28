@@ -1502,6 +1502,29 @@ pub enum DlssSupport {
     NotBuilt,
 }
 
+/// Why Streamline said DLSS frame generation cannot run on this device
+/// (`slIsFeatureSupported`, and on Windows Reflex): what Preferences says
+/// under the setting in place of a reason it cannot know
+/// ([`crate::dlss_fg_unavailable`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DlssFgUnavailable {
+    /// Windows' hardware-accelerated GPU scheduling is off
+    /// (`eErrorOSDisabledHWS`).
+    GpuSchedulingOff,
+    /// Windows is older than 10 20H1 (`eErrorOSOutOfDate`).
+    WindowsOutOfDate,
+    /// The NVIDIA driver is too old for it (`eErrorDriverOutOfDate`).
+    DriverOutOfDate,
+    /// The DLSS folder has no frame generation library, or it would not
+    /// load (`eErrorFeatureMissing`, `eErrorFeatureFailedToLoad`).
+    FilesMissing,
+    /// The graphics card has no frame generation
+    /// (`eErrorAdapterNotSupported`, `eErrorFeatureNotSupported`).
+    Card,
+    /// Any other answer: its `sl::Result` name, for the user to pass on.
+    Other(&'static str),
+}
+
 /// What drew a frame in FSR's place ([`RenderStats::dlss_drawing`]): the
 /// setting still says FSR 3.1 (DLSS is a choice inside it, and FSR draws
 /// whenever DLSS cannot), so the reports name what drew instead.

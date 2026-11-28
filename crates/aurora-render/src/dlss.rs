@@ -182,6 +182,8 @@ mod sl {
     /// `sl::Result`: `eOk` and the values the viewer tells apart.
     pub const OK: i32 = 0;
     pub const ERROR_DRIVER_OUT_OF_DATE: i32 = 2;
+    #[cfg_attr(not(windows), allow(dead_code, reason = "Windows' Reflex only"))]
+    pub const ERROR_REFLEX_API: i32 = 14;
     pub const ERROR_INVALID_PARAMETER: i32 = 25;
 
     /// `sl::Result`'s name, for the log.
@@ -1674,7 +1676,7 @@ mod imp {
     use ash::vk;
     use std::ffi::{CStr, CString};
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
     use wgpu::hal::api::Vulkan;
 
     /// Streamline application id of this local build (any fixed UUID).
@@ -1952,6 +1954,19 @@ mod imp {
     /// Preferences shows, and what the renderer waits for.
     pub(crate) fn fg_ready() -> bool {
         FG_SUPPORTED.load(Ordering::Relaxed)
+    }
+
+    /// Streamline's answer when it said no to frame generation on this
+    /// device (an `sl::Result`; OK when it said yes or was not asked):
+    /// `ERROR_REFLEX_API` for Reflex refused on Windows. Asked and forgotten
+    /// with [`FG_SUPPORTED`].
+    static FG_REFUSED: AtomicI32 = AtomicI32::new(sl::OK);
+
+    /// Why frame generation cannot run on the device DLSS started on, when
+    /// Streamline said why; None while it can, or before it was asked.
+    pub(crate) fn fg_unavailable() -> Option<crate::DlssFgUnavailable> {
+        let r = FG_REFUSED.load(Ordering::Relaxed);
+        (r != sl::OK && !fg_ready()).then(|| super::unavailable_of(r, sl::result_name(r)))
     }
 
     /// `AURORA_DLSS_RR` for a test: `1` turns Ray Reconstruction on
@@ -2720,6 +2735,7 @@ mod imp {
         RR_UNAVAILABLE.store(false, Ordering::Relaxed);
         RR_REFUSED.store(false, Ordering::Relaxed);
         FG_SUPPORTED.store(false, Ordering::Relaxed);
+        FG_REFUSED.store(sl::OK, Ordering::Relaxed);
         SNAPSHOT_RR_REFUSED.store(false, Ordering::Relaxed);
         FAILED.store(false, Ordering::Relaxed);
         REFUSAL.store(false, Ordering::Relaxed);
@@ -3337,6 +3353,8 @@ mod imp {
                 let fg = unsafe { (lib.is_feature_supported)(sl::FEATURE_DLSS_G, &adapter) };
                 #[allow(unused_mut)] // Windows: Reflex too
                 let mut ok = fg == sl::OK;
+                #[allow(unused_mut)] // Windows: Reflex too
+                let mut refused = fg;
                 if !ok {
                     log::info!("DLSS: no frame generation here ({})", sl::result_name(fg));
                 }
@@ -3355,9 +3373,11 @@ mod imp {
                     if let Err(e) = reflex {
                         log::error!("DLSS: no frame generation here: {e}");
                         ok = false;
+                        refused = sl::ERROR_REFLEX_API;
                     }
                 }
                 FG_SUPPORTED.store(ok, Ordering::Relaxed);
+                FG_REFUSED.store(refused, Ordering::Relaxed);
                 if ok {
                     log::info!("DLSS: frame generation supported here");
                 }
@@ -6379,6 +6399,10 @@ mod imp {
         false
     }
 
+    pub(crate) fn fg_unavailable() -> Option<crate::DlssFgUnavailable> {
+        None
+    }
+
     pub(crate) fn set_fg_at_start(_: bool) {}
 
     pub(crate) fn fg_restart(_: bool) -> bool {
@@ -6664,8 +6688,8 @@ fn fg_retry_due(since: Option<std::time::Instant>, retried: bool, now: std::time
 }
 
 pub(crate) use imp::{
-    Dlss, closing, fg_ready, fg_restart, fg_wanted, folder_named, instance, left_behind, optimal_size, refused_here, refused_memory,
-    request_device, resizing, retry, retry_asked, rr_device, rr_probe, rr_ready, rr_ready_on, rr_refused_here, rr_retry,
+    Dlss, closing, fg_ready, fg_restart, fg_unavailable, fg_wanted, folder_named, instance, left_behind, optimal_size, refused_here,
+    refused_memory, request_device, resizing, retry, retry_asked, rr_device, rr_probe, rr_ready, rr_ready_on, rr_refused_here, rr_retry,
     rr_targets_refused, rr_wanted, set_fg_at_start, snapshot_rr_refused, snapshot_rr_refused_here, snapshot_rr_targets_refused, support,
     support_on, wanted,
 };
@@ -6675,6 +6699,26 @@ pub(crate) use imp::{Presenter, pause_presenter, update};
 pub(crate) use imp::{forget_instance, xr_entry};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) use imp::{opened_for_xr, opening_device, xr_device_extensions, xr_instance_extensions};
+
+/// What Preferences says of Streamline's no to frame generation, `code`
+/// (an `sl::Result`, `name` its name): the reasons the user can act on
+/// (Windows' GPU scheduling or version, the driver, the DLSS folder), the
+/// card, or the answer itself (DLSS-G guide, *Checking DLSS-G's support*).
+#[cfg_attr(
+    not(all(feature = "dlss", any(target_os = "linux", all(windows, target_arch = "x86_64")))),
+    allow(dead_code, reason = "builds with DLSS only")
+)]
+fn unavailable_of(code: i32, name: &'static str) -> crate::DlssFgUnavailable {
+    use crate::DlssFgUnavailable as U;
+    match code {
+        2 => U::DriverOutOfDate,    // eErrorDriverOutOfDate
+        3 => U::WindowsOutOfDate,   // eErrorOSOutOfDate
+        4 => U::GpuSchedulingOff,   // eErrorOSDisabledHWS
+        7 | 32 => U::Card,          // eErrorAdapterNotSupported, eErrorFeatureNotSupported
+        31 | 34 => U::FilesMissing, // eErrorFeatureMissing, eErrorFeatureFailedToLoad
+        _ => U::Other(name),
+    }
+}
 
 /// The sl-ngx commit this viewer speaks to (Linux): `SL_NGX_COMMIT` in
 /// scripts/dlss-setup.sh, which a test keeps the same. Its library is
@@ -6702,7 +6746,22 @@ pub(crate) fn render_size(display: (u32, u32), ratio: f32) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answers, FG_RETRY, SL_NGX_COMMIT, fg_retry_due, lock_within, refused, render_size};
+    use super::{Answers, FG_RETRY, SL_NGX_COMMIT, fg_retry_due, lock_within, refused, render_size, unavailable_of};
+    use crate::DlssFgUnavailable as U;
+
+    #[test]
+    fn streamlines_no_to_frame_generation_names_what_the_user_can_change() {
+        // the codes are sl::Result's (sl_result.h), in its order
+        assert_eq!(unavailable_of(4, "eErrorOSDisabledHWS"), U::GpuSchedulingOff);
+        assert_eq!(unavailable_of(3, "eErrorOSOutOfDate"), U::WindowsOutOfDate);
+        assert_eq!(unavailable_of(2, "eErrorDriverOutOfDate"), U::DriverOutOfDate);
+        assert_eq!(unavailable_of(31, "eErrorFeatureMissing"), U::FilesMissing);
+        assert_eq!(unavailable_of(34, "eErrorFeatureFailedToLoad"), U::FilesMissing);
+        assert_eq!(unavailable_of(7, "eErrorAdapterNotSupported"), U::Card);
+        assert_eq!(unavailable_of(32, "eErrorFeatureNotSupported"), U::Card);
+        // the rest are named as Streamline answered
+        assert_eq!(unavailable_of(14, "eErrorReflexAPI"), U::Other("eErrorReflexAPI"));
+    }
 
     #[test]
     fn a_size_frame_generation_turned_off_at_is_tried_once_more() {

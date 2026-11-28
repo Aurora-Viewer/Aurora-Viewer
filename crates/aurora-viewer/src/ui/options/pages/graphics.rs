@@ -1420,8 +1420,10 @@ fn image(cx: &mut Cx) {
             let on = aurora_render::dlss_fg_wanted(cx.s.dlss_fg);
             let ready = aurora_render::dlss_fg_ready();
             let restart = aurora_render::dlss_fg_restart(on);
-            let blocked = (!ready && !restart).then(|| tr!("ui-options-dlss-fg-unavailable"));
-            let greyed = (!on && !ready && !aurora_render::dlss_fg_restart(true)).then(|| tr!("ui-options-dlss-fg-unavailable"));
+            // (why it cannot: Streamline's reason when it gave one)
+            let unavailable = || fg_unavailable_text(aurora_render::dlss_fg_unavailable());
+            let blocked = (!ready && !restart).then(unavailable);
+            let greyed = (!on && !ready && !aurora_render::dlss_fg_restart(true)).then(unavailable);
             let help = if cfg!(windows) {
                 tr!("ui-options-dlss-fg-help-windows")
             } else {
@@ -1430,12 +1432,12 @@ fn image(cx: &mut Cx) {
             cx.experimental().row(tr!("ui-options-dlss-fg"), help, &field!(dlss_fg), |ui, s| {
                 let r = ui.add_enabled_ui(greyed.is_none(), |ui| toggle(ui, &p, &mut s.dlss_fg));
                 if let Some(why) = &greyed {
-                    r.response.on_disabled_hover_text(*why);
+                    r.response.on_disabled_hover_text(why.as_str());
                 }
                 r.inner
             });
             if let Some(why) = blocked.filter(|_| on) {
-                cx.note(why);
+                cx.note(&why);
             }
             if restart {
                 cx.note(tr!("ui-options-dlss-fg-restart"));
@@ -1847,6 +1849,23 @@ fn parcel_rows<'a, T, K: egui::AsIdSalt>(
 /// Preferences' lines under the frame generation switch, from what runs
 /// (`aurora_render::dlss_fg_status`): what shows the frames, Reflex, and
 /// the frames shown per second against the drawn ones.
+/// Why DLSS frame generation cannot be chosen: what Streamline said when
+/// the user can act on it (Windows' GPU scheduling or version, the driver,
+/// the DLSS folder) or its answer by name, else the general reason (no
+/// reason given, or the card has none).
+fn fg_unavailable_text(reason: Option<aurora_render::DlssFgUnavailable>) -> String {
+    use aurora_i18n::tr;
+    use aurora_render::DlssFgUnavailable as U;
+    match reason {
+        Some(U::GpuSchedulingOff) => tr!("ui-options-dlss-fg-unavailable-gpu-scheduling").to_owned(),
+        Some(U::WindowsOutOfDate) => tr!("ui-options-dlss-fg-unavailable-windows").to_owned(),
+        Some(U::DriverOutOfDate) => tr!("ui-options-dlss-fg-unavailable-driver").to_owned(),
+        Some(U::FilesMissing) => tr!("ui-options-dlss-fg-unavailable-files").to_owned(),
+        Some(U::Other(name)) => tr!("ui-options-dlss-fg-unavailable-other", reason = name),
+        Some(U::Card) | None => tr!("ui-options-dlss-fg-unavailable").to_owned(),
+    }
+}
+
 fn fg_status_lines(status: &aurora_render::DlssFgStatus) -> Vec<String> {
     use aurora_i18n::tr;
     use aurora_render::{DlssFgHeld, DlssFgRefusal, DlssFgShown};

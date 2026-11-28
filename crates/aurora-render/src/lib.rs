@@ -199,6 +199,12 @@ pub use renderer::{CASCADES, RenderError};
 pub fn dlss_fg_ready() -> bool {
     dlss::fg_ready()
 }
+/// Why DLSS frame generation cannot be chosen, when Streamline said why
+/// (dlss.rs): what Preferences says under it. None while it can, and in a
+/// build or start where Streamline was not asked.
+pub fn dlss_fg_unavailable() -> Option<DlssFgUnavailable> {
+    dlss::fg_unavailable()
+}
 /// The DLSS frame generation setting as the renderer is about to be made
 /// (before `Renderer::new`): on Windows, Streamline loads frame generation
 /// at its start only when it is wanted then.
