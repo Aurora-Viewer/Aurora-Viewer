@@ -4192,6 +4192,14 @@ impl Session<'_> {
     /// IM sessions, parcel events and region crossings all fail and nothing
     /// gets better before a new login, so the session ends now with the
     /// "connection lost" message; a neighbour only loses its own events.
+    ///
+    /// The region still answers on UDP, so it is told the session ends:
+    /// LLAppViewer::forceDisconnect sends a LogoutRequest once the session
+    /// has started (`sendSimpleLogoutRequest`, once per session), or the
+    /// region keeps the agent and the next arrival there finds it still in
+    /// place (#2748). The silent region of `tick` gets none: its circuit is
+    /// dead, and LLMessageSystem::sendMessage drops what is sent to a dead
+    /// circuit.
     fn on_eq_lost(&mut self, addr: SocketAddr) {
         transition::link(|| format!("event queue of region {} gave up", transition::grid(self.handle_of(addr))));
         // (a queue replaced since, after a new seed capability, is not lost)
@@ -4207,6 +4215,11 @@ impl Session<'_> {
             return;
         }
         log::warn!("event queue of the agent's region {addr} lost: disconnecting");
+        // (STATE_STARTED: the first arrival is behind; a logout under way
+        // has already sent its request)
+        if !self.login_arrival && self.logout_started.is_none() {
+            self.send_logout_request();
+        }
         emit(
             self.sh,
             NetEvent::Disconnected {
@@ -7812,6 +7825,72 @@ mod script_dialog_tests {
         session.on_command(NetCommand::ArrivalGivenUp);
         assert!(session.agent_moved);
         assert!(session.cam_requested_at.is_none());
+    }
+
+    /// #2748: the agent's region whose event queue gave up still hears UDP,
+    /// and is told the session ends (LLAppViewer::forceDisconnect), or it
+    /// keeps the agent and refuses the next arrival.
+    #[tokio::test]
+    async fn a_lost_event_queue_logs_the_session_out_once_it_has_started() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("main simulator");
+        let main_addr = main.local_addr().expect("main address");
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        sock.writable().await.expect("socket ready");
+        async fn lost_queue<'a>(sh: &'a Shared, sock: Arc<UdpSocket>, main_addr: SocketAddr) -> Session<'a> {
+            let mut session = test_session(sh, sock, [(main_addr, Sim::new(main_addr, 10))].into(), main_addr);
+            // a queue that really stopped
+            let queue = tokio::spawn(async {});
+            while !queue.is_finished() {
+                tokio::task::yield_now().await;
+            }
+            session.sims.get_mut(&main_addr).expect("simulator").eq_task = Some(queue);
+            session
+        }
+        // No LogoutRequest reaches the region within a short wait.
+        async fn no_logout_request(sim: &UdpSocket) {
+            let mut datagram = [0; 1500];
+            while let Ok(Ok((size, _))) = tokio::time::timeout(Duration::from_millis(300), sim.recv_from(&mut datagram)).await {
+                let packet = parse_packet(&datagram[..size]).expect("datagram");
+                assert_ne!(packet.id, LogoutRequest::ID, "no LogoutRequest");
+            }
+        }
+        let disconnected = |received: &crossbeam_channel::Receiver<(Instant, NetEvent)>| {
+            received
+                .try_iter()
+                .any(|(_, event)| matches!(event, NetEvent::Disconnected { lost: true, .. }))
+        };
+
+        // A started session: one reliable LogoutRequest, then "connection lost".
+        let mut session = lost_queue(&sh, sock.clone(), main_addr).await;
+        session.on_eq_lost(main_addr);
+        let request = logout_request_from(&main).await;
+        assert_eq!(
+            (request.agent_data.agent_id, request.agent_data.session_id),
+            (Uuid::from_u128(1), Uuid::from_u128(2))
+        );
+        assert!(session.finished);
+        assert!(disconnected(&received));
+
+        // Before the first arrival (STATE_AGENT_WAIT) the session ends without
+        // one, as forceDisconnect before STATE_STARTED.
+        let mut session = lost_queue(&sh, sock.clone(), main_addr).await;
+        session.login_arrival = true;
+        session.on_eq_lost(main_addr);
+        no_logout_request(&main).await;
+        assert!(session.finished);
+        assert!(disconnected(&received));
+
+        // A logout under way already sent its request: it is not sent twice
+        // (mLogoutRequestSent).
+        let mut session = lost_queue(&sh, sock.clone(), main_addr).await;
+        session.on_command(NetCommand::Logout);
+        logout_request_from(&main).await;
+        session.on_eq_lost(main_addr);
+        no_logout_request(&main).await;
+        assert!(session.finished);
+        assert!(disconnected(&received));
     }
 
     /// A `ViewerStats` capability: the body of every POST it receives.
