@@ -279,11 +279,13 @@ fn windows_outside_the_viewer_keep_their_own_field_ids() {
             ..Default::default()
         };
         input.viewports.insert(viewport, Default::default());
-        let _ = ctx.run_ui(input, |ui| {
+        let mut output = ctx.run_ui(input, |ui| {
             assert_eq!(ui.ctx().viewport_id(), viewport);
             assert_eq!(ui.layer_id(), egui::LayerId::background());
             seen.push([name_focus::field_id(ui, Which::Name), name_focus::field_id(ui, Which::Desc)]);
         });
+        // debug builds assert that egui's texture changes were handled
+        output.textures_delta.clear();
     }
     let [build, profile] = [seen[0], seen[1]];
     for i in 0..2 {
@@ -302,7 +304,7 @@ fn lone_name(ctx: &egui::Context, offset: f32, editable: bool, click: bool) {
         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 400.0))),
         ..Default::default()
     };
-    let _ = ctx.run_ui(input, |ui| {
+    let mut output = ctx.run_ui(input, |ui| {
         egui::Area::new(egui::Id::unique(super::super::super::INSPECTOR_ID)).show(ui.ctx(), |ui| {
             egui::ScrollArea::vertical()
                 .max_height(40.0)
@@ -319,6 +321,8 @@ fn lone_name(ctx: &egui::Context, offset: f32, editable: bool, click: bool) {
             name_focus::apply(ui.ctx());
         }
     });
+    // debug builds assert that egui's texture changes were handled
+    output.textures_delta.clear();
 }
 
 #[test]
