@@ -3274,16 +3274,6 @@ fn water_fx_ocean(p: vec2<f32>, footprint: f32, fine: bool, at: WaterSeaAt) -> W
         let s01=textureLoad(water_ground,vec2<i32>(i.x,row+128+j.y),0);let s11=textureLoad(water_ground,vec2<i32>(j.x,row+128+j.y),0);
         let d=mix(mix(d00,d10,f.x),mix(d01,d11,f.x),f.y);
         let s=mix(mix(s00,s10,f.x),mix(s01,s11,f.x),f.y);
-        // the folds and the foam with weights whose slope goes on across
-        // the texels' lines (3f² - 2f³; OceanMaps::sample_weighted alike):
-        // thresholded into whitecaps, the bilinear field drew their edges as
-        // polygons cornered on every texel (1.5 m on the long tile), and as
-        // the crests moved through the fixed tile the edges slid along the
-        // corners, a crawling pixelation (reported on the grid and in the
-        // demo, at the back of the caps)
-        let g=f*f*(3.0-2.0*f);
-        let dw=mix(mix(d00.w,d10.w,g.x),mix(d01.w,d11.w,g.x),g.y);
-        let szw=mix(mix(s00.zw,s10.zw,g.x),mix(s01.zw,s11.zw,g.x),g.y);
         // (the long chop's shortest waves are 10 m, the ripples' and the
         // lakes' chop's ~2 m on the whole: a pixel past a fraction of them
         // aliases them)
@@ -3291,12 +3281,39 @@ fn water_fx_ocean(p: vec2<f32>, footprint: f32, fine: bool, at: WaterSeaAt) -> W
         let att=(1.0-smoothstep(0.5,2.0,k*footprint))*w;
         o.offset+=d.xyz*w;
         if(!(fine && c==1 && water_fine_on())){o.slope+=s.xy*att;}
-        o.jacobian+=vec3<f32>(szw.x,dw,szw.y)*att;
-        let foam=mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+256+i.y),0).x,textureLoad(water_ground,vec2<i32>(j.x,row+256+i.y),0).x,g.x),
-            mix(textureLoad(water_ground,vec2<i32>(i.x,row+256+j.y),0).x,textureLoad(water_ground,vec2<i32>(j.x,row+256+j.y),0).x,g.x),g.y);
+        o.jacobian+=vec3<f32>(s.z,d.w,s.w)*att;
+        let foam=water_fx_ocean_foam(row+256,i,f);
         o.foam=max(o.foam,foam*select(att,w,c==0));
     }
     return o;
+}
+// The cubic B-spline's weights at `t` (0..1) for the texels at -1, 0, 1
+// and 2 from the one under it.
+fn water_bspline(t: f32) -> vec4<f32> {
+    let it=1.0-t;let t2=t*t;let t3=t2*t;
+    return vec4<f32>(it*it*it,3.0*t3-6.0*t2+4.0,-3.0*t3+3.0*t2+3.0*t+1.0,t3)/6.0;
+}
+// A cascade's foam (its map from `row`) at texel `base` plus `f`, as a
+// cubic B-spline over the 4 x 4 texels round it, wrapping. The foam maps are
+// made texel by texel (each keeps the most its crests folded, fading:
+// water_fft.rs `linger`), so a crest passing stamps its trail square by
+// square: read bilinear, and thresholded into the whitecaps' foam, the
+// trail's end showed those squares, sliding as the foam rode on (reported
+// on the grid and in the demo). A B-spline is smooth everywhere: the
+// stamped squares read as rounded patches. (OceanMaps::sample_weighted
+// alike.)
+fn water_fx_ocean_foam(row: i32, base: vec2<i32>, f: vec2<f32>) -> f32 {
+    let wx=water_bspline(f.x);let wy=water_bspline(f.y);
+    var sum=0.0;
+    for(var y=0;y<4;y++){
+        var line=0.0;
+        for(var x=0;x<4;x++){
+            let q=(base+vec2<i32>(x-1,y-1)+vec2<i32>(128))%vec2<i32>(128);
+            line+=textureLoad(water_ground,vec2<i32>(q.x,row+q.y),0).x*wx[x];
+        }
+        sum+=line*wy[y];
+    }
+    return sum;
 }
 // One map of a cascade (`row`: its first row) at `q` in tiles, bilinear and
 // wrapping.
@@ -3337,6 +3354,28 @@ fn water_surface_z(p:vec2<f32>,level:f32)->f32 {
 // wind waves, steep however small they are, where the sea's whole fold
 // takes the long swell with it and seldom shows them).
 struct WaterFine { slope: vec2<f32>, foam: f32, kept: f32, fold: f32 };
+// The short cascade's foam on the GPU's finer maps at `p` (some 11 cm a
+// texel, made texel by texel as the CPU's: water_ocean.wgsl), as a cubic
+// B-spline in four filtered taps (Sigg and Hadwiger, "Fast Third-Order
+// Texture Filtering", GPU Gems 2), through the pixel's footprint (`gx`,
+// `gy`): read bilinear, the stamped trail behind the crests showed its
+// texels as squares close to the camera (water_fx_ocean_foam).
+fn water_fine_foam(p:vec2<f32>,gx:vec2<f32>,gy:vec2<f32>)->f32 {
+    let tile=water_fx.fine.y;
+    let size=f32(textureDimensions(water_fine).x);
+    let pos=p/tile*size-0.5;
+    let base=floor(pos);let t=pos-base;
+    let wx=water_bspline(t.x);let wy=water_bspline(t.y);
+    let g0=vec2<f32>(wx.x+wx.y,wy.x+wy.y);let g1=vec2<f32>(wx.z+wx.w,wy.z+wy.w);
+    let a=(base+0.5+vec2<f32>(wx.y/g0.x,wy.y/g0.y)-1.0)/size;
+    let b=(base+0.5+vec2<f32>(wx.w/g1.x,wy.w/g1.y)+1.0)/size;
+    let du=gx/tile;let dv=gy/tile;
+    let s00=textureSampleGrad(water_fine,tex_sampler,a,4,du,dv).x;
+    let s10=textureSampleGrad(water_fine,tex_sampler,vec2<f32>(b.x,a.y),4,du,dv).x;
+    let s01=textureSampleGrad(water_fine,tex_sampler,vec2<f32>(a.x,b.y),4,du,dv).x;
+    let s11=textureSampleGrad(water_fine,tex_sampler,b,4,du,dv).x;
+    return g0.y*(g0.x*s00+g1.x*s10)+g1.y*(g0.x*s01+g1.x*s11);
+}
 fn water_fine_on() -> bool { return water_fx.fine.x > 0.5; }
 // (`p` where the water lies before the waves move it: water_pixel's
 // `flow`. The short cascade is in the surface's shape already, read there
@@ -3364,7 +3403,7 @@ fn water_fx_fine(p:vec2<f32>,gx:vec2<f32>,gy:vec2<f32>,chop:f32,open:f32)->Water
             o.fold=1.0-((1.0+s.z*short)*(1.0+s.w*short)-dxy*dxy);
         }
     }
-    o.foam=textureSampleGrad(water_fine,tex_sampler,p/water_fx.fine.y,4,gx/water_fx.fine.y,gy/water_fx.fine.y).x*short;
+    o.foam=water_fine_foam(p,gx,gy)*short;
     o.kept=1.0-smoothstep(0.02,0.1,max(length(gx),length(gy)));
     return o;
 }
