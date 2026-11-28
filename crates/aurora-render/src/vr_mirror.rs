@@ -88,6 +88,7 @@ struct Vertex { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f3
         size: (u32, u32),
         egui: &mut egui_wgpu::Renderer,
         ui: Option<&crate::ui_frame::UiFrame>,
+        lost: &crate::device_lost::DeviceLost,
     ) -> bool {
         let (width, height) = size;
         if width == 0 || height == 0 || self.last.is_some_and(|t| t.elapsed() < Duration::from_secs_f64(1.0 / 30.0)) {
@@ -153,29 +154,35 @@ struct Vertex { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f3
             pass.draw(0..3, 0..1);
         }
         let mut commands = Vec::new();
-        if let Some(ui) = ui {
+        // after the surface's acquire, right before the upload, which is
+        // guarded too: a device lost meanwhile draws no interface (#3844)
+        if let Some(ui) = ui.filter(|_| !lost.get()) {
             let screen = egui_wgpu::ScreenDescriptor {
                 size_in_pixels: [width, height],
                 pixels_per_point: ui.pixels_per_point,
             };
-            commands = egui.update_buffers(device, queue, &mut encoder, &ui.primitives, &screen);
-            let jobs = crate::ui_frame::paint_jobs(&ui.primitives, crate::ui_frame::meshes_uploaded(&ui.primitives));
-            let mut pass = encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("VR desktop exit hint"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    ..Default::default()
-                })
-                .forget_lifetime();
-            egui.render(&mut pass, &jobs, &screen);
+            let uploaded =
+                crate::device_lost::ui_upload_guarded(lost, || egui.update_buffers(device, queue, &mut encoder, &ui.primitives, &screen));
+            if let Some(uploaded) = uploaded {
+                commands = uploaded;
+                let jobs = crate::ui_frame::paint_jobs(&ui.primitives, crate::ui_frame::meshes_uploaded(&ui.primitives));
+                let mut pass = encoder
+                    .begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("VR desktop exit hint"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        ..Default::default()
+                    })
+                    .forget_lifetime();
+                egui.render(&mut pass, &jobs, &screen);
+            }
         }
         // Return the sampled runtime image to its required layout before XR release.
         encoder.transition_resources(

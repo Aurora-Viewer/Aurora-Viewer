@@ -20,7 +20,7 @@
 use super::abilities::{self, AbilitySet};
 use super::members::{self, role_name};
 use super::view::{self, View};
-use super::{GroupAction, GroupProfileUi};
+use super::{GroupAction, GroupWindow};
 use crate::theme::Palette;
 use crate::ui::avatar_picker::AvatarPicker;
 use crate::ui::place_details::Ctx;
@@ -247,7 +247,7 @@ fn dangerous(bit: u32) -> bool {
     p == powers::ROLE_ASSIGN_MEMBER || p == powers::ROLE_CHANGE_ACTIONS
 }
 
-pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
+pub fn show(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let p = c.p;
     let Some(d) = v.data else {
         ui.label(egui::RichText::new(aurora_i18n::tr!("common-loading-2")).size(12.5).color(p.muted));
@@ -348,7 +348,7 @@ pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
         Section::Identity => identity(st, &mut m, c, v, actions),
         Section::Abilities => abilities_section(st, &mut m, c, v, d),
         Section::Bans => bans(st, &mut m, c, v, d, actions),
-        Section::Invitations => invitations(st, &mut m, c, v),
+        Section::Invitations => invitations(st, &mut m, c),
     }
     dialog(st, ui.ctx(), p, v, d);
 }
@@ -422,7 +422,7 @@ fn switch_row(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut 
     changed
 }
 
-fn roles(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &GroupData, actions: &mut Vec<GroupAction>) {
+fn roles(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &GroupData, actions: &mut Vec<GroupAction>) {
     let p = c.p;
     let owner_role = v.profile.map(|g| g.owner_role).unwrap_or_default();
     let list = roles_now(d, &st.admin.changes, owner_role);
@@ -733,7 +733,7 @@ fn set_head(ui: &mut egui::Ui, p: &Palette, set: &AbilitySet, on: usize, open: b
 }
 
 /// The confirmations and warnings of the abilities (handleActionCheck).
-fn dialog(st: &mut GroupProfileUi, ctx: &egui::Context, p: &Palette, v: &View, d: &GroupData) {
+fn dialog(st: &mut GroupWindow, ctx: &egui::Context, p: &Palette, v: &View, d: &GroupData) {
     let Some(dlg) = st.admin.dialog.clone() else { return };
     let role = match &dlg {
         Dialog::Dangerous { role, .. } | Dialog::BanGiven { role } | Dialog::BanTaken { role } => *role,
@@ -813,7 +813,7 @@ fn dialog(st: &mut GroupProfileUi, ctx: &egui::Context, p: &Palette, v: &View, d
 }
 
 /// The group's identity (LLPanelGroupGeneral's editable part).
-fn identity(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
+fn identity(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let p = c.p;
     let Some(g) = v.profile else {
         ui.label(egui::RichText::new(aurora_i18n::tr!("common-loading-2")).size(12.5).color(p.muted));
@@ -1055,7 +1055,7 @@ fn rating_choice(ui: &mut egui::Ui, p: &Palette, chosen: &mut Option<bool>, info
 
 /// Who has which ability (LLPanelGroupActionsSubTab): the abilities by
 /// set, the roles and members of the one chosen.
-fn abilities_section(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &GroupData) {
+fn abilities_section(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &GroupData) {
     let p = c.p;
     let catalogue = abilities::catalogue(v.post_links);
     let full = ui.max_rect();
@@ -1194,7 +1194,7 @@ fn abilities_section(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v:
 }
 
 /// The banned residents (GroupAPIv1), unban, ban by name.
-fn bans(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &GroupData, actions: &mut Vec<GroupAction>) {
+fn bans(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &GroupData, actions: &mut Vec<GroupAction>) {
     let p = c.p;
     if st.admin.bans_asked != Some(v.id) {
         st.admin.bans_asked = Some(v.id);
@@ -1228,7 +1228,7 @@ fn bans(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &G
             )
             .clicked()
             {
-                st.admin.picker.open("group_ban_picker", true);
+                st.admin.picker.open(&format!("group_ban_picker-{}", v.id), true);
             }
         });
     });
@@ -1321,7 +1321,7 @@ fn bans(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &G
 }
 
 /// "Invitations": invite by name, with a role.
-fn invitations(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View) {
+fn invitations(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx) {
     let p = c.p;
     let mut open = false;
     view::card(
@@ -1353,7 +1353,7 @@ fn invitations(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View
         },
     );
     if open {
-        st.open_invite(v.id);
+        st.open_invite();
     }
 }
 
@@ -1376,5 +1376,16 @@ impl AdminState {
             info.insignia = texture;
         }
         std::mem::take(&mut self.texture.wanted_images)
+    }
+
+    /// The insignia's texture picker is open.
+    pub(super) fn picking_insignia(&self) -> bool {
+        self.texture.open
+    }
+
+    /// Another group window took the texture picker (one "texture_picker"
+    /// window at a time).
+    pub(super) fn stop_picking_insignia(&mut self) {
+        self.texture.open = false;
     }
 }

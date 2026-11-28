@@ -53,6 +53,11 @@ pub struct NotifUi {
     /// its cards, the friends' toasts at the top right) stands exactly under
     /// it. `None` with Firestorm's bars.
     pub column: Option<egui::Rect>,
+    /// The width the user dragged Aurora's center to (px, 0 = its default
+    /// width), from and back to `Settings::notification_width`.
+    pub width: f32,
+    /// A drag of that width ended, or a double click reset it: save it.
+    pub width_committed: bool,
     /// Aurora's center (`ui::notification_center`).
     pub center: super::notification_center::CenterUi,
 }

@@ -464,6 +464,8 @@ pub enum Action {
     WorldMap,
     /// World › Teleport history (Firestorm Alt+H).
     TeleportHistory,
+    /// Show the current SLURL, including when its address bar is hidden.
+    AddressBar,
     /// World › Teleport Home (the Legacy Viewer's Ctrl+Shift+H).
     TeleportHome,
     /// World › Region / Estate (Firestorm's "Region Details", Alt+R).
@@ -895,6 +897,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Minimap, aurora_i18n::tr!("common-mini-map")),
                     (Action::WorldMap, aurora_i18n::tr!("common-world-map")),
                     (Action::TeleportHistory, aurora_i18n::tr!("common-teleport-history")),
+                    (Action::AddressBar, aurora_i18n::tr!("toolbar-location-bar")),
                     (Action::TeleportHome, aurora_i18n::tr!("keybinds-teleport-home")),
                     (Action::RegionEstate, aurora_i18n::tr!("region-title")),
                     (Action::Search, aurora_i18n::tr!("search-title")),
@@ -1018,6 +1021,15 @@ pub fn label(a: Action) -> &'static str {
 #[cfg(test)]
 pub fn all_actions() -> impl Iterator<Item = Action> {
     sections().iter().flat_map(|(_, list)| list.iter().map(|(a, _)| *a))
+}
+
+/// The key that carries, on this PC's layout, the letter `us_key` has on
+/// US QWERTY. `KeyBindings::default` and `sanitized` follow the PC's
+/// layout: a test that reads their letter shortcuts names the keys
+/// through here (Ctrl+Q is KeyA on AZERTY, Ctrl+H is KeyJ on Dvorak).
+#[cfg(test)]
+pub(crate) fn letter(us_key: KeyCode) -> KeyCode {
+    layout::current().named_key(us_key)
 }
 
 /// Up to two bindings per action (primary, secondary), as in Firestorm.
@@ -1386,6 +1398,7 @@ impl KeyBindings {
             (Action::Gestures, [kmod(K::KeyG, true, false), None]),
             (Action::Minimap, [kmod(K::KeyM, true, true), None]),
             (Action::WorldMap, [kmod(K::KeyM, true, false), None]),
+            (Action::AddressBar, [kmod(K::KeyL, true, false), None]),
             // World.TeleportHome, shortcut="control|shift|H" (menu_viewer.xml)
             (Action::TeleportHome, [kmod(K::KeyH, true, true), None]),
             (
@@ -2214,20 +2227,6 @@ impl KeyBindings {
             })
     }
 
-    /// Explicit passage bindings, or Ctrl plus unmodified jump bindings.
-    pub fn pass_wall_bindings(&self) -> [Option<Binding>; 2] {
-        let explicit = self.get(Action::PassWall);
-        if explicit.iter().any(Option::is_some) {
-            return explicit;
-        }
-        self.get(Action::Up).map(|binding| {
-            binding.filter(|b| !b.ctrl && !b.alt && !b.shift).map(|mut b| {
-                b.ctrl = true;
-                b
-            })
-        })
-    }
-
     /// The held actions an input belongs to (double-tap running).
     pub fn held_actions_of(&self, input: &Input) -> Vec<Action> {
         self.map
@@ -2242,14 +2241,6 @@ impl KeyBindings {
 mod tests {
     use super::*;
     use crate::build::ui::Shortcut;
-
-    /// The key that carries, on this PC's layout, the letter `us_key` has on
-    /// US QWERTY. `KeyBindings::default` and `sanitized` follow the PC's
-    /// layout: a test that reads their letter shortcuts names the keys
-    /// through here (Ctrl+Q is KeyA on AZERTY, Ctrl+H is KeyJ on Dvorak).
-    fn letter(us_key: KeyCode) -> KeyCode {
-        layout::current().named_key(us_key)
-    }
 
     #[test]
     fn standalone_alt_keys_use_platform_labels() {
@@ -2640,6 +2631,17 @@ mod tests {
             old.triggered(&Input::key(KeyCode::Escape), m(false, true, false)),
             Some(Action::ResetCameraAngles)
         );
+    }
+
+    #[test]
+    fn address_bar_is_ctrl_l_and_available_while_editing_text() {
+        let kb = KeyBindings::default();
+        let control = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        assert_eq!(kb.triggered(&Input::key(KeyCode::KeyL), control), Some(Action::AddressBar));
+        assert!(!text_field_keeps(KeyCode::KeyL, control));
     }
 
     #[test]
@@ -3540,27 +3542,6 @@ mod tests {
 #[cfg(test)]
 mod passage_tests {
     use super::*;
-    #[test]
-    fn passage_keycaps_keep_custom_secondary_mouse_and_unassigned_bindings() {
-        let mut keys = KeyBindings::default();
-        keys.set(Action::Up, 0, k(KeyCode::F10));
-        keys.set(Action::Up, 1, kalt(KeyCode::F11, false, false));
-        assert_eq!(keys.pass_wall_bindings(), [kmod(KeyCode::F10, true, false), None]);
-        let mouse = Binding::captured(
-            Input::Mouse("Other9".into()),
-            Mods {
-                shift: true,
-                ..Default::default()
-            },
-        );
-        keys.set(Action::PassWall, 0, None);
-        keys.set(Action::PassWall, 1, Some(mouse.clone()));
-        assert_eq!(keys.pass_wall_bindings(), [None, Some(mouse)]);
-        keys.set(Action::PassWall, 1, None);
-        keys.set(Action::Up, 0, None);
-        assert_eq!(keys.pass_wall_bindings(), [None, None]);
-    }
-
     #[test]
     fn passage_follows_jump_rebindings_without_overriding_another_shortcut() {
         let mut keys = KeyBindings::default();

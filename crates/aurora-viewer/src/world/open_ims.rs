@@ -1,9 +1,10 @@
-//! Conversations open at logout, kept per account following
+//! Restore saved conversations and import the former account file, following
 //! FSFloaterIMContainer::saveOpenIMs / restoreOpenIMs (fsfloaterimcontainer.cpp,
 //! originally LGPL 2.1). Aurora also restores group chats (#1683), using
 //! their membership names and ordinary group-session start protocol.
 //! Conferences cannot be rejoined by their old session id and are excluded.
-//! The list is always written; the setting decides whether it is reopened.
+//! social_history.rs now saves the live list during use. The existing setting
+//! still decides whether it is reopened.
 
 use aurora_llsd::Llsd;
 use std::path::Path;
@@ -12,7 +13,8 @@ use uuid::Uuid;
 /// Per account file, extending the LLSD array of FSLastOpenIMs.
 pub const FILE: &str = "open_ims.xml";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Conversation {
     Resident(Uuid),
     Group(Uuid),
@@ -21,7 +23,7 @@ pub enum Conversation {
 }
 
 impl Conversation {
-    fn id(self) -> Uuid {
+    pub(super) fn id(self) -> Uuid {
         match self {
             Self::Resident(id) | Self::Group(id) | Self::Legacy(id) => id,
         }
@@ -68,6 +70,7 @@ fn parse(data: &Llsd) -> Vec<Conversation> {
     out
 }
 
+/// Legacy fixture writer (demo/tests); live sessions use social_history.
 pub fn save(path: &Path, conversations: &[Conversation]) {
     let list: Vec<Llsd> = conversations
         .iter()
@@ -100,30 +103,29 @@ impl super::World {
     /// A deliberate close/snooze takes precedence over deferred login work.
     pub(super) fn cancel_saved_im(&mut self, session: Uuid) {
         self.reopen_ims.retain(|saved| saved.id() != session);
+        self.social_history.cancel_saved_im(session);
     }
 
-    /// Save only rejoinable conversations, with the kind needed at login.
-    pub fn save_open_ims(&self) {
-        let Some(path) = &self.open_ims_path else { return };
-        let mut conversations: Vec<Conversation> = self
-            .social
-            .ims
-            .iter()
-            .filter_map(|s| match self.groups.sessions.get(&s.other) {
-                Some(info) if info.group => Some(Conversation::Group(s.other)),
-                Some(_) => None,
-                None if self.groups.is_member(&s.other) => Some(Conversation::Group(s.other)),
-                None => Some(Conversation::Resident(s.other)),
-            })
-            .collect();
-        // A quick logout must not lose conversations still waiting for
-        // the login's group/mute replies.
-        for pending in &self.reopen_ims {
-            if !conversations.iter().any(|c| c.id() == pending.id()) {
-                conversations.push(*pending);
-            }
+    /// Only rejoinable conversations, retaining pending restoration in order.
+    pub(super) fn open_conversations(&self) -> impl Iterator<Item = Conversation> + '_ {
+        let live = self.social.ims.iter().filter_map(|s| self.saved_conversation(s.other));
+        let pending = self.reopen_ims.iter().copied().filter(|pending| {
+            !self
+                .social
+                .ims
+                .iter()
+                .any(|s| self.saved_conversation(s.other).is_some_and(|c| c.id() == pending.id()))
+        });
+        live.chain(pending)
+    }
+
+    fn saved_conversation(&self, id: Uuid) -> Option<Conversation> {
+        match self.groups.sessions.get(&id) {
+            Some(info) if info.group => Some(Conversation::Group(id)),
+            Some(_) => None,
+            None if self.groups.is_member(&id) => Some(Conversation::Group(id)),
+            None => Some(Conversation::Resident(id)),
         }
-        save(path, &conversations);
     }
 
     /// Called each frame: group membership and mutes may arrive after login.
@@ -225,7 +227,6 @@ mod tests {
         let (resident, group, conference, pending) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4));
         let dir = std::env::temp_dir().join(format!("aurora-open-ims-{}", Uuid::new_v4()));
         let path = dir.join(FILE);
-        w.open_ims_path = Some(path.clone());
         w.social.session_mut(resident);
         w.on_group_event(NetEvent::Groups(vec![membership(group)]));
         w.info_mut(group, "");
@@ -233,7 +234,7 @@ mod tests {
         w.info_mut(conference, "Conference");
         w.session_lines(conference);
         w.reopen_ims = vec![Conversation::Group(group), Conversation::Group(pending)];
-        w.save_open_ims();
+        save(&path, &w.open_conversations().collect::<Vec<_>>());
         assert_eq!(
             load(&path),
             [

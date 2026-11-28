@@ -43,6 +43,16 @@ anim-timeline-mirror = Зеркально редактировать и доба
 anim-timeline-limb-handles = Показать манипуляторы кистей, стоп, локтей и коленей
 anim-timeline-key = Добавить ключ
 anim-timeline-key-hint = Добавить ключ выбранной кости в текущем кадре (K)
+anim-timeline-channels-hint = Показать ключи вращения и положения этой кости в отдельных строках
+anim-timeline-channel-rotation = Вращение
+anim-timeline-channel-location = Положение
+anim-timeline-keying-hint = Что записывает ключ. С Положением перемещение берёт один сустав, вне его цепочки IK. В анимациях Second Life нет ключей масштаба.
+anim-timeline-keying-auto = Авто: вращение и положение таза и сдвинутых суставов
+anim-timeline-keying-auto-short = Авто
+anim-timeline-keying-loc-rot = Положение и вращение
+anim-timeline-keying-loc-rot-short = Пол. + Вращ.
+anim-timeline-keying-rot-short = Вращ.
+anim-timeline-keying-loc-short = Пол.
 anim-timeline-zoom-out = Уменьшить масштаб (Ctrl+колёсико)
 anim-timeline-zoom-in = Увеличить масштаб (Ctrl+колёсико)
 anim-timeline-fit = Показать анимацию целиком (Shift+колёсико прокручивает шкалу)
@@ -302,7 +312,6 @@ owned-land-contribution = { $area } м²
 toolbar-edit = Кнопки панелей…
 toolbar-title = Кнопки панелей
 toolbar-remove = Убрать эту кнопку
-toolbar-locked = Закреплено
 toolbar-locked-bars = Закрепить панели
 toolbar-help = Чтобы добавить кнопку, перетащите её на док или боковую панель. Чтобы убрать её, перетащите обратно сюда. Те же настройки доступны по щелчку правой кнопкой мыши на панели.
 toolbar-help-classic = Чтобы добавить кнопку, перетащите её на нижнюю или боковую панель. Чтобы убрать её, перетащите обратно сюда. Те же настройки доступны по щелчку правой кнопкой мыши на панели.
@@ -362,18 +371,13 @@ toolbar-command-quickprefs = Быстрые настройки
 toolbar-command-web-browser = Веб-браузер
 toolbar-command-chat-bar = Строка чата
 toolbar-command-area-search = Поиск объектов поблизости
-area-search-hint = Поиск по названию объекта, описанию, владельцу, создателю или UUID…
 area-search-refresh = Обновить
-area-search-parcel = Только текущий участок
-area-search-children = Включить связанные примы
 area-search-mine = Мои объекты
 area-search-filters = Фильтры
 area-search-sale = Продаётся
 area-search-physical = Физический
 area-search-phantom = Фантомный
 area-search-temporary = Временный
-area-search-distance = Максимальное расстояние
-area-search-reset = Сбросить фильтры
 area-search-count = Показано объектов: { $shown } из { $total } · ожидают сведений: { $pending }
 area-search-parcel-pending = Ожидание границ текущего участка…
 area-search-scope = В списке только объекты, полученные вьюером.
@@ -382,7 +386,6 @@ area-search-price = Цена
 area-search-inspect = Осмотреть
 area-search-zoom = Приблизить
 area-search-copy = Копировать UUID
-area-search-neighbors = Включить соседние регионы
 area-search-demo-description = Тестовый объект для проверки поиска и фильтров без подключения
 area-search-empty = По этим фильтрам ничего не найдено.
 area-search-sit = Сесть
@@ -1069,11 +1072,6 @@ login-accounts-forget-password = Удалить сохранённый паро�
 login-accounts-remove = Удалить аккаунт
 login-accounts-confirm = Действие затронет только { $name }. Продолжить?
 import-title = Импорт ресурсов
-import-entry-point = Интерфейс импорта
-import-entry-point-help = Выберите, что открывать по команде «Строительство → Импорт» и сочетанию клавиш импорта (по умолчанию Ctrl+U). Из панели быстрого импорта тоже можно открыть полное окно загрузки.
-import-entry-window = Окно загрузки
-import-launcher-folder = Папка
-import-icon-bar = Панель быстрого импорта
 import-type-title = Импорт — { $type }
 import-open-inventory = Показать в инвентаре
 import-lod-high = Высокий
@@ -1267,7 +1265,6 @@ import-hands-salute = Отдать честь правой рукой
 import-hands-typing = Набор текста
 import-hands-peace = Знак мира правой рукой
 import-menu = Импорт
-import-launcher-settings = Настройки
 import-settings-title = Настройки импорта
 import-texture = Текстура
 import-sound = Звук
@@ -1599,10 +1596,7 @@ inventory-move-confirm = Переместить
 inventory-move-connection-unavailable = Не удалось переместить: нет связи с регионом.
 inventory-move-invalid-target = Предмет или папка назначения не найдены. Загрузите инвентарь заново.
 ao-title = AO · Анимации аватара
-ao-help = Выберите состояние слева. Щёлкните по анимации, чтобы выбрать её, или перетащите, чтобы изменить порядок. Команда «Объединить…» создаёт группу для одновременного воспроизведения или дорожку со своим циклом. Наборы и параметры хранятся в #Aurora/Aurora AO.
 ao-enabled = Включить AO
-ao-pause = Приостановить
-ao-stands = Стойки и повороты
 ao-set = Набор
 ao-reload = Загрузить наборы из инвентаря заново
 ao-new = Новый набор
@@ -1625,22 +1619,16 @@ ao-empty = Для начала создайте набор или импорти
 ao-sits = Заменять анимации сидения
 ao-smart = Умная замена анимаций сидения
 ao-mouselook = Отключать стойки при виде от первого лица
-ao-default = Набор по умолчанию
 ao-current = Текущее состояние: { $state }
 ao-previous = Предыдущая анимация
 ao-next = Следующая анимация
-ao-add = Добавить анимацию
 ao-play-tip = Дважды щёлкните, чтобы выбрать эту анимацию
 ao-up = Переместить вверх
 ao-down = Переместить вниз
-ao-track = Дорожка
-ao-group = Группа
-ao-drop = Добавьте или перетащите сюда анимацию.
 ao-container-name = Название группы или дорожки
 ao-target = Добавить в: { $name }
 ao-state-root = Основное состояние
 ao-cycle = По порядку
-ao-random = Случайный порядок
 ao-set-name = Название набора AO
 ao-remove-confirm = Удалить эту запись AO? Исходные анимации сохранятся, а удалённые папки попадут в корзину.
 ao-choose = Выбрать из инвентаря
@@ -1690,7 +1678,6 @@ ao-water-shore-exit = Прыжок из воды на препятствие
 ao-swim-slots = Анимации плавания для этого набора
 ao-swim-required = Отсутствуют обязательные анимации плавания.
 ao-swim-required-missing = Для включения плавания нужно назначить эту анимацию.
-ao-swim-required-present = Обязательная для плавания анимация назначена.
 ao-swim-choose = Выбрать анимацию…
 ao-swim-ready = Все обязательные анимации плавания назначены.
 ao-swimming-forward = Плавание на поверхности
@@ -1701,7 +1688,6 @@ ao-water-dive-entry = Нырок · вход в воду
 ao-water-cannonball = Прыжок бомбочкой
 ao-swim-optional = Этот слот необязателен. Текущие анимации плавания работают и без него.
 movement-water-jumps = Нырки и прыжки бомбочкой
-movement-water-jumps-help = Для нырка повторно нажмите кнопку прыжка в течение 0,45 с после прыжка. Более позднее нажатие, повторное нажатие во время нырка или нажатие в полёте над водой запускает прыжок бомбочкой.
 ao-swimming-up = Плавание вверх
 ao-swimming-down = Плавание вниз
 ao-always = Всегда
@@ -3377,9 +3363,6 @@ ui-options-show-chat-channel-hint = Показывает выбор канала
 ui-options-show-recent-emojis = Показывать недавние эмодзи
 ui-options-show-recent-emojis-hint = Последние использованные эмодзи появятся над полями чата после первой отправки. Щёлкните по эмодзи, чтобы добавить его в сообщение.
 ui-options-show-recent-emojis-legacy = Показывать недавние эмодзи (классический стиль)
-ui-options-show-recent-emojis-legacy-hint = В классическом стиле чата последние эмодзи появляются под полями ввода. По умолчанию строка скрыта, как в классическом вьюере.
-ui-options-favorite-emojis = Избранные эмодзи
-ui-options-favorite-emojis-hint = Щёлкните по эмодзи правой кнопкой в списке выбора или в строке недавних, чтобы сохранить его. Избранные эмодзи идут первыми в строке и доступны в отдельной вкладке.
 ui-options-script-errors = Ошибки скриптов
 ui-options-script-errors-in-chat = Показывать ошибки скриптов в общем чате
 ui-options-script-errors-in-chat-hint = Ошибки скриптов ваших объектов отображаются в чате красным со значком предупреждения и сохраняются в окне «Отладка скриптов» без его открытия. Если настройка выключена, окно открывается при каждой ошибке. Это видно только вам.
@@ -4949,8 +4932,6 @@ ui-land-general-script-info = Сведения о скриптах
 world-profiles-joined-today = Аккаунт создан сегодня
 keybinds-insert = Insert
 ui-context-inspect-2 = Осмотреть
-ui-context-inspect-all-attachments = Осмотреть все прикреплённые объекты
-inspect-title = Осмотр объектов
 inspect-col-name = Название объекта
 inspect-col-description = Описание
 inspect-col-owner = Владелец
@@ -4964,24 +4945,8 @@ inspect-col-created = Дата создания
 inspect-date = { $day }.{ $month }.{ $year } { $hour }:{ $minute }
 inspect-empty = Нечего осматривать.
 inspect-group-owner = [{ $name }] (группа)
-inspect-owner-profile = Открыть профиль владельца…
 inspect-owner-profile-tip = Профиль владельца выделенного объекта
-inspect-creator-profile = Открыть профиль создателя…
 inspect-creator-profile-tip = Профиль первоначального создателя выделенного объекта
-inspect-options = Отображаемые столбцы
-inspect-totals = Сводная статистика
-inspect-totals-objects =
-    { $objects ->
-        [one] { $objects } объект
-        [few] { $objects } объекта
-        [many] { $objects } объектов
-       *[other] { $objects } объекта
-    }, { $prims ->
-        [one] { $prims } прим
-        [few] { $prims } прима
-        [many] { $prims } примов
-       *[other] { $prims } прима
-    }
 inspect-totals-visible = Видимые грани
 inspect-totals-complexity = Сложность
 inspect-totals-textures = Текстуры
@@ -11229,8 +11194,6 @@ ui-options-chat-logs-dated-help = Отдельный файл за месяц д
 ui-options-chat-logs-note = Это обычные текстовые файлы, доступные любому, кто пользуется компьютером. Они хранятся на нём отдельно для каждого аккаунта и грида и не прикладываются к отчётам об ошибках.
 ui-options-chat-logs-open = Открыть папку
 ui-options-chat-logs-folder-help = Файлы этого аккаунта будут перемещены в новую папку.
-ui-options-chat-logs-legacy-layout = Использовать общую папку с классическим вьюером
-ui-options-chat-logs-legacy-layout-help = Записывает файлы аккаунта в формате классического вьюера внутри выбранной папки (first_last), чтобы оба вьюера читали и дополняли одну историю. Выберите выше папку истории классического вьюера. Aurora только добавляет строки, без переноса, импорта или удаления. После выключения Aurora снова использует свои файлы. Настройка «Файлы по датам» должна совпадать в обоих вьюерах. Только для Second Life. По умолчанию выключено.
 ui-options-chat-logs-moved =
     { $count ->
         [one] Перемещён { $count } файл.
@@ -12507,7 +12470,6 @@ ui-land-dialogs-return-objects-of-owners =
        *[other] Вернуть объекты владельцам? Объектов: { $count } · владельцев: { $owners }
     }
 ui-land-dialogs-objects-of-owners-returned = Объекты выбранных владельцев возвращены.
-ui-group-profile-title = Профиль группы
 ui-group-profile-view = Открыть профиль группы
 ui-group-profile-members-and-roles = Участники и роли
 ui-group-profile-leave = Выйти
@@ -13055,7 +13017,6 @@ demo-buy-land-bought = Демонстрация покупки: участок �
 import-permissions-tab = Права доступа
 import-permissions-help = Эти настройки применяются к загружаемым текстурам, звукам, анимациям, материалам и мешам.
 import-permissions-sharing = Общий доступ
-import-permissions-payment = Оплата
 import-preview-enlarge = Увеличить предпросмотр
 import-preview-enlarged = Увеличенный предпросмотр · { $name }
 import-preview-gestures = Перетаскивание — вращение · Shift + перетаскивание — сдвиг · колёсико — зум
@@ -13653,19 +13614,7 @@ movement-running = Улучшить бег
 movement-fly-assist = Улучшить полёт
 movement-swimming = Включить плавание
 movement-jump-obstacles = Выпрыгивать из воды у крутых препятствий
-movement-key-unbound = Не назначено
-movement-key-double = Двойное нажатие
-movement-water-submerge = На поверхности: нырнуть
-movement-water-surface = Под водой: всплыть
-movement-water-leap = На поверхности: выпрыгнуть из воды
-movement-water-takeoff = На поверхности: взлететь
-movement-water-dive = Нырок: сразу после прыжка
-movement-water-cannonball = Прыжок бомбочкой: в полёте или повторным нажатием во время нырка
-movement-water-walk-crouch = Присесть / идти вприсядку
-movement-water-walk-jump = Прыгнуть и приземлиться на воду
 movement-water-walk = Идти / бежать по воде
-movement-run-multiplier = Множитель скорости бега
-movement-run-help = ×1 сохраняет обычный бег. Увеличьте до ×5 для ускорения. Скорость ходьбы сохраняется.
 movement-run-awaiting-script = Бег: ожидание свежих данных моста.
 movement-run-no-command = Бег: скрипт не получает команду ускорения.
 movement-run-no-controls = ожидание клавиш движения
@@ -13681,8 +13630,6 @@ movement-run-ramping = плавный разгон
 movement-run-saturated = достигнут предел тяги
 movement-run-regulation = Запрошено тяги: { $power }% · цель разгона: { $ramp } м/с · перезапусков: { $restarts }.
 movement-run-feedback = Бег: { $state }. Цель { $target } м/с · замер скрипта { $speed } м/с · обновлений тяги: { $pushes }.
-movement-swim-speed = Плавание
-movement-fly-multiplier = Множитель скорости полёта
 movement-float-height = Высота на воде
 movement-float-help = Смещение относительно обычного положения на поверхности. Положительное поднимает, отрицательное опускает. Значение 0 м восстанавливает исходную высоту.
 movement-speed-help = Каждую функцию можно переключать отдельно. Физика симулятора и задержка могут ограничить скорость. Фиксация положения имеет приоритет.
@@ -13786,26 +13733,8 @@ bridge-request-http = Симулятор отклонил запрос мост�
 bridge-request-gone = Адрес моста изменился вместе с регионом. Повторное подключение.
 bridge-request-response = Мост вернул нечитаемое или неполное состояние. Повторяем.
 bridge-request-sequence = Ответ моста не соответствует команде. Повторяем.
-ao-design-title = Варианты компоновки AO
-ao-design-help = Сравните текущее окно AO с двумя вариантами компоновки управления движением. Текущие элементы AO используют то же окно и элементы управления.
-ao-design-current = Текущее окно
-ao-design-tabs = Вкладки «Анимации» и «Движение»
-ao-design-section = Сворачиваемый раздел движения
-ao-design-avatar = Состояние аватара в предпросмотре
-ao-design-animations = Анимации
-ao-design-movement = Движение
-ao-design-swim-animations = Выбрать анимации плавания в AO
-ao-design-open = Открыть AO
-ao-design-reset = Сбросить настройки движения
-ao-design-session = Автономный прототип. Настройки движения временные и не влияют на управление или сетевой аккаунт.
-ao-design-movement-help = Каждая функция движения работает отдельно. Включение AO управляет воспроизведением анимации.
-ao-design-animation-help = Анимации плавания выбираются в состояниях плавания AO из списков инвентаря.
-ao-design-passage = Предпросмотр. Здесь был бы отправлен запрос на проход через препятствие.
-ao-tab-animations = Анимации
-ao-tab-movement = Движение (ЭКСПЕРИМЕНТАЛЬНО)
 ao-movement-help = Улучшения движения настраиваются отдельно от остальных анимаций AO.
 movement-pass-enable = Проход через препятствия
-movement-fly-help = ×1 сохраняет обычный полёт. Для ускорения установите значение до ×5.
 radar-opt-bridge = Уточнять неизвестную высоту через мост Aurora
 bridge-script-info-loading = Получение сведений о скриптах через мост Aurora…
 bridge-script-info-region = Сведения о скриптах доступны только для объектов в текущем регионе.
@@ -13842,63 +13771,11 @@ bridge-object-info-result =
     Ваше текущее положение: { $observer }
 bridge-query-timeout = Мост не вернул запрошенные сведения вовремя. Повторите попытку.
 bridge-query-interrupted = Запрос сведений прерван сменой региона или подключения к мосту. Повторите попытку.
-ao-states = Состояния
-ao-combine = Объединить…
 ao-combine-title = Объединить анимации
-ao-new-group = Новая группа
-ao-new-track = Новая дорожка
-ao-group-name = Название группы
-ao-track-name = Название дорожки
-ao-create-group = Создать группу
-ao-create-track = Создать дорожку
-ao-combine-name-exists = Группа или дорожка с таким названием уже есть.
-ao-rename-combination = Переименовать группу или дорожку
-ao-group-example = Группа воспроизводит несколько анимаций одновременно. Например, позу тела и анимацию кисти.
-ao-track-example = У дорожки свой цикл, который идёт параллельно основному. Например, можно менять жесты рук, пока позы тела идут по своему циклу.
 ao-combine-existing = Перенести сюда анимации из «{ $state }»
 ao-combine-existing-help = Отмеченные анимации будут удалены из основного списка.
-ao-back-state = ← Назад к «{ $state }»
-ao-group-kind = Группа · Одновременное воспроизведение
-ao-track-kind = Дорожка · Независимый цикл
-ao-group-explanation = Все анимации группы воспроизводятся одновременно.
-ao-track-explanation = Анимации дорожки воспроизводятся по очереди параллельно циклу «{ $state }».
-ao-add-group = Добавить в группу
-ao-add-track = Добавить на дорожку
-ao-group-cycle-help = Группа занимает одну позицию в цикле «{ $state }».
-ao-dissolve-group = Разгруппировать анимации
-ao-dissolve-track = Разобрать дорожку
 ao-combine-empty = Добавьте сюда анимации.
-ao-parallel-tracks = Параллельные дорожки
-ao-entry-help = Нажмите для выбора или открытия · Перетащите для изменения порядка
-ao-track-cycle = Цикл дорожки
-ao-state-cycle = Цикл «{ $state }»
-ao-auto-cycle = Переключать автоматически
-ao-cycle-interval = Интервал
-ao-group-summary =
-    { $count ->
-        [one] Группа · { $count } анимация
-        [few] Группа · { $count } анимации одновременно
-        [many] Группа · { $count } анимаций одновременно
-       *[other] Группа · { $count } анимации одновременно
-    }
-ao-track-summary =
-    { $count ->
-        [one] Дорожка · { $count } анимация · Независимый цикл
-        [few] Дорожка · { $count } анимации · Независимый цикл
-        [many] Дорожка · { $count } анимаций · Независимый цикл
-       *[other] Дорожка · { $count } анимации · Независимый цикл
-    }
-ao-group-count =
-    { $count ->
-        [one] { $count } анимация для воспроизведения
-        [few] { $count } анимации для одновременного воспроизведения
-        [many] { $count } анимаций для одновременного воспроизведения
-       *[other] { $count } анимации для одновременного воспроизведения
-    }
-movement-run-speed = Скорость бега
-movement-flight-speed = Скорость полёта
 ao-combine-group-choice = Воспроизводить несколько анимаций одновременно
-ao-combine-track-choice = Добавить независимый цикл
 numeric-increase = Увеличить
 numeric-decrease = Уменьшить
 build-status-no-mod = Изменение запрещено
@@ -14542,7 +14419,6 @@ rlva-hidden-region = (Cкрытый регион)
 rlva-hidden-parcel = (Cкрытый участок)
 rlva-enable = Включить RLVa
 rlva-enable-hint = Разрешает объектам управлять действиями вьюера с помощью команд RestrainedLove. При ограничениях может потребоваться вход в последнем месте. По умолчанию отключено.
-rlva-session-hint = Отключение RLVa немедленно снимает все ограничения, включая ограничение при следующем входе.
 rlva-blocked = Это действие ограничено RLVa.
 rlva-active = Активные ограничения
 rlva-none = Нет активных ограничений
@@ -15505,24 +15381,11 @@ area-search-group = Группа
 area-search-last-owner = Предыдущий владелец
 area-search-land-impact = Нагрузка на участок
 area-search-prim-count = Число примов
-area-search-search = Поиск
-area-search-columns = Столбцы
-area-search-regex = Использовать регулярные выражения
 area-search-regex-error = Регулярное выражение: { $error }
-area-search-required = Показывать только объекты со следующими признаками
-area-search-excluded = Исключать объекты со следующими признаками
-area-search-ranges = Расстояние и цена продажи
-area-search-attachment = Вложения
 area-search-media = Общие медиа
 area-search-copy-perm = Копирование
 area-search-modify-perm = Изменение
 area-search-transfer-perm = Передача
-area-search-probes = Датчики отражений
-area-search-child-prim = Дочерние примы
-area-search-neighbor-regions = В соседних регионах
-area-search-distance-range = Расстояние
-area-search-min = Мин.
-area-search-max = Макс.
 area-search-click-action = Действие по щелчку
 area-search-click-unrestricted = Без ограничений
 area-search-click-any = Любое действие
@@ -15534,13 +15397,7 @@ area-search-save-defaults = Сохранить по умолчанию
 area-search-copy-link = Скопировать как ссылку
 area-search-reset-columns = Восстановить столбцы
 area-search-regex-limit = Превышен предел поиска совпадений. Упростите выражение.
-area-search-reset-all-tip = Сбросить весь поиск.
-area-search-reset-search-tip = Очистить поля поиска и регулярные выражения.
-area-search-reset-options-tip = Восстановить исходные настройки фильтров.
 area-search-reset-columns-tip = Восстановить стандартные столбцы.
-area-search-range-options = Диапазоны
-area-search-reset-ranges-tip = Восстановить стандартные диапазоны расстояния и цены продажи.
-area-search-results = Результаты
 local-appearance-warning =
     { $count ->
         [one] Локальные текстуры и материалы · { $count } объект

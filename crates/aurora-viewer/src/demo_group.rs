@@ -125,6 +125,31 @@ pub fn invitees() -> Option<Vec<Uuid>> {
     (v.split(':').nth(1) == Some("invite")).then(|| vec![super::DEMO_FRIEND, Uuid::from_u128(MEMBER | 5000), DEMO_NOVA])
 }
 
+/// `:second`: another group's window opens beside the first one
+/// (FSFloaterGroup, one window per group), which keeps its tab and draft:
+/// Northern Wolves, where we have the same abilities as in the first group
+/// (a notice can be written in both), or Aurora Builders for a guest.
+pub fn second_group() -> Option<Uuid> {
+    let v = std::env::var("AURORA_DEMO_GROUP_PROFILE").ok()?;
+    v.split(':').skip(1).any(|p| p == "second").then(|| match shown_group() {
+        DEMO_GROUP1 => super::DEMO_GROUP2,
+        _ => DEMO_GROUP1,
+    })
+}
+
+/// The first id of the extra groups of `AURORA_DEMO_GROUPS=many|150`.
+pub const MANY_GROUPS: u128 = 0x6E00_0000_0000_0000_0000_0000_0000_1000;
+
+/// The groups a resident may belong to at most (the grid's 150).
+pub const MAX_GROUPS: usize = 150;
+
+/// `AURORA_DEMO_GROUPS=150`: an extra group where we have the first
+/// group's abilities (two in three), so a notice is written and sent there.
+pub fn many_group_sends(id: Uuid) -> bool {
+    let n = id.as_u128().wrapping_sub(MANY_GROUPS);
+    std::env::var("AURORA_DEMO_GROUPS").is_ok_and(|m| m == "150") && n < MAX_GROUPS as u128 && n % 3 != 2
+}
+
 /// The group the profile opens on in this scenario.
 pub fn shown_group() -> Uuid {
     match scenario() {
@@ -993,10 +1018,14 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
             message,
             bucket,
             ..
-        } if *to == DEMO_GROUP1 => {
-            log::info!("demo group: notice sent ({} bytes attached)", bucket.len().saturating_sub(1));
+        } if *to == DEMO_GROUP1 || second_group() == Some(*to) || many_group_sends(*to) => {
+            // the group named: `:second` checks a draft went to its own
+            log::info!(
+                "demo group: notice sent to {to} ({} bytes attached)",
+                bucket.len().saturating_sub(1)
+            );
             vec![NetEvent::InstantMessage(aurora_net::InstantMessage {
-                from_agent_id: DEMO_GROUP1,
+                from_agent_id: *to,
                 from_name: "Aurora Demo".into(),
                 to_agent_id: DEMO_AGENT,
                 dialog: 32,

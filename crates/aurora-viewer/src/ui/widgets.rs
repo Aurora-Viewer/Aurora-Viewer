@@ -58,7 +58,7 @@ pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     chip_row, clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab,
     pill_tab_wide, reveal_search_selection, search_box, search_cleared, search_list_item, search_scroll_to_column, search_scroll_to_row,
-    search_text_edit, search_text_edit_with_margin,
+    search_text_edit, search_text_edit_with_margin, select_on_focus,
 };
 pub use text_field::text_field;
 pub use tracks::{
@@ -68,8 +68,9 @@ pub use tracks::{
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
-    FORM_LABEL_W, FORM_SLIDER_W, Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark,
-    form_row, glyph, navigation, navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
+    FORM_LABEL_W, FORM_SLIDER_W, Modal, ModalGround, NoticeKind, caret_room, collapsing, collapsing_forced, disclosure_caret,
+    experimental_mark, form_row, glyph, navigation, navigation_beside, navigation_wrapped, notice, paint_glyph, section_header, sort_caret,
+    stat, surface,
 };
 pub(crate) use workspace::{
     INVENTORY_LABEL_PADDING, finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
@@ -296,6 +297,36 @@ pub fn floater_chrome(ctx: &egui::Context) -> Vec2 {
 fn fit_in(area: egui::Rect, pos: egui::Pos2, size: Vec2) -> egui::Pos2 {
     let max = (area.max - size).max(area.min);
     pos.clamp(area.min, max)
+}
+
+/// Anchor a popup on the roomier side when it cannot fit below its control.
+/// The returned y belongs to the top pivot, or the bottom pivot when `above`.
+pub fn popup_vertical(screen: egui::Rect, control: egui::Rect, wanted: f32, gap: f32) -> (f32, bool, f32) {
+    let below = (screen.bottom() - control.bottom() - gap).max(0.0);
+    let above = (control.top() - screen.top() - gap).max(0.0);
+    let opens_above = below < wanted && above > below;
+    if opens_above {
+        (control.top() - gap, true, above)
+    } else {
+        (control.bottom() + gap, false, below)
+    }
+}
+
+#[test]
+fn moved_controls_open_popups_towards_available_space() {
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+    for (y, above) in [(8.0, false), (650.0, true), (330.0, false)] {
+        let control = egui::Rect::from_min_size(egui::pos2(8.0, y), egui::vec2(220.0, 36.0));
+        let (anchor, actual, room) = popup_vertical(screen, control, 280.0, 8.0);
+        assert_eq!(actual, above);
+        let height = room.min(280.0);
+        assert!(anchor >= screen.top() && anchor <= screen.bottom());
+        assert!(if above {
+            anchor - height >= screen.top()
+        } else {
+            anchor + height <= screen.bottom()
+        });
+    }
 }
 
 /// Width of a minimized floater: its icon, a title cut short and its
@@ -741,6 +772,9 @@ pub struct Floater<'a> {
     /// A state at the right end of the title bar, before its buttons: a
     /// dot of its colour and its text in muted.
     pub title_state: Option<(Color32, String)>,
+    /// A switch at the right end of the title bar, before its buttons, with
+    /// its label (the AO window's AO on / off).
+    pub title_switch: Option<(&'a str, &'a mut bool)>,
     pub default_pos: egui::Pos2,
     pub default_size: Vec2,
     pub min_size: Vec2,
@@ -758,6 +792,9 @@ pub struct Floater<'a> {
     /// Resized in height only: its width is the one it opens with
     /// (Performance's full view, lined up under the system island).
     pub height_only: bool,
+    /// Resized in width only, its height following its content (see
+    /// `width_only`).
+    pub width_only: bool,
     /// Put a toolbar directly beneath the title, without a separator layout row.
     pub compact_header: bool,
     /// Something new waits inside (unread messages): the minimized bar shows
@@ -785,6 +822,9 @@ pub struct Floater<'a> {
     /// No title bar: its close cross in a small box against its right edge
     /// (see `headless`).
     pub headless: bool,
+    /// Its glass tinted as the toolbars' (`Palette::bar`) instead of the
+    /// windows' (the mini AO strip, laid over the world like a bar).
+    pub bar_glass: bool,
     /// Its body's margins in place of the floater's own (`margin`).
     pub margin: Option<egui::Margin>,
     /// A window without a title bar shows no close cross, and Ctrl+W passes
@@ -811,11 +851,13 @@ impl<'a> Floater<'a> {
             title_note: None,
             title_note_tooltip: None,
             title_state: None,
+            title_switch: None,
             default_pos: pos,
             default_size: size,
             min_size: Vec2::new(220.0, 120.0),
             resizable: true,
             height_only: false,
+            width_only: false,
             help: None,
             actions: Vec::new(),
             silent: false,
@@ -830,6 +872,7 @@ impl<'a> Floater<'a> {
             aspect: None,
             order: egui::Order::Middle,
             headless: false,
+            bar_glass: false,
             margin: None,
             closable: true,
             cascade: None,
@@ -880,6 +923,12 @@ impl<'a> Floater<'a> {
         self
     }
 
+    /// A switch with its label before the title buttons (see `title_switch`).
+    pub fn title_switch(mut self, label: &'a str, on: &'a mut bool) -> Self {
+        self.title_switch = Some((label, on));
+        self
+    }
+
     /// A state before the title buttons (see `title_state`).
     pub fn title_state(mut self, dot: Color32, text: impl Into<String>) -> Self {
         self.title_state = Some((dot, text.into()));
@@ -912,7 +961,7 @@ impl<'a> Floater<'a> {
     /// window drawn over an overlay of the viewer's (`order`) is a window
     /// of its own outside, over nothing.
     fn goes_outside(&self) -> bool {
-        !STAYS_INSIDE.contains(&self.id) && !self.height_only
+        !STAYS_INSIDE.contains(&self.id) && !self.height_only && !self.width_only
     }
 
     pub fn framed_header(mut self, icon: &'a str) -> Self {
@@ -923,6 +972,16 @@ impl<'a> Floater<'a> {
     pub fn auto_height(mut self) -> Self {
         self.auto_height = true;
         self.resizable = false;
+        self
+    }
+
+    /// As tall as its content, with no scroll bar while the room holds it,
+    /// and resized in width by its left and right edges (the Aurora build
+    /// tools' Create window: its shape grid wraps to the width chosen).
+    pub fn width_only(mut self) -> Self {
+        self.auto_height = true;
+        self.resizable = true;
+        self.width_only = true;
         self
     }
 
@@ -968,6 +1027,12 @@ impl<'a> Floater<'a> {
     /// window by the room its widgets leave, and it cannot be minimized.
     pub fn headless(mut self) -> Self {
         self.headless = true;
+        self
+    }
+
+    /// The toolbars' glass (`bar_glass`).
+    pub fn bar_glass(mut self) -> Self {
+        self.bar_glass = true;
         self
     }
 
@@ -1072,16 +1137,37 @@ impl<'a> Floater<'a> {
         if !self.silent {
             super::sound_cues::floater_shown(ctx, egui::Id::unique(self.id));
         }
-        let opacity = super::surface_opacity::window(ctx, self.id, self.chat);
+        // (one dressed as a bar fades as the bars do, not as a window)
+        let opacity = if self.bar_glass {
+            super::surface_opacity::bars()
+        } else {
+            super::surface_opacity::window(ctx, self.id, self.chat)
+        };
         let shadow = ctx.global_style().visuals.window_shadow;
+        // (the toolbar islands' glass for one laid over the world like a bar)
+        let glass_palette = if self.bar_glass {
+            Palette {
+                panel: p.bar,
+                panel_alpha: workspace::island_alpha(p),
+                ..*p
+            }
+        } else {
+            *p
+        };
+        let tint = glass_palette.panel;
         let fill = super::surface_opacity::frame_fill(
-            p,
-            Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
+            &glass_palette,
+            Color32::from_rgba_unmultiplied(tint.r(), tint.g(), tint.b(), glass_palette.panel_alpha),
             opacity,
         );
+        let border = if self.bar_glass {
+            workspace::island_border(p)
+        } else {
+            border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6)))
+        };
         let frame = egui::Frame::new()
             .fill(fill)
-            .stroke(border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6))))
+            .stroke(border)
             .corner_radius(ctx.global_style().visuals.window_corner_radius)
             .shadow(egui::Shadow {
                 color: shadow.color.gamma_multiply(opacity),
@@ -1134,6 +1220,7 @@ impl<'a> Floater<'a> {
         }
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
         let mut go_outside = false;
+        let mut reset_one = false;
         let mut out = None;
         let window_id = egui::Id::unique(self.id);
         let title_field_id = window_id.with("title_rename_field");
@@ -1154,13 +1241,20 @@ impl<'a> Floater<'a> {
             super::layout::reanchor(ctx, window_id);
             ctx.data_mut(|d| d.insert_temp(window_id.with(PLACE_POS), self.default_pos));
         }
-        let opening = self
-            .cascade
-            .and_then(|group| cascade::prepare(ctx, window_id, group, egui::Rect::from_min_size(self.default_pos, expanded), work));
+        let opening = self.cascade.and_then(|group| {
+            cascade::prepare(
+                ctx,
+                window_id,
+                group,
+                egui::Rect::from_min_size(self.default_pos, expanded),
+                work,
+                self.min_size,
+            )
+        });
         // A window as tall as its content (fixed, or of automatic height)
         // whose content is taller than the room scrolls it, from the frame
         // after the one that showed it too tall, and for as long as it is.
-        let content_sized = !self.resizable && !minimized;
+        let content_sized = (!self.resizable || self.width_only) && !minimized;
         let scroll_id = window_id.with("body_scrolls");
         let scrolls = content_sized && ctx.data(|d| d.get_temp::<bool>(scroll_id)).unwrap_or(false);
         let mut still_too_tall = false;
@@ -1170,7 +1264,7 @@ impl<'a> Floater<'a> {
         // are (LLFloaterView::adjustToFitScreen).
         let shrink = egui::AreaState::load(ctx, window_id)
             .and_then(|s| s.size)
-            .filter(|s| resizable && resize_drag.is_none() && (s.x > work.width() + 0.5 || s.y > work.height() + 0.5))
+            .filter(|s| resizable && !self.width_only && resize_drag.is_none() && (s.x > work.width() + 0.5 || s.y > work.height() + 0.5))
             .map(|s| s.min(work.size()));
         // Our handles clamp both geometry and position at the minimum, while
         // Window retains its normal movement and persisted layout.
@@ -1191,11 +1285,19 @@ impl<'a> Floater<'a> {
         // reports of 2026-11-17 and 2026-11-21). It gets at least the room
         // egui gives a window it opens, which changes nothing until a squeeze.
         if self.auto_height && !minimized {
-            w = w
-                .auto_sized()
-                .min_width(self.default_size.x)
-                .max_width(self.default_size.x)
-                .min_height(work.height());
+            // `width_only`: the width the user left it at, or the one it is
+            // restored to
+            let width = if !self.width_only {
+                self.default_size.x
+            } else if restore {
+                expanded.x
+            } else {
+                egui::AreaState::load(ctx, window_id)
+                    .and_then(|s| s.size)
+                    .map_or(self.default_size.x, |size| size.x)
+            }
+            .clamp(self.min_size.x, work.width());
+            w = w.auto_sized().min_width(width).max_width(width).min_height(work.height());
         } else if self.resizable && !minimized {
             w = w.default_size(self.default_size).min_size(self.min_size);
         } else if !minimized {
@@ -1216,7 +1318,9 @@ impl<'a> Floater<'a> {
                 if self.framed_header.is_some() { 40.0 } else { 38.0 },
             ));
         } else if let Some(size) = opening.as_ref().and_then(|o| o.size).filter(|_| !self.auto_height) {
-            w = w.fixed_size(size);
+            // a stacked window made smaller to keep its step
+            // (`cascade::Group::keeps_step`) stops at its least size
+            w = w.fixed_size(size.max(self.min_size));
         } else if restore && !self.auto_height {
             w = w.fixed_size(expanded.min(work.size()));
         } else if let Some(size) = shrink {
@@ -1276,7 +1380,11 @@ impl<'a> Floater<'a> {
             }
         }
         if let Some(rect) = resized {
-            w = w.fixed_size(rect.size());
+            w = if self.width_only {
+                w.min_width(rect.width()).max_width(rect.width())
+            } else {
+                w.fixed_size(rect.size())
+            };
             asked = Some(rect.min);
         }
         // Whatever places the window, its title bar stays in reach: egui
@@ -1286,7 +1394,8 @@ impl<'a> Floater<'a> {
             w = w.current_pos(pos);
         }
         // `steady_size`: once shown, the body in the window's exact rect
-        let held = self.steady_size && resizable && egui::AreaState::load(ctx, window_id).is_some_and(|s| s.size.is_some());
+        let held =
+            self.steady_size && resizable && !self.width_only && egui::AreaState::load(ctx, window_id).is_some_and(|s| s.size.is_some());
         let mut glass_slot = None;
         let response = w.show(ctx, |outer| {
             glass_slot = Some((outer.painter().clone(), outer.painter().add(egui::Shape::Noop)));
@@ -1304,7 +1413,7 @@ impl<'a> Floater<'a> {
             // Reserve the requested content area as a resizable Window would:
             // height-filling scroll areas otherwise shave a few pixels off
             // each restoration even though Resize remembered the right size.
-            if resizable || (restore && !self.auto_height) {
+            if resizable && !self.width_only || (restore && !self.auto_height) {
                 ui.set_min_size(ui.available_size());
             }
             if self.headless {
@@ -1386,8 +1495,31 @@ impl<'a> Floater<'a> {
                                 **clicked = true;
                             }
                         }
-                        if let Some(h) = self.help {
+                        // The minimized bar leaves help and reset out, so
+                        // the name keeps room (#4756): LLFloater::
+                        // updateTitleButtons (indra/llui/llfloater.cpp)
+                        // hides help on a minimized floater. A compact
+                        // view is no bar and keeps them.
+                        let bar = minimized && !compact;
+                        if let Some(h) = self.help.filter(|_| !bar) {
                             title_button(ui, p, "help-circle-filled").on_hover_text(h);
+                        }
+                        // the window alone back to its default place and
+                        // size (#4756): the last button from close, out of
+                        // a quick click's way
+                        if !bar {
+                            let response = title_button(ui, p, RESET_ICON).on_hover_text(aurora_i18n::tr!("common-window-reset"));
+                            #[cfg(test)]
+                            ui.ctx()
+                                .data_mut(|d| d.insert_temp(egui::Id::unique(("floater_reset", self.id)), response.rect));
+                            if response.clicked() {
+                                reset_one = true;
+                            }
+                        }
+                        if let Some((label, on)) = &mut self.title_switch {
+                            ui.add_space(4.0);
+                            switch(ui, p, on).on_hover_text(*label);
+                            ui.label(RichText::new(*label).size(12.0).color(p.ink));
                         }
                         if let Some((dot, text)) = &self.title_state {
                             ui.add_space(4.0);
@@ -1587,7 +1719,7 @@ impl<'a> Floater<'a> {
                     &painter.with_clip_rect(response.response.rect),
                     slot,
                     response.response.rect,
-                    p,
+                    &glass_palette,
                     radius,
                     opacity,
                 );
@@ -1607,10 +1739,28 @@ impl<'a> Floater<'a> {
                 attention_mark(&painter, p, response.response.rect, radius, wash);
             }
             if let (Some(drag), Some(requested)) = (resize_drag, resized) {
-                drag.finish(ctx, window_id, requested, response.response.rect);
+                // `width_only`: its content reflows to the width asked, a
+                // frame late at most, so a frame wider than asked is no
+                // minimum to keep (it stopped the window from narrowing)
+                let actual = if self.width_only {
+                    egui::Rect::from_min_size(
+                        response.response.rect.min,
+                        egui::vec2(requested.width(), response.response.rect.height()),
+                    )
+                } else {
+                    response.response.rect
+                };
+                drag.finish(ctx, window_id, requested, actual);
             }
             if resizable {
-                resize::handles_of(ctx, p, &response.response, self.height_only);
+                let axes = if self.height_only {
+                    resize::Axes::Height
+                } else if self.width_only {
+                    resize::Axes::Width
+                } else {
+                    resize::Axes::Both
+                };
+                resize::handles_of(ctx, p, &response.response, axes);
             }
         }
         title_draft_end(ctx, window_id, self.title_rename.as_ref(), title_draft, title_finished);
@@ -1629,6 +1779,10 @@ impl<'a> Floater<'a> {
                 unminimize_quietly(ctx, self.id);
             }
             crate::outside::want(ctx, window_id, true);
+        } else if reset_one {
+            // taken at the next frame (`layout::take_reset`), as after
+            // Preferences' "Reset windows…"
+            reset_window(ctx, self.id);
         } else if toggle_min {
             ctx.data_mut(|d| d.insert_persisted(min_id, !minimized));
             if self.cascade.is_some() {
@@ -1723,6 +1877,7 @@ impl<'a> Floater<'a> {
         let mut shape = None;
         let mut body = Some(body);
         let mut back = false;
+        let mut reset_one = false;
         // a document's name, renamed by a double click on it as in the
         // title inside: the title of this window is the system's
         let title_field_id = window_id.with("title_rename_field");
@@ -1829,6 +1984,19 @@ impl<'a> Floater<'a> {
                         }
                         if let Some(h) = self.help {
                             title_button(ui, p, "help-circle-filled").on_hover_text(h);
+                        }
+                        // as inside (#4756): back inside the viewer's
+                        // window, at its default place and size
+                        if title_button(ui, p, RESET_ICON)
+                            .on_hover_text(aurora_i18n::tr!("common-window-reset"))
+                            .clicked()
+                        {
+                            reset_one = true;
+                        }
+                        if let Some((label, on)) = &mut self.title_switch {
+                            ui.add_space(4.0);
+                            switch(ui, p, on).on_hover_text(*label);
+                            ui.label(RichText::new(*label).size(12.0).color(p.ink));
                         }
                         if let Some((dot, text)) = &self.title_state {
                             ui.add_space(4.0);
@@ -1952,6 +2120,11 @@ impl<'a> Floater<'a> {
         }
         if back {
             crate::outside::want(ctx, window_id, false);
+        }
+        if reset_one {
+            // the next frame brings it inside and takes the reset there
+            // (`show`, `layout::reset_pending`)
+            reset_window(ctx, self.id);
         }
         if let (Some(ratio), Some((head, width))) = (ratio, shape) {
             // the window takes the picture's shape once, at its width,
@@ -2600,6 +2773,20 @@ pub fn reset_windows(ctx: &egui::Context) {
     super::perf::forget_monitor_rect(ctx);
 }
 
+/// The reset button of a floater's title bar (#4756): `reset_windows` for
+/// the window `id` alone (`layout::reset_window`). The Performance window
+/// forgets the rect of its full view too.
+pub fn reset_window(ctx: &egui::Context, id: &str) {
+    super::layout::reset_window(ctx, egui::Id::unique(id));
+    if id == super::perf::WINDOW {
+        super::perf::forget_monitor_rect(ctx);
+    }
+}
+
+/// The title bar's reset button (`reset_window`): the icon of Preferences'
+/// "Reset windows…".
+const RESET_ICON: &str = "restore";
+
 /// Split what is left of `ui` between a list and the footer under it (its
 /// buttons, a note): the list gets a child exactly as tall as the room the
 /// footer leaves, and `Footer::show` lays the footer out under it. A list
@@ -2684,6 +2871,13 @@ pub fn take_floater_resize(ctx: &egui::Context, id: &str) -> Option<Vec2> {
 pub fn minimize_floater(ctx: &egui::Context, id: &str) {
     ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((id, "minimized")), true));
     cascade::minimized(ctx, egui::Id::unique(id), true);
+}
+
+/// Undoes `minimize_floater` at once, for a window without a title bar that
+/// an older layout left minimized (the mini AO strip).
+pub fn unminimize_floater(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((id, "minimized")), false));
+    cascade::minimized(ctx, egui::Id::unique(id), false);
 }
 
 /// The accent that says something waits behind `rect`: a violet wash of
@@ -4325,11 +4519,47 @@ pub fn action_button_keyed(
     enabled: bool,
     key: Option<&crate::keybinds::Binding>,
 ) -> egui::Response {
+    action_button_inner(ui, p, icon, label, kind, size, enabled, key, 0.0)
+}
+
+/// `action_button` of a fixed `size` whose right `trailing` points hold a
+/// control of the caller's (an eye): its content is centred in the rest,
+/// and a label too long for it ends with "…", the whole label on hover.
+pub fn action_button_trailing(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    kind: ActionKind,
+    size: Vec2,
+    trailing: f32,
+) -> egui::Response {
+    action_button_inner(ui, p, icon, label, kind, size, true, None, trailing)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn action_button_inner(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    kind: ActionKind,
+    size: Vec2,
+    enabled: bool,
+    key: Option<&crate::keybinds::Binding>,
+    trailing: f32,
+) -> egui::Response {
     const ICON: f32 = KEYED_ICON;
     const GAP: f32 = KEYED_GAP;
     let enabled = enabled && ui.is_enabled();
     let font = control_font(ui, 12.5);
-    let (lead, text_w, caps_w) = keyed_parts(ui, icon, label, key);
+    let (lead, mut text_w, caps_w) = keyed_parts(ui, icon, label, key);
+    // the room the label has beside the caller's control
+    let room = (trailing > 0.0 && size.x > 0.0).then(|| (size.x - trailing - KEYED_PAD / 2.0 - lead - caps_w).max(0.0));
+    let elided = room.is_some_and(|room| text_w > room);
+    if let Some(room) = room {
+        text_w = text_w.min(room);
+    }
     let icon = if key.is_some() && size.x > 0.0 && lead + text_w + caps_w + 2.0 * GAP > size.x {
         ""
     } else {
@@ -4365,8 +4595,12 @@ pub fn action_button_keyed(
             .rect_stroke(rect, radius, Stroke::new(1.0, edge.gamma_multiply(fade)), egui::StrokeKind::Inside);
     }
     let ink = ink.gamma_multiply(fade);
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
-    let left = rect.center().x - content / 2.0;
+    let galley = if elided {
+        elided_galley(ui, RichText::new(label).font(font).color(ink), text_w)
+    } else {
+        ui.painter().layout_no_wrap(label.to_owned(), font, ink)
+    };
+    let left = rect.center().x - trailing / 2.0 - content / 2.0;
     if let Some(texture) = super::icons::global(icon) {
         ui.painter().image(
             texture.id(),
@@ -4387,6 +4621,9 @@ pub fn action_button_keyed(
     }
     if hot {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if elided {
+        resp = resp.on_hover_text(label);
     }
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     resp

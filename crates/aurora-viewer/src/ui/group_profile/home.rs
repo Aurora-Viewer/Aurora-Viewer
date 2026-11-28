@@ -6,7 +6,7 @@
 use super::members::{self, Show};
 use super::notices;
 use super::view::{self, View};
-use super::{Env, GroupAction, GroupProfileUi, Tab};
+use super::{Env, GroupAction, GroupWindow, Tab};
 use crate::theme::Palette;
 use crate::ui::place_details::Ctx;
 use crate::ui::widgets;
@@ -19,7 +19,7 @@ const ONLINE: usize = 8;
 /// Width of the right column.
 const SIDE_W: f32 = 290.0;
 
-pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &View, actions: &mut Vec<GroupAction>) {
+pub fn show(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &View, actions: &mut Vec<GroupAction>) {
     egui::ScrollArea::vertical()
         .id_salt("group_profile_home")
         .auto_shrink([false, false])
@@ -99,7 +99,7 @@ pub fn notice_date(timestamp: u32, now: i64) -> String {
 
 /// The three latest notices (GroupNoticesListReply), each opening in the
 /// Notices tab.
-fn notices(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
+fn notices(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let p = c.p;
     let (_, all) = view::card(
         ui,
@@ -142,7 +142,7 @@ fn notices(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
 }
 
 /// The members online now, owners first, then the officers, then by name.
-fn online(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &View) {
+fn online(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &View) {
     let p = c.p;
     let count = v.online_count();
     let title = match count {
@@ -184,7 +184,7 @@ fn online(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v:
                 let pic = Rect::from_min_size(Pos2::new(row.left(), row.center().y - 15.0), Vec2::splat(30.0));
                 let pics = env.avatar_pics.get(&m.id);
                 if pics.is_none() {
-                    st.want_pic(m.id, env.now);
+                    st.want_pic(m.id);
                 }
                 widgets::avatar_disc(ui, p, pic, pics, &name, false);
                 let status = match crate::ui::presence::of_in(world, NameScope::Roster, &m.id) {

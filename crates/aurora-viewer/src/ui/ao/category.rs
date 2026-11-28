@@ -48,6 +48,17 @@ impl Category {
         }
     }
 
+    /// What the group holds, under its name.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::General => aurora_i18n::tr!("ao-category-general-line"),
+            Self::Ground => aurora_i18n::tr!("ao-category-ground-line"),
+            Self::Jumping => aurora_i18n::tr!("ao-category-jumping-line"),
+            Self::Flight => aurora_i18n::tr!("ao-category-flight-line"),
+            Self::Water => aurora_i18n::tr!("ao-category-water-line"),
+        }
+    }
+
     pub fn states(self) -> impl Iterator<Item = State> + Clone {
         const GROUND_STATES: &[State] = &[
             State::Walking,

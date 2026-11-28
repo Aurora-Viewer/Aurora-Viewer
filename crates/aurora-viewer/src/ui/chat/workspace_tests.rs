@@ -23,6 +23,7 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         blocked: false,
         beyond_range: false,
         speaker: Default::default(),
+        private_history: false,
     }
 }
 
@@ -3449,6 +3450,51 @@ fn an_outgoing_call_does_not_take_the_keyboard_when_it_opens_the_window() {
         assert!(
             h.frames.ctx.memory(|m| m.has_focus(egui::Id::unique(("conv_input", Some(BOB))))),
             "{style:?}: a user request takes the keyboard"
+        );
+    }
+}
+
+/// An emoji chosen in the picker takes the caret after it: what is typed
+/// next follows the emoji, in Aurora's box as in the Legacy style's field.
+/// It went to the end of the draft with the caret left where it was, so the
+/// next characters came before it.
+#[test]
+fn an_emoji_of_the_picker_takes_the_caret_after_it() {
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        h.st.selected = Some(JANE);
+        h.st.conv_focus_request = true;
+        h.settle();
+        h.frame(vec![egui::Event::Text("hello".into())]);
+        h.settle();
+        assert_eq!(h.st.draft_mut(Some(JANE)).as_str(), "hello", "{style:?}: typed in the field");
+        h.st.emoji_open = true;
+        h.settle();
+        let picker = h
+            .frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique(("emoji_picker", Some(JANE)))))
+            .unwrap_or_else(|| panic!("{style:?}: the picker is shown"));
+        // down the picker's first column, to the first emoji met (the
+        // search and the categories write nothing)
+        let mut y = picker.top() + 10.0;
+        while h.st.draft_mut(Some(JANE)).as_str() == "hello" && y < picker.bottom() {
+            h.click(egui::pos2(picker.left() + 21.0, y));
+            y += 12.0;
+        }
+        let picked = h.st.draft_mut(Some(JANE)).clone();
+        assert!(
+            picked.starts_with("hello") && picked.len() > "hello".len(),
+            "{style:?}: an emoji of the picker is written: {picked:?} in {picker:?}"
+        );
+        assert!(!h.st.emoji_open, "{style:?}: the pick closes the picker");
+        h.settle();
+        h.frame(vec![egui::Event::Text("!".into())]);
+        h.settle();
+        assert_eq!(
+            h.st.draft_mut(Some(JANE)).as_str(),
+            format!("{picked}!"),
+            "{style:?}: what is typed next follows the emoji"
         );
     }
 }

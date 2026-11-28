@@ -8,7 +8,7 @@
 use super::view::{Source, View};
 use super::{LineEnv, Mark, find};
 use crate::theme::Palette;
-use crate::world::chat_log::transcript::{Index, PAGE, Reply, Spot, Transcript, contains_ci};
+use crate::world::chat_log::transcript::{HistorySource, Index, PAGE, Reply, Spot, Transcript, contains_ci};
 use crate::world::transcripts::LineClock;
 use crate::world::{ChatLine, World};
 use egui::RichText;
@@ -48,6 +48,11 @@ pub struct HistoryUi {
     /// read once and paged in memory (LLFloaterConversationPreview with
     /// loadStitchedHistory, LL viewer 26.5).
     stitched: Option<Stitched>,
+    /// The other resident of a private conversation (`World::private_peer`):
+    /// its lines resolve their names when drawn, as in the conversation.
+    /// None for the nearby chat, a group or a conference, whose lines keep
+    /// the names the file gives.
+    peer: Option<uuid::Uuid>,
 }
 
 struct Stitched {
@@ -85,15 +90,17 @@ fn field_id() -> egui::Id {
 }
 
 impl HistoryUi {
-    /// Show the transcript of a conversation; `path`: its file, when the
-    /// account has one for it.
-    pub fn show_file(&mut self, title: String, path: Option<PathBuf>) {
+    /// Show the transcript of a conversation; `peer`: the other resident of
+    /// a private one (`World::private_peer`); `source` resolves and opens
+    /// lazily on the `"aurora-transcript"` thread without main-thread I/O.
+    pub fn show_source(&mut self, title: String, peer: Option<uuid::Uuid>, source: Option<HistorySource>) {
         *self = HistoryUi {
             open: true,
             title,
-            index: path.is_none().then_some(None),
-            file: path.and_then(Transcript::open),
+            index: source.is_none().then_some(None),
+            file: source.and_then(Transcript::open_source),
             searches: self.searches,
+            peer,
             ..Default::default()
         };
         if self.file.is_none() {
@@ -102,8 +109,8 @@ impl HistoryUi {
     }
 
     /// Show the stitched history of a direct conversation, read by the
-    /// World (`World::open_direct_preview`); `path`: its transcript file.
-    pub fn show_stitched(&mut self, title: String, resident: uuid::Uuid, path: Option<PathBuf>) {
+    /// World (`World::open_direct_preview`); `source`: its transcript source.
+    pub fn show_stitched(&mut self, title: String, resident: uuid::Uuid, source: Option<HistorySource>) {
         *self = HistoryUi {
             open: true,
             title,
@@ -111,8 +118,9 @@ impl HistoryUi {
             stitched: Some(Stitched {
                 resident,
                 entries: None,
-                folder: path.and_then(|p| p.parent().map(PathBuf::from)),
+                folder: source.as_ref().and_then(HistorySource::folder).map(PathBuf::from),
             }),
+            peer: Some(resident),
             ..Default::default()
         };
     }
@@ -133,10 +141,11 @@ impl HistoryUi {
     }
 
     /// The stitched read came, oldest first: the most recent page shows.
-    pub fn set_stitched(&mut self, entries: Vec<crate::world::chat_log::Entry>) {
+    pub fn set_stitched(&mut self, entries: Vec<crate::world::chat_log::Entry>, folder: Option<PathBuf>) {
         let Some(s) = self.stitched.as_mut() else {
             return;
         };
+        s.folder = s.folder.take().or(folder);
         let messages = entries.len();
         s.entries = Some(entries);
         if messages == 0 {
@@ -178,13 +187,15 @@ impl HistoryUi {
     /// An import merged these transcripts: a page's place in the file is no
     /// longer the same, so the one shown is read again from the start.
     pub fn imported(&mut self, changed: &std::collections::BTreeSet<String>) {
-        let path = self.file.as_ref().map(|f| f.path.clone());
         if self.open
-            && let Some(path) = path
-            && path.file_stem().and_then(|s| s.to_str()).is_some_and(|stem| changed.contains(stem))
+            && let Some(source) = self
+                .file
+                .as_ref()
+                .filter(|f| f.matches_changed(changed))
+                .map(|f| f.source().clone())
         {
             let title = std::mem::take(&mut self.title);
-            self.show_file(title, Some(path));
+            self.show_source(title, self.peer, Some(source));
         }
     }
 
@@ -271,7 +282,7 @@ impl HistoryUi {
             && self.loaded != Some(self.page)
         {
             let page: Vec<_> = entries.iter().skip(self.page * PAGE).take(PAGE).cloned().collect();
-            self.lines = world.history_lines(page, false, true, None).into();
+            self.lines = world.history_lines(page, false, true, self.peer).into();
             self.clock = LineClock::default();
             self.loaded = Some(self.page);
             self.selection.clear();
@@ -296,7 +307,7 @@ impl HistoryUi {
                     }
                 }
                 Reply::Page { page, entries } if page == self.page => {
-                    self.lines = world.history_lines(entries, false, true, None).into();
+                    self.lines = world.history_lines(entries, false, true, self.peer).into();
                     self.clock = LineClock::default();
                     self.loaded = Some(page);
                     // the lines are another page's: numbered again
@@ -449,7 +460,7 @@ impl HistoryUi {
                 if let Some(dir) = self
                     .file
                     .as_ref()
-                    .and_then(|f| f.path.parent())
+                    .and_then(Transcript::folder)
                     .or_else(|| self.stitched.as_ref().and_then(|s| s.folder.as_deref()))
                     && icon_button(ui, p, "folder-open-filled", aurora_i18n::tr!("ui-options-chat-logs-open"), true)
                 {
@@ -686,9 +697,72 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         assert_eq!(NAMES, NameScope::Roster);
         assert_eq!(super::super::sender_name(&world, "Aurora Demo", &line), "Near Tester");
+        // the same lines as a private conversation and a group load them
+        // (`World::history_lines`), the group member's name cached too
+        let me = world.agent_id;
+        let name = |id, username: &str, display: &str, first: &str, last: &str| aurora_net::AvatarNameData {
+            id,
+            username: username.into(),
+            display_name: display.into(),
+            legacy_first: first.into(),
+            legacy_last: last.into(),
+            ..Default::default()
+        };
+        world.social.avatar_names.on_display_names(
+            &[
+                name(near, "near.tester", "Nova", "Near", "Tester"),
+                name(me, "aurora.demo", "Aurie", "Aurora", "Demo"),
+            ],
+            &[],
+            Some(3600),
+        );
+        let entry = |from: &str| crate::world::chat_log::Entry {
+            stamp: String::new(),
+            time: None,
+            from: from.into(),
+            text: "hello".into(),
+        };
+        let entries = || vec![entry("Near Tester"), entry("Aurora Demo")];
+        let private = world.history_lines(entries(), false, false, Some(near));
+        let group = world.history_lines(entries(), false, false, None);
+        let senders = |world: &World, lines: &[ChatLine]| -> Vec<String> {
+            lines.iter().map(|l| super::super::sender_name(world, "Me", l)).collect()
+        };
+        for lines in [&private, &group] {
+            let kinds: Vec<_> = lines.iter().map(|l| (l.kind, l.source)).collect();
+            assert_eq!(
+                kinds,
+                [(crate::world::ChatKind::Im, near), (crate::world::ChatKind::OWN, uuid::Uuid::nil())]
+            );
+        }
+        // a private conversation's history: the cached names, theirs and
+        // ours, as its live lines show them (`draw_line`, the rows, follows
+        // the same rule)
+        assert_eq!(senders(&world, &private), ["Nova", "Aurie"]);
+        assert!(private.iter().all(super::super::log_names_resolve));
+        // a group member's line keeps the name it was written with, and so
+        // does ours there
+        assert_eq!(senders(&world, &group), ["Near Tester", "Aurora Demo"]);
+        assert!(!group.iter().any(super::super::log_names_resolve));
+        assert!(!super::super::log_names_resolve(&line));
+        // display names turned off while the conversation is open: both
+        // sides follow, and back
+        world.social.avatar_names.options.use_display_names = false;
+        assert_eq!(senders(&world, &private), ["Near Tester", "Aurora Demo"]);
+        world.social.avatar_names.options.use_display_names = true;
+        assert_eq!(senders(&world, &private), ["Nova", "Aurie"]);
+        // a name not cached yet: as the file gives it, theirs (the lookup is
+        // queued) and ours (not the live lines' "Me")
+        let mut unknown = private[0].clone();
+        unknown.source = uuid::Uuid::from_u128(77);
+        assert_eq!(super::super::sender_name(&world, "Me", &unknown), "Near Tester");
+        world.agent_id = uuid::Uuid::from_u128(78);
+        assert_eq!(super::super::sender_name(&world, "Me", &private[1]), "Aurora Demo");
+        world.agent_id = me;
         // said now: the stand-in the line takes when it arrives
         let mut said = line.clone();
         said.origin = crate::world::Origin::Live;
@@ -715,5 +789,50 @@ mod tests {
         assert!(!notice.text.contains("Tester"), "{}", notice.text);
         // and nothing rewrites it again when it is drawn
         assert!(!notice.wording(NameScope::World).rewritten);
+    }
+
+    /// The window on a private conversation resolves its lines' names when
+    /// they are drawn, as the conversation does; on a group, a conference
+    /// or the nearby chat it keeps the names the file gives
+    /// (`World::private_peer`).
+    #[test]
+    fn the_window_resolves_names_only_for_a_private_conversation() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let group = uuid::Uuid::from_u128(0x4268);
+        world.groups.groups.push(aurora_net::GroupMembership {
+            id: group,
+            name: "Builders".into(),
+            insignia: uuid::Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+        let resident = uuid::Uuid::from_u128(0x4267);
+        assert_eq!(world.private_peer(resident), Some(resident));
+        assert_eq!(world.private_peer(group), None);
+        assert_eq!(world.private_peer(uuid::Uuid::nil()), None);
+        // a transcript file: the window keeps what the caller decided
+        let mut ui = HistoryUi::default();
+        ui.show_source("Group".into(), world.private_peer(group), None);
+        assert_eq!(ui.peer, None);
+        ui.show_source("Near".into(), world.private_peer(resident), None);
+        assert_eq!(ui.peer, Some(resident));
+        // a stitched history is always a direct conversation's
+        let entry = crate::world::chat_log::Entry {
+            stamp: String::new(),
+            time: None,
+            from: "Near Tester".into(),
+            text: "hello".into(),
+        };
+        let mut ui = HistoryUi::default();
+        ui.show_stitched("Near".into(), resident, None);
+        ui.set_stitched(vec![entry], None);
+        ui.poll(&world);
+        assert_eq!(ui.lines.len(), 1);
+        assert!(ui.lines.iter().all(|l| l.private_history));
     }
 }

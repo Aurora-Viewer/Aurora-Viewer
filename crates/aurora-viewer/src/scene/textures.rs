@@ -25,7 +25,7 @@ use aurora_assets::J2kInfo;
 use aurora_net::fetch::ByteRange;
 use aurora_net::{FetchRequest, FetchResult, Fetcher, Lane};
 use aurora_render::{MipLevel, Renderer, StagedTexture, StagingPool, TexelFormat, build_mips};
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -138,9 +138,18 @@ const UI_ASK_LAPSE: Duration = Duration::from_secs(5);
 /// left by teleport go in about a second instead of in one frame.
 const EVICT_PER_FRAME: usize = 64;
 const EVICT_LOOKS_PER_FRAME: usize = 512;
-/// Uploads set aside in a frame because their texture page is still being
-/// made, before the frame stops looking for one that can go.
+/// Texture sizes whose page is still being made, set aside in a frame
+/// before it stops looking for an upload that can go. The uploads of a
+/// size already waiting do not count: a page the driver takes long to
+/// allocate (video memory full, #4612) would otherwise hold back for that
+/// long the sizes whose pages have room.
 const PAGE_WAITS: usize = 16;
+/// Time a frame spends at most setting aside uploads whose page is not
+/// there, from the first one: thousands may wait for the same page, and a
+/// count would stop the frame in front of them (a frame that has uploaded
+/// nothing has no other limit, `UploadBudget::allows`). Several thousand
+/// set aside in that time.
+const PAGE_WAIT_WALK: Duration = Duration::from_millis(1);
 /// Shortest wait before a texture refused by a full video memory is
 /// decoded and sent again (the renderer's own page wait is 2 s to 30 s).
 const MEMORY_RETRY_MIN: Duration = Duration::from_secs(1);
@@ -1455,7 +1464,7 @@ impl PreviewSource {
         self.image_at_size(id, 256)
     }
 
-    pub(super) fn image_at_size(self, id: Uuid, side: u32) -> Option<Arc<aurora_render::preview::Image>> {
+    pub(crate) fn image_at_size(self, id: Uuid, side: u32) -> Option<Arc<aurora_render::preview::Image>> {
         if let Some(image) = self.local {
             return Some(image);
         }
@@ -1526,6 +1535,16 @@ impl PreviewSource {
 }
 
 impl TextureStreamer {
+    /// At exit: the textures' downloaded bytes (`Entry::data`, up to
+    /// thousands of files) are let go without freeing them on the main
+    /// thread (`Scene::leak_at_exit`). The entries hold no GPU handle; the
+    /// uploads and the staging pool, which do, drop as usual. The writes the
+    /// 2 s housekeeping had not made yet are lost as before.
+    pub(crate) fn leak_at_exit(&mut self) {
+        std::mem::forget(std::mem::take(&mut self.entries));
+        std::mem::forget(std::mem::take(&mut self.by_fetch_key));
+    }
+
     pub fn new(cache_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(cache_dir.join("tex"));
         TextureStreamer {
@@ -3490,8 +3509,11 @@ impl TextureStreamer {
         let t0 = Instant::now();
         let mut spent = 0u64;
         let mut done = 0usize;
-        // uploads whose texture page is not there yet, put back at the end
+        // uploads whose texture page is not there yet, put back at the end,
+        // and their sizes
         let mut waiting: Vec<PendingUpload> = Vec::new();
+        let mut waiting_sizes: HashSet<ChainSize> = HashSet::new();
+        let mut walk_started: Option<Instant> = None;
         self.uploads.promote_ready();
         while budget.allows(done, spent, t0.elapsed()) {
             let Some(mut u) = self.uploads.pop(&mut self.trash) else {
@@ -3526,12 +3548,13 @@ impl TextureStreamer {
             let placed = e.slot != NO_SLOT;
             let queued = &self.uploads;
             if placed
-                && u.chain()
-                    .is_some_and(|chain| !renderer.textures.prepare_page(e.slot, chain, queued.queued(chain)))
+                && let Some(chain) = u.chain()
+                && !renderer.textures.prepare_page(e.slot, chain, queued.queued(chain))
             {
+                waiting_sizes.insert(chain);
                 waiting.push(u);
-                if waiting.len() >= PAGE_WAITS {
-                    // (thousands may wait for that same page)
+                let walk = *walk_started.get_or_insert_with(Instant::now);
+                if waiting_sizes.len() >= PAGE_WAITS || walk.elapsed() >= PAGE_WAIT_WALK {
                     break;
                 }
                 continue;
@@ -4654,6 +4677,23 @@ mod tests {
 
     fn rgba(width: u32, height: u32, levels: u32) -> ChainSize {
         (TexelFormat::Rgba8, width, height, levels)
+    }
+
+    /// At exit the textures' bytes are let go, not freed on the main thread.
+    #[test]
+    fn the_texture_bytes_are_let_go_at_exit() {
+        let mut s = TextureStreamer::new(PathBuf::new());
+        let bytes = Arc::new(vec![7u8; 64]);
+        s.entries.insert(
+            Uuid::from_u128(0x2894),
+            Entry {
+                data: bytes.clone(),
+                ..entry(None, 100.0)
+            },
+        );
+        s.leak_at_exit();
+        drop(s);
+        assert_eq!(Arc::strong_count(&bytes), 2, "left behind, not freed");
     }
 
     /// A 1024 × 1024 texture in use, loaded at `decoded`, covering `need_px`

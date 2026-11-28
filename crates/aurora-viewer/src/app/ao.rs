@@ -24,6 +24,10 @@ impl App {
                 .unwrap_or_default();
             self.ao_runtime = runtime::Runtime::with_choices(choices);
             self.ao_held_changes.clear();
+            // (the preview's stage model goes with the old window's state)
+            self.ao_ui.stage.stage.clear(&self.scene);
+            self.ao_preview_body = None;
+            self.ao_preview_light = None;
             self.ao_ui = Default::default();
             self.ao_missing.clear();
             self.ao_default_applied = false;
@@ -33,15 +37,6 @@ impl App {
             let ready = !matches!(self.ao_demo.as_deref(), Some("firestorm-wait" | "folder-names-wait")) || self.frame_count >= 720;
             crate::ao::demo::inventory_services(&mut self.world, ready);
         }
-        if self.demo
-            && self.ao_ui.prototype.is_none()
-            && let Some(mode) = self.ao_demo.as_deref().filter(|mode| mode.starts_with("design-"))
-        {
-            self.ao_ui.prototype = Some(crate::ui::ao::prototype::Prototype::new(mode));
-            if mode == "design-swim" {
-                self.ao_ui.state = crate::ao::State::SwimmingForward;
-            }
-        }
         if self.demo && self.frame_count == 360 {
             match self.ao_demo.as_deref() {
                 // the Mini AO window alone, without the manager
@@ -49,6 +44,20 @@ impl App {
                 Some(mode) if mode.starts_with("quick") => {
                     self.panels.ao = false;
                     self.toolbar_ui.ao_quick.open = true;
+                }
+                Some("unavailable") => {
+                    // The catalogue has already loaded #Aurora. OpenSim's
+                    // Hypergrid rename keeps the id and the parent.
+                    let brand = inventory::child(&self.world.inventory, self.world.inventory.root, "#Aurora");
+                    if let Some(mut info) = brand.and_then(|id| self.world.inventory.folders.get(&id)).map(|f| f.info.clone()) {
+                        info.name = "#Aurora (Unavailable)".into();
+                        info.version = -1;
+                        self.world.inventory.server_updated(vec![info], Vec::new());
+                    }
+                    self.panels.inventory = true;
+                    self.inventory_ui
+                        .open_folders([Some(self.world.inventory.root), brand].into_iter().flatten());
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(90.0, 80.0), egui::vec2(600.0, 710.0));
                 }
                 Some("folder-names" | "folder-names-wait") => {
                     self.panels.inventory = true;
@@ -59,7 +68,7 @@ impl App {
                     });
                     self.inventory_ui
                         .open_folders([Some(inv.root), brand, bridge].into_iter().flatten());
-                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(90.0, 80.0), egui::vec2(600.0, 710.0));
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(90.0, 80.0), egui::vec2(760.0, 710.0));
                 }
                 Some(mode @ ("migrate" | "migrate-done" | "migrate-swim" | "migrate-alchemy" | "migrate-alchemy-done")) => {
                     self.panels.ao = true;
@@ -92,7 +101,7 @@ impl App {
                     );
                     self.settings.keybinds.set(KeyAction::Down, 1, None);
                     self.open_movement();
-                    crate::ui::widgets::size_floater(&self.egui_ctx, "ao", egui::vec2(520.0, 760.0));
+                    crate::ui::widgets::size_floater(&self.egui_ctx, "ao", egui::vec2(1240.0, 760.0));
                 }
                 Some(mode) if mode.starts_with("interface") => {
                     self.panels.ao = true;
@@ -110,14 +119,14 @@ impl App {
                     {
                         self.ao_runtime.choose(crate::ao::State::Standing, c.folder, index);
                     }
-                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(220.0, 90.0), egui::vec2(560.0, 760.0));
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(160.0, 90.0), egui::vec2(1240.0, 760.0));
                 }
                 Some("swim") => {
                     self.panels.ao = true;
                     self.ao_ui.state = crate::ao::State::SwimmingForward;
                     // Expand only the owned offline capture; ordinary users
                     // retain the manager's saved size and can scroll/resize it.
-                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(220.0, 120.0), egui::vec2(560.0, 740.0));
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(160.0, 90.0), egui::vec2(1240.0, 760.0));
                 }
                 _ => {}
             }
@@ -147,7 +156,7 @@ impl App {
             if matches!(crate::ao::water_demo::mode(), Some("water-walk-ui" | "swim-ui")) && (720..780).contains(&self.frame_count) {
                 self.open_movement();
                 crate::ui::widgets::open_floater(&self.egui_ctx, "ao", &mut self.panels.ao);
-                crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(60.0, 80.0), egui::vec2(600.0, 740.0));
+                crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(60.0, 80.0), egui::vec2(1240.0, 760.0));
             }
             if self.frame_count == 720 {
                 if let Some(index) = match crate::ao::water_demo::mode() {
@@ -167,7 +176,7 @@ impl App {
                 if crate::ao::water_demo::mode().is_some_and(|m| m.starts_with("slots")) {
                     self.ao_ui.tab = 0;
                     crate::ui::widgets::open_floater(&self.egui_ctx, "ao", &mut self.panels.ao);
-                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(100.0, 80.0), egui::vec2(720.0, 760.0));
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(100.0, 80.0), egui::vec2(1240.0, 760.0));
                     self.ao_ui.state = match crate::ao::water_demo::mode() {
                         Some("slots-surface") => crate::ao::State::SwimmingForward,
                         Some("slots-underwater") => crate::ao::State::UnderwaterSwimming,
@@ -283,12 +292,6 @@ impl App {
             .map_or((false, Uuid::nil()), |a| (a.enabled, a.selected));
         // (with Aurora's movement, the walk or the stop of the keys first)
         let raw = self.world.own_signals();
-        let preview = self
-            .demo
-            .then(|| self.ao_ui.prototype.as_mut().map(|prototype| prototype.signal(now)))
-            .flatten()
-            .map(|signal| [signal]);
-        let raw = preview.as_ref().map_or(raw, |signals| signals.as_slice());
         let anchor_hold = self.native_anchor.standing_since(self.world.agent.ground_sit);
         // Preference/set changes release physics first. Retain the verified
         // set until stand-up is acknowledged, including with the AO disabled.
@@ -314,15 +317,6 @@ impl App {
             swim_input.strafe_left |= swim_input.turn_left;
             swim_input.strafe_right |= swim_input.turn_right;
         }
-        // Offline preview states share stock flight/jump/fall UUIDs. Carry
-        // their explicit context just like the real movement controller does.
-        let preview_swim = preview.as_ref().and_then(|signals| {
-            self.ao_ui
-                .prototype
-                .as_ref()
-                .filter(|p| p.pose.swimming())
-                .map(|p| (p.pose, signals[0]))
-        });
         let frame = runtime::Frame {
             raw,
             run_hold: self
@@ -331,7 +325,7 @@ impl App {
                 .map(|start| crate::world::PlayingAnimation::from_signal(crate::ao::State::Running.motion(), 0, start, None)),
             native_running: self.movement_runtime.native_running,
             enabled,
-            swim_hold: preview_swim.or_else(|| self.movement_runtime.swim_signal(now, &swim_input)),
+            swim_hold: self.movement_runtime.swim_signal(now, &swim_input),
             water_walk_hold: self
                 .movement_runtime
                 .water_walk
@@ -343,11 +337,7 @@ impl App {
             mouselook: self.camera.mouselook(),
             on_object,
             seat_animations: self.world.seat_has_animations(),
-            underwater: if preview.is_some() {
-                self.ao_ui.prototype.as_ref().is_some_and(|prototype| prototype.underwater())
-            } else {
-                self.world.agent.position.z < water
-            },
+            underwater: self.world.agent.position.z < water,
             region: self.world.main_region,
         };
         let anims = &mut self.scene.anims;
@@ -500,7 +490,7 @@ impl App {
                 Ok(change) => self.apply_ao_action(Action::Edit(change, None)),
                 Err(reason) => self.ao_ui.message = reason,
             },
-            Action::ShowRecovery(id) => {
+            Action::ShowInInventory(id) => {
                 self.inventory_ui.show_folder(&self.world.inventory, id);
                 crate::ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
@@ -548,10 +538,19 @@ impl App {
             Ok(reply) => {
                 self.world.inventory.remove(&reply.removed);
                 self.world.inventory.apply(reply.contents);
+                // A set made (new, duplicated, imported, brought over) opens in
+                // the window to edit, as FloaterAO selects it; it plays only
+                // once "Use this set" is pressed, or when no set was in use.
                 if let Some(id) = pending.select.and_then(|id| reply.created.get(&id).copied()) {
-                    self.settings.ao.accounts.entry(self.world.agent_id).or_default().selected = id;
-                    if !self.demo {
-                        self.settings.save();
+                    self.ao_ui.editing = Some(id);
+                    let account = self.settings.ao.accounts.entry(self.world.agent_id).or_default();
+                    // (the catalogue is still the one before this reply: a set
+                    // plays by default, or as the first, even with no id saved)
+                    if self.ao_catalog.selected(account.selected).is_none() {
+                        account.selected = id;
+                        if !self.demo {
+                            self.settings.save();
+                        }
                     }
                 }
                 self.ao_catalog.invalidate();
@@ -564,11 +563,12 @@ impl App {
                 {
                     self.ao_runtime.choose(target.state, config.folder, index);
                 }
-                self.ao_ui.message = aurora_i18n::tr!("ao-saved").into();
+                self.ao_ui.note_saved();
                 self.ao_ui.reset_cycle();
             }
             Err(reason) => {
                 self.ao_ui.message = reason;
+                self.ao_ui.drop_moves();
                 // AIS can fail after some operations succeeded. Reload the
                 // server's state; never replay a possibly completed creation.
                 for id in pending.refresh {

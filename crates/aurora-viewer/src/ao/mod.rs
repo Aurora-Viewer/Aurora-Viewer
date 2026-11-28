@@ -37,6 +37,33 @@ pub struct Account {
     /// Last animation link or group per state/track folder, across sets.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub animations: HashMap<Uuid, Uuid>,
+    /// The order "Your sets" lists the sets in, as dragged there. Kept in
+    /// this viewer's settings only: the sets' folders are left as they are
+    /// (nothing of ours in the inventory). The Legacy Viewer lists them as
+    /// the inventory gives them; a set not listed here comes after, by name.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub set_order: Vec<Uuid>,
+}
+
+impl Account {
+    /// `sets` (by name) in the order the user gave them.
+    pub fn ordered<'a>(&self, sets: &'a [Set]) -> Vec<&'a Set> {
+        let mut out: Vec<&Set> = sets.iter().collect();
+        // (stable: the ones not placed keep their order by name)
+        out.sort_by_key(|s| self.set_order.iter().position(|id| *id == s.id).unwrap_or(usize::MAX));
+        out
+    }
+
+    /// Moves the set at `from` to `to` in `shown` (the list as shown), and
+    /// keeps that order.
+    pub fn move_set(&mut self, shown: &[Uuid], from: usize, to: usize) {
+        let mut order = shown.to_vec();
+        if from < order.len() && to < order.len() {
+            let id = order.remove(from);
+            order.insert(to, id);
+        }
+        self.set_order = order;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
