@@ -12512,7 +12512,8 @@ ui-land-dialogs-return-objects-of-owners = { $owners ->
    *[other] これら{ $owners }人の所有者の{ $count }個のオブジェクトを返却しますか？
     }
 ui-land-dialogs-objects-of-owners-returned = 選択した所有者のオブジェクトを返却しました。
-ui-group-profile-title = グループのプロフィール
+ui-group-profile-title-loading = グループのプロフィール－読み込んでいます…
+ui-group-profile-title-named = グループのプロフィール－{ $name }
 ui-group-profile-view = グループのプロフィールを表示
 ui-group-profile-members-and-roles = メンバーと役割
 ui-group-profile-leave = 脱退
@@ -12679,6 +12680,19 @@ ui-group-notices-message = メッセージ…
 ui-group-notices-drop = インベントリ、お気に入り、場所からアイテムまたはランドマークをドラッグ（コピー・譲渡可）
 ui-group-notices-not-attachable = このアイテムは添付できません：コピー可能かつ譲渡可能で、着用していないものである必要があります。
 ui-group-notices-remove-attachment = 添付を削除
+ui-group-notices-copy-tip = 通知を送信できる他のグループにこの通知をコピーします：それぞれのグループが専用のウィンドウで開き、すぐに送信できます
+ui-group-notices-copy-to = この通知のコピー先
+ui-group-notices-copy-replaces = { $group }（作成中の通知を置き換えます）
+ui-group-notices-copy-limit = 一度にコピーできるのは{ $count }グループまでです：さらにコピーするにはもう一度実行してください。
+ui-group-notices-copy-tick-pinned = ピン留めしたグループを選択
+ui-group-notices-copy-others = その他のグループ
+ui-group-notices-copy-copied = { $group }（コピー済み）
+ui-group-notices-copy-clear = 選択をクリア
+ui-group-notices-copy-do = { $count ->
+    [0] コピー
+    [one] { $shown }グループにコピー
+   *[other] { $shown }グループにコピー
+    }
 ui-group-notices-send = { $count ->
     [one] { $shown }人のメンバーに送信
    *[other] { $shown }人のメンバーに送信

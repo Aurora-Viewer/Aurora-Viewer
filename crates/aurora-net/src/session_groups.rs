@@ -129,8 +129,8 @@ impl Session<'_> {
     /// LLGroupMgr::sendCapGroupMembersRequest: the whole list from the
     /// GroupMemberData capability, or GroupMembersRequest when the region
     /// has none ("Falling back to UDP fetch"). A failed request answers
-    /// nothing, as in groupMembersRequestCoro: the window asks again when
-    /// it is opened again.
+    /// no list, as in groupMembersRequestCoro: the window asks again when
+    /// it is opened again, and the event frees the viewer's request queue.
     fn group_members_request(&mut self, group: uuid::Uuid, request: uuid::Uuid) {
         let Some(url) = self.main_cap("GroupMemberData") else {
             log::info!("group members: no GroupMemberData capability, by UDP");
@@ -151,9 +151,15 @@ impl Session<'_> {
                         log::info!("group members: {} from GroupMemberData", page.members.len());
                         let _ = events.send(NetEvent::GroupMembers(Box::new(page)));
                     }
-                    None => log::warn!("group members: no member data received"),
+                    None => {
+                        log::warn!("group members: no member data received");
+                        let _ = events.send(NetEvent::GroupMembersFailed { request });
+                    }
                 },
-                Err(e) => log::warn!("group members: error receiving member data ({e})"),
+                Err(e) => {
+                    log::warn!("group members: error receiving member data ({e})");
+                    let _ = events.send(NetEvent::GroupMembersFailed { request });
+                }
             }
         });
     }

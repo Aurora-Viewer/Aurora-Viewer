@@ -1200,9 +1200,16 @@ impl<'a> Floater<'a> {
             super::layout::reanchor(ctx, window_id);
             ctx.data_mut(|d| d.insert_temp(window_id.with(PLACE_POS), self.default_pos));
         }
-        let opening = self
-            .cascade
-            .and_then(|group| cascade::prepare(ctx, window_id, group, egui::Rect::from_min_size(self.default_pos, expanded), work));
+        let opening = self.cascade.and_then(|group| {
+            cascade::prepare(
+                ctx,
+                window_id,
+                group,
+                egui::Rect::from_min_size(self.default_pos, expanded),
+                work,
+                self.min_size,
+            )
+        });
         // A window as tall as its content (fixed, or of automatic height)
         // whose content is taller than the room scrolls it, from the frame
         // after the one that showed it too tall, and for as long as it is.
@@ -1270,7 +1277,9 @@ impl<'a> Floater<'a> {
                 if self.framed_header.is_some() { 40.0 } else { 38.0 },
             ));
         } else if let Some(size) = opening.as_ref().and_then(|o| o.size).filter(|_| !self.auto_height) {
-            w = w.fixed_size(size);
+            // a stacked window made smaller to keep its step
+            // (`cascade::Group::keeps_step`) stops at its least size
+            w = w.fixed_size(size.max(self.min_size));
         } else if restore && !self.auto_height {
             w = w.fixed_size(expanded.min(work.size()));
         } else if let Some(size) = shrink {

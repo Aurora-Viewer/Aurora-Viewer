@@ -12667,7 +12667,8 @@ ui-land-dialogs-return-objects-of-owners = { $owners ->
    *[other] Rendre les { $count } objets de ces { $owners } propriétaires ?
     }
 ui-land-dialogs-objects-of-owners-returned = Les objets des propriétaires choisis ont été rendus.
-ui-group-profile-title = Profil du groupe
+ui-group-profile-title-loading = Profil du groupe - Chargement...
+ui-group-profile-title-named = Profil du groupe - { $name }
 ui-group-profile-view = Voir le profil du groupe
 ui-group-profile-members-and-roles = Membres et rôles
 ui-group-profile-leave = Quitter
@@ -12834,6 +12835,19 @@ ui-group-notices-message = Message…
 ui-group-notices-drop = Glisser un objet ou un repère depuis l'inventaire, les favoris ou les lieux (copie + transfert)
 ui-group-notices-not-attachable = Cet objet ne peut pas être joint : il doit être copiable et transférable, et ne pas être porté.
 ui-group-notices-remove-attachment = Retirer la pièce jointe
+ui-group-notices-copy-tip = Copier cette notice vers d'autres groupes où vous pouvez envoyer des notices : chacun s'ouvre dans sa propre fenêtre, prêt à l'envoi
+ui-group-notices-copy-to = Copier cette notice vers
+ui-group-notices-copy-replaces = { $group } (remplace la notice en cours d'écriture)
+ui-group-notices-copy-limit = Jusqu'à { $count } groupes à la fois : copiez à nouveau pour d'autres.
+ui-group-notices-copy-tick-pinned = Cocher les groupes épinglés
+ui-group-notices-copy-others = Autres groupes
+ui-group-notices-copy-copied = { $group } (copiée)
+ui-group-notices-copy-clear = Effacer la sélection
+ui-group-notices-copy-do = { $count ->
+    [0] Copier
+    [one] Copier vers { $shown } groupe
+   *[other] Copier vers { $shown } groupes
+    }
 ui-group-notices-send = { $count ->
     [one] Envoyer à { $shown } membre
    *[other] Envoyer à { $shown } membres

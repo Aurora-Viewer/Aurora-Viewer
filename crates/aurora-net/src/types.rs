@@ -1120,6 +1120,12 @@ pub enum NetEvent {
     /// Members of a group: one GroupMembersReply packet, or the whole list
     /// of the GroupMemberData capability.
     GroupMembers(Box<crate::groups::MembersPage>),
+    /// A GroupMemberData request that failed or came back empty
+    /// (groupMembersRequestCoro clears `mMemberRequestInFlight` whatever the
+    /// outcome), so that the next queued request can go out.
+    GroupMembersFailed {
+        request: uuid::Uuid,
+    },
     /// Roles of a group (GroupRoleDataReply, one packet).
     GroupRoles(Box<crate::groups::RolesPage>),
     /// Role / member pairs of a group (GroupRoleMembersReply, one packet).

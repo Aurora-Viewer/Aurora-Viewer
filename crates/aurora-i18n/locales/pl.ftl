@@ -12344,7 +12344,6 @@ ui-land-dialogs-return-objects-of-owners = { $owners ->
    *[other] Zwrócić tym właścicielom ({ $owners }) ich obiekty ({ $count })?
     }
 ui-land-dialogs-objects-of-owners-returned = Obiekty wybranych właścicieli zostały zwrócone.
-ui-group-profile-title = Profil grupy
 ui-group-profile-view = Zobacz profil grupy
 ui-group-profile-members-and-roles = Członkowie i funkcje
 ui-group-profile-leave = Opuść

@@ -39,7 +39,7 @@ impl App {
                 format!("{prefix}-{id}")
             }
             CtxAction::AppLink(link) => match link {
-                AppLink::Group(_) => "group_profile".into(),
+                AppLink::Group(id) => format!("group_profile-{id}"),
                 AppLink::Parcel(_) => {
                     self.settings.standalone_place_details = false;
                     "places".into()

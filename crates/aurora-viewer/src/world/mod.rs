@@ -4911,6 +4911,7 @@ impl World {
             | NetEvent::GroupRoleMembers(_)
             | NetEvent::GroupTitles { .. }
             | NetEvent::GroupNotices { .. }
+            | NetEvent::GroupMembersFailed { .. }
             | NetEvent::GroupBanList { .. }) => {
                 // the Group titles window's own requests
                 if let NetEvent::GroupTitles { group, request, titles } = &ev {

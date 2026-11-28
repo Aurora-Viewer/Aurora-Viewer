@@ -1161,6 +1161,21 @@ pub fn toggle_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, on: &mut b
     clicked
 }
 
+/// Entry that leaves the menu open (a step before the menu's own action,
+/// like ticking several rows at once); true when clicked and enabled.
+pub fn item_stays(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool) -> bool {
+    row(ui, p, icon, label, enabled, End::None, false).clicked() && enabled
+}
+
+/// [`toggle`] that can be greyed out (a choice past its limit).
+pub fn toggle_if(ui: &mut Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, enabled: bool) -> bool {
+    let clicked = row(ui, p, icon, label, enabled, End::Check(*on), false).clicked() && enabled;
+    if clicked {
+        *on = !*on;
+    }
+    clicked
+}
+
 /// Entry opening a sub-menu on hover (▸). A disabled sub-menu does not open.
 pub fn submenu(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, body: impl FnOnce(&mut Ui)) {
     submenu_heading(ui, p, icon, label, enabled, body);

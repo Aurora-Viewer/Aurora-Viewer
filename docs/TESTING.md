@@ -7220,8 +7220,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links][:classic][:wide]` | Group profile window, as a member, officer, owner or guest, in either look |
-| `AURORA_DEMO_GROUPS=many` | More than 50 group memberships for the Conversations group picker |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links][:classic][:wide][:second]` | Group profile window, as a member, officer, owner or guest, in either look; `:second` adds another group's window (Northern Wolves) |
+| `AURORA_DEMO_GROUPS=many\|150` | More than 50 group memberships for the Conversations group picker; `150` fills the list to the grid's most, for copying a notice to many groups |
 | `AURORA_DEMO_ACTIVE_GROUP=none` | Starts the demo session with no active group (active group nil) |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
 | `AURORA_DEMO_GROUP_REGION=1\|still` | Group titles window with region rules; one role of Aurora Builders has a blank title, listed as "<Blank title>"; `1` teleports to a region with its own title and back |
@@ -11208,7 +11208,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   opens the classic window (the Legacy Viewer's eight tabs) on the tab of
   the section asked (`terrain`: Terrain, `scripts` or `interventions`:
   Debug, `people`: Access, none: Region).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links][:classic][:wide]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links][:classic][:wide][:second]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -11287,6 +11287,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (`member:members:classic`) keeps the read-only list and has no
   Administration section; an officer (`officer:admin:classic`) sees only
   the parts their abilities allow.
+  `:second` then opens the profile of another group (Northern Wolves,
+  where we get the same abilities as in Aurora Builders; Aurora Builders
+  for `guest`) in a window of its own, stacked 32 px below and to the
+  right of the first one (smaller when the room is short), which stays
+  open with its tab and draft (one window per group, like the Legacy
+  Viewer's standalone group floaters). With `officer:compose:second`,
+  write a notice in Aurora Builders, open Notices › New notice in Northern
+  Wolves: it starts empty, Aurora Builders still holds its draft, and each
+  Send logs `demo group: notice sent to <its group's id>`. Clicking the
+  first group's name again raises its window as it was.
+  "Copy to other groups" in a draft lists the other group (ticked rows
+  stay ticked while the menu is open); "Copy to 1 group" opens or raises
+  that group's window on a new notice with the same subject, message and
+  attachment, and the log says `group notice draft copied to 1 group(s)`.
+  A group already writing a notice is listed as "(replaces the notice
+  being written)".
   Check the header against the mockup (banner,
   insignia, badges, tabs), the switches of "Me in this group" (the active
   group follows in the top bar, the title in the Title shown list), the
@@ -11298,6 +11314,20 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `RequestGroups` response adds 64 named memberships (67 total). Combine it
   with `AURORA_DEMO_CONV=aurora:new`, then open Start group in the Conversations
   column to inspect the scrollable picker and reach the last entry.
+  `AURORA_DEMO_GROUPS=150` fills the list to 150 groups, the grid's most
+  ("Demo group 001"…); two in three get our abilities of Aurora Builders
+  (every one but each third), so with
+  `AURORA_DEMO_GROUP_PROFILE=officer:compose` the draft's "Copy" menu lists
+  about 100 groups with its search, ticks 10 at most ("Up to 10 groups at
+  a time"), and a second copy reaches 10 more; each Send logs
+  `demo group: notice sent to <its id>`. These groups have no members or
+  roles in the demo.
+  The groups pinned in People (or a group's right-click menu) are listed
+  first under "Pinned", and "Tick the pinned groups" ticks them, 10 at
+  most, leaving the menu open for the copy. After a copy, the same entry,
+  from the window the notice was written in or any window the copy
+  opened, ticks the next pinned groups, and the groups already copied to
+  say "(copied)". "Clear selection" unticks every group.
 - **`AURORA_DEMO_WEARABLE_FAVORITES=1|evening|recent|custom|create|import|import-done`**: the
   Favorite Wearables window (the toolbar's Favorite wearables command, Me ›
   Favorite wearables) opens at frame 300 on the outfit of the Appearance demo (seeded

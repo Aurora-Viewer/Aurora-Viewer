@@ -12074,7 +12074,6 @@ ui-land-dialogs-return-objects-of-owners = { $owners ->
    *[other] Bu { $owners } sahibin { $count } nesnesi kendilerine iade edilsin mi?
     }
 ui-land-dialogs-objects-of-owners-returned = Seçilen sahiplerin nesneleri iade edildi.
-ui-group-profile-title = Grup Profili
 ui-group-profile-view = Grubun profilini görüntüle
 ui-group-profile-members-and-roles = Üyeler ve roller
 ui-group-profile-leave = Ayrıl
