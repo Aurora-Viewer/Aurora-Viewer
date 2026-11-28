@@ -493,10 +493,19 @@ impl StageUi {
             ui.ctx().request_repaint();
         }
         let anchored = match &self.joints {
-            // an upright figure in its own view (the AO preview): framed as
-            // it stands at rest, the camera still while it moves, its floor
-            // under its feet whatever the pose
-            Some(_) if self.upright => model.frame(None, model.still()),
+            // an upright figure in its own view (the AO preview): framed once
+            // as it first shows, then held still while it moves; framed again
+            // only when it changes size a lot (its outfit still arriving),
+            // not when a pose spreads its arms
+            Some(joints) if self.upright => {
+                let (bounds, body) = (model.bounds(&self.bones), model.body(joints));
+                let now = Steady::of(&bounds, body).frame.radius;
+                let steady = match &mut self.steady {
+                    Some(steady) if now < steady.frame.radius * UPRIGHT_GROWN && now > steady.frame.radius * 0.6 => *steady,
+                    steady => *steady.insert(Steady::of(&bounds, body)),
+                };
+                steady.frame
+            }
             Some(joints) if self.worn && !self.single => {
                 let (bounds, body) = (model.bounds(&self.bones), model.body(joints));
                 let steady = match &mut self.steady {
@@ -871,6 +880,11 @@ impl Camera {
 
 /// The darker and the lighter of the theme's text and ground: a light ground
 /// and its text, in any theme.
+/// How much larger an upright figure has to show before it is framed again
+/// (`StageUi::upright`): more of its outfit arrived, past what a pose
+/// spreading its arms or legs makes of it.
+const UPRIGHT_GROWN: f32 = 1.5;
+
 /// How wide an upright figure frames, as a share of the sphere around it
 /// (`StageUi::upright`): arms at its sides, turned any way.
 const UPRIGHT_WIDTH: f32 = 0.5;
