@@ -3964,7 +3964,11 @@ impl Session<'_> {
     /// LLFloaterPermsDefault::updateCap / updateCapCoro: the masks to the
     /// agent region's AgentPreferences, tried MAX_HTTP_RETRIES (5) times,
     /// RETRY_TIMEOUT (5 s) apart. Without the capability yet, the region's
-    /// capabilities post them when they arrive (`on_caps`).
+    /// capabilities post them when they arrive (`on_caps`). One difference
+    /// on purpose: once a post has succeeded (sCapSent), updateCapCoro shows
+    /// the DefaultObjectPermissions alert at each new failure reason during
+    /// the retries; here the failure is told once, with the last reason,
+    /// after the fifth try, so a passing outage shows one alert, not five.
     fn post_default_perms(&self) {
         let Some(masks) = self.default_perms.masks else {
             return;
