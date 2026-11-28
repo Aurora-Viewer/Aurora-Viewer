@@ -768,7 +768,9 @@ fn wind_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     let side = compass_side(ui.available_width());
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
-            ui.add_enabled_ui(!w.wind_follow_region, |ui| compass(ui, p, w, side));
+            ui.add_enabled_ui(!w.wind_follow_region, |ui| {
+                compass(ui, p, &mut w.wind_from, side, aurora_i18n::tr!("ui-weather-wind-from-tip"));
+            });
             let summary = wind_summary(w);
             ui.allocate_ui_with_layout(Vec2::new(side, 16.0), Layout::top_down(Align::Center), |ui| {
                 ui.label(RichText::new(summary).size(ENDS_SIZE).color(p.muted));
@@ -823,7 +825,7 @@ fn wind_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
 
 /// The side of the wind's compass in a card row `width` wide: about a
 /// third of it (0.36), between [`COMPASS_MIN`] and [`COMPASS`].
-fn compass_side(width: f32) -> f32 {
+pub(crate) fn compass_side(width: f32) -> f32 {
     (width * 0.36).clamp(COMPASS_MIN, COMPASS)
 }
 
@@ -845,9 +847,10 @@ fn at(center: egui::Pos2, radius: f32, degrees: f32) -> egui::Pos2 {
 }
 
 /// The wind's compass, north up: a dot on its rim where the wind comes
-/// from, an arrow the way it blows. A click or a drag sets where it comes
-/// from.
-fn compass(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, side: f32) {
+/// `from` (degrees clockwise from north), an arrow the way it blows. A
+/// click or a drag sets where it comes from, in the slider's steps. The
+/// Weather page's wind and the Sea page's (`environment/sea.rs`).
+pub(crate) fn compass(ui: &mut egui::Ui, p: &Palette, from: &mut f32, side: f32, tip: impl Into<egui::WidgetText>) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(side), Sense::click_and_drag());
     let enabled = ui.is_enabled();
     if enabled
@@ -855,9 +858,9 @@ fn compass(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, side: f32) {
         && let Some(pos) = resp.interact_pointer_pos()
         && pos.distance(rect.center()) > 4.0
     {
-        w.wind_from = snap_direction(bearing(rect.center(), pos));
+        *from = snap_direction(bearing(rect.center(), pos));
     }
-    let resp = resp.on_hover_text(aurora_i18n::tr!("ui-weather-wind-from-tip"));
+    let resp = resp.on_hover_text(tip);
     if enabled {
         resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     }
@@ -884,8 +887,8 @@ fn compass(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, side: f32) {
         );
     }
     // where it comes from, on the rim; the arrow points the way it blows
-    painter.circle_filled(at(c, r * 0.84, w.wind_from), 4.0, fade(p.teal));
-    let to = w.wind_from + 180.0;
+    painter.circle_filled(at(c, r * 0.84, *from), 4.0, fade(p.teal));
+    let to = *from + 180.0;
     let tip = at(c, r * 0.42, to);
     let back = r * 0.3;
     let wing_l = at(c, back, to + 145.0);

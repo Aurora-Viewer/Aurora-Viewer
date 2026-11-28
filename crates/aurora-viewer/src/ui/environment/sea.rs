@@ -131,23 +131,32 @@ fn wind_card(ui: &mut egui::Ui, p: &Palette, s: &mut SeaSettings) {
         ui.add_enabled_ui(mine, |ui| {
             let speed = s.shape.state * sea::MAX_WIND;
             let state = aurora_i18n::tr!("ui-sea-state-value", speed = format!("{speed:.0}"), force = beaufort(speed)).to_string();
-            card::slider_row(
-                ui,
-                p,
-                (aurora_i18n::tr!("ui-sea-state"), aurora_i18n::tr!("ui-sea-state-tip")),
-                &state,
-                None,
-                egui::Slider::new(&mut s.shape.state, 0.0..=state_top),
-            );
-            let from = format!("{} · {:.0}°", compass_point(s.from), s.from);
-            card::slider_row(
-                ui,
-                p,
-                (aurora_i18n::tr!("ui-weather-wind-from"), aurora_i18n::tr!("ui-sea-from-tip")),
-                &from,
-                None,
-                egui::Slider::new(&mut s.from, 0.0..=355.0).step_by(5.0),
-            );
+            // the Weather page's wind compass beside the sliders, the same
+            // way round: where the wind comes from, a click or a drag on it
+            let side = card::compass_side(ui.available_width());
+            ui.horizontal_top(|ui| {
+                // (its direction in words is the slider's, beside it)
+                card::compass(ui, p, &mut s.from, side, aurora_i18n::tr!("ui-sea-from-tip"));
+                ui.vertical(|ui| {
+                    card::slider_row(
+                        ui,
+                        p,
+                        (aurora_i18n::tr!("ui-sea-state"), aurora_i18n::tr!("ui-sea-state-tip")),
+                        &state,
+                        None,
+                        egui::Slider::new(&mut s.shape.state, 0.0..=state_top),
+                    );
+                    let from = format!("{} · {:.0}°", compass_point(s.from), s.from);
+                    card::slider_row(
+                        ui,
+                        p,
+                        (aurora_i18n::tr!("ui-weather-wind-from"), aurora_i18n::tr!("ui-sea-from-tip")),
+                        &from,
+                        None,
+                        egui::Slider::new(&mut s.from, 0.0..=355.0).step_by(5.0),
+                    );
+                });
+            });
         });
     });
 }
