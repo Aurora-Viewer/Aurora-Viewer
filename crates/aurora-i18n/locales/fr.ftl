@@ -11140,7 +11140,6 @@ people-groups-active = Groupe actif
 people-groups-member = Membre
 people-groups-title = Titre : { $title }
 people-groups-online = { $count } en ligne
-people-groups-chat-off = chat coupé
 people-groups-notices = { $count ->
     [one] { $count } avis
    *[other] { $count } avis
@@ -11159,6 +11158,9 @@ people-groups-settings = Réglages
 people-groups-receive-notices = Recevoir les avis
 people-groups-receive-chat = Recevoir le chat du groupe
 people-groups-in-profile = Afficher dans mon profil
+people-groups-switch-on = { $setting } : activé
+people-groups-switch-off = { $setting } : désactivé
+people-groups-chat-refused = Chat refusé par « { $preference } » (Préférences › Chat › { $section })
 people-groups-pin = Épingler en haut de la liste
 people-groups-slurl = SLURL
 people-groups-leave = Quitter le groupe

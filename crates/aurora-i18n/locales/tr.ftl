@@ -10584,7 +10584,6 @@ people-groups-active = Aktif grup
 people-groups-member = Üye
 people-groups-title = Unvan: { $title }
 people-groups-online = { $count } çevrimiçi
-people-groups-chat-off = sohbet engellendi
 people-groups-notices = { $count ->
     [one] { $count } bildirim
    *[other] { $count } bildirim

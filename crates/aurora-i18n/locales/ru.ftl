@@ -10878,7 +10878,6 @@ people-groups-active = Активная группа
 people-groups-member = Участник
 people-groups-title = Титул: { $title }
 people-groups-online = В сети: { $count }
-people-groups-chat-off = чат заблокирован
 people-groups-notices =
     { $count ->
         [one] { $count } уведомление

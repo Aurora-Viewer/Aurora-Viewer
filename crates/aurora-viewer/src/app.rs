@@ -11583,9 +11583,16 @@ impl App {
             for cmd in std::mem::take(&mut self.world.outfit.commands) {
                 self.send(cmd);
             }
-            // block list, groups and group chat sessions
-            self.world.groups.mute_all_groups = self.settings.mute_all_groups;
-            self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices;
+            // block list, groups and group chat sessions;
+            // AURORA_DEMO_PEOPLE=groups-no-chats|groups-without-notices turn
+            // a refusal on for the run, the settings untouched
+            let (no_chats, without_notices) = if self.demo {
+                crate::demo::people::group_chat_refusal()
+            } else {
+                (false, false)
+            };
+            self.world.groups.mute_all_groups = self.settings.mute_all_groups || no_chats;
+            self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices || without_notices;
             self.world.groups.report_blocks = self.settings.report_blocks;
             self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
             self.world.groups.notices_in_chat = crate::world::groups::NoticesInChat {
@@ -20849,7 +20856,7 @@ impl App {
                 }
                 // Conversations › Contacts in Aurora's look of People: its
                 // friends tab
-                let people_aurora = !self.settings.classic_people && !(self.demo && crate::demo::people::legacy());
+                let people_aurora = !self.people_classic();
                 let friends_before = self.settings.friends_list.clone();
                 // its Groups pill is the Legacy look's Groups tab, kept in
                 // the settings
@@ -21113,6 +21120,7 @@ impl App {
                 // (the floater's map rings nobody); the map is drawn above
                 // the rows, so it could not see a newer selection anyway
                 self.people_map_ui.set_selected(self.people_ui.map_selection());
+                let people_aurora = !self.people_classic();
                 let mut people_map = |ui: &mut egui::Ui, size: egui::Vec2| {
                     let acts = self.people_map_ui.draw(
                         ui,
@@ -21152,7 +21160,7 @@ impl App {
                         images: &self.ui_images,
                     },
                     &mut people_map,
-                    !self.settings.classic_people && !(self.demo && crate::demo::people::legacy()),
+                    people_aurora,
                 );
                 if self.settings.radar.alert_sounds != people_before.0.alert_sounds {
                     self.settings.audio.ui.set_radar_sounds(self.settings.radar.alert_sounds);
@@ -23457,7 +23465,9 @@ impl ApplicationHandler for App {
                     self.people_ui.open_sheet(id);
                 }
                 if crate::demo::people::mode() == Some(crate::demo::people::Mode::Groups) {
-                    self.people_ui.open_group_sheet(crate::demo::DEMO_GROUP1);
+                    if let Some(group) = crate::demo::people::group_sheet() {
+                        self.people_ui.open_group_sheet(group);
+                    }
                     self.world.group_data.open(crate::demo::DEMO_GROUP1, true);
                 }
                 // the mock-up's window

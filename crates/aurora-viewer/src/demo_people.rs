@@ -14,7 +14,10 @@
 //! The other tabs, with the mock-up's contents: `friends` (four friends,
 //! two online, Nova's sheet open; `friends-symbols` with the sets of
 //! `visuals`: their symbols after the names, #1104), `groups` (the demo's three groups, the
-//! first one pinned and its sheet open, the market's chat blocked), `sets`
+//! first one pinned and its sheet open, the wolves' notices off, the
+//! market hidden from the profile and its chat blocked;
+//! `groups-no-chats` and `groups-without-notices` with that preference on
+//! for the run), `sets`
 //! (Family, Clubbing and Shop, a nickname and a non-friend, a row under the
 //! pointer), `recent` (four residents met lately) and `blocked` (a resident
 //! blocked in full, one for voice and text, an object for its sounds;
@@ -58,7 +61,9 @@ pub fn mode() -> Option<Mode> {
             "sheet" | "fiche" => Some(Mode::Sheet),
             "legacy" => Some(Mode::Legacy),
             "friends" | "amis" | "friends-symbols" => Some(Mode::Friends),
-            "groups" | "groupes" | "groups-hover" | "groups-hover-active" => Some(Mode::Groups),
+            "groups" | "groupes" | "groups-hover" | "groups-hover-active" | "groups-no-chats" | "groups-without-notices" => {
+                Some(Mode::Groups)
+            }
             "sets" | "sets-import" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
             "recent" | "récent" | "recent-save" | "recent-restore" => Some(Mode::Recent),
             "blocked" | "bloqué" | "blocked-empty" => Some(Mode::Blocked),
@@ -130,6 +135,12 @@ fn width_override() -> Option<f32> {
     let value = std::env::var("AURORA_DEMO_PEOPLE").ok()?;
     let width: f32 = value.split_once(':')?.1.trim().parse().ok()?;
     (width.is_finite() && width >= 220.0).then_some(width)
+}
+
+/// The group whose sheet `groups` opens: none in a window narrowed by
+/// `groups:<width>`, so that the rows keep that width.
+pub fn group_sheet() -> Option<Uuid> {
+    (mode() == Some(Mode::Groups) && width_override().is_none()).then_some(super::DEMO_GROUP1)
 }
 
 /// The modes of the tabs after Near you.
@@ -221,6 +232,22 @@ pub fn mute_list() -> Option<String> {
         _ if contacts_mode() => Some(String::new()),
         _ => None,
     }
+}
+
+/// `groups-no-chats` / `groups-without-notices`: the run behaves as with
+/// Preferences › Chat's "No group chats" / "Groups without notices" on, the
+/// settings untouched: (every group's chat refused, the chat of the groups
+/// whose notices are off refused).
+pub fn group_chat_refusal() -> (bool, bool) {
+    static REFUSAL: std::sync::OnceLock<(bool, bool)> = std::sync::OnceLock::new();
+    *REFUSAL.get_or_init(|| {
+        let value = std::env::var("AURORA_DEMO_PEOPLE").unwrap_or_default();
+        match value.split(':').next().unwrap_or_default().trim() {
+            "groups-no-chats" => (true, false),
+            "groups-without-notices" => (false, true),
+            _ => (false, false),
+        }
+    })
 }
 
 /// The account's group limit for the groups tab's count.
@@ -401,6 +428,14 @@ fn every_badge(state: &mut State) {
 pub fn legacy() -> bool {
     // AURORA_DEMO_RADAR_MARKS=legacy shows its marks in the same table
     mode() == Some(Mode::Legacy) || crate::ui::avatar_marks::demo_legacy()
+}
+
+/// Whether People shows the Legacy look in a demo run whose preference
+/// (`Settings::classic_people`) says `classic`: `legacy` forces it, and
+/// every other scenario of this module shows Aurora's look it was made
+/// for, for this run only (the settings untouched).
+pub fn classic_look(classic: bool) -> bool {
+    legacy() || (classic && mode().is_none())
 }
 
 /// The first friend of the demo buddy list (a display name "Nova ♪").

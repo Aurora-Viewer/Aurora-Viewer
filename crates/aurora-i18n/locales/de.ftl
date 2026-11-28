@@ -10672,7 +10672,6 @@ people-groups-active = Aktive Gruppe
 people-groups-member = Mitglied
 people-groups-title = Titel: { $title }
 people-groups-online = { $count } online
-people-groups-chat-off = Chat blockiert
 people-groups-notices =
     { $count ->
         [one] { $count } Mitteilung

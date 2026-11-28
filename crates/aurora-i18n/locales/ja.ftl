@@ -11018,7 +11018,6 @@ people-groups-active = アクティブなグループ
 people-groups-member = メンバー
 people-groups-title = タイトル：{ $title }
 people-groups-online = オンライン{ $count }
-people-groups-chat-off = チャットをブロック中
 people-groups-notices = { $count ->
     [one] { $count }件の通知
    *[other] { $count }件の通知
@@ -11037,6 +11036,9 @@ people-groups-settings = 設定
 people-groups-receive-notices = グループ通知を受信
 people-groups-receive-chat = グループチャットを受信
 people-groups-in-profile = プロフィールに表示
+people-groups-switch-on = { $setting }：オン
+people-groups-switch-off = { $setting }：オフ
+people-groups-chat-refused = 「{ $preference }」によりチャットを拒否中（初期設定 › チャット › { $section }）
 people-groups-pin = リストの先頭に固定
 people-groups-slurl = SLurl
 people-groups-leave = グループを脱退

@@ -10573,7 +10573,6 @@ people-groups-active = Aktiv gruppe
 people-groups-member = Medlem
 people-groups-title = Tittel: { $title }
 people-groups-online = { $count } pålogget
-people-groups-chat-off = chat blokkert
 people-groups-notices = { $count ->
     [one] { $count } kunngjøring
    *[other] { $count } kunngjøringer

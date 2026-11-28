@@ -32,11 +32,21 @@ impl App {
         }
     }
 
+    /// People in the Legacy look (Preferences › Aurora); a demo's People
+    /// scenario shows the look it was made for (`demo::people::classic_look`).
+    pub(super) fn people_classic(&self) -> bool {
+        if self.demo {
+            crate::demo::people::classic_look(self.settings.classic_people)
+        } else {
+            self.settings.classic_people
+        }
+    }
+
     /// Communicate › Friends / Groups / Contact Sets (togglePeoplePanel,
     /// llviewermenu.cpp): People closes when that tab shows, otherwise it
     /// opens, or expands, on the tab.
     pub(super) fn people_tab_shortcut(&mut self, tab: u8) {
-        let classic = self.settings.classic_people || (self.demo && crate::demo::people::legacy());
+        let classic = self.people_classic();
         let tab = people_tab_shown(tab, classic);
         let ctx = &self.egui_ctx;
         let shown = self.panels.people && self.panels.people_tab == tab && !crate::ui::widgets::floater_minimized(ctx, "people");
