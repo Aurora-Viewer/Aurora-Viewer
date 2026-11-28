@@ -94,7 +94,11 @@ level of the steps below and of each PR: one line per step while it is
 general (follow-up, what waits on your human, the selection), then one per
 PR and step once there are several (`#3935: CI approved, waiting`, `#4664:
 conflict fixed, pushed`, `check.ps1: #3935, #4664`), so the broader progress
-shows. Rewrite the list when a pick or an answer changes what is left.
+shows. Move it as the work moves: the step done and the next one started
+in the same breath as the call that starts it (Claude Code: `update_plan`
+alongside that call), never left on a step finished minutes ago while you
+wait on something else. Rewrite the list when a pick or an answer changes
+what is left.
 
 Dependabot's PRs are not this routine's: the queue leaves bots out, and
 AGENTS.md section 13 says how they are handled.
