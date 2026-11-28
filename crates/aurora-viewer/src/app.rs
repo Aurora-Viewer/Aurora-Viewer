@@ -13926,7 +13926,12 @@ impl App {
         self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
         let egui_state = &mut gfx.egui_state;
         // (and what the windows outside read at their last pass)
-        self.inventory_ui.clipboard_input(&self.outside.take_heard());
+        let outside_events = self.outside.begin_frame(self.palette, || {
+            let text = egui_state.clipboard_text();
+            self.inventory_ui.clipboard_changed(text.as_deref());
+            text
+        });
+        self.inventory_ui.clipboard_input(&outside_events);
         self.inventory_ui.clipboard_input(&raw.events);
         if self.inventory_ui.cut
             && (self.inventory_ui.native_clipboard_changed()
@@ -13934,12 +13939,8 @@ impl App {
         {
             self.inventory_ui.clipboard_changed(egui_state.clipboard_text().as_deref());
         }
-        self.text_menu.before(
-            &ctx,
-            &mut raw,
-            || egui_state.clipboard_text(),
-            self.demo.then_some(self.frame_count),
-        );
+        self.text_menu.prepare_clipboard(|| egui_state.clipboard_text());
+        self.text_menu.before(&ctx, &mut raw.events, self.demo.then_some(self.frame_count));
         let mut inventory_drop = Vec::new();
         let mut library_drop = None;
         let t_pass = Instant::now();

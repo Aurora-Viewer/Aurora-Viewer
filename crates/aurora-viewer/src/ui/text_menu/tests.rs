@@ -1,4 +1,5 @@
 use super::*;
+use egui::RawInput;
 use egui::text::CCursor;
 
 #[test]
@@ -82,7 +83,8 @@ impl Bench {
         };
         let clipboard = self.clipboard.clone();
         let Bench { ctx, menu, text, kind, .. } = self;
-        menu.before(ctx, &mut raw, || clipboard.clone(), None);
+        menu.prepare_clipboard(|| clipboard.clone());
+        menu.before(ctx, &mut raw.events, None);
         let p = crate::theme::Theme::default().palette();
         let mut output = ctx.run_ui(raw, |ui| {
             let id = Id::unique(FIELD);
@@ -167,7 +169,10 @@ fn a_right_click_on_a_field_opens_the_menu_and_keeps_the_selection() {
     // the popup is an egui area: drawn from its second frame
     b.frame(Vec::new());
     let open = b.menu.open.as_ref().expect("still open");
-    let layer = egui::LayerId::new(egui::Order::Foreground, Id::unique("text_field_menu").with(open.serial));
+    let layer = egui::LayerId::new(
+        egui::Order::Foreground,
+        Id::unique("text_field_menu").with((egui::ViewportId::ROOT, open.serial)),
+    );
     assert!(b.ctx.memory(|m| m.areas().is_visible(&layer)));
     // a click outside closes it
     b.click(Pos2::new(480.0, 380.0), PointerButton::Primary);
@@ -184,7 +189,7 @@ fn chosen_entries_run_in_the_field() {
     let open = b.menu.open.as_ref().expect("open");
     let rect = b
         .ctx
-        .memory(|m| m.area_rect(Id::unique("text_field_menu").with(open.serial)))
+        .memory(|m| m.area_rect(Id::unique("text_field_menu").with((egui::ViewportId::ROOT, open.serial))))
         .expect("menu laid out");
     let first = Pos2::new(rect.center().x, rect.top() + rect.height() / 10.0);
     b.click(first, PointerButton::Primary);
@@ -194,6 +199,7 @@ fn chosen_entries_run_in_the_field() {
     // Paste plays the clipboard's text at the cursor
     b.clipboard = Some("pasted".into());
     b.menu.pending = Some((Id::unique(FIELD), Pending::Entry(Entry::Paste)));
+    b.menu.before(&b.ctx, &mut Vec::new(), None); // an extra pass before the clipboard is prepared
     b.frame(Vec::new());
     assert_eq!(b.text, "pasted");
     // Select All then Delete
@@ -300,4 +306,66 @@ fn a_field_without_spelling_has_no_suggestions() {
     let mut b = Bench::new("Hello wrold", Kind::Editable);
     b.click(b.center(), PointerButton::Secondary);
     assert!(b.menu.open.as_ref().expect("opened").spell.is_none());
+}
+
+#[test]
+fn a_detached_field_applies_its_spelling_suggestion() {
+    crate::spelling::tests::ready();
+    let ctx = Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let palette = theme.palette();
+    let mut menu = TextMenu::default();
+    let mut text = String::from("Hello wrold");
+    let focused = std::cell::Cell::new(true);
+    let mut frame = |events: Vec<Event>| {
+        let mut input = RawInput {
+            viewport_id: egui::ViewportId::from_hash_of("detached chat"),
+            screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(500.0, 400.0))),
+            focused: focused.get(),
+            events,
+            ..Default::default()
+        };
+        input.viewports.entry(input.viewport_id).or_default();
+        let mut word = Pos2::ZERO;
+        let output = crate::ui::login::test_output(ctx.run_ui(input, |ui| {
+            menu.outside(ui, &palette, |ui| {
+                let mut out = egui::TextEdit::singleline(&mut text).id(Id::unique(FIELD)).show(ui);
+                word = out.galley_pos + out.galley.pos_from_cursor(CCursor::new(8)).center().to_vec2();
+                crate::ui::spelling::field(ui, &palette, &mut out, &mut text, false);
+            });
+        }));
+        let suggestion = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(label) if label.galley.job.text == "world" => Some(label.visual_bounding_rect().center()),
+            _ => None,
+        });
+        (word, suggestion)
+    };
+    let press = |pos, button, pressed| Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    let (word, _) = frame(vec![]);
+    frame(vec![Event::PointerMoved(word), press(word, PointerButton::Primary, true)]);
+    frame(vec![press(word, PointerButton::Primary, false)]);
+    frame(vec![Event::PointerMoved(word), press(word, PointerButton::Secondary, true)]);
+    frame(vec![press(word, PointerButton::Secondary, false)]);
+    let started = std::time::Instant::now();
+    let suggestion = loop {
+        if let (_, Some(pos)) = frame(vec![]) {
+            break pos;
+        }
+        assert!(started.elapsed().as_secs() < 5, "the detached menu offers world");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    frame(vec![
+        Event::PointerMoved(suggestion),
+        press(suggestion, PointerButton::Primary, true),
+    ]);
+    frame(vec![press(suggestion, PointerButton::Primary, false)]);
+    focused.set(false);
+    frame(vec![]);
+    assert_eq!(text, "Hello world");
 }
