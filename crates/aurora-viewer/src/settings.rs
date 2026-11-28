@@ -714,6 +714,9 @@ pub struct Settings {
     pub motion_blur: crate::motion_blur::Settings,
     pub shape_show_hints: bool,
     pub shape_height_feet: bool,
+    /// The shape editor shows its handles over the avatar in Avatar Studio
+    /// instead of its window (#5022; Aurora's own, off by default).
+    pub shape_handles: bool,
     /// AppearanceCameraMovement (llpaneleditwearable.cpp): frame the edited
     /// body part automatically. Independent of the customise animation.
     pub appearance_camera_movement: bool,
@@ -2575,6 +2578,7 @@ impl Default for Settings {
             gestures: Default::default(),
             shape_show_hints: true,
             shape_height_feet: false,
+            shape_handles: false,
             customize_animation: true,
             appearance_camera_movement: true,
             bento_idle: false,

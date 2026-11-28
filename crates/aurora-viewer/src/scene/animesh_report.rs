@@ -200,6 +200,49 @@ impl super::Scene {
         joints
     }
 
+    /// The rigged meshes avatar `subject` wears that are weighted to its
+    /// face bones (a mesh head, its eyes, its teeth), for the shape handles'
+    /// dots (shape_editor/face_surface.rs), and a key of them: their ids
+    /// and whether their geometry is held yet.
+    pub fn face_meshes(&self, world: &crate::world::World, subject: Uuid) -> (u64, Vec<super::meshes::MeshView>) {
+        use std::hash::{Hash, Hasher};
+        let rig = &self.avatar_lib.rig;
+        let face = crate::shape_editor::face_surface::face_joints(rig);
+        let worn = world
+            .objects
+            .index_of_uuid(&subject)
+            .and_then(|i| world.objects.get(i))
+            .filter(|avatar| avatar.is_avatar())
+            .map(|avatar| world.objects.children_of(&avatar.key).to_vec())
+            .unwrap_or_default();
+        let mut found: Vec<(Uuid, Option<super::meshes::MeshView>)> = Vec::new();
+        for i in worn.into_iter().flat_map(|root| linkset(world, root)) {
+            let Some(o) = world.objects.get(i) else { continue };
+            let volume = o.visual_volume();
+            let Some(sculpt) = volume.sculpt.filter(|_| volume.is_mesh()) else {
+                continue;
+            };
+            let on_face = self.meshes.meta(&sculpt.texture).and_then(|m| m.skin).is_some_and(|skin| {
+                skin.joint_names
+                    .iter()
+                    .any(|n| rig.names.get(n).is_some_and(|&j| face.get(j).copied().unwrap_or(false)))
+            });
+            if on_face && !found.iter().any(|(id, _)| *id == sculpt.texture) {
+                let view = self
+                    .meshes
+                    .view(&sculpt.texture)
+                    .filter(|view| view.skin.is_some() && view.lod_section(3).is_some());
+                found.push((sculpt.texture, view));
+            }
+        }
+        found.sort_by_key(|(id, _)| *id);
+        let mut key = std::collections::hash_map::DefaultHasher::new();
+        for (id, view) in &found {
+            (id, view.is_some()).hash(&mut key);
+        }
+        (key.finish(), found.into_iter().filter_map(|(_, view)| view).collect())
+    }
+
     /// What J9 says of the animated objects and rigged attachments avatar
     /// `avatar` wears.
     pub fn worn_animesh_report(&self, world: &crate::world::World, avatar: Uuid, now: std::time::Instant) -> Report {

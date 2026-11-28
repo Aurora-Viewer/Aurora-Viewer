@@ -4,7 +4,11 @@
 pub mod camera;
 pub mod catalog;
 pub mod demo;
+pub mod face_surface;
+pub mod handles;
+pub mod history;
 pub(crate) mod material;
+pub mod mesh_areas;
 mod preview;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -35,6 +39,42 @@ pub struct Draft {
     pub original: Wearable,
     pub edited: Wearable,
     pub pending: Option<Uuid>,
+    /// Undo and redo of `edited`'s sliders, for the sliders and the handles.
+    pub history: history::History,
+}
+
+/// What the avatar wears that decides which handles show
+/// (`handles::shown_params`), refreshed a few times a second by the app.
+#[derive(Debug, Clone)]
+pub struct Worn {
+    /// The system body's upper and lower parts are both drawn.
+    pub system_body: bool,
+    /// The system head is drawn (no bakes-on-mesh head, no alpha on it).
+    pub system_head: bool,
+    /// The joints the worn rigged meshes are skinned to.
+    pub rigged: std::collections::HashSet<usize>,
+}
+
+impl Worn {
+    /// Whether the system mesh of `part` is drawn: then every handle of the
+    /// part shows; hidden (a mesh body or head), only those whose sliders
+    /// move a joint the worn meshes use.
+    pub fn system(&self, part: handles::Part) -> bool {
+        match part {
+            handles::Part::Body => self.system_body,
+            handles::Part::Head => self.system_head,
+        }
+    }
+}
+
+impl Default for Worn {
+    fn default() -> Self {
+        Self {
+            system_body: true,
+            system_head: true,
+            rigged: Default::default(),
+        }
+    }
 }
 impl Draft {
     pub fn dirty(&self) -> bool {
@@ -126,11 +166,73 @@ pub struct State {
     pub xml: xml_import::Import,
     /// Export of the draft to an appearance XML.
     pub xml_export: xml_export::Export,
+    /// The handles view chosen (Settings::shape_handles): in Avatar Studio,
+    /// dots on the avatar and a bar take the window's place.
+    pub handles: bool,
+    /// Avatar Studio shows the avatar (set by the app each frame): the only
+    /// place the handles show.
+    pub studio: bool,
+    /// The poser or the animation editor holds the avatar: no handles.
+    pub handles_blocked: bool,
+    /// The pointer is over a dot or drags one (the Studio camera keeps off).
+    pub handles_pointer: bool,
+    pub worn: Worn,
+    pub(crate) handle_drag: Option<(handles::Drag, handles::Pose)>,
+    /// The handle under the pointer last frame, and which of its two dots.
+    pub(crate) handle_hover: Option<(usize, bool)>,
+    handle_layouts: Vec<handles::Layout>,
+    /// The handles shown: the body's, or the head's (the bar's Body | Head).
+    pub handles_part: handles::Part,
+    /// The part just changed: the app frames it with the Studio camera.
+    pub(crate) part_framing: bool,
+    /// The number window a double-click opened on a handle: which handle,
+    /// which of its dots, where on screen, and whether its field has had
+    /// the keyboard yet.
+    pub(crate) handle_entry: Option<HandleEntry>,
+    /// The face area whose handles show (the shape editor's tab: Head,
+    /// Eyes…); none: the head shows its areas to pick one.
+    pub(crate) handles_area: Option<usize>,
+    /// AURORA_DEMO_SHAPE_HANDLES=drag: where its scripted pointer started
+    /// (its drag holds no mouse button).
+    pub(crate) demo_drag_from: Option<glam::Vec2>,
+    /// The areas on the avatar's own meshes (mesh_areas.rs) and what they
+    /// were made for: the layout (sex, part, system head) and the areas
+    /// with dots.
+    pub(crate) mesh_areas: Option<((bool, handles::Part, bool, Vec<usize>), mesh_areas::MeshAreas)>,
+    /// This frame's tint of the hovered area on the avatar's meshes
+    /// (`FrameParams::part_joints`).
+    pub mesh_tint: Option<[u32; 8]>,
+    /// The renderer reads the area under the pointer this frame.
+    pub mesh_pick_wanted: bool,
+    /// The renderer's newest pick: the class and the window pixel read.
+    pub(crate) mesh_pick: Option<(u32, [f32; 2])>,
+    /// Whether the scene drew the avatar's skinned faces for the tint and
+    /// the pick (unknown: taken as drawn). Without them (an impostor), the
+    /// areas keep their glows.
+    pub(crate) meshes_drawn: Option<bool>,
+    /// AURORA_DEMO_SHAPE_HANDLES=body: the area taken as hovered (no pointer).
+    pub(crate) demo_hover_area: Option<usize>,
+    /// Under a mesh head: each face dot's place on the worn head's own
+    /// surface (face_surface.rs), and what it was read for (the worn
+    /// meshes, `Scene::face_meshes`' key, and the sex of the layout).
+    pub(crate) face_surface: Option<(u64, Arc<HashMap<face_surface::Key, glam::Vec3>>)>,
+    face_surface_pending: Option<u64>,
+    face_surface_tx: mpsc::Sender<(u64, HashMap<face_surface::Key, glam::Vec3>)>,
+    face_surface_rx: mpsc::Receiver<(u64, HashMap<face_surface::Key, glam::Vec3>)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct HandleEntry {
+    pub handle: usize,
+    pub mirrored: bool,
+    pub at: egui::Pos2,
+    pub focused: bool,
 }
 impl Default for State {
     fn default() -> Self {
         let (snapshot_tx, snapshot_rx) = mpsc::channel();
         let (model_tx, model_rx) = mpsc::channel();
+        let (face_surface_tx, face_surface_rx) = mpsc::channel();
         Self {
             open: false,
             group: 0,
@@ -172,6 +274,29 @@ impl Default for State {
             model_requested: Instant::now() - Duration::from_secs(1),
             xml: xml_import::Import::default(),
             xml_export: xml_export::Export::default(),
+            handles: false,
+            studio: false,
+            handles_blocked: false,
+            handles_pointer: false,
+            worn: Worn::default(),
+            handle_drag: None,
+            handle_hover: None,
+            handle_layouts: Vec::new(),
+            handles_part: handles::Part::Body,
+            part_framing: false,
+            handle_entry: None,
+            handles_area: None,
+            demo_drag_from: None,
+            mesh_areas: None,
+            mesh_tint: None,
+            mesh_pick_wanted: false,
+            mesh_pick: None,
+            meshes_drawn: None,
+            demo_hover_area: None,
+            face_surface: None,
+            face_surface_pending: None,
+            face_surface_tx,
+            face_surface_rx,
         }
     }
 }
@@ -255,6 +380,7 @@ impl State {
                     edited: original.clone(),
                     original,
                     pending: None,
+                    history: Default::default(),
                 });
                 self.changed(world);
             }
@@ -277,7 +403,154 @@ impl State {
         }
     }
 
+    /// The handles show: the editor is open on a draft in Avatar Studio,
+    /// with the handles view chosen.
+    pub fn handles_view(&self) -> bool {
+        self.open && self.handles && self.studio && self.draft.is_some()
+    }
+
+    /// The avatar's meshes take part this frame: the hovered area's tint or
+    /// the pick of the area under the pointer (the app has the renderer draw
+    /// them as it draws the poser's part, on the agent).
+    pub fn mesh_part_wanted(&self) -> bool {
+        self.mesh_tint.is_some() || self.mesh_pick_wanted
+    }
+
+    /// The area classes of the renderer's pick (`FrameParams::part_classes`).
+    pub fn mesh_part_classes(&self) -> [u32; 32] {
+        self.mesh_areas
+            .as_ref()
+            .filter(|_| self.mesh_pick_wanted)
+            .map_or([0; 32], |(_, areas)| areas.classes)
+    }
+
+    /// The renderer's pick (`Renderer::take_part_pick`): the newest answer,
+    /// kept while a pick is wanted.
+    pub fn set_mesh_pick(&mut self, answer: Option<(u32, [u32; 2])>) {
+        if !self.mesh_pick_wanted {
+            self.mesh_pick = None;
+        } else if let Some((class, [x, y])) = answer {
+            self.mesh_pick = Some((class, [x as f32, y as f32]));
+        }
+    }
+
+    /// Whether the scene drew the agent's skinned faces for the tint and the
+    /// pick (none: it was not asked to; the last answer stays).
+    pub fn set_meshes_drawn(&mut self, drawn: Option<bool>) {
+        if let Some(drawn) = drawn {
+            self.meshes_drawn = Some(drawn);
+        }
+    }
+
+    /// Whether the shape edited is male (the layout's sex).
+    pub fn shape_male(&self) -> bool {
+        self.draft
+            .as_ref()
+            .is_some_and(|d| d.edited.params.get(&80).copied().unwrap_or(0.0) > 0.5)
+    }
+
+    /// Read where the face's dots sit on the worn head (face_surface.rs), on
+    /// a worker, when the meshes worn (`worn`) or the sex changed since the
+    /// last reading; the answer arrives a few frames later.
+    pub fn request_face_surface(
+        &mut self,
+        jobs: &Jobs,
+        lib: &Arc<crate::scene::avatar::AvatarLibrary>,
+        worn: u64,
+        meshes: Vec<crate::scene::meshes::MeshView>,
+    ) {
+        while let Ok((done, points)) = self.face_surface_rx.try_recv() {
+            self.face_surface_pending = None;
+            self.face_surface = Some((done, Arc::new(points)));
+        }
+        let male = self.shape_male();
+        let key = worn ^ u64::from(male).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        if self.face_surface.as_ref().is_some_and(|(done, _)| *done == key) || self.face_surface_pending.is_some() {
+            return;
+        }
+        let layout = self.handle_layout(lib, male);
+        if layout.part != handles::Part::Head || layout.system_head {
+            return;
+        }
+        let anchors: Vec<handles::Anchor> = layout
+            .handles
+            .iter()
+            .flat_map(|h| std::iter::once(h.anchor).chain(h.mirror))
+            .collect();
+        self.face_surface_pending = Some(key);
+        let (tx, lib) = (self.face_surface_tx.clone(), lib.clone());
+        jobs.run(move || {
+            let decoded: Vec<_> = meshes
+                .iter()
+                .filter_map(|mesh| {
+                    let faces = aurora_assets::decode_mesh_lod(mesh.lod_section(3)?).ok()?;
+                    Some((mesh.skin.clone()?, faces))
+                })
+                .collect();
+            let meshes: Vec<_> = decoded.iter().map(|(skin, faces)| (skin.as_ref(), faces.as_slice())).collect();
+            let joints = handles::base_rest_joints(&lib, male);
+            let lifted = face_surface::surface_anchors(&lib.rig, &joints, &meshes, &anchors);
+            log::info!(
+                "shape handles: {} face meshes read, {} of {} face dots on their surface",
+                decoded.len(),
+                lifted.len(),
+                anchors.len()
+            );
+            let _ = tx.send((key, lifted));
+        });
+    }
+
+    /// No tint and no pick (the handles hidden, a drag, the editor closed).
+    pub(crate) fn drop_mesh_part(&mut self) {
+        self.mesh_tint = None;
+        self.mesh_pick_wanted = false;
+        self.mesh_pick = None;
+    }
+
+    /// The handles of this sex and of the part shown, derived once from the
+    /// avatar definitions: the head's on the system head's mesh while it
+    /// shows, on the face bones under a mesh head. Every layout derived is
+    /// kept (eight at most), so that going between Body and Head, or the
+    /// head's kind changing as the worn list arrives, derives nothing again.
+    pub fn handle_layout(&mut self, lib: &crate::scene::avatar::AvatarLibrary, male: bool) -> &handles::Layout {
+        let part = self.handles_part;
+        let system_head = part == handles::Part::Head && self.worn.system(part);
+        let found = |l: &handles::Layout| l.male == male && l.part == part && l.system_head == system_head;
+        let index = match self.handle_layouts.iter().position(found) {
+            Some(index) => index,
+            None => {
+                self.handle_layouts.push(handles::derive(lib, male, part, system_head));
+                self.handle_layouts.len() - 1
+            }
+        };
+        &self.handle_layouts[index]
+    }
+
+    /// Undo (false) or redo (true) one step of the sliders' history.
+    pub fn step_history(&mut self, world: &mut World, redo: bool) {
+        self.handle_drag = None;
+        let Some(draft) = &mut self.draft else {
+            return;
+        };
+        let moved = if redo {
+            draft.history.redo(&mut draft.edited.params)
+        } else {
+            draft.history.undo(&mut draft.edited.params)
+        };
+        if moved {
+            self.changed(world);
+        }
+    }
+
     pub fn close(&mut self, world: &mut World) {
+        self.handle_drag = None;
+        self.handle_hover = None;
+        self.handle_entry = None;
+        self.handles_area = None;
+        // the next opening starts on the body, as the Studio frames it
+        self.handles_part = handles::Part::Body;
+        self.drop_mesh_part();
+        self.handles_pointer = false;
         self.generation = self.generation.wrapping_add(1);
         self.worker_generation.store(self.generation, Ordering::Relaxed);
         self.open = false;

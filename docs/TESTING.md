@@ -7218,6 +7218,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_SHAPE_XML=<file>` | With `AURORA_DEMO_SHAPE`: imports an appearance XML into the shape draft |
 | `AURORA_DEMO_SHAPE_XML_EXPORT=<file>` | With `AURORA_DEMO_SHAPE`: exports the shape draft to an appearance XML |
+| `AURORA_DEMO_SHAPE_HANDLES=body\|mesh-body\|drag\|resize\|head\|area\|entry\|sliders` | Avatar Studio with the shape handles on the avatar (see Details) |
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
@@ -12117,6 +12118,57 @@ dialog: one `<param>` per shape parameter, no texture or other id; the footer
 says where it was saved. `readonly` (no modify rights) refuses it with the
 "needs modify rights" message, and the button is greyed out. The file reads
 back with `AURORA_DEMO_SHAPE_XML`.
+`AURORA_DEMO_SHAPE_HANDLES=body|mesh-body|drag|resize|head|area|entry|sliders`
+(#5022) enters Avatar Studio at frame 640, in T-pose, opens the worn demo
+shape and shows its handles view for this launch only: the saved choice (the
+switch "Handles on the avatar" of the shape window and its bar) is not
+changed. `body` opens on the body's
+areas (Head and neck, Torso, Arms, Legs) with the hint "Click a part of the
+body…" under the bar: the area under the pointer lights on the avatar's own
+meshes (the poser's part tint, so a mesh body or a feral lights where its
+skin is) and is named; the system head's face areas (`head`, `area`) are
+violet glows over their dots instead, brighter under the pointer, as are the
+areas of an avatar whose meshes are not drawn. A click on one shows its dots
+(`drag`, `resize` and `entry` pick their handle's area themselves), "← Arms"
+in the bar or Escape goes back. Violet handles sit on the
+collision volumes the body sliders move most (both sides for a side volume),
+each drawn as a double-headed arrow along the way it slides on screen; the bar
+above the bottom bar holds the switch back to the sliders, Body | Head, Undo,
+Redo, Save as, Cancel and Save. Hovering a handle lights its twin, shows its
+sliders' names and values, and draws each slider's track on both sides: its
+path from minimum to maximum, a ring at its default and, at the handle under
+the pointer, the slider's own end captions ("Narrow" / "Wide"…). A handle on
+the far side of the body is hidden, one seen along its motion is a faded round
+dot. A slider that resizes its part (Hand Size, Neck Thickness, Leg Muscles,
+Torso Muscles, Body Fat, Belly Size; Head Size and a few face sliders) shows a
+grow mark (four short arrows out of the dot) instead, never faded; hovered,
+the part's outline at the slider's smallest and largest values replaces the
+track, with the captions beside them. A double-click on a handle opens its
+number window: the slider's value field beside it, ready to type; Escape or a
+press elsewhere closes it.
+`mesh-body` acts as if a rigged mesh body and head skinned to the bones alone
+hid the system ones (the demo wears none): the volume-only handles (Breast
+Size, Belly, Butt, Love Handles…) disappear and the bone sliders stay. `drag`
+sways the Hip Width handle sideways from frame 900 to 1080 through the
+pointer's own solve: the hips widen and narrow along their track (shown while
+held, captions at its ends), the shape's Undo takes the whole sway back in one
+step. `resize` does the same with the Hand Size handle, pulled away from the
+hand and back: the hands grow between their two outlines (pressed near the
+middle of a part as seen, a resize scrubs instead: up and right grow, down
+and left shrink). `head` picks Head in the bar: the camera eases onto the
+head, which shows its areas (Head, Eyes, Ears, Nose, Mouth, Chin) as a violet
+glow over each part of the face, brighter and named under the pointer, with
+the hint "Click a part of the face…" under the bar. `area` then picks Eyes at
+frame 900, as a click on its glow does: only the eye dots show, on the system
+head's mesh where each slider's morph changes it most (none inside the
+mouth), the bar shows "← Eyes" to go back (Escape too). Under a mesh head the
+face dots sit on the Bento face bones instead.
+`entry` opens, at frame 900, the number window of the Height handle as a
+double-click does. `sliders` opens the shape editor's window instead, its
+switch shown since Studio is active. Captures after frame 1100. The drag
+itself (any angle, the far side hidden, Escape and the unsaved-changes
+question, Save sending the shape once, Save as and its name dialog, a typed
+value and Escape in the number window) is checked by hand.
 Opening the editor stands our avatar up (a seated avatar leaves its seat, as
 in the Legacy Viewer), and while the editor is open our avatar plays the
 customise animation (not the physics layer editor, which keeps the camera,

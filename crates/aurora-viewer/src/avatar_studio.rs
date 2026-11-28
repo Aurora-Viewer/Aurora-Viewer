@@ -17,7 +17,15 @@ pub const NEAR: f32 = 0.025;
 pub const SOLE_HEIGHT: f32 = 0.06;
 // Numerical separation only: no avatar-framing zoom limit.
 const MIN_DISTANCE: f32 = 0.001;
+/// The head close up (`inspect_head`), m: about half a metre of view, the
+/// head filling half of it.
+const HEAD_DISTANCE: f32 = 0.75;
 const RESPONSE: f32 = 0.09;
+
+/// How far the camera stands to frame a whole avatar `height` tall.
+fn body_distance(height: f32) -> f32 {
+    (height * 0.78 / (FOV * 0.5).tan()).clamp(1.5, 6.0)
+}
 
 const FADE_OUT: f32 = 0.12;
 const FADE_IN: f32 = 0.18;
@@ -222,7 +230,7 @@ impl Studio {
             height,
             focus_height: height * 0.5,
             target_height: height * 0.5,
-            distance: (height * 0.78 / (FOV * 0.5).tan()).clamp(1.5, 6.0),
+            distance: body_distance(height),
             ..Self::default()
         };
         self.target_distance = self.distance;
@@ -338,6 +346,37 @@ impl Studio {
         self.zoom(1.0);
     }
 
+    /// The head close up (the shape handles' Head), `at` from the floor's
+    /// point the Studio turns around: the head in the middle of the view, a
+    /// face's width of view around it, eased like every Studio move. A head
+    /// off the turning axis (a feral's, ahead of its body) is reached by the
+    /// sideways pan and by moving the focus along the line of sight to the
+    /// axis' plane, the distance making up for it; an upright avatar's
+    /// head, on the axis, gets no pan.
+    pub fn inspect_head(&mut self, at: Vec3) {
+        if !at.is_finite() {
+            return;
+        }
+        let rotation = Quat::from_rotation_z(self.yaw);
+        let (forward, right) = (rotation * Vec3::X, rotation * Vec3::Y);
+        let (sin, cos) = self.elevation().sin_cos();
+        // the eye looks along -(forward·cos + up·sin): the focus slides along
+        // that line, `along` metres away from the eye, to the axis' plane
+        let along = at.dot(forward) / cos.max(0.2);
+        let focus = at - (forward * cos + Vec3::Z * sin) * along;
+        self.target_height = focus.z;
+        self.target_pan = Vec2::new(focus.dot(right), 0.0);
+        self.target_distance = (HEAD_DISTANCE + along / (1.0 + 0.08 * 0.08_f32).sqrt()).max(MIN_DISTANCE);
+    }
+
+    /// Back to the whole body (the shape handles' Body): the framing entering
+    /// Studio gives, eased like the head close up, the orbit kept.
+    pub fn inspect_body(&mut self) {
+        self.target_height = self.height * 0.5;
+        self.target_distance = body_distance(self.height);
+        self.target_pan = Vec2::ZERO;
+    }
+
     pub fn update(&mut self, dt: f32) {
         if !dt.is_finite() || dt <= 0.0 {
             return;
@@ -355,6 +394,60 @@ impl Studio {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A feral's head, ahead of its body and low, ends in the middle of the
+    /// view at a face's distance, whichever way the Studio looks at it.
+    #[test]
+    fn the_head_close_up_finds_a_head_off_the_turning_axis() {
+        for yaw in [0.0, 0.9, 2.5, -1.7] {
+            let mut studio = Studio::default();
+            studio.enter(yaw, 1.0);
+            let head = Vec3::new(0.55, -0.1, 0.7);
+            studio.inspect_head(head);
+            for _ in 0..300 {
+                studio.update(0.05);
+            }
+            let view = studio.view(Vec3::ZERO, 1.6);
+            let sight = (view.target - view.eye).normalize();
+            let off = (head - view.eye).reject_from_normalized(sight).length();
+            assert!(off < 0.01, "yaw {yaw}: the head {off} m off the line of sight");
+            let distance = (head - view.eye).length();
+            assert!((distance - HEAD_DISTANCE).abs() < 0.05, "yaw {yaw}: {distance} m from the head");
+        }
+    }
+
+    #[test]
+    fn the_head_close_up_eases_onto_the_head_and_reset_comes_back() {
+        let mut studio = Studio::default();
+        studio.enter(0.0, 1.8);
+        studio.pan_view(40.0, 0.0, 900.0);
+        let (body_distance, body_height) = (studio.target_distance, studio.target_height);
+        studio.inspect_head(Vec3::new(0.0, 0.0, 1.65));
+        for _ in 0..200 {
+            studio.update(0.05);
+        }
+        let view = studio.view(Vec3::ZERO, 1.6);
+        assert!((view.target.z - 1.65).abs() < 0.02, "focus on the head: {}", view.target.z);
+        assert!(view.eye.distance(view.target) < body_distance, "closer than the body view");
+        assert!(studio.pan.length() < 1e-3, "no sideways pan left");
+        // a non-finite height changes nothing
+        studio.inspect_head(Vec3::NAN);
+        assert!((studio.target_height - 1.65).abs() < 1e-6);
+        // back to the body: eased, not a jump, the orbit kept
+        studio.rotate(50.0);
+        let yaw = studio.yaw;
+        studio.inspect_body();
+        studio.update(0.016);
+        assert!(studio.distance < body_distance, "eases out, no jump: {}", studio.distance);
+        for _ in 0..200 {
+            studio.update(0.05);
+        }
+        assert!((studio.distance - body_distance).abs() < 1e-3);
+        assert!((studio.focus_height - body_height).abs() < 1e-3);
+        assert_eq!(studio.yaw, yaw);
+        studio.enter(0.0, 1.8);
+        assert_eq!((studio.target_distance, studio.target_height), (body_distance, body_height));
+    }
 
     #[test]
     fn person_b_follows_the_user_s_hover_until_given_their_own() {

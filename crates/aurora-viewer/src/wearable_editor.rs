@@ -278,6 +278,7 @@ impl State {
                     edited: original.clone(),
                     original,
                     pending: None,
+                    history: Default::default(),
                 });
                 self.camera_pending = true;
                 self.changed(world);

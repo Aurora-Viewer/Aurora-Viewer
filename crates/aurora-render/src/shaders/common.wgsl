@@ -87,6 +87,9 @@ struct Frame {
     part_joints: array<vec4<u32>, 2>,
     // Eight four-bit part classes per word, summed before interpolation.
     part_classes: array<vec4<u32>, 8>,
+    // x: 1 when an unrigged worn object lets the part pick through to the
+    // skin behind it (the shape handles; the poser keeps it as an occluder)
+    part_pick_mode: vec4<u32>,
     rez_gradient: array<vec4<f32>, 3>, // rez effect: the brand gradient (linear rgb), edge to trail; [0].w its look
     cascade_vp: array<mat4x4<f32>, 3>,
     lights: array<Light, 64>,

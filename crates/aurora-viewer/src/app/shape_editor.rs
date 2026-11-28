@@ -81,6 +81,10 @@ impl App {
         }
         self.shape_ui.hints = self.settings.shape_show_hints;
         self.shape_ui.feet = self.settings.shape_height_feet;
+        self.shape_ui.handles = self.settings.shape_handles;
+        if self.avatar_studio.active && self.shape_ui.handles {
+            self.studio_reset_view();
+        }
         if let Some(command) = self.shape_ui.open_item(&mut self.world, item) {
             self.focus_shape_category();
             self.panels.appearance = false;
@@ -92,6 +96,256 @@ impl App {
                 self.shape_ui.loaded(&mut self.world, item, asset, &data);
             } else {
                 self.send(command);
+            }
+        }
+    }
+
+    /// Avatar Studio's Shape button: open the worn shape in the editor, or
+    /// close it as its window's cross does (a dirty draft asks first).
+    pub(super) fn toggle_studio_shape(&mut self) {
+        let draft = self.shape_ui.draft.as_ref();
+        if !self.shape_ui.open {
+            if let Some(item) = worn_shape(&self.world) {
+                self.open_shape_editor(item);
+            }
+        } else if draft.is_some_and(|d| d.dirty() && d.pending.is_none()) {
+            self.shape_ui.close_confirmation = true;
+        } else if draft.is_none_or(|d| d.pending.is_none()) {
+            // a save under way keeps the editor open, as its cross does
+            self.shape_ui.close(&mut self.world);
+        }
+    }
+
+    /// What the shape handles need from the frame: whether Avatar Studio
+    /// shows the avatar, whether the poser or the animation editor holds it,
+    /// and, a few times a second, what the avatar wears (#5022).
+    pub(super) fn update_shape_handles(&mut self) {
+        let shown_before = self.shape_ui.handles_view();
+        self.shape_ui.studio = self.avatar_studio.active && !self.viewfinder_on();
+        self.shape_ui.handles_blocked = self.ik_editor.posing() || self.avatar_studio.animation_editor;
+        // back in the Studio with the head's handles still chosen: the head
+        // close up again, not the Studio's opening view of the whole body
+        if !shown_before && self.shape_ui.handles_view() && self.shape_ui.handles_part == crate::shape_editor::handles::Part::Head {
+            self.shape_ui.part_framing = true;
+        }
+        if std::mem::take(&mut self.shape_ui.part_framing) && self.shape_ui.handles_view() {
+            self.frame_handles_part();
+        }
+        if !self.shape_ui.handles_view() || !self.frame_count.is_multiple_of(10) {
+            return;
+        }
+        let agent = self.world.agent_id;
+        let rigged = self.scene.rigged_joints(&self.world, agent);
+        // LLVOAvatar::updateMeshVisibility: a part is hidden by a worn body
+        // or head using its bake (bakes on mesh) or by an alpha layer
+        let index = self.world.objects.index_of_uuid(&agent);
+        let shown = |slots: &[usize]| {
+            index.is_none_or(|index| {
+                let mask = self.scene.bom_mask(&self.world, index);
+                slots.iter().all(|slot| {
+                    mask & (1u64 << slot) == 0 && self.world.bake_texture(index, *slot) != Some(crate::scene::avatar::IMG_INVISIBLE)
+                })
+            })
+        };
+        let (system_body, system_head) = (shown(&[9, 10]), shown(&[8]));
+        self.shape_ui.worn = crate::shape_editor::Worn {
+            system_body,
+            system_head,
+            rigged,
+        };
+        // under a mesh head, the face's dots go on its own surface, read
+        // from its geometry on a worker whenever what is worn changes
+        if self.shape_ui.handles_part == crate::shape_editor::handles::Part::Head && !system_head {
+            let (key, meshes) = self.scene.face_meshes(&self.world, agent);
+            let lib = self.world.avatar_lib.clone();
+            self.shape_ui.request_face_surface(&self.scene.jobs, &lib, key, meshes);
+        }
+        // AURORA_DEMO_SHAPE_HANDLES=mesh-body: as if a classic rigged mesh
+        // body and head (skinned to the bones, not the volumes) hid the
+        // system ones; the demo wears none
+        if self.demo && std::env::var("AURORA_DEMO_SHAPE_HANDLES").is_ok_and(|m| m == "mesh-body") {
+            let rig = &self.world.avatar_lib.rig;
+            self.shape_ui.worn = crate::shape_editor::Worn {
+                system_body: false,
+                system_head: false,
+                rigged: (0..rig.len()).filter(|j| rig.canonical_names[*j].starts_with('m')).collect(),
+            };
+        }
+    }
+
+    /// The Studio camera on the part the handles show: the head close up,
+    /// or the whole body (the Studio's opening composition), eased both ways.
+    pub(super) fn frame_handles_part(&mut self) {
+        match self.shape_ui.handles_part {
+            crate::shape_editor::handles::Part::Body => self.avatar_studio.inspect_body(),
+            crate::shape_editor::handles::Part::Head => {
+                // the head volume's centre: the middle of the head, not its base joint
+                let head = self.world.avatar_lib.rig.names.get("HEAD").copied();
+                let floor = self.studio_view(1.0).map(|view| view.floor);
+                if let (Some(head), Some(floor), Some(frame)) = (head, floor, crate::ik_edit::Frame::new(&self.world)) {
+                    // where the head is, not only how high: a feral's is ahead of its body
+                    let at = frame.joints[head].w_axis.truncate() - floor;
+                    self.avatar_studio.inspect_head(at);
+                }
+            }
+        }
+    }
+
+    /// AURORA_DEMO_SHAPE_HANDLES=body|mesh-body|drag|resize|sliders: Avatar
+    /// Studio in T-pose with the worn demo shape open, its handles shown (the
+    /// sliders' window for `sliders`), for this launch only (the setting is
+    /// not changed). `drag` then drags the Hip Width handle sideways and
+    /// back for three seconds, `resize` pulls the Hand Size handle away from
+    /// the hand and back, both through the same solve as the pointer.
+    /// `head` shows the head's handles, the camera on the head; `entry`
+    /// opens the number window of the Height handle, as a double-click does.
+    pub(super) fn demo_shape_handles(&mut self, proj: &crate::ui::hud::Projector) {
+        if !self.demo {
+            return;
+        }
+        let Ok(mode) = std::env::var("AURORA_DEMO_SHAPE_HANDLES") else {
+            return;
+        };
+        if self.frame_count == 640 {
+            self.panels.avatar_studio = true;
+            // nothing in front of the avatar, as AURORA_DEMO_SHAPE
+            self.panels.perf = false;
+            self.panels.inventory = false;
+            self.panels.appearance = false;
+            self.panels.people = false;
+            self.panels.chat = false;
+            self.panels.minimap = false;
+        }
+        if !self.avatar_studio.active {
+            return;
+        }
+        self.avatar_studio.pose = crate::avatar_studio::Pose::T;
+        if !self.shape_ui.open && self.frame_count < 900 {
+            crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
+            if let Some(item) = worn_shape(&self.world) {
+                if let Some(info) = self.world.inventory.items.get_mut(&item) {
+                    info.name = aurora_i18n::tr!("shape-demo-name").into();
+                }
+                self.open_shape_editor(item);
+                self.shape_ui.handles = mode != "sliders";
+                self.studio_reset_view();
+                if mode == "head" || mode == "area" {
+                    self.shape_ui.handles_part = crate::shape_editor::handles::Part::Head;
+                    self.shape_ui.part_framing = true;
+                }
+            }
+        }
+        // the Torso area lit on the body's meshes, as the pointer over it
+        // does (the demo has no pointer to read it under)
+        self.shape_ui.demo_hover_area = (mode == "body" && self.frame_count >= 760).then_some(crate::shape_editor::handles::AREA_TORSO);
+        // the Eyes area picked, as a click on its glow does
+        if mode == "area" && self.frame_count == 900 {
+            self.shape_ui.handles_area = Some(2);
+        }
+        if mode == "entry" && self.frame_count == 900 {
+            let male = self
+                .shape_ui
+                .draft
+                .as_ref()
+                .is_some_and(|d| d.edited.params.get(&80).copied().unwrap_or(0.0) > 0.5);
+            let lib = self.world.avatar_lib.clone();
+            let height = self
+                .shape_ui
+                .handle_layout(&lib, male)
+                .handles
+                .iter()
+                .enumerate()
+                .find(|(_, h)| h.params.contains(&33))
+                .map(|(i, h)| (i, h.area));
+            if let Some((handle, area)) = height {
+                // its area shown, as a click on its glow does
+                self.shape_ui.handles_area = Some(area);
+                self.shape_ui.handle_entry = Some(crate::shape_editor::HandleEntry {
+                    handle,
+                    mirrored: false,
+                    at: egui::Pos2::ZERO,
+                    focused: false,
+                });
+            }
+        }
+        let slider = match mode.as_str() {
+            "drag" => 37,
+            "resize" => 675,
+            _ => return,
+        };
+        if !(900..1080).contains(&self.frame_count) {
+            return;
+        }
+        // the Hip Width (or Hand Size) dot, held by a pointer that sways
+        let lib = self.world.avatar_lib.clone();
+        let Some(frame) = crate::ik_edit::Frame::new(&self.world) else {
+            return;
+        };
+        let male = self
+            .shape_ui
+            .draft
+            .as_ref()
+            .is_some_and(|d| d.edited.params.get(&80).copied().unwrap_or(0.0) > 0.5);
+        let layout = self.shape_ui.handle_layout(&lib, male).clone();
+        let Some((index, handle)) = layout.handles.iter().enumerate().find(|(_, h)| h.params.contains(&slider)) else {
+            return;
+        };
+        // its area shown, as a click on its glow does
+        self.shape_ui.handles_area = Some(handle.area);
+        let project = |p: glam::Vec3| proj.project(p).map(|(at, _)| glam::Vec2::new(at.x, at.y));
+        let Some(pose) = crate::shape_editor::handles::Pose::from_joints(&lib.rig, frame.model, &frame.joints) else {
+            return;
+        };
+        let body = crate::shape_editor::handles::Body::new(&lib, self.world.server_visual_params(), pose.clone());
+        let eye = self
+            .studio_view(proj.width / proj.height.max(1.0))
+            .map_or(self.camera.position, |view| view.eye);
+        let Some(draft) = &mut self.shape_ui.draft else {
+            return;
+        };
+        if self.shape_ui.handle_drag.is_none() {
+            let Some(drawn) = body.drawn(&draft.edited.params, handle.anchor, &frame.joints) else {
+                return;
+            };
+            let Some(at) = project(drawn) else {
+                return;
+            };
+            let grip = crate::shape_editor::handles::Grip {
+                handle: index,
+                mirrored: false,
+                anchor: handle.anchor,
+                params: handle.params.clone(),
+                resize: handle.resize,
+            };
+            if let Some(drag) =
+                crate::shape_editor::handles::Drag::start(&body, &draft.edited.params, grip, drawn, drawn - eye, project, at)
+            {
+                draft.history.begin(&draft.edited.params);
+                self.shape_ui.handle_drag = Some((drag, pose));
+                self.shape_ui.demo_drag_from = Some(at);
+            }
+            return;
+        }
+        let (Some((drag, _)), Some(from)) = (&self.shape_ui.handle_drag, self.shape_ui.demo_drag_from) else {
+            return;
+        };
+        let t = (self.frame_count - 900) as f32 / 180.0;
+        let pointer = from + glam::Vec2::new(60.0 * (t * std::f32::consts::TAU).sin(), 0.0);
+        let range = |id: i32| {
+            crate::shape_editor::catalog::PARAMS
+                .iter()
+                .find(|p| p.id == id)
+                .map(|p| (p.min, p.max))
+        };
+        if drag.step(&body, &mut draft.edited.params, range, project, pointer) {
+            self.shape_ui.editing = true;
+            self.shape_ui.changed(&mut self.world);
+        }
+        if self.frame_count == 1079 {
+            self.shape_ui.handle_drag = None;
+            self.shape_ui.demo_drag_from = None;
+            if let Some(draft) = &mut self.shape_ui.draft {
+                draft.history.settle(&draft.edited.params);
             }
         }
     }

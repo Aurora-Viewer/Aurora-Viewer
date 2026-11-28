@@ -5008,8 +5008,32 @@ impl Scene {
                     if self.geom_ready(&morphed).is_some() {
                         key = morphed;
                     } else {
-                        // drawn as its file has it until the morph is built
                         g.morph_pending |= !self.geom_failed(&morphed);
+                        // until the new morph is built, the part keeps the
+                        // shape it had (held until then); only a first one
+                        // is drawn as its file has it. A shape dragged in the
+                        // editor changes the weights every frame: the body
+                        // flashed back to its file's shape at each change.
+                        let this_part = |k: &GeomKey| matches!(k, GeomKey::AvatarMorph { part, .. } if *part == pi as u8) && *k != morphed;
+                        // (held lists a part's newest first: the newest built)
+                        let previous = held.iter().copied().find(|k| this_part(k) && self.geom_ready(k).is_some());
+                        // and the oldest still being built stays held until it
+                        // is: dropped at each new weight, a drag slower than
+                        // the morph jobs kept the shape it had before the drag
+                        let building = held
+                            .iter()
+                            .rev()
+                            .copied()
+                            .find(|k| this_part(k) && self.geom_ready(k).is_none() && !self.geom_failed(k));
+                        if let Some(building) = building {
+                            self.geom_ref(building);
+                            g.morph_geoms.push(building);
+                        }
+                        if let Some(previous) = previous {
+                            self.geom_ref(previous);
+                            g.morph_geoms.push(previous);
+                            key = previous;
+                        }
                     }
                 }
                 let Some(geom) = self.geom_ready(&key) else {

@@ -204,6 +204,9 @@ struct FrameU {
     /// `in_poser_part`).
     part_joints: [[u32; 4]; 2],
     part_classes: [[u32; 4]; 8],
+    /// x: 1 when an unrigged worn object lets the part pick through
+    /// (`FrameParams::part_pick_through`).
+    part_pick_mode: [u32; 4],
     rez_gradient: [[f32; 4]; 3],
     cascade_vp: [[[f32; 4]; 4]; CASCADES],
     lights: [LightU; MAX_LIGHTS],
@@ -8627,6 +8630,7 @@ impl Backend {
             [f.part_joints[4], f.part_joints[5], f.part_joints[6], f.part_joints[7]],
         ];
         u.part_classes = std::array::from_fn(|i| std::array::from_fn(|j| f.part_classes[i * 4 + j]));
+        u.part_pick_mode = [u32::from(f.part_pick_through), 0, 0, 0];
         u.rez_gradient = f.rez_gradient;
         u.view_proj = vp.to_cols_array_2d();
         u.inv_view_proj = vp.inverse().to_cols_array_2d();

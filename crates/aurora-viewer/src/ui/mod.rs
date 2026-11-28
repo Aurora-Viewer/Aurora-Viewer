@@ -143,6 +143,7 @@ pub mod scripts;
 pub mod search;
 pub mod second_camera;
 pub mod shape;
+pub mod shape_handles;
 pub mod sheet;
 pub mod signup;
 pub mod sim_console;
