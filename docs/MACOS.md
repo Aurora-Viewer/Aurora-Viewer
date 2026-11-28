@@ -126,8 +126,8 @@ application (its `.app` in `/Applications`) as the plugins folder.
 ## Updates
 
 The viewer tells you when a new version is out, but it cannot replace
-itself on macOS yet: its "Open the release page" button leads to the new
-disk image. Install it as in step 1, replacing the old application. Your settings,
+itself on macOS yet: the update window says so at once, with no Update
+button, and its "Open the release page" button leads to the new disk image. Install it as in step 1, replacing the old application. Your settings,
 cache and logs are kept: they are not inside the application.
 
 | What | Where |

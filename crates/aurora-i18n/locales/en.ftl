@@ -10473,6 +10473,7 @@ update-notice-title = Aurora { $version } is available
 update-notice-ready-title = Aurora { $version } is ready to install
 update-notice-body = A new version of Aurora is waiting for you: { $current } → { $version }.
 update-notice-install = Install…
+update-notice-how = How to update…
 update-demo-finish = Finish demo
 update-check = Check for updates
 update-check-hint = Show available updates, including skipped versions.

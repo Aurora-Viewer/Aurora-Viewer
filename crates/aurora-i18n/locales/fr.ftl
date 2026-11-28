@@ -10469,6 +10469,7 @@ update-notice-title = Aurora { $version } est disponible
 update-notice-ready-title = Aurora { $version } est prête à installer
 update-notice-body = Une nouvelle version d’Aurora vous attend : { $current } → { $version }.
 update-notice-install = Installer…
+update-notice-how = Comment mettre à jour…
 update-demo-finish = Terminer la démo
 update-check = Vérifier les mises à jour
 update-check-hint = Afficher les mises à jour disponibles, même les versions ignorées.

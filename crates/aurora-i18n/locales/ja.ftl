@@ -10363,6 +10363,7 @@ update-notice-title = Aurora { $version } が利用可能です
 update-notice-ready-title = Aurora { $version } のインストール準備ができました
 update-notice-body = Auroraの新しいバージョンがあります：{ $current } → { $version }。
 update-notice-install = インストール…
+update-notice-how = 更新方法…
 update-demo-finish = デモを終了
 update-check = アップデートを確認
 update-check-hint = スキップしたバージョンを含め、利用可能なアップデートを表示します。
