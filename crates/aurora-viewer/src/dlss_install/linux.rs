@@ -36,7 +36,23 @@ const SNIPPET: Remote = remote(
     "30982c937afed85c96b8d313323de9a650a2eec6de1bb0f714b21750f4ce98f6",
 );
 
-pub const INSTALLED: [&str; 2] = [SNIPPET.name, "libsl_ngx.so"];
+/// Ray Reconstruction's and frame generation's models, beside it, as
+/// scripts/dlss-setup.sh installs them: NGX loads each only when its
+/// feature is asked for.
+const RR_SNIPPET: Remote = remote(
+    "lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.310.9.16",
+    "libnvidia-ngx-dlssd.so.310.9.16",
+    48_238_232,
+    "a5d59de18841f15779039dda567a15dd723ba737915f489271fdb5f109fbfb96",
+);
+const FG_SNIPPET: Remote = remote(
+    "lib/Linux_x86_64/rel/libnvidia-ngx-dlssg.so.310.9.16",
+    "libnvidia-ngx-dlssg.so.310.9.16",
+    7_391_232,
+    "574839cae01c835de4d5845c36ca9cf75361f8160bd52397142c36a24e29e6f7",
+);
+
+pub const INSTALLED: [&str; 4] = [SNIPPET.name, RR_SNIPPET.name, FG_SNIPPET.name, "libsl_ngx.so"];
 
 const SDK_HEADERS: [Remote; 23] = [
     remote(
@@ -384,7 +400,7 @@ pub fn prepare(net: &Net, work: &Path, report: Report) -> Result<(), String> {
     }
     let vulkan = system_library("libvulkan.so.1").ok_or("the Vulkan loader libvulkan.so.1 was not found")?;
 
-    let all: Vec<(&str, &Remote)> = [(SDK, &NGX), (SDK, &SNIPPET)]
+    let all: Vec<(&str, &Remote)> = [(SDK, &NGX), (SDK, &SNIPPET), (SDK, &RR_SNIPPET), (SDK, &FG_SNIPPET)]
         .into_iter()
         .chain(SDK_HEADERS.iter().map(|r| (SDK, r)))
         .chain(VULKAN_HEADERS.iter().map(|r| (VULKAN, r)))
@@ -439,13 +455,18 @@ pub fn prepare(net: &Net, work: &Path, report: Report) -> Result<(), String> {
 }
 
 /// What an earlier version of the setup left there, and other versions of
-/// the DLSS model.
+/// the DLSS models.
 pub fn remove_old(folder: &Path) {
     let _ = std::fs::remove_file(folder.join("libnvsdk_ngx.so"));
     if let Ok(dir) = std::fs::read_dir(folder) {
         for e in dir.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with("libnvidia-ngx-dlss.so.") && name != SNIPPET.name {
+            // (another version of a model, which NGX could load instead)
+            let stale = [&SNIPPET, &RR_SNIPPET, &FG_SNIPPET].iter().any(|r| {
+                let stem = r.name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+                name.starts_with(&format!("{stem}.")) && name != r.name
+            });
+            if stale {
                 let _ = std::fs::remove_file(e.path());
             }
         }

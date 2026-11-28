@@ -3,8 +3,8 @@
 //!
 //! The release is one zip of 276 MB, nearly all of it what the viewer does
 //! not use (debug builds, other features, samples). Its central directory
-//! is read from its end and only the six entries below are fetched, by
-//! HTTP range requests (about 32 MB). Each is checked against the SHA-256
+//! is read from its end and only the entries below are fetched, by HTTP
+//! range requests (about 58 MB). Each is checked against the SHA-256
 //! of the entry in NVIDIA's zip (whose own SHA-256 is the script's), and
 //! each DLL against NVIDIA's Authenticode signature. A server that does not
 //! answer ranges gets the whole zip, checked against its SHA-256.
@@ -36,8 +36,12 @@ const LICENCE: Entry = Entry {
     packed: 9_256,
 };
 
-/// What goes in the folder, besides NVIDIA's licence the user accepted.
-const FILES: [Entry; 5] = [
+/// What goes in the folder, besides NVIDIA's licence the user accepted:
+/// super resolution, Ray Reconstruction, and frame generation with the
+/// Reflex it needs on Windows, as scripts/dlss-setup.ps1 installs them.
+/// Streamline loads a feature's plugin only when the viewer asks for it,
+/// so the files of a feature left off cost nothing.
+const FILES: [Entry; 12] = [
     Entry {
         zip: "bin/x64/sl.interposer.dll",
         name: "sl.interposer.dll",
@@ -66,6 +70,57 @@ const FILES: [Entry; 5] = [
         sha256: "d00b5b0ab29c3ca101b70c3a5ecb3a01b7ef33766a3383a28a18623083e6123e",
         packed: 31_123_363,
     },
+    // Ray Reconstruction
+    Entry {
+        zip: "bin/x64/sl.dlss_d.dll",
+        name: "sl.dlss_d.dll",
+        size: 437_376,
+        sha256: "8dff36fd063094eb1f659e8d4dcd52c7423859a9c4a3df3796084c48412d60ac",
+        packed: 198_398,
+    },
+    Entry {
+        zip: "bin/x64/nvngx_dlssd.dll",
+        name: "nvngx_dlssd.dll",
+        size: 48_343_664,
+        sha256: "b49435ae346f227feafe7bbe937d88277ea0ee7323975ec06488f377fdb46cee",
+        packed: 21_565_260,
+    },
+    // frame generation, and the Reflex it needs
+    Entry {
+        zip: "bin/x64/sl.dlss_g.dll",
+        name: "sl.dlss_g.dll",
+        size: 637_056,
+        sha256: "3ed9538df724993bea8a050195a6a78b9c8c8a566d5b05ade477aab3c390e90f",
+        packed: 291_415,
+    },
+    Entry {
+        zip: "bin/x64/nvngx_dlssg.dll",
+        name: "nvngx_dlssg.dll",
+        size: 7_506_544,
+        sha256: "8d59d49b36410dd6b62fef2503a5871d347415bd85d943fa0848563a95dd50c7",
+        packed: 3_740_014,
+    },
+    Entry {
+        zip: "bin/x64/sl.reflex.dll",
+        name: "sl.reflex.dll",
+        size: 388_736,
+        sha256: "443577e869352436ff7ec8f4d9c90418d3e95368436ce219261e0f4f07a38122",
+        packed: 180_986,
+    },
+    Entry {
+        zip: "bin/x64/sl.pcl.dll",
+        name: "sl.pcl.dll",
+        size: 360_064,
+        sha256: "5698c38e722318681f215c9fe68e45b9bedd51378acc699d8eee26e961e57770",
+        packed: 167_273,
+    },
+    Entry {
+        zip: "bin/x64/NvLowLatencyVk.dll",
+        name: "NvLowLatencyVk.dll",
+        size: 57_840,
+        sha256: "2a77dc3e1c724b7eea5755be0ae7423752e79a2459fae72181a9f00e3507e5d6",
+        packed: 28_693,
+    },
     // Streamline's own licence (MIT)
     Entry {
         zip: "license.txt",
@@ -76,7 +131,15 @@ const FILES: [Entry; 5] = [
     },
 ];
 
-pub const INSTALLED: [&str; 5] = [FILES[0].name, FILES[1].name, FILES[2].name, FILES[3].name, FILES[4].name];
+pub const INSTALLED: [&str; FILES.len()] = {
+    let mut names = [""; FILES.len()];
+    let mut i = 0;
+    while i < FILES.len() {
+        names[i] = FILES[i].name;
+        i += 1;
+    }
+    names
+};
 
 /// NVIDIA's DLSS licence, from the release.
 pub fn licence(net: &Net) -> Result<String, String> {

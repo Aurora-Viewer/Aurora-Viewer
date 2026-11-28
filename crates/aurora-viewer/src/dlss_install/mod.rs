@@ -7,7 +7,7 @@
 //!
 //! - Windows: NVIDIA's signed Streamline release (windows.rs). Only the
 //!   files the viewer needs are read out of the release's zip, by HTTP
-//!   range requests (about 32 MB of its 276 MB), each checked against its
+//!   range requests (about 58 MB of its 276 MB), each checked against its
 //!   SHA-256 and NVIDIA's signature;
 //! - Linux: NVIDIA's DLSS SDK files, and sl-ngx (MIT) built against them
 //!   with the system's `g++` (linux.rs).
