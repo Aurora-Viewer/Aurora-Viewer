@@ -198,8 +198,9 @@ impl OceanMaps {
     }
 
     /// The wind sea at world `p`, each cascade taken by its `weights` (the
-    /// open sea's two, the lakes': `ocean_weights`), bilinear and
-    /// wrapping, as `water_fx_ocean`.
+    /// open sea's two, the lakes': `ocean_weights`), wrapping, as
+    /// `water_fx_ocean`: bilinear, but for the folds (`jacobian`) and the
+    /// foam, whose weights' slope goes on across the texels' lines.
     pub fn sample_weighted(&self, p: Vec2, weights: [f32; 3]) -> OceanAt {
         if self.texels.len() != OCEAN_TILES.len() * OCEAN_BLOCKS * OCEAN_N * OCEAN_N {
             return OceanAt::default();
@@ -218,7 +219,14 @@ impl OceanMaps {
                 (base.x as i32).rem_euclid(OCEAN_N as i32) as usize,
                 (base.y as i32).rem_euclid(OCEAN_N as i32) as usize,
             );
-            let mix = |block: usize| {
+            // the folds and the foam with weights whose slope goes on across
+            // the texels' lines (3f² - 2f³; `water_fx_ocean`): thresholded
+            // into whitecaps, a bilinear field drew their edges as polygons
+            // cornered on every texel (1.5 m on the long tile), and as the
+            // crests moved through the fixed tile their edges slid along
+            // the corners, as a crawling pixelation
+            let g = f * f * (Vec2::splat(3.0) - 2.0 * f);
+            let mix = |block: usize, f: Vec2| {
                 let t = |dx: usize, dy: usize| self.block(c, block, x + dx, y + dy);
                 let (a, b, cc, d) = (t(0, 0), t(1, 0), t(0, 1), t(1, 1));
                 std::array::from_fn::<f32, 4, _>(|k| {
@@ -227,12 +235,13 @@ impl OceanMaps {
                     top + (bottom - top) * f.y
                 })
             };
-            let d = mix(0);
-            let s = mix(1);
+            let d = mix(0, f);
+            let s = mix(1, f);
+            let (dg, sg) = (mix(0, g), mix(1, g));
             at.offset += Vec3::new(d[0], d[1], d[2]) * w;
             at.slope += Vec2::new(s[0], s[1]) * w;
-            at.jacobian += Vec3::new(s[2], d[3], s[3]) * w;
-            at.foam = at.foam.max(mix(2)[0] * w);
+            at.jacobian += Vec3::new(sg[2], dg[3], sg[3]) * w;
+            at.foam = at.foam.max(mix(2, g)[0] * w);
         }
         at
     }
@@ -680,6 +689,30 @@ fn inverse_fft_2d(grid: &mut [C], n: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The whitecaps' edges are thresholds of the folds: with bilinear
+    /// weights the folds' slope jumps at every texel's line, and the edges
+    /// turned a corner there. Either side of the lines, their slope agrees.
+    #[test]
+    fn the_folds_bend_smoothly_across_the_texels_lines() {
+        let mut ocean = Ocean::new();
+        let maps = ocean.update(12.0, Vec2::X, 16.0, Spectrum::Jonswap, 1.0, FETCH, 1.0, false);
+        let texel = OCEAN_TILES[0] / OCEAN_N as f32;
+        let h = texel * 0.02;
+        // (the open sea's long cascade alone: its texels are the coarsest)
+        let fold = |p: Vec2| maps.sample_weighted(p, [1.0, 0.0, 0.0]).jacobian.x;
+        let (mut jump, mut slope) = (0.0f32, 0.0f32);
+        for k in 0..64 {
+            let p = Vec2::new((17 + k) as f32 * texel, (3.3 + k as f32 * 1.7) * texel);
+            let left = (fold(p) - fold(p - Vec2::X * h)) / h;
+            let right = (fold(p + Vec2::X * h) - fold(p)) / h;
+            jump = jump.max((right - left).abs());
+            let mid = p + Vec2::X * texel * 0.5;
+            slope = slope.max(((fold(mid + Vec2::X * h) - fold(mid - Vec2::X * h)) / (2.0 * h)).abs());
+        }
+        assert!(slope > 1e-3, "the folds vary: {slope}");
+        assert!(jump < 0.1 * slope, "no corner at the texels' lines: {jump} against {slope}");
+    }
 
     #[test]
     fn the_inverse_fft_brings_a_single_wave_back() {

@@ -3268,10 +3268,22 @@ fn water_fx_ocean(p: vec2<f32>, footprint: f32, fine: bool, at: WaterSeaAt) -> W
         let base=floor(pos);let f=pos-base;
         let i=vec2<i32>(base)%vec2<i32>(128);let j=(i+vec2<i32>(1))%vec2<i32>(128);
         let row=320+c*384;
-        let d=mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+i.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+i.y),0),f.x),
-            mix(textureLoad(water_ground,vec2<i32>(i.x,row+j.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+j.y),0),f.x),f.y);
-        let s=mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+128+i.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+128+i.y),0),f.x),
-            mix(textureLoad(water_ground,vec2<i32>(i.x,row+128+j.y),0),textureLoad(water_ground,vec2<i32>(j.x,row+128+j.y),0),f.x),f.y);
+        let d00=textureLoad(water_ground,vec2<i32>(i.x,row+i.y),0);let d10=textureLoad(water_ground,vec2<i32>(j.x,row+i.y),0);
+        let d01=textureLoad(water_ground,vec2<i32>(i.x,row+j.y),0);let d11=textureLoad(water_ground,vec2<i32>(j.x,row+j.y),0);
+        let s00=textureLoad(water_ground,vec2<i32>(i.x,row+128+i.y),0);let s10=textureLoad(water_ground,vec2<i32>(j.x,row+128+i.y),0);
+        let s01=textureLoad(water_ground,vec2<i32>(i.x,row+128+j.y),0);let s11=textureLoad(water_ground,vec2<i32>(j.x,row+128+j.y),0);
+        let d=mix(mix(d00,d10,f.x),mix(d01,d11,f.x),f.y);
+        let s=mix(mix(s00,s10,f.x),mix(s01,s11,f.x),f.y);
+        // the folds and the foam with weights whose slope goes on across
+        // the texels' lines (3f² - 2f³; OceanMaps::sample_weighted alike):
+        // thresholded into whitecaps, the bilinear field drew their edges as
+        // polygons cornered on every texel (1.5 m on the long tile), and as
+        // the crests moved through the fixed tile the edges slid along the
+        // corners, a crawling pixelation (reported on the grid and in the
+        // demo, at the back of the caps)
+        let g=f*f*(3.0-2.0*f);
+        let dw=mix(mix(d00.w,d10.w,g.x),mix(d01.w,d11.w,g.x),g.y);
+        let szw=mix(mix(s00.zw,s10.zw,g.x),mix(s01.zw,s11.zw,g.x),g.y);
         // (the long chop's shortest waves are 10 m, the ripples' and the
         // lakes' chop's ~2 m on the whole: a pixel past a fraction of them
         // aliases them)
@@ -3279,9 +3291,9 @@ fn water_fx_ocean(p: vec2<f32>, footprint: f32, fine: bool, at: WaterSeaAt) -> W
         let att=(1.0-smoothstep(0.5,2.0,k*footprint))*w;
         o.offset+=d.xyz*w;
         if(!(fine && c==1 && water_fine_on())){o.slope+=s.xy*att;}
-        o.jacobian+=vec3<f32>(s.z,d.w,s.w)*att;
-        let foam=mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+256+i.y),0).x,textureLoad(water_ground,vec2<i32>(j.x,row+256+i.y),0).x,f.x),
-            mix(textureLoad(water_ground,vec2<i32>(i.x,row+256+j.y),0).x,textureLoad(water_ground,vec2<i32>(j.x,row+256+j.y),0).x,f.x),f.y);
+        o.jacobian+=vec3<f32>(szw.x,dw,szw.y)*att;
+        let foam=mix(mix(textureLoad(water_ground,vec2<i32>(i.x,row+256+i.y),0).x,textureLoad(water_ground,vec2<i32>(j.x,row+256+i.y),0).x,g.x),
+            mix(textureLoad(water_ground,vec2<i32>(i.x,row+256+j.y),0).x,textureLoad(water_ground,vec2<i32>(j.x,row+256+j.y),0).x,g.x),g.y);
         o.foam=max(o.foam,foam*select(att,w,c==0));
     }
     return o;
