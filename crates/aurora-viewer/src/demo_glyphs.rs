@@ -60,11 +60,11 @@ pub const SAMPLES: &[Sample] = &[
         chat: "Right to left: مرحبا بالعالم · שלום עולם · ۞ ۩",
     },
     Sample {
-        title: "ᗩᑌᖇOᖇᗩ ᏔᎾᏞᎰ",
+        title: "ᐰ 𒀭 ᗩᑌᖇOᖇᗩ ᏔᎾᏞᎰ",
         display_name: "ᴀᴜʀᴏʀᴀ ᴄᴅᴇꜰᴊᴋᴏᴘꜱᴜᴠᴡᴢ ᴥ",
         // 𐙚 𖤐 ꨄ: Linux Noto files only, squares on Windows
         // (`fallback::NOT_ON_WINDOWS`)
-        chat: "Other scripts: ಠ ୨୧ অ અ ਅ അ అ අ · 𓆩 ꕤ ᥫ 𐙚 𖤐 ꨄ · नमस्ते ॐ · สวัสดี ๑ · ஐ · ༒ · ꋬ · ጀ · ᚱᚢᚾ · ᬅᬓ",
+        chat: "Other scripts: ಠ ୨୧ অ અ ਅ അ അ අ · ꧁ · က · 𓆩 ꕤ ᥫ 𐙚 𖤐 ꨄ · ᐰ 𒀭 · नमस्ते ॐ · สวัสดี ๑ · ஐ · ༒ · ꋬ · ጀ · ᚱᚢᚾ · ᬅᬓ",
     },
     Sample {
         title: "🐺 Wolf Pack 🌙",

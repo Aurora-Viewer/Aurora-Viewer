@@ -13,6 +13,7 @@ use std::sync::{Arc, Once, OnceLock};
 
 pub mod fallback;
 pub mod preview;
+pub mod provider;
 
 pub const INTER: &str = "Inter";
 pub const NOTO: &str = "Noto Sans";
@@ -119,19 +120,48 @@ fn font_dirs() -> Vec<PathBuf> {
             dirs.push(PathBuf::from(local).join("Microsoft").join("Windows").join("Fonts"));
         }
     } else if cfg!(target_os = "macos") {
-        dirs.push(PathBuf::from("/usr/share/fonts"));
-        dirs.push(PathBuf::from("/usr/local/share/fonts"));
-        if let Some(home) = std::env::var_os("HOME") {
-            dirs.push(PathBuf::from(home).join(".local/share/fonts"));
-        }
-        dirs.push(PathBuf::from("/System/Library/Fonts"));
-        dirs.push(PathBuf::from("/Library/Fonts"));
+        dirs = macos_font_dirs(std::env::var_os("HOME").map(PathBuf::from));
     } else {
         dirs = xdg_font_dirs(
             std::env::var_os("HOME").map(PathBuf::from),
             std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
             std::env::var_os("XDG_DATA_DIRS"),
         );
+    }
+    dirs
+}
+
+/// The font directories of macOS: the Unix ones an XDG set-up may add, the
+/// system's own (its `Supplemental` folder is read with it), the network
+/// library, and the user's `~/Library/Fonts` where a double-clicked font
+/// lands. `home` is `$HOME`, for the tests.
+fn macos_font_dirs(home: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut dirs = vec![PathBuf::from("/usr/share/fonts"), PathBuf::from("/usr/local/share/fonts")];
+    if let Some(home) = &home {
+        dirs.push(home.join(".local/share/fonts"));
+    }
+    dirs.push(PathBuf::from("/System/Library/Fonts"));
+    dirs.push(PathBuf::from("/Library/Fonts"));
+    dirs.push(PathBuf::from("/Network/Library/Fonts"));
+    if let Some(home) = home {
+        dirs.push(home.join("Library/Fonts"));
+    }
+    dirs
+}
+
+/// The fonts macOS downloads into `AssetsV2`, in their
+/// `com_apple_MobileAsset_Font*` folders. They are read by the on-demand
+/// fallback only: the Preferences list's small directory budget must not be
+/// used up by their many folders before it reaches the user's own fonts.
+#[cfg(target_os = "macos")]
+fn macos_asset_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(entries) = std::fs::read_dir("/System/Library/AssetsV2") {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with("com_apple_MobileAsset_Font") {
+                dirs.push(entry.path());
+            }
+        }
     }
     dirs
 }
@@ -456,19 +486,34 @@ pub fn chat_size(ctx: &egui::Context, size: f32) -> f32 {
     size * ctx.data(|data| data.get_temp(egui::Id::unique(CHAT_ID))).unwrap_or(1.0)
 }
 
+/// The row metrics of the chosen font, as egui builds a text row from it.
+fn primary_row(definitions: &egui::FontDefinitions) -> Option<fallback::RowMetrics> {
+    let data = definitions.font_data.get(MAIN).or_else(|| {
+        definitions
+            .families
+            .get(&egui::FontFamily::Proportional)?
+            .iter()
+            .find_map(|name| definitions.font_data.get(name))
+    })?;
+    let face = ttf_parser::Face::parse(data.bytes(), data.index).ok()?;
+    fallback::RowMetrics::of(&face)
+}
+
 /// Keep the unscaled faces so live changes never compound their scale and
 /// late system fallbacks or a font change inherit the current preference.
 fn install(ctx: &egui::Context, definitions: egui::FontDefinitions) {
     let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let heavier =
         definitions.font_data.contains_key(SEMIBOLD) || definitions.font_data.get(MAIN).is_some_and(|face| has_weight_axis(face.bytes()));
+    let scale = scale(ctx);
+    let shift = definitions.font_data.get(MAIN).map_or(0.0, |face| face.tweak.y_offset_factor);
+    provider::set_baseline(primary_row(&definitions), shift, scale);
     ctx.data_mut(|data| {
         data.insert_temp(egui::Id::unique(DEFINITIONS_ID), Arc::new(definitions.clone()));
         data.insert_temp(egui::Id::unique(SEMIBOLD_ID), heavier);
         data.insert_temp(egui::Id::unique(BASELINE_ID), BaselineFace::of(&definitions));
         data.insert_temp(egui::Id::unique(INSTALLED_ID), frame);
     });
-    let scale = scale(ctx);
     let mut scaled = definitions;
     for face in scaled.font_data.values_mut() {
         let face = Arc::make_mut(face);
@@ -820,6 +865,17 @@ mod tests {
             xdg_font_dirs(None, Some(p("data")), Some("".into())),
             [p("/usr/share/fonts"), p("/usr/local/share/fonts")]
         );
+    }
+
+    #[test]
+    fn macos_font_dirs_read_the_user_and_network_fonts() {
+        let p = PathBuf::from;
+        let dirs = macos_font_dirs(Some(p("/Users/u")));
+        assert!(dirs.contains(&p("/Users/u/Library/Fonts")), "~/Library/Fonts: {dirs:?}");
+        assert!(dirs.contains(&p("/Network/Library/Fonts")), "/Network/Library/Fonts: {dirs:?}");
+        assert!(dirs.contains(&p("/System/Library/Fonts")));
+        assert!(dirs.contains(&p("/Library/Fonts")));
+        assert!(dirs.contains(&p("/Users/u/.local/share/fonts")));
     }
 
     fn measure(ctx: &egui::Context, family: egui::FontFamily, size: f32, width: f32) -> (egui::Vec2, usize) {

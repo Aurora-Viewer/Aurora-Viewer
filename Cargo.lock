@@ -818,6 +818,7 @@ dependencies = [
  "ttf-parser",
  "unicode-bidi",
  "unicode-bidi-mirroring",
+ "unicode-script",
  "uuid",
  "wayland-client",
  "wayland-protocols",

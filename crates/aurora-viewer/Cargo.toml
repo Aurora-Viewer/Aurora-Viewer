@@ -81,6 +81,9 @@ spellbook = "0.4.2"
 # app/photo_reel.rs), recoverable; Windows, macOS and freedesktop. MIT.
 trash = "5.2.9"
 ttf-parser = "0.25.1"
+# The script a character belongs to, for the on-demand system font fallback
+# (ui/fonts/provider.rs); already in the tree through usvg, MIT/Apache-2.0.
+unicode-script = "0.5.8"
 # Right-to-left text in reading order (ui/bidi.rs): the Unicode Bidirectional
 # Algorithm (unicode-rs, already in the tree through url) and its mirrored
 # brackets (RazrFalcon, of rustybuzz), MIT/Apache-2.0.
