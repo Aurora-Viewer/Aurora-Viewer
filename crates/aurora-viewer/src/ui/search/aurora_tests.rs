@@ -465,6 +465,104 @@ fn search_groups_navigation_wraps_without_overlap_at_the_minimum_width() {
 }
 
 #[test]
+fn dragging_a_chip_reorders_the_chips_and_the_sections_of_all() {
+    let mut world = world();
+    let mut w = Window::new("aurora");
+    let requests = w.st.aurora_requests(&w.settings);
+    apply(&mut world, requests.into_iter().map(SearchAction::Find).collect());
+    let places_head = aurora_i18n::text("common-places").to_uppercase();
+    let people_head = aurora_i18n::text("common-people").to_uppercase();
+    let y_of = |texts: &Texts, text: &str| texts.iter().find(|(_, t)| t == text).map(|(pos, _)| pos.y);
+    let texts = w.settle(&mut world);
+    assert!(y_of(&texts, &people_head) < y_of(&texts, &places_head), "the default order");
+    let at = |texts: &Texts, label: &str| texts.iter().find(|(_, t)| t == label).map(|(pos, _)| *pos).expect("chip");
+    let places = at(&texts, aurora_i18n::tr!("common-places"));
+    // the left half of the People chip: its icon, before its name
+    let target = at(&texts, aurora_i18n::tr!("common-people")) - Vec2::new(30.0, 0.0);
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let mut actions = w.frame(&world, vec![egui::Event::PointerMoved(places), button(places, true)]).1;
+    for step in 1..=4 {
+        let pos = places + (target - places) * (step as f32 / 4.0);
+        actions.extend(w.frame(&world, vec![egui::Event::PointerMoved(pos)]).1);
+    }
+    actions.extend(w.frame(&world, vec![button(target, false)]).1);
+    actions.extend(w.frame(&world, Vec::new()).1);
+    assert!(
+        actions.iter().any(|a| matches!(a, SearchAction::SettingsChanged)),
+        "the order is saved"
+    );
+    assert!(actions.iter().all(|a| !matches!(a, SearchAction::Find(_))), "no new search");
+    assert_eq!(w.st.aurora_kind(), Kind::All, "a drag is not a click");
+    assert_eq!(w.settings.aurora_order, ["places", "people", "events", "groups", "classifieds"]);
+    let texts = w.settle(&mut world);
+    assert!(y_of(&texts, &places_head) < y_of(&texts, &people_head), "All follows the chips");
+    let chips = |texts: &Texts| {
+        let mut row: Vec<(f32, String)> = [
+            aurora_i18n::tr!("search-aurora-all"),
+            aurora_i18n::tr!("common-people"),
+            aurora_i18n::tr!("common-places"),
+            aurora_i18n::tr!("search-tab-land"),
+        ]
+        .iter()
+        .map(|l| (at(texts, l).x, (*l).to_owned()))
+        .collect();
+        row.sort_by(|a, b| a.0.total_cmp(&b.0));
+        row.into_iter().map(|(_, l)| l).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        chips(&texts),
+        [
+            aurora_i18n::tr!("search-aurora-all"),
+            aurora_i18n::tr!("common-places"),
+            aurora_i18n::tr!("common-people"),
+            aurora_i18n::tr!("search-tab-land"),
+        ],
+        "All first, Land sales after the sections"
+    );
+    // a click on a moved chip still opens its list, and the order stays
+    w.click(&mut world, aurora_i18n::tr!("common-places"));
+    assert_eq!(w.st.aurora_kind(), Kind::Places);
+    w.click(&mut world, aurora_i18n::tr!("search-aurora-all"));
+    let texts = w.settle(&mut world);
+    assert!(y_of(&texts, &places_head) < y_of(&texts, &people_head));
+}
+
+#[test]
+fn the_demo_order_is_shown_for_the_launch_and_never_saved() {
+    let mut world = world();
+    let mut w = Window::new("aurora");
+    w.st.aurora_launch_order(" Groups, unknown ,places");
+    let requests = w.st.aurora_requests(&w.settings);
+    apply(&mut world, requests.into_iter().map(SearchAction::Find).collect());
+    let mut actions = Vec::new();
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        let (t, a) = w.frame(&world, Vec::new());
+        actions.extend(a);
+        texts = t;
+    }
+    let y_of = |label: &'static str| {
+        let head = aurora_i18n::text(label).to_uppercase();
+        texts
+            .iter()
+            .find(|(_, t)| *t == head)
+            .map(|(pos, _)| pos.y)
+            .unwrap_or_else(|| panic!("{head} in {:?}", texts.iter().map(|t| &t.1).collect::<Vec<_>>()))
+    };
+    assert!(y_of("common-groups") < y_of("common-places"), "All's sections");
+    let x_of = |label: &str| texts.iter().find(|(_, t)| t == label).map(|(pos, _)| pos.x).expect("chip");
+    let chips = ["common-groups", "common-places", "common-people", "search-tab-events"].map(|k| x_of(aurora_i18n::text(k)));
+    assert!(chips.is_sorted(), "the chips: named first, then the default order");
+    assert!(w.settings.aurora_order.is_empty(), "the saved order is untouched");
+    assert!(actions.iter().all(|a| !matches!(a, SearchAction::SettingsChanged)));
+}
+
+#[test]
 fn all_then_a_chip_rows_toggles_and_the_web() {
     let mut world = world();
     let mut w = Window::new("aurora");

@@ -53,6 +53,24 @@ impl Tab {
         Tab::ALL.iter().position(|t| *t == self).unwrap_or(0)
     }
 
+    /// Its name in the saved settings (`SearchSettings::aurora_order`).
+    pub fn key(self) -> &'static str {
+        match self {
+            Tab::Web => "web",
+            Tab::People => "people",
+            Tab::Groups => "groups",
+            Tab::Places => "places",
+            Tab::Land => "land",
+            Tab::Events => "events",
+            Tab::Classifieds => "classifieds",
+        }
+    }
+
+    /// The tab of a saved name, none for a name this version does not know.
+    pub fn from_key(key: &str) -> Option<Tab> {
+        Tab::ALL.into_iter().find(|t| t.key() == key)
+    }
+
     /// selectTab(FSLastSearchTab), the first tab when it fails.
     pub fn from_index(i: usize) -> Tab {
         Tab::ALL.get(i).copied().unwrap_or(Tab::Web)
@@ -137,6 +155,12 @@ pub struct SearchSettings {
     /// The G / M / A toggles of Aurora's window, one set for every type
     /// (the Legacy Viewer's defaults: General only).
     pub aurora_ratings: RatingBoxes,
+    /// Aurora's own: the order of the People, Places, Events, Groups and
+    /// Classifieds chips, which the sections of "All" follow, as the user
+    /// dragged them (`Tab::key`). Empty: that order. Unknown or missing
+    /// names are skipped or put back at their default place
+    /// (`ui/search/aurora.rs`, `section_order`).
+    pub aurora_order: Vec<String>,
 }
 
 impl Default for SearchSettings {
@@ -153,6 +177,7 @@ impl Default for SearchSettings {
             land_type: 0,
             teleport_action: 1,
             aurora_ratings: RatingBoxes::default(),
+            aurora_order: Vec::new(),
         }
     }
 }

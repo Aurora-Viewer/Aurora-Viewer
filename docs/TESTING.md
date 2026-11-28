@@ -7234,6 +7234,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab (or Aurora's "all" chip), search done |
+| `AURORA_DEMO_SEARCH_ORDER=<names>` | Order of the section chips of Aurora's "Search" and of All, for this launch |
 | `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo; `teleport` opens the offline link test |
 | `AURORA_DEMO_EVENT_TIMES=1\|grid-behind` | Events start from the next hour. `grid-behind` puts the demo grid clock one hour behind the computer |
 | `AURORA_DEMO_GRID_HELP=<page>` | Help › Knowledge base shown, opening this page |
@@ -11514,6 +11515,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   A text containing `page` (for example `people:page`) answers a full
   page: "> 100 found" and the Next button; a text containing
   `xyz` finds nothing ("'xyz' not found").
+- **`AURORA_DEMO_SEARCH_ORDER=places,people,events,groups,classifieds`**
+  (with `AURORA_DEMO_SEARCH`): the order of the People, Places, Events,
+  Groups and Classifieds chips of Aurora's "Search", and of the sections
+  of All, for this launch only, as if the user had dragged them: the
+  saved order (`SearchSettings::aurora_order`) is neither read nor
+  changed. Names left out keep their default place; a chip dragged in the
+  window saves the new order as usual.
 - **`AURORA_DEMO_EVENT_TIMES=1`** (with `AURORA_DEMO_SEARCH=events`): the
   demo events start at the next whole hour, then 2, 5, 8, 12 and 26 hours
   later, instead of their fixed October dates, so the list reads "Today"
