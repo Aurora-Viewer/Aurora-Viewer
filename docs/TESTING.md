@@ -3308,7 +3308,8 @@ Transaction windows, with the same variable:
   enabled and opens Buy L$ for the missing L$ 80, the window staying open.
   With Contactless payment on (the default), the price is chosen already
   and the terminal's card, or the Pay button, pays it at the end of its
-  hold; short of L$, the same hold opens Buy L$.
+  hold; short of L$, the same hold opens Buy L$. The window then says
+  "Payment accepted" and closes by itself after 1.5 s.
 - `buy-touch-menu` (#1869): the for-sale cube keeps the Touch click action
   and Buy is chosen from its menu; add `-confirm` to press Buy at frame 320
   (the log shows `demo purchase confirmed: … prim=971, price=10`).

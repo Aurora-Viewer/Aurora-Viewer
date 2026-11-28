@@ -89,6 +89,24 @@ enum Stage {
     Failed(String),
 }
 
+/// How long an object's window waits for the new balance after its payment
+/// left, its terminal saying "Sending", before it closes without more; and
+/// how long it stays on "Payment accepted" before closing by itself. In
+/// seconds of egui's time.
+const OBJECT_ANSWER_WAIT: f64 = 5.0;
+const OBJECT_ACCEPTED: f64 = 1.5;
+
+/// The payment an object's window just made with its terminal.
+#[derive(Default)]
+struct Receipt {
+    /// When the window began to show it.
+    since: Option<f64>,
+    /// The balance changed since: the server took the payment.
+    answered: bool,
+    /// When the terminal began to say that it was accepted.
+    accepted: Option<f64>,
+}
+
 /// A resident or a group being paid.
 pub struct Payee {
     pub id: Uuid,
@@ -128,6 +146,9 @@ pub struct PayUi {
     /// The object's window `object_terminal` belongs to: its object and
     /// when it opened.
     object_window: Option<(Uuid, Instant)>,
+    /// The payment the object's window just made, while it stays to say
+    /// what became of it.
+    object_receipt: Option<Receipt>,
     /// AURORA_DEMO_PAY=hold: a hold drawn at this fraction, for captures.
     demo_hold: Option<f32>,
     /// AURORA_DEMO_PAY=button: the Pay button for this run, whatever
@@ -272,6 +293,9 @@ impl PayUi {
     /// The new balance: a payment still waiting took it (grids that send no
     /// TransactionInfo), and a finished one shows it.
     pub fn on_balance(&mut self, balance: i32) {
+        if let Some(shown) = self.object_receipt.as_mut() {
+            shown.answered = true;
+        }
         if let Some(payee) = self.payee.as_mut() {
             match payee.stage {
                 Stage::Sending { amount, .. } => {
@@ -808,7 +832,38 @@ impl PayUi {
             threshold,
             ..
         } = rules;
-        let d = state.dialog.as_mut().filter(|d| d.target.action == Action::Pay)?;
+        // the window of a payment just made stays a moment: its terminal says
+        // the payment is on its way, then accepted once the balance changed,
+        // and the window closes by itself (`Interactions::paid`). Without
+        // the server's answer it closes without saying so.
+        let receipt = !state.dialog.as_ref().is_some_and(|d| d.target.action == Action::Pay);
+        if receipt {
+            if !contactless || state.paid.is_none() {
+                self.object_receipt = None;
+                return None;
+            }
+            let now = ctx.input(|i| i.time);
+            let shown = self.object_receipt.get_or_insert_with(Receipt::default);
+            let since = *shown.since.get_or_insert(now);
+            if shown.answered && shown.accepted.is_none() {
+                shown.accepted = Some(now);
+            }
+            let over = match shown.accepted {
+                Some(at) => now - at >= OBJECT_ACCEPTED,
+                None => now - since >= OBJECT_ANSWER_WAIT,
+            };
+            if over {
+                state.paid = None;
+                self.object_receipt = None;
+                self.object_window = None;
+                return None;
+            }
+            ctx.request_repaint_after_secs(0.1);
+        } else {
+            self.object_receipt = None;
+        }
+        let accepted = self.object_receipt.as_ref().is_some_and(|shown| shown.accepted.is_some());
+        let d = if receipt { state.paid.as_mut() } else { state.dialog.as_mut() }?;
         // the terminal of this window only: a hold never passes from the
         // window of an object to the next one
         let window = (d.target.object, d.opened);
@@ -894,11 +949,6 @@ impl PayUi {
             // PAY_PRICE_HIDE (-1) hides the free amount
             let free = default != -1;
             let quick: Vec<i32> = buttons.iter().copied().filter(|v| *v > 0).collect();
-            if free {
-                amount_field(ui, p, &mut d.amount, &mut false);
-            } else {
-                ui.label(RichText::new(aurora_i18n::tr!("ui-pay-object-amounts")).size(12.0).color(p.muted));
-            }
             // with the free amount, a button fills it in; without it (a vendor
             // selling at its prices), the button pays at once, like the
             // Legacy Viewer's quick-pay buttons (LLFloaterPay::onGive). With
@@ -907,38 +957,47 @@ impl PayUi {
             // and an amount that is none of them (the last one paid
             // elsewhere) is not.
             let chooses = free || contactless;
-            if contactless && !free && parse_amount(&d.amount).is_none_or(|a| !quick.contains(&a)) {
-                d.amount = match quick.as_slice() {
-                    [only] => only.to_string(),
-                    _ => String::new(),
-                };
-            }
-            let amount = if chooses { parse_amount(&d.amount) } else { None };
+            let mut amount = None;
             let mut pay = None;
-            if !quick.is_empty() {
-                ui.columns(quick.len(), |cols| {
-                    for (col, value) in cols.iter_mut().zip(quick.iter().copied()) {
-                        let (icon, kind) = if !chooses {
-                            ("coin-filled", ActionKind::Primary)
-                        } else if amount == Some(value) {
-                            ("", ActionKind::Primary)
-                        } else {
-                            ("", ActionKind::Flat)
-                        };
-                        let h = if chooses { 28.0 } else { 40.0 };
-                        if widgets::action_button(col, p, icon, &money(value), kind, Vec2::new(col.available_width(), h)).clicked()
-                            && asked.is_none()
-                        {
-                            if chooses {
-                                d.amount = value.to_string();
-                            } else if available {
-                                pay = Some(value);
+            // (greyed once the payment is made)
+            ui.add_enabled_ui(!receipt, |ui| {
+                if free {
+                    amount_field(ui, p, &mut d.amount, &mut false);
+                } else {
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-pay-object-amounts")).size(12.0).color(p.muted));
+                }
+                if !receipt && contactless && !free && parse_amount(&d.amount).is_none_or(|a| !quick.contains(&a)) {
+                    d.amount = match quick.as_slice() {
+                        [only] => only.to_string(),
+                        _ => String::new(),
+                    };
+                }
+                amount = if chooses { parse_amount(&d.amount) } else { None };
+                if !quick.is_empty() {
+                    ui.columns(quick.len(), |cols| {
+                        for (col, value) in cols.iter_mut().zip(quick.iter().copied()) {
+                            let (icon, kind) = if !chooses {
+                                ("coin-filled", ActionKind::Primary)
+                            } else if amount == Some(value) {
+                                ("", ActionKind::Primary)
+                            } else {
+                                ("", ActionKind::Flat)
+                            };
+                            let h = if chooses { 28.0 } else { 40.0 };
+                            if widgets::action_button(col, p, icon, &money(value), kind, Vec2::new(col.available_width(), h)).clicked()
+                                && asked.is_none()
+                            {
+                                if chooses {
+                                    d.amount = value.to_string();
+                                } else if available {
+                                    pay = Some(value);
+                                }
                             }
                         }
-                    }
-                });
-            }
-            let after = amount.zip(world.balance).map(|(a, b)| b - a);
+                    });
+                }
+            });
+            let after = amount.zip(world.balance).map(|(a, b)| b - a).filter(|_| !receipt);
             ui.horizontal(|ui| {
                 ui.label(RichText::new(aurora_i18n::tr!("ui-pay-balance")).size(12.0).color(p.muted));
                 ui.label(
@@ -966,7 +1025,7 @@ impl PayUi {
                     ui.label(RichText::new(aurora_i18n::tr!("common-insufficient-or-unknown-balance")).color(p.danger));
                 });
             }
-            if let Some(error) = &d.error {
+            if let Some(error) = d.error.as_ref().filter(|_| !receipt) {
                 ui.label(RichText::new(error).color(p.danger));
             }
             if let Some(value) = asked {
@@ -1005,7 +1064,17 @@ impl PayUi {
                 // that holds the card in our place; short of L$ the payment
                 // stays possible and opens Buy L$, as above
                 let holder = world.social.display_name_of(&world.agent_id);
-                let status = if !available {
+                let received = if accepted {
+                    let name = d.props.as_ref().map(|props| props.name.clone()).unwrap_or_default();
+                    aurora_i18n::tr!("ui-pay-terminal-accepted-help", name = name, amount = money(amount.unwrap_or(0)))
+                } else {
+                    String::new()
+                };
+                let status = if accepted {
+                    terminal::Status::Accepted(&received)
+                } else if receipt {
+                    terminal::Status::Sending
+                } else if !available {
                     terminal::Status::Blocked {
                         label: aurora_i18n::tr!("ui-pay-terminal-ready"),
                         text: aurora_i18n::tr!("ui-object-actions-this-object-is-no-longer-available"),
@@ -1036,19 +1105,27 @@ impl PayUi {
                 }
                 let playing = self.object_terminal.playing();
                 let can_pay = available && amount.is_some() && !playing;
-                match widgets::dialog_buttons(
-                    ui,
-                    p,
-                    &[
-                        button("", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, true),
-                        button("coin-filled", &label, ActionKind::Primary, can_pay),
-                    ],
-                    BUTTON_H,
-                ) {
-                    Some(0) if playing => self.object_terminal.stop(),
-                    Some(0) => close = true,
-                    Some(_) => self.object_terminal.play(),
-                    None => {}
+                if receipt {
+                    // nothing left to cancel: the window closes by itself
+                    let leave = [button("", aurora_i18n::tr!("common-close"), ActionKind::Flat, true)];
+                    if widgets::dialog_buttons(ui, p, &leave, BUTTON_H).is_some() {
+                        close = true;
+                    }
+                } else {
+                    match widgets::dialog_buttons(
+                        ui,
+                        p,
+                        &[
+                            button("", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, true),
+                            button("coin-filled", &label, ActionKind::Primary, can_pay),
+                        ],
+                        BUTTON_H,
+                    ) {
+                        Some(0) if playing => self.object_terminal.stop(),
+                        Some(0) => close = true,
+                        Some(_) => self.object_terminal.play(),
+                        None => {}
+                    }
                 }
             } else {
                 // without the free amount the Legacy Viewer hides its Pay
@@ -1081,11 +1158,18 @@ impl PayUi {
         });
         if !open || close {
             state.dialog = None;
+            state.paid = None;
             self.object_window = None;
+            self.object_receipt = None;
             ctx.data_mut(|data| {
                 data.remove::<i32>(confirm_id);
             });
             return None;
+        }
+        // the payment leaves: if `Interactions::confirm` sends it, the window
+        // stays to say what became of it
+        if result.is_some() && contactless {
+            self.object_receipt = Some(Receipt::default());
         }
         result
     }
@@ -1331,10 +1415,16 @@ mod tests {
         }
     }
 
+    /// One frame of the window `draw` shows; true when it says `text`.
+    fn shows(frames: &mut Frames, draw: impl FnMut(&mut egui::Ui), text: &str) -> bool {
+        frames.run(Vec::new(), draw).iter().any(|t| t.source == text)
+    }
+
     /// With the terminal a vendor's only price is chosen already and a click
     /// on it pays nothing; the Pay button holds the card to the end of the
-    /// hold, then the payment leaves and the window closes, and Cancel on
-    /// the way takes the card back: nothing leaves and the window stays.
+    /// hold, then the payment leaves, the window says it was accepted once
+    /// the balance changed and closes by itself; Cancel on the way takes the
+    /// card back: nothing leaves and the window stays.
     #[test]
     fn the_terminal_pays_a_vendor_after_its_hold_and_cancel_takes_the_card_back() {
         let library = std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load());
@@ -1361,13 +1451,19 @@ mod tests {
             let mut pay = PayUi::default();
             let commands = std::cell::RefCell::new(Vec::new());
             let open = std::cell::Cell::new(true);
+            let receipt = std::cell::Cell::new(false);
+            let accepted = aurora_i18n::tr!("ui-pay-terminal-accepted");
+            let mut said = false;
             let mut draw = |ui: &mut egui::Ui| {
                 if let Some(amount) = pay.show_object(ui.ctx(), &p, &mut state, &world, rules(true))
                     && let Some(command) = state.confirm(&world, Some(amount))
                 {
                     commands.borrow_mut().push(command);
+                    // the server's answer, as the demo gives it
+                    pay.on_balance(820);
                 }
                 open.set(state.dialog.is_some());
+                receipt.set(state.paid.is_some());
             };
             for _ in 0..3 {
                 frames.run(Vec::new(), &mut draw);
@@ -1386,18 +1482,26 @@ mod tests {
                 click(&mut frames, &mut draw, aurora_i18n::tr!("common-cancel"));
             }
             for _ in 0..90 {
-                frames.run(Vec::new(), &mut draw);
+                said |= shows(&mut frames, &mut draw, accepted);
             }
             if stop {
                 assert!(commands.borrow().is_empty(), "the card taken back");
                 assert!(open.get(), "Cancel on the way keeps the window");
+                assert!(!receipt.get() && !said);
             } else {
                 assert!(
                     matches!(commands.borrow().as_slice(), [NetCommand::PayObject { amount: 180, .. }]),
                     "{:?}",
                     commands.borrow()
                 );
-                assert!(!open.get());
+                assert!(!open.get(), "nothing left to pay in the window");
+                assert!(receipt.get() && said, "the window stays to say the payment was accepted");
+                // then closes by itself, with no second payment
+                for _ in 0..120 {
+                    frames.run(Vec::new(), &mut draw);
+                }
+                assert!(!receipt.get(), "the window closed by itself");
+                assert_eq!(commands.borrow().len(), 1);
             }
         }
     }

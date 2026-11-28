@@ -272,6 +272,11 @@ pub struct Interactions {
     pub props: HashMap<Uuid, ObjectProps>,
     requested: HashMap<Uuid, Instant>,
     pub dialog: Option<Dialog>,
+    /// The dialog of the payment to an object just made, kept at hand: the
+    /// terminal of the Aurora look shows it accepted for a moment before
+    /// its window closes by itself (`ui::pay::PayUi::show_object`). Whoever
+    /// does not show it clears it.
+    pub paid: Option<Dialog>,
     pub contents: Option<Contents>,
     pub held: Option<Held>,
     pub media_url: Option<String>,
@@ -410,6 +415,7 @@ impl Interactions {
     }
 
     pub fn open(&mut self, target: Target) -> Vec<NetCommand> {
+        self.paid = None;
         self.dialog = Some(Dialog {
             target,
             props: None,
@@ -561,7 +567,10 @@ impl Interactions {
                 description: p.name.clone(),
             }
         };
-        self.dialog = None;
+        // the dialog of a payment stays at hand for the terminal of the
+        // Aurora look (`paid`); a purchase's is done with
+        let done = self.dialog.take();
+        self.paid = done.filter(|d| d.target.action == Action::Pay);
         Some(out)
     }
 }

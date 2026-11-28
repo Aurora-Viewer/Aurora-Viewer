@@ -29,7 +29,13 @@ impl App {
             threshold,
             reduce_motion: self.settings.reduce_motion,
         };
-        let paying_object = self.interactions.dialog.as_ref().is_some_and(|d| d.target.action == Action::Pay);
+        // the window of a payment just made stays a moment for the terminal
+        // of the Aurora look alone (`Interactions::paid`)
+        if classic || !rules.contactless {
+            self.interactions.paid = None;
+        }
+        let paying_object =
+            self.interactions.dialog.as_ref().is_some_and(|d| d.target.action == Action::Pay) || self.interactions.paid.is_some();
         if paying_object && !classic {
             a.object_confirm = self
                 .pay_ui
