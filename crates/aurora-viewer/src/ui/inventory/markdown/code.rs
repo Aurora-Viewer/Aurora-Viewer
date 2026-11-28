@@ -7,6 +7,7 @@ use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag};
 
 use super::{Rendered, Span, Style};
 use crate::ui::scripts;
+use crate::ui::scripts::Lang;
 
 pub(super) fn is_lsl(kind: &CodeBlockKind<'_>) -> bool {
     matches!(kind, CodeBlockKind::Fenced(info) if info.split_whitespace().next().is_some_and(|name| name.eq_ignore_ascii_case("lsl")))
@@ -59,7 +60,7 @@ impl Block {
     }
 
     pub(super) fn finish(self, source: &str, rendered: &mut Rendered) {
-        let tokens = scripts::highlight_lsl(&rendered.text[self.start..]);
+        let tokens = scripts::highlight_lsl(&rendered.text[self.start..], Lang::Lsl);
         rendered.spans.truncate(self.span);
         for (bytes, role) in &tokens {
             rendered.spans.push(Span {

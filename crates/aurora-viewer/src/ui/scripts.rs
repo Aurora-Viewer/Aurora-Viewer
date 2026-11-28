@@ -1,7 +1,17 @@
-//! Shared inventory / object script editors (LLPreviewLSL,
-//! LLLiveLSLEditor and LLScriptEdCore, Firestorm indra/newview,
-//! originally LGPL 2.1). Each document owns its pending requests and
-//! saved snapshot, so late replies cannot replace another editor's text.
+//! The script editor: the documents a window holds and what each keeps (text,
+//! cursor, folds, undo, Find, its colour picker), the window that shows them --
+//! a linkset's tree, its tabs and its split, the docks under the source, the
+//! status bar and the documentation pane -- and what a save, a load or a
+//! compile target answers. Each document owns its pending requests and saved
+//! snapshot, so late replies cannot replace another editor's text. The Legacy
+//! Viewer opens one floater per script (LLPreviewLSL, LLLiveLSLEditor,
+//! indra/newview); Aurora shares one window unless Preferences › Script editor
+//! asks for one per script.
+//!
+//! The scripts of one linkset share a window: the tree of the linkset beside
+//! the source, a star on the row of a script with unsaved text, and the menus
+//! and toolbar above both (`linkset.rs`), Aurora's own layout where the Legacy
+//! Viewer opens one floater per script.
 
 use super::widgets::{Floater, flat_button};
 use crate::theme::Palette;
@@ -9,9 +19,28 @@ use aurora_net::scripts::{CompileTarget, MAX_SOURCE, ScriptOptions, ScriptSaved,
 use egui::Vec2;
 use uuid::Uuid;
 
+/// The lines a window's Console keeps: a script that says a line a frame
+/// cannot grow it without end.
+/// Two documents of the list, mutably, in the order given: the two panes of a
+/// split window.
+fn two_mut(documents: &mut [Editor], a: usize, b: usize) -> (&mut Editor, &mut Editor) {
+    debug_assert_ne!(a, b);
+    if a < b {
+        let (left, right) = documents.split_at_mut(b);
+        (&mut left[a], &mut right[0])
+    } else {
+        let (left, right) = documents.split_at_mut(a);
+        (&mut right[0], &mut left[b])
+    }
+}
+
 pub mod backup;
 mod colors;
+mod complete;
+mod create;
+mod crumbs;
 mod debug;
+mod demo;
 mod dialogs;
 pub(crate) mod editing;
 mod experiences;
@@ -19,19 +48,38 @@ mod files;
 pub(crate) use files::live_folder;
 mod focus;
 mod folding;
+mod format;
 mod indent;
+mod inlays;
+mod linkset;
+mod minimap;
+mod navigate;
+mod outline;
 mod preprocessor;
 pub mod recovery;
 mod reference;
 pub mod settings;
 mod syntax;
 mod view;
+
 pub use focus::editor_focused;
-pub(crate) use indent::edit_scoped as edit_code;
+pub(crate) use indent::{TAB_SIZE, edit_scoped as edit_code};
+pub use linkset::{
+    Linkset, Prim as LinksetPrim, PrimKind, PrimMenu as LinksetPrimMenu, Script as LinksetScript, ScriptMenu as LinksetScriptMenu,
+};
+pub(crate) use linkset::{root_row_id, script_row_id};
 pub(crate) use syntax::highlight as highlight_lsl;
 
+pub use view::BarChange;
+
+/// The key of the window of the agent's own scripts: one window for the
+/// inventory's scripts, grouped by the folder that holds each, drawn with the
+/// same tree, tabs and dock as an object's linkset. A fixed id that no object
+/// or item of a grid has (theirs are random), and not nil, the key of a draft's
+/// own window on the login screen.
+pub const INVENTORY_WINDOW: Uuid = Uuid::from_u128(0x5C01_9C0D_0000_0000_0000_0000_0000_0001);
+
 pub enum Action {
-    Debug,
     /// Rename only the inventory/task item metadata, never the source text.
     Rename {
         target: ScriptTarget,
@@ -63,6 +111,86 @@ pub enum Action {
     },
     Reset(ScriptTarget),
     QueryRunning(ScriptTarget),
+    /// A script of the linkset's tree that is not open yet: the app gives it
+    /// an editor.
+    OpenScript(ScriptTarget),
+    /// "Copy to inventory" of a script's contents menu, the same action as in
+    /// the contents window.
+    TakeScript {
+        object: Uuid,
+        item: Uuid,
+    },
+    /// "Delete" of a script's contents menu.
+    DeleteScript {
+        object: Uuid,
+        item: Uuid,
+    },
+    /// "Properties" of a script's contents menu: the item's own window.
+    Properties(ScriptTarget),
+    /// "New script" of a prim's menu in the tree, and the strip's plus: the
+    /// language chosen on the new script's page, which the app creates in
+    /// `object` (`lua` for an SLua script).
+    NewScript {
+        object: Uuid,
+        lua: bool,
+    },
+    /// Take / Take copy of the linkset's root, from its menu in the tree: the
+    /// object menu's own action for that object.
+    TakeObject {
+        object: Uuid,
+        copy: bool,
+    },
+    /// Delete of the linkset's root, from its menu in the tree.
+    DeleteObject(Uuid),
+    /// A touch on a prim, from its menu in the tree or a click in the tree's
+    /// 3D view: the object menu's own touch, refused by RLVa where it is.
+    Touch(Uuid),
+    /// "Edit" of a prim's menu in the tree: the build floater's Edit tool, on
+    /// that prim.
+    EditObject(Uuid),
+    /// Save every script the window has open: the linkset's (`linkset` not
+    /// nil), or the one document of a window of its own.
+    SaveAll {
+        linkset: Uuid,
+        target: ScriptTarget,
+    },
+    /// The status bar's own controls: the editor's zoom, the wrapping, the
+    /// minimap (the app keeps them in the script settings).
+    BarChange(view::BarChange),
+    /// A close prompt was cancelled (or its window closed): a quit that waited
+    /// for the scripts' text gives up.
+    CloseCancelled,
+}
+
+/// The script a page's prim gained since the page opened: the first one that
+/// was not there (`before`), which is the one the page asked for. The app's
+/// listing is the only word on what the object made.
+fn new_script_of<'a>(scripts: &'a [linkset::Script], before: &[Uuid]) -> Option<&'a linkset::Script> {
+    scripts.iter().find(|script| !before.contains(&script.item))
+}
+
+/// A script's text read for an object-wide search or check, no document
+/// opened: its request while it loads, then its text or what stopped it.
+#[derive(Default)]
+struct ReadText {
+    request: Option<Uuid>,
+    text: Option<String>,
+    error: Option<String>,
+}
+
+/// One line of a window's Console tab: when the object said it with
+/// `llOwnerSay`, the name it spoke with (a window of a linkset holds several
+/// prims), and what it said.
+/// What the region reports of an object's scripts, as the bridge brings it
+/// (`OBJECT_SCRIPT_MEMORY`, `OBJECT_RUNNING_SCRIPT_COUNT`,
+/// `OBJECT_TOTAL_SCRIPT_COUNT`): the memory they are allowed, not their live
+/// heaps, for the status bar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScriptStats {
+    /// The memory the simulator sets aside for the object's scripts, in bytes.
+    pub memory: u32,
+    pub running: u32,
+    pub total: u32,
 }
 
 struct PendingSave {
@@ -75,6 +203,14 @@ struct PendingSave {
 
 pub struct Editor {
     pub target: ScriptTarget,
+    /// The linkset this script belongs to, when it is inside an object: the
+    /// scripts of one linkset share a window and its tree. Nil for an agent
+    /// inventory script.
+    pub linkset: Uuid,
+    /// A script that does not exist yet: the page that asks which language
+    /// (`create::Draft`). Such a document has no item, no text and nothing to
+    /// save; it leaves once a language is chosen.
+    draft: Option<create::Draft>,
     /// Inventory list that opened this editor, if any.
     pub(crate) inventory_owner: Option<egui::Id>,
     pub name: String,
@@ -95,10 +231,15 @@ pub struct Editor {
     lua_scripts: bool,
     running: Option<bool>,
     status: String,
+    /// When this script was last saved in this session, for the bar to say so.
+    pub(super) saved_at: Option<std::time::SystemTime>,
     errors: Vec<String>,
     compile_failed: bool,
     close_prompt: bool,
     close_after_save: bool,
+    /// The lines a reader marked in the gutter (0-based, as the text is), for
+    /// F2 and Shift+F2.
+    bookmarks: std::collections::BTreeSet<usize>,
     closed: bool,
     raise: bool,
     tools: view::Tools,
@@ -109,9 +250,24 @@ pub struct Editor {
 }
 
 impl Editor {
+    /// Whether the window still shows this script.
+    pub(crate) fn is_open(&self) -> bool {
+        !self.closed
+    }
+
+    /// Its text has changes the item does not have yet.
+    pub(crate) fn unsaved(&self) -> bool {
+        self.dirty()
+    }
+
     /// SLua source: Lua colors, words and help.
+    /// The language this script is written in.
+    fn lang(&self) -> Lang {
+        Lang::of(self.compile)
+    }
+
     fn lua(&self) -> bool {
-        self.compile == CompileTarget::Luau
+        self.lang().is_lua()
     }
 
     /// The number of the first line: Lua counts from 1, LSL from 0
@@ -122,6 +278,69 @@ impl Editor {
 
     fn dirty(&self) -> bool {
         self.loaded && (self.source != self.baseline || self.compile != self.baseline_compile || self.experience.dirty())
+    }
+
+    /// The hash of the text the window shows -- the preprocessed one while the
+    /// Output view is on -- made once a frame: `stamp` is that frame's clock, so
+    /// that the analysis, the minimap, the inlays and the weigh all read one
+    /// hash instead of walking the script each time they ask. `None` (a save,
+    /// outside a frame) makes it again.
+    fn text_key(&mut self, stamp: Option<f64>) -> u64 {
+        use std::hash::{Hash, Hasher};
+        if let (Some(stamp), Some((made, key))) = (stamp, self.tools.text_key)
+            && made == stamp
+        {
+            return key;
+        }
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.source.hash(&mut hasher);
+        if self.tools.processed {
+            self.tools.processed_source.hash(&mut hasher);
+        }
+        let key = hasher.finish();
+        if let Some(stamp) = stamp {
+            self.tools.text_key = Some((stamp, key));
+        }
+        key
+    }
+
+    /// The script's outline, the linter's rows and the blocks of its text, made
+    /// again only when the text, its name or its language changes: the dock, the
+    /// sticky line, the gutter and the path under the caret read them every
+    /// frame, and the linter is not for every frame. See `text_key` for `stamp`.
+    fn analysis(&mut self, stamp: Option<f64>) -> &view::Analysis {
+        use std::hash::{Hash, Hasher};
+        let lua = self.lua();
+        let lang = self.lang();
+        let key = {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            self.text_key(stamp).hash(&mut hasher);
+            self.name.hash(&mut hasher);
+            lua.hash(&mut hasher);
+            hasher.finish()
+        };
+        if self.tools.analysis.0 != Some(key) {
+            let made = if self.tools.processed {
+                view::Analysis::make(&self.tools.processed_source, lang)
+            } else {
+                view::Analysis::make(&self.source, lang)
+            };
+            self.tools.analysis = (Some(key), made);
+        }
+        // just made, or kept from an earlier frame of the same text
+        &self.tools.analysis.1
+    }
+
+    /// Closes the document -- its colour picker's pending click goes with it --
+    /// or asks about the text first when it has changes the item has not, or a
+    /// save on its way: LLFloaterScriptEd's close check.
+    fn close_asking(&mut self) {
+        self.colors.cancel(&mut self.source);
+        if self.dirty() || self.saving.is_some() {
+            self.close_prompt = true;
+        } else {
+            self.closed = true;
+        }
     }
 
     fn can_save(&self) -> bool {
@@ -175,9 +394,85 @@ impl Editor {
     }
 }
 
+/// The language a script is written in: what its scanners read it as, and what
+/// its catalogue names (`llSay` or `ll.Say`). The Luau VM runs Lua.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) enum Lang {
+    #[default]
+    Lsl,
+    Lua,
+}
+
+impl Lang {
+    /// The language a compile target's text is written in.
+    pub(crate) fn of(compile: aurora_net::scripts::CompileTarget) -> Self {
+        if compile == aurora_net::scripts::CompileTarget::Luau {
+            Lang::Lua
+        } else {
+            Lang::Lsl
+        }
+    }
+
+    pub(crate) fn is_lua(self) -> bool {
+        self == Lang::Lua
+    }
+}
+
+/// The 3D view of the object a script window's tree is about, beside its
+/// Properties: the prims the app feeds the stage (`object_stage`), and the one
+/// the script in front is in, outlined.
+#[derive(Default)]
+pub struct StageView {
+    pub view: crate::ui::object_stage::StageUi,
+    /// The object's root prim, and the prim the script in front is in.
+    pub root: Uuid,
+    pub prim: Uuid,
+    /// The names of the prims shown, for the tag under the pointer.
+    pub names: Vec<(Uuid, String)>,
+}
+
 #[derive(Default)]
 pub struct Editors {
     pub documents: Vec<Editor>,
+    /// The layout the open scripts were put in, as the preferences last said:
+    /// one window per script, or the shared windows. The app watches it, so a
+    /// change moves every open script to the window it belongs in now.
+    pub simple: bool,
+    /// The script shown in each linkset window, by the linkset's root: the
+    /// one the user chose in the tree, or the last one opened.
+    active: std::collections::HashMap<Uuid, ScriptTarget>,
+    /// The filter of each linkset window's tree, by its root.
+    filters: std::collections::HashMap<Uuid, String>,
+    /// The scripts read for an object-wide search or check, no document
+    /// opened, by the script; and the request being served, by its id.
+    read: std::collections::HashMap<ScriptTarget, ReadText>,
+    reads: std::collections::HashMap<Uuid, ScriptTarget>,
+    /// The two scripts a window shows side by side, left then right, by its
+    /// root. The one in front is one of them.
+    splits: std::collections::HashMap<Uuid, (ScriptTarget, ScriptTarget)>,
+    /// How much of the split's width its left pane takes, by the window's
+    /// root (a half until the divider is dragged).
+    split_ratio: std::collections::HashMap<Uuid, f32>,
+    /// The split a window waits for: a script dragged from the tree onto a
+    /// pane before its document existed, and the pane it took beside the other
+    /// one, by the window's root, until the app opens it.
+    pending_split: std::collections::HashMap<Uuid, (ScriptTarget, ScriptTarget)>,
+    /// The scripts a window's tree has selected, by its root, in the order
+    /// they were chosen; the script in front is one of them (a plain click
+    /// leaves it alone).
+    tree_selection: std::collections::HashMap<Uuid, Vec<ScriptTarget>>,
+    /// The region's figure of each object's scripts, by the object (the
+    /// window's root), as the bridge last brought it.
+    stats: std::collections::HashMap<Uuid, ScriptStats>,
+    /// The scripts of each window's tab strip, in the order the reader dragged
+    /// them into, by the window's root.
+    tab_order: std::collections::HashMap<Uuid, Vec<ScriptTarget>>,
+    /// The prim each window's tree is to open because the script in it was
+    /// just chosen: a script brought to the front shows in the tree.
+    reveal: std::collections::HashMap<Uuid, Uuid>,
+    /// The 3D view of the object each window's tree is about, by the window's
+    /// root: the app keeps its stage up to date from the world.
+    pub stages: std::collections::HashMap<Uuid, StageView>,
     panels: dialogs::Panels,
     debug: debug::Debug,
     includes: std::collections::HashMap<Uuid, PendingInclude>,
@@ -221,6 +516,27 @@ struct PendingInclude {
     owner: ScriptTarget,
     asset: Uuid,
     reply: std::sync::mpsc::Sender<Result<preprocessor::Include, String>>,
+}
+
+/// The tab strip's order once `moved` is dropped on `onto`: before it when it
+/// comes from its right, after it when it comes from its left.
+fn reorder_targets(order: &mut Vec<ScriptTarget>, moved: ScriptTarget, onto: ScriptTarget) {
+    let Some(from) = order.iter().position(|target| *target == moved) else {
+        return;
+    };
+    let Some(at) = order.iter().position(|target| *target == onto) else {
+        return;
+    };
+    if from == at {
+        return;
+    }
+    order.remove(from);
+    let anchor = order
+        .iter()
+        .position(|target| *target == onto)
+        .unwrap_or(order.len().saturating_sub(1));
+    let slot = if from < at { anchor + 1 } else { anchor };
+    order.insert(slot.min(order.len()), moved);
 }
 
 impl Editors {
@@ -275,6 +591,46 @@ impl Editors {
         std::mem::take(&mut self.compiled)
     }
 
+    /// `AURORA_DEMO_SCRIPTS=split`: the window's two open scripts side by
+    /// side, the divider a little left of the middle.
+    /// `AURORA_DEMO_SCRIPTS=outline`: the window's dock on its Outline tab,
+    /// the tree of the script in front.
+    /// `AURORA_DEMO_SCRIPTS=new`: the page that asks which language a new
+    /// script of `root` will be written in, for `prim` (`lua` where the demo
+    /// region runs SLua).
+    /// The objects whose windows are open and whose script figure the status
+    /// bar shows: the app asks the bridge for them (`editor_script_info`).
+    pub fn stats_wanted(&self) -> Vec<Uuid> {
+        let mut wanted = Vec::new();
+        for e in self.documents.iter().filter(|e| !e.closed && !e.linkset.is_nil()) {
+            let root = Self::window_key(e);
+            if !wanted.contains(&root) {
+                wanted.push(root);
+            }
+        }
+        wanted.truncate(4);
+        wanted
+    }
+
+    /// Keeps the region's figure of an object's scripts, for its window's bar.
+    pub fn script_stats(&mut self, info: &aurora_net::bridge::query::ScriptInfo) {
+        self.stats.insert(
+            info.object,
+            ScriptStats {
+                memory: info.memory,
+                running: info.running,
+                total: info.total,
+            },
+        );
+    }
+
+    /// The figure of `root`'s object's scripts, when the region has given one.
+    fn stats_of(&self, root: Uuid) -> Option<ScriptStats> {
+        self.stats.get(&root).copied()
+    }
+
+    /// `AURORA_DEMO_SCRIPTS=lints`: the window's dock on its Problems tab,
+    /// unfolded, so that the findings show at once.
     pub fn disconnected(&mut self) {
         // the latest text is copied, and the copies stay for the next login
         // whatever the editors do now (LLScriptEdContainer's destructor
@@ -284,6 +640,9 @@ impl Editors {
         self.includes.clear();
         self.documents.retain(|e| e.dirty() || e.saving.is_some());
         for e in &mut self.documents {
+            // the linkset is gone with the connection: each kept draft gets
+            // its own window again, with its name
+            e.linkset = Uuid::nil();
             e.colors.cancel(&mut e.source);
             e.loading = None;
             e.experience.loading = None;
@@ -304,6 +663,11 @@ impl Editors {
     pub fn prepare_exit(&mut self) -> bool {
         let mut ready = true;
         for e in &mut self.documents {
+            // a script already closed (discarded, or its window's X) owes
+            // nothing more: asking again would hold the quit for ever
+            if e.closed {
+                continue;
+            }
             e.colors.cancel(&mut e.source);
             if e.dirty() || e.saving.is_some() {
                 e.close_prompt = true;
@@ -313,219 +677,30 @@ impl Editors {
         ready
     }
 
-    pub fn demo_edit(&mut self, target: ScriptTarget, source: String, save: bool) -> Option<Action> {
-        let e = self.documents.iter_mut().find(|e| e.target == target)?;
-        e.source = source;
-        if save { e.save() } else { None }
+    /// How many open scripts ask about their text (the `quit` demo).
+    pub fn prompting(&self) -> usize {
+        self.documents.iter().filter(|e| !e.closed && e.close_prompt).count()
+    }
+
+    /// What the Discard button of a close prompt does, for every script asking
+    /// (the `quit` demo drives the whole flow without clicks; the buttons
+    /// themselves are the test's).
+    /// Every open script is settled: nothing more to save, to ask about, or to
+    /// wait for. A quit held by `prepare_exit` goes on once this is true.
+    pub fn exit_ready(&self) -> bool {
+        self.documents
+            .iter()
+            .all(|e| e.closed || (!e.close_prompt && !e.dirty() && e.saving.is_none()))
     }
 
     /// AURORA_DEMO_EDITOR_SYNC: the script counts as sent to the external
     /// editor without launching one (the demo's editor is a socket client).
-    pub fn demo_external(&mut self, target: ScriptTarget) {
-        if let Some(e) = self.documents.iter_mut().find(|e| e.target == target && e.can_edit) {
-            e.tools.external_starting = true;
-        }
-    }
-
-    pub fn demo_experience(&mut self, target: ScriptTarget, experience: Uuid) -> Option<Action> {
-        let e = self.documents.iter_mut().find(|e| e.target == target)?;
-        e.experience.selected = Some(experience);
-        e.save()
-    }
-
-    pub fn demo_indent(&mut self, target: ScriptTarget, ctx: &egui::Context, tabs: bool) {
-        let Some(e) = self.documents.iter_mut().find(|e| e.target == target) else {
-            return;
-        };
-        if tabs {
-            e.source = e.source.replace("    ", "\t");
-        }
-        let Some(line) = e
-            .source
-            .find("llSay(")
-            .and_then(|start| e.source[start..].find(';').map(|end| start + end + 1))
-        else {
-            return;
-        };
-        Self::focus_source(e, ctx, line);
-    }
-
-    pub fn demo_tabstops(&mut self, target: ScriptTarget, ctx: &egui::Context) {
-        let Some(e) = self.documents.iter_mut().find(|e| e.target == target) else {
-            return;
-        };
-        e.source = e.source.replacen("        llSay(", "       llSay(", 1);
-        if let Some(position) = e.source.find("llSay(") {
-            Self::focus_source(e, ctx, position);
-        }
-    }
-
-    pub fn demo_close_brace(&mut self, target: ScriptTarget, ctx: &egui::Context, tabs: bool) {
-        if let Some(e) = self.documents.iter_mut().find(|e| e.target == target) {
-            e.source = "default\n{\n    state_entry()\n    {\n        llSetColor(<0.2, 0.8, 1.0>, ALL_SIDES);\n        ".into();
-            if tabs {
-                e.source = e.source.replace("    ", "\t");
-            }
-            Self::focus_source(e, ctx, e.source.len());
-        }
-    }
-
-    pub fn demo_color_events(&self, frame: u64, mode: &str) -> Vec<egui::Event> {
-        use super::color_picker::Control;
-        let Some(e) = self.documents.first() else { return Vec::new() };
-        let rect = match frame {
-            323 | 324 => e.colors.swatches.first().copied(),
-            343 | 344 => e.colors.picker.controls.get(&Control::Slot(20)).copied(),
-            363 | 364 if mode == "color-cancel" => e.colors.picker.controls.get(&Control::Cancel).copied(),
-            363 | 364 if mode == "color-accept" => e.colors.picker.controls.get(&Control::Accept).copied(),
-            _ => None,
-        };
-        let Some(rect) = rect else { return Vec::new() };
-        let pos = rect.center();
-        vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed: frame % 2 == 1,
-                modifiers: egui::Modifiers::NONE,
-            },
-        ]
-    }
-
-    pub fn demo_selection(&mut self, ctx: &egui::Context, outdent: bool) {
-        if let Some(e) = self.documents.first_mut() {
-            let Some(start) = e.source.find("integer count") else { return };
-            let Some(end) = e.source.find("string greet") else { return };
-            let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
-            let id = egui::Id::unique((&id, "source_text"));
-            editing::select(ctx, id, e.source[..start].chars().count()..e.source[..end].chars().count(), true);
-            if outdent {
-                editing::selection_command(ctx, id, &mut e.source, editing::SelectionCommand::Indent);
-            }
-        }
-    }
-
-    pub fn demo_insertion_events(&self, ctx: &egui::Context, frame: u64, mode: &str) -> Vec<egui::Event> {
-        let Some(e) = self.documents.first() else { return Vec::new() };
-        if matches!(frame, 323 | 324) {
-            let Some(rect) = e.tools.insert_button else { return Vec::new() };
-            let pos = rect.center();
-            return vec![
-                egui::Event::PointerMoved(pos),
-                egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: frame == 323,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ];
-        }
-        if (frame == 400 && mode == "insert-filter") || (frame == 326 && mode == "insert-empty") {
-            return vec![egui::Event::Text(
-                if mode == "insert-empty" { "no_matching_function" } else { "color" }.into(),
-            )];
-        }
-        if frame == 350 && mode == "insert-filter" {
-            let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
-            let id = egui::Id::unique((&id, "source_text")).with("insert_filter");
-            if let Some(field) = ctx.read_response(id) {
-                return vec![
-                    egui::Event::PointerMoved(field.rect.center_bottom() + Vec2::new(0.0, 90.0)),
-                    egui::Event::MouseWheel {
-                        unit: egui::MouseWheelUnit::Point,
-                        delta: Vec2::new(0.0, -240.0),
-                        modifiers: egui::Modifiers::NONE,
-                        phase: egui::TouchPhase::Move,
-                        source: egui::MouseWheelSource::Unknown,
-                    },
-                ];
-            }
-        }
-        Vec::new()
-    }
-
-    pub fn demo_folding_events(&self, frame: u64) -> Vec<egui::Event> {
-        if !matches!(frame, 323 | 324) {
-            return Vec::new();
-        }
-        let Some(e) = self.documents.first() else { return Vec::new() };
-        let Some((_, rect)) = e.folding.controls.get(1) else {
-            return Vec::new();
-        };
-        let pos = rect.center();
-        vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed: frame == 323,
-                modifiers: egui::Modifiers::NONE,
-            },
-        ]
-    }
-
-    pub fn demo_tools(&mut self, target: ScriptTarget, ctx: &egui::Context, mode: &str, settings: &mut settings::ScriptSettings) {
-        let Some(e) = self.documents.iter_mut().find(|e| e.target == target) else {
-            return;
-        };
-        let id = format!("script_editor_{}_{}", target.object, target.item);
-        let text_id = egui::Id::unique((&id, "source_text"));
-        match mode {
-            "search" | "search-left" | "search-inline" | "search-overlay" | "search-outside" => {
-                settings.search_prefer_left = mode == "search-left";
-                settings.search_inline = mode == "search-inline";
-                let geometry = match mode {
-                    "search-left" => Some((egui::pos2(450.0, 130.0), Vec2::new(660.0, 650.0))),
-                    "search-inline" => Some((egui::pos2(170.0, 130.0), Vec2::new(800.0, 700.0))),
-                    "search-overlay" => Some((egui::pos2(140.0, 130.0), Vec2::new(1300.0, 700.0))),
-                    "search-outside" => Some((egui::pos2(-380.0, 130.0), Vec2::new(660.0, 650.0))),
-                    _ => None,
-                };
-                if let Some((pos, size)) = geometry {
-                    super::widgets::place_floater(ctx, &id, pos, size);
-                }
-                self.panels.search.begin(ctx, text_id, text_id, &e.source);
-                self.panels.search.query = "llSay".into();
-                self.panels.search.replacement = "llOwnerSay".into();
-                self.panels.search.find(ctx, text_id, &e.source);
-            }
-            "preferences" | "word-wrap-preferences" => self.panels.preferences.open = true,
-            "help" => {
-                e.tools.help.open = true;
-                e.tools.help.visit("llSay");
-            }
-            "preprocessor" | "processed" | "object-preprocessor" | "preprocessor-error" => {
-                settings.preprocessor = true;
-                e.processor_settings.clone_from(settings);
-                e.source = if mode == "preprocessor-error" {
-                    "#if 1\n#error Demo preprocessing error\n#endif\n".into()
-                } else {
-                    "#define CHANNEL 0\n#include \"library.lsl\"\nlist values = [1, 2];\ndefault\n{\n    state_entry()\n    {\n        values[1] = 42;\n        switch ((integer)values[1])\n        {\n            case 42: greet(CHANNEL); break;\n            default: llOwnerSay(\"Unexpected value\");\n        }\n    }\n}\n".into()
-                };
-                e.save();
-            }
-            _ => {}
-        }
-    }
-
-    pub fn demo_processed(&mut self, ctx: &egui::Context) {
-        if let Some(e) = self.documents.first_mut() {
-            e.tools.processed = true;
-            let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
-            let id = egui::Id::unique((&id, "source_text")).with("processed");
-            let at = e
-                .tools
-                .processed_source
-                .find("\n//nfo_preprocessor_version 0\n")
-                .map(|i| i + "\n//nfo_preprocessor_version 0\n".len())
-                .unwrap_or(0);
-            let at = e.tools.processed_source[..at].chars().count();
-            editing::select(ctx, id, at..at, false);
-            e.tools.scroll_to_cursor = true;
-        }
-    }
-
+    /// The demo of the Code menu: a click on its button, as a reader's.
+    /// `AURORA_DEMO_SCRIPTS=docs` and its siblings: what the documentation
+    /// pane shows, in the window's own state (the pane opened on a function,
+    /// on a constant the catalogue says nothing about, or closed).
+    /// `AURORA_DEMO_SCRIPTS=search-linkset`: Find on one script of a
+    /// linkset's window, with a query the demo's scripts answer.
     fn focus_source(e: &Editor, ctx: &egui::Context, byte: usize) {
         let cursor = egui::text::CCursor::new(e.source[..byte].chars().count());
         let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
@@ -535,18 +710,6 @@ impl Editors {
             state.store(ctx, text_id);
             ctx.memory_mut(|m| m.request_focus(text_id));
         }
-    }
-
-    pub fn demo_close_clean(&mut self, target: ScriptTarget) -> bool {
-        let Some(index) = self
-            .documents
-            .iter()
-            .position(|e| e.target == target && e.loaded && !e.dirty() && e.saving.is_none())
-        else {
-            return false;
-        };
-        self.documents.remove(index);
-        true
     }
 
     /// Opens the editor of a script item, or raises it. `flags` are the
@@ -564,6 +727,8 @@ impl Editors {
         let request = can_read.then(Uuid::new_v4);
         self.documents.push(Editor {
             target,
+            linkset: Uuid::nil(),
+            draft: None,
             inventory_owner: None,
             name,
             source: String::new(),
@@ -588,10 +753,12 @@ impl Editors {
                 aurora_i18n::tr!("script-no-permission")
             }
             .into(),
+            saved_at: None,
             errors: Vec::new(),
             compile_failed: false,
             close_prompt: false,
             close_after_save: false,
+            bookmarks: std::collections::BTreeSet::new(),
             closed: false,
             raise: true,
             tools: view::Tools::opening(),
@@ -603,7 +770,80 @@ impl Editors {
         request
     }
 
+    /// Opens the page that asks which language a new script of `object` will
+    /// be written in, in place of the one this window had: the tree's "New
+    /// script" and the strip's plus both come here, while the item itself is
+    /// created only once a language is chosen
+    /// (LLPanelContents::onNewScriptFlyout, indra/newview/llpanelcontents.cpp).
+    /// `before` are the scripts `object` held when the page opened: the one
+    /// that appears past them is the new script, and opens (`Action::NewScript`).
+    fn open_draft(&mut self, root: Uuid, object: Uuid, prim: String, lang: Lang, before: Vec<Uuid>) {
+        let lua = lang.is_lua();
+        // one page per window: asking from another prim moves it there
+        self.documents.retain(|e| e.draft.is_none() || e.linkset != root);
+        let draft = create::Draft {
+            object,
+            prim,
+            lua,
+            before,
+            chosen: false,
+            chosen_at: 0.0,
+        };
+        let target = draft.target();
+        let name = aurora_i18n::tr!("extra-new-script").to_string();
+        self.documents.push(Editor {
+            target,
+            linkset: root,
+            draft: Some(draft),
+            inventory_owner: None,
+            name,
+            source: String::new(),
+            highlighter: syntax::Highlighter::default(),
+            colors: colors::State::new(format!("script_color_picker_{}_{}", target.object, target.item)),
+            folding: folding::State::default(),
+            baseline: String::new(),
+            // nothing to load: it is a page, not an item of the object
+            loaded: true,
+            loading: None,
+            saving: None,
+            can_read: false,
+            can_edit: false,
+            can_reset: false,
+            compile: CompileTarget::Mono,
+            baseline_compile: CompileTarget::Mono,
+            experience: experiences::State::default(),
+            lua_scripts: false,
+            running: None,
+            status: String::new(),
+            saved_at: None,
+            errors: Vec::new(),
+            compile_failed: false,
+            close_prompt: false,
+            close_after_save: false,
+            bookmarks: std::collections::BTreeSet::new(),
+            closed: false,
+            raise: true,
+            tools: view::Tools::opening(),
+            recompile_allowed: false,
+            processor_settings: settings::ScriptSettings::default(),
+            processor_environment: preprocessor::Environment::default(),
+            processing: None,
+        });
+        self.active.insert(root, target);
+    }
+
     pub fn loaded(&mut self, request: Uuid, target: ScriptTarget, result: Result<String, String>) {
+        // a script read for a search or a check has no document
+        if let Some(target) = self.reads.remove(&request) {
+            if let Some(read) = self.read.get_mut(&target) {
+                read.request = None;
+                match result {
+                    Ok(text) => read.text = Some(text),
+                    Err(reason) => read.error = Some(reason),
+                }
+            }
+            return;
+        }
         if let Some(include) = self.includes.remove(&request) {
             let _ = include.reply.send(result.map(|source| preprocessor::Include {
                 source,
@@ -684,27 +924,28 @@ impl Editors {
                 },
             });
         }
-        match result {
+        let outcome = match result {
             Ok(saved) => {
                 e.baseline = pending.source;
                 e.baseline_compile = pending.compile;
                 e.experience.baseline = pending.experience;
                 e.compile_failed = !saved.compiled;
                 e.errors.clone_from(&saved.errors);
-                e.status = if !saved.compiled {
-                    aurora_i18n::tr!("script-compile-failed")
-                } else if saved.checked {
-                    aurora_i18n::tr!("script-saved")
-                } else {
-                    aurora_i18n::tr!("script-saved-not-compiled")
-                }
-                .into();
+                e.saved_at = Some(std::time::SystemTime::now());
                 if e.close_after_save && saved.compiled && !e.dirty() {
                     e.closed = true;
                 }
+                if !saved.compiled {
+                    aurora_i18n::tr!("script-compile-failed").to_string()
+                } else if saved.checked {
+                    aurora_i18n::tr!("script-saved").to_string()
+                } else {
+                    aurora_i18n::tr!("script-saved-not-compiled").to_string()
+                }
             }
-            Err(reason) => e.status.clone_from(reason),
-        }
+            Err(reason) => reason.to_string(),
+        };
+        e.status = outcome;
         e.close_after_save = false;
         true
     }
@@ -758,197 +999,296 @@ impl Editors {
         self.documents.iter().any(|e| e.colors.picker.is_open())
     }
 
+    /// The identity of a document's own parts: its source, its dialogs and
+    /// the commands its controls leave for the next pass.
+    pub(super) fn document_id(e: &Editor) -> String {
+        format!("script_editor_{}_{}", e.target.object, e.target.item)
+    }
+
+    /// The floater a document is drawn in: its own (a draft of the login
+    /// screen), or the one its window's scripts share -- an object's linkset,
+    /// or the agent's inventory.
+    pub(super) fn window_of(e: &Editor) -> String {
+        if e.linkset.is_nil() {
+            Self::document_id(e)
+        } else {
+            Self::window_name(e.linkset)
+        }
+    }
+
+    /// The prim each script in a window of its own says it is in, for the
+    /// first chip under its source: a window of the simple layout has no tree
+    /// to ask, and a script of the inventory has no prim.
+    pub fn name_own_scripts(&mut self, prim: impl Fn(ScriptTarget) -> String) {
+        for e in &mut self.documents {
+            if e.is_open() && e.linkset.is_nil() && !e.target.object.is_nil() {
+                e.tools.prim = prim(e.target);
+            }
+        }
+    }
+
+    /// The floater's name for one window's key: the inventory's own, or the
+    /// linkset's.
+    pub(crate) fn window_name(root: Uuid) -> String {
+        if root == INVENTORY_WINDOW {
+            "script_inventory".into()
+        } else {
+            format!("script_linkset_{root}")
+        }
+    }
+
+    /// The key of a window in the maps of per-window state: its linkset's
+    /// root, or the script's item when it has a window of its own.
+    fn window_key(e: &Editor) -> Uuid {
+        if e.linkset.is_nil() { e.target.item } else { e.linkset }
+    }
+
+    /// The script in front in a window: the app feeds its tree's 3D view the
+    /// prim that one is in.
+    pub fn script_in_front(&self, window: Uuid) -> Option<ScriptTarget> {
+        self.active.get(&window).copied()
+    }
+
+    /// The window commands of the script in front, while its source has the
+    /// keyboard (Ctrl+F is `focus::find`'s): Ctrl+Tab and Ctrl+Shift+Tab cycle
+    /// the scripts of its window, Ctrl+W closes it, Ctrl+1 to Ctrl+5 choose a
+    /// tab of the dock in the reader's order. Run before the sources are
+    /// drawn, or the text edit would take the Tab as an indentation.
+    fn shortcuts(&mut self, ctx: &egui::Context) {
+        let Some(owner) = focus::active(ctx) else { return };
+        // only from the source: a field of the tree (its filter) keeps the
+        // text keys, and Find has its own
+        if !ctx.memory(|m| m.has_focus(owner)) {
+            return;
+        }
+        let Some(index) = self
+            .documents
+            .iter()
+            .position(|e| !e.closed && egui::Id::unique((&Self::document_id(e), "source_text")) == owner)
+        else {
+            return;
+        };
+        #[derive(Clone, Copy)]
+        enum Step {
+            Next,
+            Previous,
+            Close,
+            Split,
+        }
+        let step = ctx.input_mut(|i| {
+            if i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::Tab) {
+                Some(Step::Previous)
+            } else if i.consume_key(egui::Modifiers::CTRL, egui::Key::Tab) {
+                Some(Step::Next)
+            } else if i.consume_key(egui::Modifiers::CTRL, egui::Key::Backslash) {
+                Some(Step::Split)
+            } else if i.consume_key(egui::Modifiers::CTRL, egui::Key::W) {
+                // AZERTY types its Z on the physical W: egui's logical keys
+                // leave that press to the field as Ctrl+Z, so undo keeps it
+                // (text_field_keeps)
+                Some(Step::Close)
+            } else {
+                None
+            }
+        });
+        match step {
+            Some(Step::Next | Step::Previous) => {
+                let linkset = self.documents[index].linkset;
+                if linkset.is_nil() {
+                    // one script in its window: nothing to cycle
+                    return;
+                }
+                let members: Vec<usize> = self
+                    .documents
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| !e.closed && e.linkset == linkset)
+                    .map(|(at, _)| at)
+                    .collect();
+                let Some(at) = members.iter().position(|member| *member == index) else {
+                    return;
+                };
+                let offset = if matches!(step, Some(Step::Previous)) {
+                    members.len() - 1
+                } else {
+                    1
+                };
+                let target = members[(at + offset) % members.len()];
+                self.select_script(linkset, target);
+            }
+            Some(Step::Split) => {
+                let linkset = self.documents[index].linkset;
+                if linkset.is_nil() {
+                    return;
+                }
+                if self.splits.remove(&linkset).is_some() {
+                    self.split_ratio.remove(&linkset);
+                } else {
+                    // the next script of the window beside this one
+                    let target = self.documents[index].target;
+                    let beside = self
+                        .documents
+                        .iter()
+                        .filter(|e| !e.closed && e.linkset == linkset && e.target != target)
+                        .map(|e| e.target)
+                        .next();
+                    if let Some(beside) = beside {
+                        self.splits.insert(linkset, (target, beside));
+                    }
+                }
+            }
+            Some(Step::Close) => {
+                let linkset = self.documents[index].linkset;
+                self.documents[index].close_asking();
+                // the keyboard goes to the tab that takes its place, so the
+                // window commands keep working (a prompt takes it instead)
+                if self.documents[index].closed
+                    && !linkset.is_nil()
+                    && let Some(next) = self
+                        .documents
+                        .iter()
+                        .enumerate()
+                        .find(|(at, e)| *at != index && !e.closed && e.linkset == linkset)
+                        .map(|(at, _)| at)
+                {
+                    self.select_script(linkset, next);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Closes the scripts of a window, asking about the text of each one with
+    /// unsaved changes: all of them, or all but `keep`.
+    fn close_scripts(&mut self, root: Uuid, keep: Option<ScriptTarget>, all: bool) {
+        for e in &mut self.documents {
+            if e.linkset != root || e.closed || (!all && Some(e.target) == keep) {
+                continue;
+            }
+            e.close_asking();
+        }
+    }
+
     pub fn show(
         &mut self,
         ctx: &egui::Context,
         p: &Palette,
         settings: &mut settings::ScriptSettings,
         color_prefs: &mut super::color_picker::Preferences,
+        linksets: &[Linkset],
     ) -> Vec<Action> {
         let colors_before = color_prefs.clone();
         let mut actions = Vec::new();
         if self.panels.preferences.show(ctx, p, settings) {
             actions.push(Action::SettingsChanged);
         }
+        dialogs::Shortcuts::show(&mut self.panels.shortcuts, ctx, p);
+        // The window commands of the script in front, before its source is
+        // drawn: Ctrl+Tab and Ctrl+Shift+Tab cycle the scripts of its window,
+        // Ctrl+W closes it. Consumed here so the text edit never sees the Tab.
+        self.shortcuts(ctx);
+        // A Find popup hangs under the menus and toolbar its window drew this
+        // frame; the search later in the frame takes that place.
         for e in &mut self.documents {
-            if e.closed {
-                continue;
+            e.tools.search_anchor = None;
+        }
+        // One window per linkset, with its tree, over the scripts whose own
+        // windows follow.
+        let mut roots: Vec<Uuid> = Vec::new();
+        for e in &self.documents {
+            if !e.closed && !e.linkset.is_nil() && !roots.contains(&e.linkset) {
+                roots.push(e.linkset);
             }
-            let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
-            e.recompile_allowed = settings.preprocessor && settings.recompile;
-            if e.processor_settings != *settings {
-                e.processor_settings.clone_from(settings);
-            }
-            e.processor_environment.agent = self.agent;
-            e.lua_scripts = self.lua_scripts;
-            if e.processor_environment.agent_name != self.agent_name {
-                e.processor_environment.agent_name.clone_from(&self.agent_name);
-            }
-            if let Some(job) = e.processing.as_ref() {
-                for request in job.includes.try_iter() {
-                    self.includes.insert(
-                        request.id,
-                        PendingInclude {
-                            owner: e.target,
-                            asset: Uuid::nil(),
-                            reply: request.reply,
-                        },
-                    );
-                    actions.push(Action::Include {
-                        request: request.id,
-                        name: request.name,
-                    });
-                }
-            }
-            if let Some(result) = e.processing.as_ref().and_then(|job| job.done.try_recv().ok()) {
-                e.processing = None;
-                self.includes.retain(|_, include| include.owner != e.target);
-                match result {
-                    Ok(output) => {
-                        e.tools.has_processed = true;
-                        e.tools.diagnostics_processed = true;
-                        e.tools.processed_source = output.uploaded.clone();
-                        // LLPreviewLSL::saveIfNeeded: //mono and //lsl2 only choose between the LSL VMs
-                        if let Some(mono) = output.mono
-                            && matches!(e.compile, CompileTarget::Mono | CompileTarget::Lsl2)
-                        {
-                            e.compile = if mono { CompileTarget::Mono } else { CompileTarget::Lsl2 };
-                            if let Some(pending) = e.saving.as_mut() {
-                                pending.compile = e.compile;
-                            }
-                        }
-                        e.errors = output.warnings;
-                        if let Some(pending) = e.saving.as_ref() {
-                            actions.push(Action::Save {
-                                request: pending.request,
-                                target: e.target,
-                                options: ScriptOptions {
-                                    compile: pending.compile,
-                                    running: pending.running,
-                                    experience: pending.experience.unwrap_or_default(),
-                                },
-                                source: output.uploaded,
-                            });
-                        }
-                    }
-                    Err(reason) => {
-                        e.saving = None;
-                        e.close_after_save = false;
-                        e.compile_failed = true;
-                        e.errors = vec![reason];
-                        e.status = aurora_i18n::tr!("script-preproc-failed").into();
-                    }
-                }
-            }
-            if std::mem::take(&mut e.raise) {
-                super::widgets::expand_floater(ctx, &id);
-            }
-            let mut open = true;
-            let title = format!("{}{}", e.name, if e.dirty() { " *" } else { "" });
-            focus::claim(
-                ctx,
-                egui::LayerId::new(egui::Order::Middle, egui::Id::unique(&id)),
-                egui::Id::unique((&id, "source_text")),
-            );
-            Floater::new(
-                &id,
-                title,
-                ctx.content_rect().center() - Vec2::new(330.0, 260.0),
-                Vec2::new(660.0, 520.0),
-            )
-            .cascade(super::widgets::CascadeGroup::Script)
-            .allow_partial_outside()
-            .rename_title(e.name.clone(), e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none())
-            .show(ctx, p, &mut open, |ui| {
-                view::body(
-                    ui,
-                    p,
-                    e,
-                    egui::Id::unique((&id, "source_text")),
-                    settings,
-                    &mut self.panels,
-                    &mut actions,
-                );
-            });
-            if let Some(name) = super::widgets::take_title_rename(ctx, &id)
-                && e.can_edit
-                && e.loaded
-                && e.saving.is_none()
-                && e.loading.is_none()
-                && name != e.name
+        }
+        for root in roots {
+            self.show_linkset(ctx, p, root, settings, color_prefs, linksets, &mut actions);
+        }
+        // a page that chose a language: the script the object made opens
+        self.pending_pages(linksets, &mut actions);
+        for index in 0..self.documents.len() {
             {
-                actions.push(Action::Rename { target: e.target, name });
-            }
-            view::dialogs(
-                ctx,
-                p,
-                e,
-                egui::Id::unique((&id, "source_text")),
-                settings,
-                &mut self.panels,
-                &mut actions,
-            );
-            let source_id = egui::Id::unique((&id, "source_text"));
-            if let Some(literal) = e.colors.clicked.take() {
-                e.colors.open(&mut e.source, ctx, source_id, egui::Id::unique(&id), literal);
-            }
-            e.colors.show(
-                ctx,
-                p,
-                color_prefs,
-                &mut e.source,
-                e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed,
-            );
-            if !open {
-                e.colors.cancel(&mut e.source);
-                if e.dirty() || e.saving.is_some() {
-                    e.close_prompt = true;
-                } else {
-                    e.closed = true;
+                let e = &mut self.documents[index];
+                if e.closed {
+                    continue;
                 }
-            }
-            if e.close_prompt {
-                let mut prompt_open = true;
-                Floater::new(
-                    &format!("{id}_close"),
-                    aurora_i18n::tr!("ui-inventory-dialogs-save-changes"),
-                    ctx.content_rect().center() - Vec2::new(220.0, 90.0),
-                    Vec2::new(440.0, 180.0),
-                )
-                .fixed()
-                .show(ctx, p, &mut prompt_open, |ui| {
-                    ui.label(aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes"));
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled_ui(e.can_save(), |ui| flat_button(ui, p, aurora_i18n::tr!("common-save")))
-                            .inner
-                            .clicked()
-                        {
-                            let action = e.save();
-                            if e.saving.is_some() {
-                                e.close_after_save = true;
-                                e.close_prompt = false;
-                                actions.extend(action);
+                e.recompile_allowed = settings.preprocessor && settings.recompile;
+                if e.processor_settings != *settings {
+                    e.processor_settings.clone_from(settings);
+                }
+                e.processor_environment.agent = self.agent;
+                e.lua_scripts = self.lua_scripts;
+                if e.processor_environment.agent_name != self.agent_name {
+                    e.processor_environment.agent_name.clone_from(&self.agent_name);
+                }
+                // a file job (an external editor's save, an export) answers
+                // its own document, even when it is not the one in front
+                let body_id = egui::Id::unique((&Self::document_id(e), "source_text"));
+                view::poll_files(ctx, e, body_id, settings, &mut actions);
+                if let Some(job) = e.processing.as_ref() {
+                    for request in job.includes.try_iter() {
+                        self.includes.insert(
+                            request.id,
+                            PendingInclude {
+                                owner: e.target,
+                                asset: Uuid::nil(),
+                                reply: request.reply,
+                            },
+                        );
+                        actions.push(Action::Include {
+                            request: request.id,
+                            name: request.name,
+                        });
+                    }
+                }
+                if let Some(result) = e.processing.as_ref().and_then(|job| job.done.try_recv().ok()) {
+                    e.processing = None;
+                    self.includes.retain(|_, include| include.owner != e.target);
+                    match result {
+                        Ok(output) => {
+                            e.tools.has_processed = true;
+                            e.tools.diagnostics_processed = true;
+                            e.tools.processed_source = output.uploaded.clone();
+                            // LLPreviewLSL::saveIfNeeded: //mono and //lsl2 only choose between the LSL VMs
+                            if let Some(mono) = output.mono
+                                && matches!(e.compile, CompileTarget::Mono | CompileTarget::Lsl2)
+                            {
+                                e.compile = if mono { CompileTarget::Mono } else { CompileTarget::Lsl2 };
+                                if let Some(pending) = e.saving.as_mut() {
+                                    pending.compile = e.compile;
+                                }
+                            }
+                            e.errors = output.warnings;
+                            if let Some(pending) = e.saving.as_ref() {
+                                actions.push(Action::Save {
+                                    request: pending.request,
+                                    target: e.target,
+                                    options: ScriptOptions {
+                                        compile: pending.compile,
+                                        running: pending.running,
+                                        experience: pending.experience.unwrap_or_default(),
+                                    },
+                                    source: output.uploaded,
+                                });
                             }
                         }
-                        if ui
-                            .add_enabled_ui(e.saving.is_none(), |ui| flat_button(ui, p, aurora_i18n::tr!("script-discard")))
-                            .inner
-                            .clicked()
-                        {
-                            e.closed = true;
-                        }
-                        if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
-                            e.close_prompt = false;
+                        Err(reason) => {
+                            e.saving = None;
                             e.close_after_save = false;
+                            e.compile_failed = true;
+                            e.errors = vec![reason];
+                            e.status = aurora_i18n::tr!("script-preproc-failed").into();
                         }
-                    });
-                });
-                if !prompt_open {
-                    e.close_prompt = false;
-                    e.close_after_save = false;
+                    }
+                }
+                // the scripts of a linkset are drawn by their shared window
+                if !e.linkset.is_nil() {
+                    continue;
+                }
+                if std::mem::take(&mut e.raise) {
+                    super::widgets::expand_floater(ctx, &Self::window_of(e));
                 }
             }
+            self.show_document(ctx, p, index, settings, color_prefs, &mut actions);
         }
         self.documents.retain(|e| {
             if e.closed
@@ -958,14 +1298,23 @@ impl Editors {
             }
             !e.closed
         });
+        // A tab chosen by a key or a click takes the keyboard once its source
+        // is drawn: a request made before the text edit draws does not hold.
+        for e in &mut self.documents {
+            if std::mem::take(&mut e.tools.focus_request) {
+                focus::text(ctx, egui::Id::unique((&Self::document_id(e), "source_text")));
+            }
+        }
         focus::find(ctx, &mut self.documents, &mut self.panels.search);
         // Draw the singleton after every editor has handled its commands. A
         // search opened in a later document must not also draw on the old one.
         let search = &mut self.panels.search;
         let mut bound = false;
         for e in &mut self.documents {
-            let window = format!("script_editor_{}_{}", e.target.object, e.target.item);
-            let id = egui::Id::unique((&window, "source_text"));
+            // the script's own source, in the window it shares with its
+            // linkset (the window anchors the Find panel)
+            let window = Self::window_of(e);
+            let id = egui::Id::unique((&Self::document_id(e), "source_text"));
             if search.owns(id) {
                 bound = true;
                 let minimized = ctx
@@ -988,1404 +1337,928 @@ impl Editors {
         if !bound {
             search.open = false;
         }
-        // An owner can change while a later editor handles Ctrl+F. Drop its
-        // unused reserved UI within this pass, without drawing another search.
-        for e in &mut self.documents {
-            e.tools.search_slot = None;
-        }
         if *color_prefs != colors_before {
             actions.push(Action::SettingsChanged);
         }
         actions
     }
+
+    /// The Problems dock's rows of one document: its diagnostics, with the
+    /// line and column each one names (a message without one is listed, and
+    /// clicking it does nothing).
+    fn document_problems(e: &mut Editor) -> Vec<view::Problem> {
+        if !e.is_open() {
+            return Vec::new();
+        }
+        let rows: Vec<view::Problem> = e
+            .errors
+            .iter()
+            .map(|message| {
+                let (line, column) = editing::error_location(message).unwrap_or((0, 0));
+                view::Problem {
+                    source: e.name.clone(),
+                    line,
+                    column,
+                    message: message.clone(),
+                }
+            })
+            .collect();
+        rows
+    }
+
+    /// Save every script the window has open that has something to save
+    /// (`linkset` nil: the one script of `target`, as Save). A script the
+    /// preprocessor handles answers with its own save later, as Save does.
+    pub fn save_all(&mut self, linkset: Uuid, target: ScriptTarget) -> Vec<Action> {
+        let mut saves = Vec::new();
+        for e in &mut self.documents {
+            if e.closed || !e.can_save() {
+                continue;
+            }
+            let mine = if linkset.is_nil() {
+                e.target == target
+            } else {
+                e.linkset == linkset
+            };
+            if mine && let Some(action) = e.save() {
+                saves.push(action);
+            }
+        }
+        saves
+    }
+
+    /// One script in its own window: an inventory script, or one whose object
+    /// is not linked to others through the editor's own panel.
+    fn show_document(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        index: usize,
+        settings: &mut settings::ScriptSettings,
+        color_prefs: &mut super::color_picker::Preferences,
+        actions: &mut Vec<Action>,
+    ) {
+        let id = Self::window_of(&self.documents[index]);
+        let mut open = true;
+        let rows = Self::document_problems(&mut self.documents[index]);
+        {
+            let e = &mut self.documents[index];
+            focus::claim(
+                ctx,
+                egui::LayerId::new(egui::Order::Middle, egui::Id::unique(&id)),
+                egui::Id::unique((&Self::document_id(e), "source_text")),
+            );
+            let title = {
+                let name = format!("{}{}", e.name, if e.dirty() { " *" } else { "" });
+                aurora_i18n::tr!("script-window-title", name = name.as_str()).to_string()
+            };
+            let body_id = egui::Id::unique((&Self::document_id(e), "source_text"));
+            let panels = &mut self.panels;
+            Floater::new(
+                &id,
+                title,
+                ctx.content_rect().center() - Vec2::new(330.0, 260.0),
+                Vec2::new(660.0, 520.0),
+            )
+            .cascade(super::widgets::CascadeGroup::Script)
+            .allow_partial_outside()
+            .rename_title(e.name.clone(), e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none())
+            .show(ctx, p, &mut open, |ui| {
+                view::body(ui, p, e, body_id, settings, panels, actions, true, &rows, None, true);
+            });
+        }
+        // Ctrl+click on a name: the declaration, in this script alone
+        if let Some(word) = self.documents[index].tools.goto_word.take() {
+            let e = &mut self.documents[index];
+            let found = navigate::definition(&[(index, e.source.as_str(), e.lang())], &word, index);
+            match found {
+                Some((_, line, column)) => {
+                    let body_id = egui::Id::unique((&Self::document_id(e), "source_text"));
+                    view::go_to_line(ctx, e, body_id, line, column);
+                }
+                None => e.status = aurora_i18n::tr!("script-goto-not-found").into(),
+            }
+        }
+        if let Some(name) = super::widgets::take_title_rename(ctx, &id)
+            && self.documents[index].can_edit
+            && self.documents[index].loaded
+            && self.documents[index].saving.is_none()
+            && self.documents[index].loading.is_none()
+            && name != self.documents[index].name
+        {
+            let target = self.documents[index].target;
+            self.documents[index].name = name.clone();
+            actions.push(Action::Rename { target, name });
+        }
+        self.document_parts(ctx, p, index, settings, color_prefs, actions, !open);
+    }
+
+    /// The dialogs, the colour picker and the close prompt of one document,
+    /// and its closing (`close`: its window's X was pressed).
+    fn document_parts(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        index: usize,
+        settings: &mut settings::ScriptSettings,
+        color_prefs: &mut super::color_picker::Preferences,
+        actions: &mut Vec<Action>,
+        close: bool,
+    ) {
+        let id = Self::document_id(&self.documents[index]);
+        let source_id = egui::Id::unique((&id, "source_text"));
+        {
+            let e = &mut self.documents[index];
+            view::dialogs(ctx, p, e, source_id, settings, &mut self.panels, actions);
+            if let Some(literal) = e.colors.clicked.take() {
+                e.colors.open(&mut e.source, ctx, source_id, egui::Id::unique(&id), literal);
+            }
+            let editable = e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed;
+            e.colors.show(ctx, p, color_prefs, &mut e.source, editable);
+            if close {
+                e.close_asking();
+            }
+        }
+        if !self.documents[index].close_prompt {
+            return;
+        }
+        let e = &mut self.documents[index];
+        let mut prompt_open = true;
+        let mut cancelled = false;
+        Floater::new(
+            &format!("{id}_close"),
+            aurora_i18n::tr!("ui-inventory-dialogs-save-changes"),
+            ctx.content_rect().center() - Vec2::new(220.0, 90.0),
+            Vec2::new(440.0, 180.0),
+        )
+        .fixed()
+        .show(ctx, p, &mut prompt_open, |ui| {
+            ui.label(aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes"));
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled_ui(e.can_save(), |ui| flat_button(ui, p, aurora_i18n::tr!("common-save")))
+                    .inner
+                    .clicked()
+                {
+                    let action = e.save();
+                    if e.saving.is_some() {
+                        e.close_after_save = true;
+                        e.close_prompt = false;
+                        actions.extend(action);
+                    }
+                }
+                if ui
+                    .add_enabled_ui(e.saving.is_none(), |ui| flat_button(ui, p, aurora_i18n::tr!("script-discard")))
+                    .inner
+                    .clicked()
+                {
+                    e.closed = true;
+                }
+                if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                    e.close_prompt = false;
+                    e.close_after_save = false;
+                    cancelled = true;
+                }
+            });
+        });
+        if !prompt_open {
+            e.close_prompt = false;
+            e.close_after_save = false;
+            cancelled = true;
+        }
+        if cancelled {
+            // a quit held while the scripts asked about their text gives up
+            actions.push(Action::CloseCancelled);
+        }
+    }
+
+    /// The window of one linkset: the tree of its prims' scripts beside the
+    /// source. Choosing another script keeps every document, its selection and
+    /// its unsaved text.
+    /// A page of a new script that chose a language: the first script to
+    /// appear in its prim past the ones it listed when it opened is the new
+    /// one, and it opens, so the reader lands in the text they chose. The
+    /// page stays while nothing appears (an object that refused the create),
+    /// and the reader may close it.
+    fn pending_pages(&mut self, linksets: &[Linkset], actions: &mut Vec<Action>) {
+        let pages: Vec<(ScriptTarget, Uuid, Vec<Uuid>)> = self
+            .documents
+            .iter()
+            .filter_map(|e| {
+                let draft = e.draft.as_ref().filter(|draft| draft.chosen)?;
+                Some((e.target, draft.object, draft.before.clone()))
+            })
+            .collect();
+        for (target, object, before) in pages {
+            let Some(prim) = linksets
+                .iter()
+                .flat_map(|linkset| linkset.prims.iter())
+                .find(|prim| prim.object == object && !prim.loading)
+            else {
+                continue;
+            };
+            let Some(script) = new_script_of(&prim.scripts, &before) else {
+                continue;
+            };
+            actions.push(Action::OpenScript(ScriptTarget { object, item: script.item }));
+            if let Some(e) = self.documents.iter_mut().find(|e| e.target == target) {
+                e.closed = true;
+            }
+        }
+    }
+
+    fn show_linkset(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        root: Uuid,
+        settings: &mut settings::ScriptSettings,
+        color_prefs: &mut super::color_picker::Preferences,
+        linksets: &[Linkset],
+        actions: &mut Vec<Action>,
+    ) {
+        let window = Self::window_name(root);
+        // what the region says of the object's scripts, for the window's bar
+        let stats = self.stats_of(root);
+        // what a drag of the tree or the tabs carries, for the pane preview
+        let tree_drag = egui::Id::unique(("script_tree_drag", root));
+        let tab_drag = egui::Id::unique(("script_tab_drag", root));
+        let members: Vec<ScriptTarget> = self
+            .documents
+            .iter()
+            .filter(|e| !e.closed && e.linkset == root)
+            .map(|e| e.target)
+            .collect();
+        if members.is_empty() {
+            self.active.remove(&root);
+            self.tree_selection.remove(&root);
+            self.pending_split.remove(&root);
+            self.filters.remove(&root);
+            return;
+        }
+        // a script opened or raised from anywhere comes to the front
+        let raised = self
+            .documents
+            .iter()
+            .rev()
+            .find(|e| !e.closed && e.linkset == root && e.raise)
+            .map(|e| e.target);
+        if raised.is_some() {
+            for e in &mut self.documents {
+                if e.linkset == root {
+                    e.raise = false;
+                }
+            }
+            super::widgets::expand_floater(ctx, &window);
+        }
+        // a script being closed asks about its unsaved text before the others
+        let prompting = self
+            .documents
+            .iter()
+            .find(|e| !e.closed && e.linkset == root && e.close_prompt)
+            .map(|e| e.target);
+        let chosen = self.active.get(&root).copied().filter(|target| members.contains(target));
+        let active = prompting.or(raised).or(chosen).unwrap_or(members[0]);
+        self.active.insert(root, active);
+        // the page of a new script is no row of the tree: while it is in front,
+        // no row keeps the light -- the script it took the front from stayed
+        // selected, and lit beside the new one
+        let drafting = self
+            .documents
+            .iter()
+            .any(|e| !e.closed && e.linkset == root && e.target == active && e.draft.is_some());
+        // the rows the tree has selected: the ones the window still holds,
+        // the script in front alone when there is none
+        let selection = {
+            let selection = self.tree_selection.entry(root).or_default();
+            if drafting {
+                selection.clear();
+            } else {
+                selection.retain(|target| members.contains(target));
+                if selection.is_empty() {
+                    selection.push(active);
+                }
+            }
+            selection.clone()
+        };
+        // the panes a window waits for (a script dragged from the tree before
+        // it had a document): now that it has one, they take their places
+        if let Some((left, right)) = self.pending_split.get(&root).copied()
+            && members.contains(&left)
+            && members.contains(&right)
+        {
+            if left != right {
+                self.splits.insert(root, (left, right));
+            }
+            self.pending_split.remove(&root);
+        }
+        let linkset = linksets.iter().find(|l| l.root == root);
+        // a script opened or raised shows in the tree, even inside a shut group
+        // of a prim that another prim holds
+        if raised.is_some()
+            && let Some(linkset) = linkset
+        {
+            linkset::reveal(ctx, root, linkset, active.object);
+        }
+        if let Some(prim) = self.reveal.remove(&root)
+            && let Some(linkset) = linkset
+        {
+            linkset::reveal(ctx, root, linkset, prim);
+        }
+        // a split lasts while both its scripts are open and one of them is the
+        // one in front: choosing another script gives a single pane again
+        if let Some((left, right)) = self.splits.get(&root).copied()
+            && (left == right || !members.contains(&left) || !members.contains(&right) || (active != left && active != right))
+        {
+            self.splits.remove(&root);
+            self.split_ratio.remove(&root);
+        }
+        let active_index = self.documents.iter().position(|e| e.target == active && !e.closed).unwrap_or(0);
+        let title = {
+            // the script in front, as the window's title (the tab strip says
+            // which one that is)
+            let e = &self.documents[active_index];
+            let name = format!("{}{}", e.name, if e.dirty() { " *" } else { "" });
+            aurora_i18n::tr!("script-window-title", name = name.as_str()).to_string()
+        };
+        let source_id = egui::Id::unique((&Self::document_id(&self.documents[active_index]), "source_text"));
+        // the marks the source draws for a script that did not compile
+        let problems = Self::document_problems(&mut self.documents[active_index]);
+        // F8 works while a script of this window has the keyboard
+        let window_keys = focus::active(ctx).is_some_and(|owner| {
+            self.documents
+                .iter()
+                .any(|e| e.linkset == root && egui::Id::unique((&Self::document_id(e), "source_text")) == owner)
+        });
+        // Save All: every script this window has open that has something to save
+        let save_all = self.documents.iter().any(|e| !e.closed && e.linkset == root && e.can_save());
+        let mut open = true;
+        let mut select = None;
+        // the tree's selection changes and the menu's entries that need the
+        // editor, applied after its panel is drawn (the filter is borrowed)
+        let mut tree_select: Option<(Vec<ScriptTarget>, Option<ScriptTarget>)> = None;
+        let mut tree_open_many: Option<Vec<ScriptTarget>> = None;
+        let mut tree_save_many: Option<Vec<ScriptTarget>> = None;
+        let mut close_one = None;
+        let mut close_others = None;
+        let mut close_all = false;
+        let mut split_open_at = None;
+        let mut dropped = None;
+        let mut tree_dropped = None;
+        let mut pane_area = None;
+        let mut unsplit = false;
+        // the prim a new script's page was asked for, from the tree or the strip
+        let mut new_draft: Option<Uuid> = None;
+        // a fresh window takes the documentation pane's room beside the
+        // source's, rather than from it
+        let mut window_ui = Floater::new(
+            &window,
+            title,
+            ctx.content_rect().center() - Vec2::new(480.0, 330.0),
+            Vec2::new(960.0, 660.0),
+        )
+        .cascade(super::widgets::CascadeGroup::Script)
+        .allow_partial_outside()
+        // the menus come right under the title, as a toolbar does
+        .compact_header();
+        // the tree and a readable source side by side
+        window_ui.min_size = Vec2::new(600.0, 380.0);
+        // the object the window is about, beside the title that names the
+        // script in front
+        window_ui.title_note = linkset.map(|linkset| linkset.name.clone()).filter(|name| !name.is_empty());
+        // the page a click asked for: opened after the frame, as the window
+        // holds the borrows of the editor's own state while it is drawn
+        let mut draft_request: Option<(Uuid, String, Vec<Uuid>)> = None;
+        window_ui.show(ctx, p, &mut open, |ui| {
+            // where Find / Replace hang when the setting keeps them in the
+            // window: the menus and the toolbar above the sources
+            let bar_top = ui.cursor().top();
+            // File, Edit and Help, then the toolbar, once for the window and
+            // for the script in front
+            let mut chosen = None;
+            if let Some(e) = self.documents.get_mut(active_index) {
+                view::menus(ui, p, e, source_id, &mut chosen);
+            }
+            if let Some(command) = chosen
+                && let Some(e) = self.documents.get_mut(active_index)
+            {
+                view::run(command, e, ctx, source_id, settings, &mut self.panels, actions);
+            }
+            if let Some(e) = self.documents.get_mut(active_index) {
+                view::toolbar(ui, p, e, source_id, settings, &mut self.panels, actions, Some(save_all));
+            }
+            // a popup under them, over the source, for the script that opened
+            // Find: no row of the window is taken from the text
+            let bar = egui::Rect::from_min_max(
+                egui::pos2(ui.max_rect().left(), bar_top),
+                egui::pos2(ui.max_rect().right(), ui.cursor().top()),
+            );
+            for e in self.documents.iter_mut().filter(|e| !e.closed && e.linkset == root) {
+                e.tools.search_anchor = settings.search_inline.then_some(bar);
+            }
+            let gap = ui.spacing().item_spacing.x;
+            // the tree keeps the room the reader gave it, or the default
+            let room = (ui.available_width() - gap).max(160.0);
+            /// Where the tree's edge line stands past the column's right edge:
+            /// the middle of the two frames' margins and the gap between them.
+            const TREE_EDGE: f32 = 8.0;
+            let most = room * 0.45;
+            let least = linkset::TREE_MIN.min(most);
+            let default_tree = linkset::TREE_WIDTH.clamp(least, most);
+            let tree_width = if settings.tree_width == 0 {
+                default_tree
+            } else {
+                (f32::from(settings.tree_width)).clamp(least, most)
+            };
+            let filter = self.filters.entry(root).or_default();
+            // the window's own 3D view, when the app kept one for it
+            let stage = self.stages.get_mut(&root);
+            // the group's path for each script, the first word of the path
+            // under the source: a prim's name (and the prims it is linked
+            // under), or the folder's path in the inventory
+            let mut paths: std::collections::HashMap<ScriptTarget, String> = std::collections::HashMap::new();
+            // the same path for the group alone, for the page of a script that
+            // does not exist yet
+            let mut prim_paths: std::collections::HashMap<Uuid, String> = std::collections::HashMap::new();
+            if let Some(linkset) = linkset {
+                let mut names: Vec<&str> = Vec::new();
+                for group in &linkset.prims {
+                    names.truncate(usize::from(group.depth));
+                    names.push(&group.name);
+                    let path = names.join(" › ");
+                    prim_paths.insert(group.object, path.clone());
+                    for script in &group.scripts {
+                        paths.insert(
+                            ScriptTarget {
+                                object: script.object,
+                                item: script.item,
+                            },
+                            path.clone(),
+                        );
+                    }
+                }
+            }
+            let path_of = |target: ScriptTarget| -> &str { paths.get(&target).map(String::as_str).unwrap_or("") };
+            for e in self.documents.iter_mut().filter(|e| !e.closed && e.linkset == root) {
+                e.tools.prim = path_of(e.target).to_owned();
+            }
+            ui.scope(|ui| {
+                // The tree's panel, its filter inside it at the top, and the
+                // tabs of the open scripts start on the same line: the panel
+                // runs down to the source's status bar, the tabs over the
+                // source alone.
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let header = ui.spacing().interact_size.y.max(24.0);
+                // the notice of the script in front, over the window's body:
+                // the tree and the sources start level under it
+                if let Some(e) = self.documents.get_mut(active_index)
+                    && e.draft.is_none()
+                {
+                    view::notice_bar(ui, p, e, actions);
+                }
+                // the window's status bar takes its room under the columns,
+                // and the air the columns keep between them above it; the page
+                // of a new script leaves that room empty, so that the tree and
+                // the source keep their place from one tab to the next
+                let air = ui.spacing().item_spacing.x;
+                let bar_room = if self.documents.is_empty() { 0.0 } else { view::STATUS_BAR + air };
+                let height = (ui.available_height() - bar_room).max(80.0);
+                let columns = ui.horizontal_top(|ui| {
+                    ui.allocate_ui_with_layout(Vec2::new(tree_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        match linkset::tree(ui, p, linkset, Some(active), &selection, filter, tree_drag, stage) {
+                            Some(linkset::TreeAction::Open(target)) => select = Some(target),
+                            Some(linkset::TreeAction::Select { targets, open }) => tree_select = Some((targets, open)),
+                            Some(linkset::TreeAction::OpenMany(targets)) => tree_open_many = Some(targets),
+                            Some(linkset::TreeAction::TakeMany(targets)) => {
+                                for target in targets {
+                                    actions.push(Action::TakeScript {
+                                        object: target.object,
+                                        item: target.item,
+                                    });
+                                }
+                            }
+                            Some(linkset::TreeAction::DeleteMany(targets)) => {
+                                for target in targets {
+                                    actions.push(Action::DeleteScript {
+                                        object: target.object,
+                                        item: target.item,
+                                    });
+                                }
+                            }
+                            Some(linkset::TreeAction::SaveMany(targets)) => tree_save_many = Some(targets),
+                            Some(linkset::TreeAction::Close(target)) => close_one = Some(target),
+                            Some(linkset::TreeAction::Take(target)) => actions.push(Action::TakeScript {
+                                object: target.object,
+                                item: target.item,
+                            }),
+                            Some(linkset::TreeAction::Delete(target)) => actions.push(Action::DeleteScript {
+                                object: target.object,
+                                item: target.item,
+                            }),
+                            Some(linkset::TreeAction::Properties(target)) => actions.push(Action::Properties(target)),
+                            Some(linkset::TreeAction::SetRunning { target, running }) => {
+                                actions.push(Action::Running { target, running });
+                            }
+                            Some(linkset::TreeAction::NewScript(object)) => new_draft = Some(object),
+                            Some(linkset::TreeAction::TakeObject { object, copy }) => {
+                                actions.push(Action::TakeObject { object, copy });
+                            }
+                            Some(linkset::TreeAction::DeleteObject(object)) => actions.push(Action::DeleteObject(object)),
+                            Some(linkset::TreeAction::Touch(object)) => actions.push(Action::Touch(object)),
+                            Some(linkset::TreeAction::Dropped { target, pos }) => tree_dropped = Some((target, pos)),
+                            Some(linkset::TreeAction::Edit(object)) => actions.push(Action::EditObject(object)),
+                            Some(linkset::TreeAction::Settings) => {
+                                // shown again, a minimized window expands
+                                // (LLFloaterReg::showInstance), and the panel is
+                                // drawn under the windows: bring it over them
+                                super::widgets::open_floater(
+                                    ctx,
+                                    super::scripts::dialogs::Preferences::WINDOW,
+                                    &mut self.panels.preferences.open,
+                                );
+                                super::widgets::bring_floater_front(ctx, super::scripts::dialogs::Preferences::WINDOW);
+                            }
+                            None => {}
+                        }
+                    });
+                    ui.add_space(gap);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(ui.available_width(), height),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            // the tabs of the open scripts, across the top of the
+                            // source's column: the tree's panel starts at their top,
+                            // to the left (the script's own commands are in the
+                            // window's toolbar, at the right of its experience)
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(ui.available_width(), header),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    let mut tabs: Vec<linkset::Tab> = self
+                                        .documents
+                                        .iter()
+                                        .filter(|e| !e.closed && e.linkset == root)
+                                        .map(|e| linkset::Tab {
+                                            target: e.target,
+                                            name: &e.name,
+                                            prim: e.draft.as_ref().map_or_else(|| path_of(e.target), |draft| draft.prim.as_str()),
+                                            lua: e.lua(),
+                                            dirty: e.dirty(),
+                                            draft: e.draft.is_some(),
+                                        })
+                                        .collect();
+                                    // in the order the reader dragged them into; the
+                                    // rest keep the order they were opened in
+                                    if let Some(order) = self.tab_order.get(&root) {
+                                        tabs.sort_by_key(|tab| order.iter().position(|target| *target == tab.target).unwrap_or(usize::MAX));
+                                    }
+                                    match linkset::tabs(
+                                        ui,
+                                        p,
+                                        &tabs,
+                                        Some(active),
+                                        settings.color(settings::ColorRole::Background, p),
+                                        self.splits.get(&root).copied(),
+                                        tab_drag,
+                                        root != INVENTORY_WINDOW,
+                                    ) {
+                                        linkset::Tabs::Select(target) => select = Some(target),
+                                        linkset::Tabs::Reorder { from, to } => {
+                                            let current: Vec<ScriptTarget> = self
+                                                .documents
+                                                .iter()
+                                                .filter(|e| !e.closed && e.linkset == root)
+                                                .map(|e| e.target)
+                                                .collect();
+                                            let order = self.tab_order.entry(root).or_insert_with(|| current.clone());
+                                            order.retain(|target| current.contains(target));
+                                            reorder_targets(order, from, to);
+                                            for target in current {
+                                                if !order.contains(&target) {
+                                                    order.push(target);
+                                                }
+                                            }
+                                        }
+                                        linkset::Tabs::Close(target) => close_one = Some(target),
+                                        linkset::Tabs::CloseOthers(target) => close_others = Some(target),
+                                        linkset::Tabs::CloseAll => close_all = true,
+                                        linkset::Tabs::Split(target) => split_open_at = Some(target),
+                                        linkset::Tabs::Dropped { target, pos } => dropped = Some((target, pos)),
+                                        linkset::Tabs::Unsplit => unsplit = true,
+                                        linkset::Tabs::NewScript => new_draft = Some(active.object),
+                                        linkset::Tabs::None => {}
+                                    }
+                                },
+                            );
+                            // the tabs sit on their source, as a file tab does
+                            if let Some(index) = self.documents.iter().position(|e| e.target == active && !e.closed) {
+                                // Ctrl+F belongs to the script in front
+                                focus::claim(ctx, egui::LayerId::new(egui::Order::Middle, egui::Id::unique(&window)), source_id);
+                                // the two panes, left then right, when the split holds
+                                let split = self.splits.get(&root).copied().and_then(|(left, right)| {
+                                    let left = self.documents.iter().position(|e| e.target == left && !e.closed)?;
+                                    let right = self.documents.iter().position(|e| e.target == right && !e.closed)?;
+                                    (left != right).then_some((left, right))
+                                });
+                                // where a tab let go over the source opens a pane
+                                pane_area = Some(ui.available_rect_before_wrap());
+                                let ratio = self.split_ratio.entry(root).or_insert(0.5);
+                                if let Some((left, right)) = split {
+                                    let left_id = egui::Id::unique((&Self::document_id(&self.documents[left]), "source_text"));
+                                    let right_id = egui::Id::unique((&Self::document_id(&self.documents[right]), "source_text"));
+                                    let side = if left == index { view::Side::Left } else { view::Side::Right };
+                                    let (a, b) = two_mut(&mut self.documents, left, right);
+                                    let focus = view::split_body(
+                                        ui,
+                                        p,
+                                        a,
+                                        left_id,
+                                        b,
+                                        right_id,
+                                        side,
+                                        settings,
+                                        &mut self.panels,
+                                        &problems,
+                                        ratio,
+                                        stats,
+                                        false,
+                                    );
+                                    if let Some(target) = focus {
+                                        self.active.insert(root, target);
+                                        self.reveal.insert(root, target.object);
+                                    }
+                                } else {
+                                    let e = &mut self.documents[index];
+                                    view::body(
+                                        ui,
+                                        p,
+                                        e,
+                                        source_id,
+                                        settings,
+                                        &mut self.panels,
+                                        actions,
+                                        false,
+                                        &problems,
+                                        stats,
+                                        false,
+                                    );
+                                }
+                            }
+                        },
+                    );
+                });
+                // a tab let go over a pane gives that side the script, or opens
+                // the split beside the one in front
+                if let Some(area) = pane_area
+                    && ctx.input(|i| i.pointer.any_down())
+                    && let Some(pos) = ctx.input(|i| i.pointer.interact_pos())
+                    && area.contains(pos)
+                {
+                    let dragging = ctx
+                        .data(|d| d.get_temp::<Option<(ScriptTarget, String)>>(tree_drag))
+                        .flatten()
+                        .map(|(target, _)| target)
+                        .or_else(|| ctx.data(|d| d.get_temp::<Option<ScriptTarget>>(tab_drag)).flatten());
+                    if let Some(target) = dragging
+                        && target != active
+                    {
+                        let ratio = self.split_ratio.get(&root).copied().unwrap_or(0.5);
+                        let boundary = if self.splits.contains_key(&root) {
+                            area.left() + view::split_widths(area.width(), ratio).0
+                        } else {
+                            area.center().x
+                        };
+                        let (half, at) = if pos.x < boundary {
+                            (egui::Rect::from_min_max(area.min, egui::pos2(boundary, area.max.y)), boundary)
+                        } else {
+                            (egui::Rect::from_min_max(egui::pos2(boundary, area.min.y), area.max), boundary)
+                        };
+                        ui.painter()
+                            .rect_filled(half, egui::CornerRadius::ZERO, p.violet.gamma_multiply(0.12));
+                        ui.painter().vline(at, area.y_range(), egui::Stroke::new(2.0, p.violet));
+                    }
+                }
+                if let Some((target, pos)) = dropped.or(tree_dropped)
+                    && let Some(area) = pane_area
+                    && area.contains(pos)
+                    && target != active
+                {
+                    let ratio = self.split_ratio.get(&root).copied().unwrap_or(0.5);
+                    let boundary = if self.splits.contains_key(&root) {
+                        area.left() + view::split_widths(area.width(), ratio).0
+                    } else {
+                        area.center().x
+                    };
+                    let left = pos.x < boundary;
+                    let (left_pane, right_pane) = self.splits.get(&root).copied().unwrap_or((active, active));
+                    let pair = if left { (target, right_pane) } else { (left_pane, target) };
+                    if self.documents.iter().any(|e| !e.closed && e.target == target) {
+                        if pair.0 != pair.1 {
+                            self.splits.insert(root, pair);
+                        }
+                    } else {
+                        // the app opens the script; the split waits for it
+                        self.pending_split.insert(root, pair);
+                        actions.push(Action::OpenScript(target));
+                    }
+                }
+                // the status bar of the script in front, across the window:
+                // the caret's place at the left, the script's weight at the right
+                if let Some(e) = self.documents.get_mut(active_index) {
+                    ui.add_space(air);
+                    if let Some(change) = view::status_bar(ui, p, e, source_id, settings, stats) {
+                        actions.push(Action::BarChange(change));
+                    }
+                }
+                // the documentation pane's edge, dragged to give it more or
+                // less room; a double click takes the default back
+                // the tree's edge, dragged to give the list more or less room;
+                // a double click takes the default back
+                if let Some(width) = super::widgets::resize_side(
+                    ui,
+                    p,
+                    columns.response.rect,
+                    tree_width,
+                    // the room between the tree's face and the source's, the
+                    // two frames' margins and the gap between the columns
+                    TREE_EDGE,
+                    default_tree,
+                    least,
+                    most,
+                    egui::Id::unique(("script_tree_resize", root)),
+                ) {
+                    // the default is no choice at all: it follows the window
+                    settings.tree_width = if (width - default_tree).abs() < 0.5 {
+                        0
+                    } else {
+                        width.round() as u16
+                    };
+                }
+                // the page of a new script, asked for by the tree or the plus:
+                // it opens after this frame, its tab taking the front
+                if let Some(object) = new_draft.take()
+                    && !object.is_nil()
+                {
+                    let prim = prim_paths.get(&object).cloned().unwrap_or_default();
+                    let before = linkset
+                        .and_then(|linkset| linkset.prims.iter().find(|prim| prim.object == object))
+                        .map(|prim| prim.scripts.iter().map(|script| script.item).collect())
+                        .unwrap_or_default();
+                    draft_request = Some((object, prim, before));
+                }
+            });
+        });
+        if let Some((object, prim, before)) = draft_request {
+            self.open_draft(root, object, prim, if self.lua_scripts { Lang::Lua } else { Lang::Lsl }, before);
+            ctx.request_repaint();
+        }
+        // F8 and Shift+F8, from the script in front and its caret: the
+        // diagnostics of the window in turn
+        if window_keys
+            && let Some(next) = view::problem_key(ctx)
+            && !problems.is_empty()
+        {
+            let e = &self.documents[active_index];
+            let at = (active_index, e.tools.position.0 + e.first_line());
+            let rows: Vec<(usize, usize)> = problems.iter().map(|problem| (active_index, problem.line)).collect();
+            if let Some(row) = view::problem_row(&rows, at, next)
+                && let Some(problem) = problems.get(row)
+            {
+                let e = &mut self.documents[active_index];
+                let body_id = egui::Id::unique((&Self::document_id(e), "source_text"));
+                view::go_to_error(ctx, e, body_id, problem.line, problem.column);
+            }
+        }
+        // Ctrl+click on a name (or the menu's command): the window takes the
+        // caret to where the name is declared
+        if self.documents[active_index].tools.goto_word.is_some() {
+            let word = self.documents[active_index].tools.goto_word.take().unwrap_or_default();
+            let scripts: Vec<(usize, &str, Lang)> = self
+                .documents
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| !e.closed && e.linkset == root)
+                .map(|(index, e)| (index, e.source.as_str(), e.lang()))
+                .collect();
+            let found = navigate::definition(&scripts, &word, active_index);
+            match found {
+                Some((document, line, column)) => {
+                    let e = &mut self.documents[document];
+                    self.active.insert(root, e.target);
+                    let body_id = egui::Id::unique((&Self::document_id(e), "source_text"));
+                    view::go_to_line(ctx, e, body_id, line, column);
+                }
+                None => {
+                    self.documents[active_index].status = aurora_i18n::tr!("script-goto-not-found").into();
+                }
+            }
+        }
+        // the tree's selection and the entries that need the editor, once
+        // its panel has been drawn
+        if let Some((targets, open)) = tree_select {
+            self.tree_selection.insert(root, targets);
+            if let Some(target) = open {
+                select = Some(target);
+            }
+        }
+        if let Some(targets) = tree_open_many {
+            for target in targets {
+                match self.documents.iter().position(|e| e.target == target && !e.closed) {
+                    Some(index) => self.select_script(root, index),
+                    None => actions.push(Action::OpenScript(target)),
+                }
+            }
+        }
+        if let Some(targets) = tree_save_many {
+            for target in targets {
+                if let Some(index) = self.documents.iter().position(|e| e.target == target && !e.closed && e.can_save())
+                    && let Some(action) = self.documents[index].save()
+                {
+                    actions.push(action);
+                }
+            }
+        }
+        if let Some(target) = select {
+            ctx.request_repaint();
+            match self.documents.iter().position(|e| e.target == target && !e.closed) {
+                Some(index) => self.select_script(root, index),
+                // that script has no editor yet: the app gives it one, with
+                // the rights and the source of its item
+                None => actions.push(Action::OpenScript(target)),
+            }
+        }
+        if let Some(target) = close_one
+            && let Some(index) = self.documents.iter().position(|e| e.target == target && !e.closed)
+        {
+            self.documents[index].close_asking();
+        }
+        // the tab's menu: another script beside this window's, or one at a time
+        if let Some(target) = split_open_at
+            && target != active
+        {
+            self.splits.insert(root, (active, target));
+        }
+        if unsplit {
+            self.splits.remove(&root);
+            self.split_ratio.remove(&root);
+        }
+        // the tab's menu: the others, or every script of the window
+        if let Some(target) = close_others {
+            self.close_scripts(root, Some(target), false);
+        }
+        if close_all {
+            self.close_scripts(root, None, true);
+        }
+        // the window's X closes every script of the linkset, asking about
+        // each one that has unsaved text
+        if !open {
+            self.close_scripts(root, None, true);
+        }
+        let active = self.active.get(&root).copied().unwrap_or(active);
+        if let Some(index) = self.documents.iter().position(|e| e.target == active && !e.closed) {
+            self.document_parts(ctx, p, index, settings, color_prefs, actions, false);
+        }
+    }
+
+    /// A script chosen in the tree: the keyboard goes to its source, at the
+    /// cursor it kept, and the colour picker and Find of the former script
+    /// close.
+    fn select_script(&mut self, root: Uuid, index: usize) {
+        let target = self.documents[index].target;
+        // the tree follows the script chosen: its row alone is selected
+        self.tree_selection.insert(root, vec![target]);
+        // the chosen script's prim opens in the tree, so the list shows it
+        self.reveal.insert(root, target.object);
+        // a script that is not one of the split's two panes gives a single
+        // pane again, now rather than at the next frame's check
+        if let Some((left, right)) = self.splits.get(&root).copied()
+            && target != left
+            && target != right
+        {
+            self.splits.remove(&root);
+            self.split_ratio.remove(&root);
+        }
+        if let Some(previous) = self.active.insert(root, target)
+            && previous != target
+        {
+            if let Some(e) = self.documents.iter_mut().find(|e| e.target == previous) {
+                e.colors.cancel(&mut e.source);
+            }
+            // Find belongs to the document it was opened in: it would search
+            // the text of a script the user is no longer looking at
+            self.panels.search.close();
+        }
+        let e = &mut self.documents[index];
+        if e.loaded {
+            e.tools.focus_start = false;
+            // after the sources of the frame are drawn, as a click's would be
+            e.tools.focus_request = true;
+        } else {
+            e.tools.focus_start = true;
+        }
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn window(target: ScriptTarget) -> String {
-        format!("script_editor_{}_{}", target.object, target.item)
-    }
-
-    fn source_id(target: ScriptTarget) -> egui::Id {
-        egui::Id::unique((window(target), "source_text"))
-    }
-
-    fn frame(ctx: &egui::Context, editors: &mut Editors, events: Vec<egui::Event>) -> egui::FullOutput {
-        frame_settings(ctx, editors, &mut settings::ScriptSettings::default(), events)
-    }
-
-    fn frame_settings(
-        ctx: &egui::Context,
-        editors: &mut Editors,
-        settings: &mut settings::ScriptSettings,
-        events: Vec<egui::Event>,
-    ) -> egui::FullOutput {
-        frame_settings_extra(ctx, editors, settings, events, |_, _| {})
-    }
-
-    fn frame_settings_extra(
-        ctx: &egui::Context,
-        editors: &mut Editors,
-        settings: &mut settings::ScriptSettings,
-        events: Vec<egui::Event>,
-        mut extra: impl FnMut(&egui::Context, &crate::theme::Palette),
-    ) -> egui::FullOutput {
-        let theme = crate::theme::Theme::default();
-        theme.apply(ctx, 1.0);
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
-                focused: true,
-                events,
-                ..Default::default()
-            },
-            |ui| {
-                super::super::layout::frame(ui.ctx(), &theme.palette(), false);
-                editors.show(
-                    ui.ctx(),
-                    &theme.palette(),
-                    settings,
-                    &mut super::super::color_picker::Preferences::default(),
-                );
-                extra(ui.ctx(), &theme.palette());
-            },
-        );
-        // These headless frames inspect shapes and responses without a renderer.
-        output.textures_delta.clear();
-        output
-    }
-
-    fn settle(ctx: &egui::Context, editors: &mut Editors) {
-        for _ in 0..3 {
-            frame(ctx, editors, vec![]).textures_delta.clear();
-        }
-    }
-
-    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
-        egui::Event::Key {
-            key,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers,
-        }
-    }
-
-    fn click_label(ctx: &egui::Context, editors: &mut Editors, label: &str) {
-        click_label_settings(ctx, editors, &mut settings::ScriptSettings::default(), label);
-    }
-
-    fn click_label_settings(ctx: &egui::Context, editors: &mut Editors, settings: &mut settings::ScriptSettings, label: &str) {
-        let output = frame_settings(ctx, editors, settings, vec![]);
-        let pos = output
-            .shapes
-            .iter()
-            .find_map(|s| match &s.shape {
-                egui::Shape::Text(t) if t.galley.job.text == label => Some(t.pos + t.galley.size() * 0.5),
-                _ => None,
-            })
-            .expect("visible button");
-        for pressed in [true, false] {
-            frame_settings(
-                ctx,
-                editors,
-                settings,
-                vec![
-                    egui::Event::PointerMoved(pos),
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ],
-            );
-        }
-    }
-
-    #[test]
-    fn ctrl_f_then_replace_changes_the_selected_word_whichever_way_it_was_selected() {
-        // egui shrinks the editor's selection to its moving end once Find
-        // takes the keyboard: the start of a word selected right to left.
-        for (anchor, caret) in [(11, 16), (16, 11)] {
-            let ctx = egui::Context::default();
-            let mut editors = Editors::default();
-            let t = target(1);
-            let load = editors.open(t, "Replace selected".into(), true, true, 0).unwrap();
-            editors.loaded(load, t, Ok("count = 1;\ncount += 2;\ncount_max = 3;".into()));
-            settle(&ctx, &mut editors);
-            let id = source_id(t);
-            let mut state = egui::TextEdit::load_state(&ctx, id).unwrap_or_default();
-            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
-                egui::text::CCursor::new(anchor),
-                egui::text::CCursor::new(caret),
-            )));
-            state.store(&ctx, id);
-            ctx.memory_mut(|m| m.request_focus(id));
-            settle(&ctx, &mut editors);
-            frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-            settle(&ctx, &mut editors);
-            assert_eq!(editors.panels.search.query, "count");
-            assert_eq!(
-                editors.panels.search.active_range(&ctx, id, &editors.documents[0].source),
-                Some(11..16),
-                "{anchor}..{caret}: the selected word stays the active match"
-            );
-            editors.panels.search.replacement = "total".into();
-            // The Replace button, not the replacement field's label of the same text.
-            let output = frame(&ctx, &mut editors, vec![]);
-            let pos = output
-                .shapes
-                .iter()
-                .filter_map(|s| match &s.shape {
-                    egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-replace") => {
-                        Some(t.pos + t.galley.size() * 0.5)
-                    }
-                    _ => None,
-                })
-                .max_by(|a, b| a.y.total_cmp(&b.y))
-                .expect("visible Replace button");
-            for pressed in [true, false] {
-                frame(
-                    &ctx,
-                    &mut editors,
-                    vec![
-                        egui::Event::PointerMoved(pos),
-                        egui::Event::PointerButton {
-                            pos,
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: egui::Modifiers::NONE,
-                        },
-                    ],
-                );
-            }
-            assert_eq!(
-                editors.documents[0].source, "count = 1;\ntotal += 2;\ncount_max = 3;",
-                "{anchor}..{caret}"
-            );
-        }
-    }
-
-    #[test]
-    fn ctrl_f_after_find_keeps_the_found_match_for_replace_inline_and_floating() {
-        fn click_text(ctx: &egui::Context, editors: &mut Editors, settings: &mut settings::ScriptSettings, label: &str) {
-            // The lowest text of that label: the button, not the field label
-            // "Replace" beside the floating window's replacement field.
-            let output = frame_settings(ctx, editors, settings, vec![]);
-            let pos = output
-                .shapes
-                .iter()
-                .filter_map(|s| match &s.shape {
-                    egui::Shape::Text(t) if t.galley.job.text == label => Some(t.pos + t.galley.size() * 0.5),
-                    _ => None,
-                })
-                .max_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)))
-                .expect("visible button");
-            for pressed in [true, false] {
-                frame_settings(
-                    ctx,
-                    editors,
-                    settings,
-                    vec![
-                        egui::Event::PointerMoved(pos),
-                        egui::Event::PointerButton {
-                            pos,
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: egui::Modifiers::NONE,
-                        },
-                    ],
-                );
-            }
-        }
-        for inline in [true, false] {
-            let ctx = egui::Context::default();
-            let mut editors = Editors::default();
-            let t = ScriptTarget {
-                object: Uuid::from_u128(77),
-                item: Uuid::from_u128(5),
-            };
-            let load = editors.open(t, "Find then Ctrl+F".into(), true, true, 0).unwrap();
-            editors.loaded(load, t, Ok("default\n{\n    count\n    llSay(0, \"x\");\n    count\n}\n".into()));
-            let mut settings = settings::ScriptSettings {
-                search_inline: inline,
-                ..Default::default()
-            };
-            super::super::widgets::place_floater(&ctx, &window(t), egui::pos2(100.0, 100.0), Vec2::new(900.0, 650.0));
-            for _ in 0..4 {
-                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-            }
-            let id = source_id(t);
-            editing::select(&ctx, id, 2..2, true);
-            frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-            for _ in 0..3 {
-                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-            }
-            editors.panels.search.query = "count".into();
-            editors.panels.search.replacement = "hi".into();
-            for _ in 0..2 {
-                click_text(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-find"));
-            }
-            let second = 43..48;
-            assert_eq!(
-                editors.panels.search.active_range(&ctx, id, &editors.documents[0].source),
-                Some(second.clone()),
-                "inline {inline}: Find went to the second count"
-            );
-            // Ctrl+F again: egui has shrunk the editor's selection to a caret,
-            // which must not drop the match Find went to.
-            frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-            for _ in 0..3 {
-                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-            }
-            assert_eq!(
-                editors.panels.search.active_range(&ctx, id, &editors.documents[0].source),
-                Some(second),
-                "inline {inline}: Ctrl+F keeps the active match"
-            );
-            click_text(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-replace"));
-            assert_eq!(
-                editors.documents[0].source, "default\n{\n    count\n    llSay(0, \"x\");\n    hi\n}\n",
-                "inline {inline}"
-            );
-        }
-    }
-
-    #[test]
-    fn opening_scripts_focuses_character_zero_and_late_loads_do_not_steal_focus() {
-        for object in [Uuid::nil(), Uuid::from_u128(22)] {
-            let ctx = egui::Context::default();
-            let mut editors = Editors::default();
-            let first = ScriptTarget {
-                object,
-                item: Uuid::from_u128(1),
-            };
-            let second = ScriptTarget {
-                object,
-                item: Uuid::from_u128(2),
-            };
-            let pending = editors.open(first, "First".into(), true, true, 0).unwrap();
-            settle(&ctx, &mut editors);
-            let load = editors.open(second, "Second".into(), true, true, 0).unwrap();
-            editors.loaded(load, second, Ok("é source".into()));
-            settle(&ctx, &mut editors);
-            assert!(ctx.memory(|m| m.has_focus(source_id(second))));
-            assert_eq!(editing::cursor(&ctx, source_id(second)).as_sorted_char_range(), 0.into()..0.into());
-            frame(&ctx, &mut editors, vec![egui::Event::Text("//".into())]);
-            assert_eq!(editors.documents[1].source, "//é source");
-            editors.loaded(pending, first, Ok("late source".into()));
-            settle(&ctx, &mut editors);
-            assert!(ctx.memory(|m| m.has_focus(source_id(second))));
-
-            editing::select(&ctx, source_id(first), 3..7, false);
-            ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((window(first), "minimized")), true));
-            settle(&ctx, &mut editors);
-            editors.open(first, "First".into(), true, true, 0);
-            settle(&ctx, &mut editors);
-            assert!(!super::super::widgets::floater_minimized(&ctx, &window(first)));
-            assert!(ctx.memory(|m| m.has_focus(source_id(first))));
-            assert_eq!(editing::cursor(&ctx, source_id(first)).as_sorted_char_range(), 0.into()..0.into());
-            assert_eq!(editors.documents[0].source, "late source");
-        }
-    }
-
-    #[test]
-    fn script_search_reuses_its_window_and_options_and_finds_in_the_new_owner() {
-        let ctx = egui::Context::default();
-        let mut editors = Editors::default();
-        let first = target(1);
-        let second = ScriptTarget {
-            object: Uuid::from_u128(22),
-            item: Uuid::from_u128(2),
-        };
-        for target in [first, second] {
-            let load = editors.open(target, "Search owner".into(), true, true, 0).unwrap();
-            editors.loaded(load, target, Ok("first needle\nsecond needle".into()));
-        }
-        settle(&ctx, &mut editors);
-        editors.open(first, "Search owner".into(), true, true, 0);
-        settle(&ctx, &mut editors);
-        frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-        settle(&ctx, &mut editors);
-        assert!(editors.panels.search.owns(source_id(first)));
-        editors.panels.search.query = "needle".into();
-        editors.panels.search.replacement = "replacement".into();
-        editors.panels.search.insensitive = false;
-        editors.panels.search.up = true;
-        // Rebind the still-open search, then reopen it after closing/minimizing.
-        for closed in [false, true] {
-            if closed {
-                editors.panels.search.open = false;
-                ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((dialogs::Search::WINDOW, "minimized")), true));
-            }
-            editors.open(second, "Search owner".into(), true, true, 0);
-            settle(&ctx, &mut editors);
-            frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-            settle(&ctx, &mut editors);
-            assert!(editors.panels.search.owns(source_id(second)));
-            assert!(!editors.panels.search.owns(source_id(first)));
-            assert_eq!(editors.panels.search.query, "needle");
-            assert_eq!(editors.panels.search.replacement, "replacement");
-            assert!(!editors.panels.search.insensitive);
-            assert!(editors.panels.search.up);
-            assert!(!super::super::widgets::floater_minimized(&ctx, dialogs::Search::WINDOW));
-            assert!(ctx.memory(|m| m.has_focus(egui::Id::unique(dialogs::Search::WINDOW).with("query"))));
-            frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-            settle(&ctx, &mut editors);
-            assert!(editor_focused(&ctx));
-            assert!(
-                editors.panels.search.owns(source_id(second)),
-                "Ctrl+F keeps Find open for the same editor"
-            );
-            assert!(ctx.memory(|m| m.has_focus(egui::Id::unique(dialogs::Search::WINDOW).with("query"))));
-
-            frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-            settle(&ctx, &mut editors);
-            assert!(editors.panels.search.owns(source_id(second)), "repeated Ctrl+F keeps Find open");
-            assert!(ctx.memory(|m| m.has_focus(egui::Id::unique(dialogs::Search::WINDOW).with("query"))));
-            frame(&ctx, &mut editors, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
-            assert_eq!(
-                editing::cursor(&ctx, source_id(second)).as_sorted_char_range(),
-                20.into()..26.into()
-            );
-            assert!(editing::cursor(&ctx, source_id(first)).is_empty());
-        }
-        click_label(&ctx, &mut editors, aurora_i18n::tr!("script-search-replace-all"));
-        assert_eq!(editors.documents[0].source, "first needle\nsecond needle");
-        assert_eq!(editors.documents[1].source, "first replacement\nsecond replacement");
-        editors.documents[1].can_edit = false;
-        editors.panels.search.query = "replacement".into();
-        editors.panels.search.replacement = "blocked".into();
-        click_label(&ctx, &mut editors, aurora_i18n::tr!("script-search-replace-all"));
-        assert_eq!(editors.documents[1].source, "first replacement\nsecond replacement");
-        editors.documents[1].can_edit = true;
-        editors.documents[1].tools.processed = true;
-        editors.documents[1].tools.processed_source = "replacement".into();
-        click_label(&ctx, &mut editors, aurora_i18n::tr!("script-search-replace-all"));
-        assert_eq!(editors.documents[1].tools.processed_source, "replacement");
-        assert_eq!(editors.documents[1].source, "first replacement\nsecond replacement");
-    }
-
-    #[test]
-    fn ctrl_f_selects_the_whole_existing_query_in_floating_and_inline_search() {
-        for inline in [false, true] {
-            let ctx = egui::Context::default();
-            let mut editors = Editors::default();
-            let target = target(1);
-            let load = editors.open(target, "Select search query".into(), true, true, 0).unwrap();
-            editors.loaded(load, target, Ok("source".into()));
-            let mut settings = settings::ScriptSettings {
-                search_inline: inline,
-                ..Default::default()
-            };
-            super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(100.0, 100.0), Vec2::new(900.0, 650.0));
-            for _ in 0..4 {
-                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-            }
-            frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-            for _ in 0..3 {
-                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-            }
-            let search_id = egui::Id::unique(dialogs::Search::WINDOW);
-            let query_id = search_id.with("query");
-            let replacement_id = search_id.with("replacement");
-            assert!(ctx.memory(|m| m.has_focus(query_id)));
-            assert_eq!(editing::cursor(&ctx, query_id).as_sorted_char_range(), 0.into()..0.into());
-            assert_eq!(
-                ctx.read_response(query_id).unwrap().layer_id.id == egui::Id::unique(window(target)),
-                inline
-            );
-
-            for field in [source_id(target), query_id, replacement_id] {
-                editors.panels.search.query = "étoile 🌟".into();
-                editors.panels.search.replacement = "replacement".into();
-                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-                let at = if field == source_id(target) { 0 } else { 2 };
-                editing::select(&ctx, field, at..at, true);
-                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-                frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-                for _ in 0..3 {
-                    frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-                }
-                assert!(editors.panels.search.owns(source_id(target)), "Ctrl+F keeps Find open");
-                assert!(ctx.memory(|m| m.has_focus(query_id)));
-                frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-                for _ in 0..3 {
-                    frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-                }
-                assert!(editors.panels.search.owns(source_id(target)));
-                assert!(ctx.memory(|m| m.has_focus(query_id)));
-                assert_eq!(editors.panels.search.query, "étoile 🌟");
-                assert_eq!(editing::cursor(&ctx, query_id).as_sorted_char_range(), 0.into()..8.into());
-                frame_settings(&ctx, &mut editors, &mut settings, vec![egui::Event::Text("new".into())]);
-                assert_eq!(editors.panels.search.query, "new");
-                assert_eq!(editors.panels.search.replacement, "replacement");
-                assert_eq!(editors.documents[0].source, "source");
-            }
-            // Finding with Enter must not reset a manually placed query caret.
-            editing::select(&ctx, query_id, 1..1, true);
-            frame_settings(
-                &ctx,
-                &mut editors,
-                &mut settings,
-                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
-            );
-            frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-            assert_eq!(editing::cursor(&ctx, query_id).as_sorted_char_range(), 1.into()..1.into());
-        }
-    }
-
-    #[test]
-    fn script_search_tries_both_sides_then_overlays_its_owner_and_hides_with_it() {
-        let ctx = egui::Context::default();
-        let mut editors = Editors::default();
-        let target = target(1);
-        let load = editors.open(target, "Anchored".into(), true, true, 0).unwrap();
-        editors.loaded(load, target, Ok("source".into()));
-        settle(&ctx, &mut editors);
-        frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-        for (pos, size) in [
-            (egui::pos2(100.0, 70.0), Vec2::new(660.0, 520.0)),
-            (egui::pos2(430.0, 190.0), Vec2::new(660.0, 520.0)),
-            (egui::pos2(260.0, 120.0), Vec2::new(900.0, 650.0)),
-            (egui::pos2(850.0, 120.0), Vec2::new(660.0, 520.0)),
-        ] {
-            super::super::widgets::place_floater(&ctx, &window(target), pos, size);
-            settle(&ctx, &mut editors);
-            let parent = ctx.memory(|m| m.area_rect(egui::Id::unique(window(target)))).unwrap();
-            let search = ctx.memory(|m| m.area_rect(egui::Id::unique(dialogs::Search::WINDOW))).unwrap();
-            assert!(search.width() < 420.0, "compact default: {search:?}");
-            let expected = if parent.right() + search.width() <= 1600.0 {
-                parent.right_top()
-            } else if parent.left() >= search.width() {
-                egui::pos2(parent.left() - search.width(), parent.top())
-            } else {
-                egui::pos2(parent.right() - search.width(), editors.documents[0].tools.body_top)
-            };
-            assert!((search.left_top() - expected).length() < 1.5, "{parent:?} / {search:?}");
-        }
-        ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((window(target), "minimized")), true));
-        settle(&ctx, &mut editors);
-        let output = frame(&ctx, &mut editors, vec![]);
-        assert!(
-            !output
-                .shapes
-                .iter()
-                .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-title")))
-        );
-        editors.open(target, "Anchored".into(), true, true, 0);
-        settle(&ctx, &mut editors);
-        assert!(editors.panels.search.open);
-        editors.demo_close_clean(target);
-        settle(&ctx, &mut editors);
-        assert!(!editors.panels.search.open);
-    }
-
-    #[test]
-    fn search_moves_between_left_floating_and_inline_without_losing_fields_or_focus() {
-        // Whether the toolbar fits inline depends on the width of the labels,
-        // so on the interface language. That language is process-wide and
-        // follows the PC's by default: English in the CI, French on a French
-        // PC, where a 840 px window fitted one and not the other. Run alone and
-        // check each maintained catalogue, so every PC checks the same layouts.
-        const ALONE: &str = "AURORA_TEST_SCRIPT_SEARCH_LANGUAGES_ALONE";
-        if std::env::var_os(ALONE).is_none() {
-            let path = concat!(
-                module_path!(),
-                "::search_moves_between_left_floating_and_inline_without_losing_fields_or_focus"
-            );
-            let (_, name) = path.split_once("::").expect("test module path");
-            let run = std::process::Command::new(std::env::current_exe().expect("the test binary"))
-                .args([name, "--exact", "--test-threads=1"])
-                .env(ALONE, "1")
-                .output()
-                .expect("the test binary starts");
-            let stdout = String::from_utf8_lossy(&run.stdout);
-            let stderr = String::from_utf8_lossy(&run.stderr);
-            assert!(run.status.success(), "the run in each language failed:\n{stdout}\n{stderr}");
-            assert!(stdout.contains("1 passed"), "the run in each language ran this test:\n{stdout}");
-            return;
-        }
-        for language in ["en", "fr", "ja"] {
-            aurora_i18n::select(language, None);
-            assert_eq!(aurora_i18n::language(), language);
-            search_moves_between_left_floating_and_inline_in_the_current_language();
-        }
-    }
-
-    fn search_moves_between_left_floating_and_inline_in_the_current_language() {
-        let ctx = egui::Context::default();
-        let mut editors = Editors::default();
-        let target = target(1);
-        let load = editors.open(target, "Responsive search".into(), true, true, 0).unwrap();
-        editors.loaded(load, target, Ok("needle needle".into()));
-        let mut settings = settings::ScriptSettings {
-            search_prefer_left: true,
-            search_inline: true,
-            ..Default::default()
-        };
-        let parent_id = egui::Id::unique(window(target));
-        let search_id = egui::Id::unique(dialogs::Search::WINDOW);
-        let query_id = search_id.with("query");
-        super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(470.0, 120.0), Vec2::new(660.0, 650.0));
-        for _ in 0..4 {
-            frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-        }
-        frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-        editors.panels.search.query = "needle".into();
-        editors.panels.search.replacement = "thread".into();
-        editors.panels.search.insensitive = false;
-        editors.panels.search.up = true;
-        for _ in 0..4 {
-            frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-        }
-        let parent = ctx.memory(|m| m.area_rect(parent_id)).unwrap();
-        let search = ctx.memory(|m| m.area_rect(search_id)).unwrap();
-        assert!((search.right() - parent.left()).abs() < 1.5, "{parent:?} / {search:?}");
-        assert_eq!(ctx.read_response(query_id).unwrap().layer_id.id, search_id);
-        editing::select(&ctx, query_id, 2..2, true);
-        // Wide cases must fit every inline control, including Whole words.
-        for (width, expected_inline) in [(1000.0, true), (1250.0, true), (660.0, false), (1000.0, true)] {
-            super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(100.0, 120.0), Vec2::new(width, 650.0));
-            settings.search_inline = false;
-            for _ in 0..4 {
-                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-            }
-            let source_before = ctx.read_response(source_id(target)).unwrap().rect;
-            settings.search_inline = true;
-            for _ in 0..4 {
-                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-            }
-            let output = frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-            let query = ctx.read_response(query_id).unwrap();
-            assert_eq!(query.layer_id.id, if expected_inline { parent_id } else { search_id });
-            if expected_inline {
-                let parent = ctx.memory(|m| m.area_rect(parent_id)).unwrap();
-                let source_after = ctx.read_response(source_id(target)).unwrap().rect;
-                assert!(parent.contains_rect(query.rect) && query.rect.left() > parent.left() + parent.width() / 3.0);
-                assert!(ctx.read_response(source_id(target)).unwrap().rect.top() > query.rect.bottom());
-                assert!(
-                    (source_after.top() - source_before.top()).abs() < 1.5,
-                    "inline changed header height: {source_before:?} / {source_after:?}"
-                );
-                assert!((source_after.height() - source_before.height()).abs() < 1.5);
-                let replacement = ctx.read_response(search_id.with("replacement")).unwrap().rect;
-                assert!(replacement.top() > query.rect.bottom() && replacement.bottom() < source_after.top());
-                assert!(
-                    !output
-                        .shapes
-                        .iter()
-                        .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-title")))
-                );
-            }
-            assert_eq!(editing::cursor(&ctx, query_id).primary.index.0, 2);
-            assert!(ctx.memory(|m| m.has_focus(query_id)));
-            assert_eq!(editors.panels.search.query, "needle");
-            assert_eq!(editors.panels.search.replacement, "thread");
-            assert!(!editors.panels.search.insensitive && editors.panels.search.up);
-            // The Find button shows in both modes; only the floating panel
-            // labels the query field. Some languages use one word for both.
-            let texts = |label: &str| {
-                output
-                    .shapes
-                    .iter()
-                    .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == label))
-                    .count()
-            };
-            let query_label = aurora_i18n::tr!("script-search-query");
-            let find_label = aurora_i18n::tr!("script-search-find");
-            let same_word = usize::from(query_label == find_label);
-            assert_eq!(texts(query_label), usize::from(!expected_inline) + same_word);
-            assert_eq!(texts(find_label), 1 + usize::from(!expected_inline) * same_word);
-            if expected_inline {
-                let label_pos = |label| {
-                    output
-                        .shapes
-                        .iter()
-                        .find_map(|s| match &s.shape {
-                            egui::Shape::Text(t) if t.galley.job.text == label => Some(t.pos),
-                            _ => None,
-                        })
-                        .unwrap()
-                };
-                let find = label_pos(aurora_i18n::tr!("script-search-find"));
-                let replace = label_pos(aurora_i18n::tr!("script-search-replace"));
-                assert!(
-                    find.x < replace.x && (find.y - replace.y).abs() < 1.5,
-                    "Find before Replace on the same row"
-                );
-            }
-        }
-        editing::select(&ctx, source_id(target), 0..0, false);
-        click_label_settings(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-find"));
-        assert_eq!(editing::cursor(&ctx, source_id(target)).as_sorted_char_range(), 7.into()..13.into());
-        editors.panels.search.query = "missing".into();
-        editors.panels.search.find(&ctx, source_id(target), &editors.documents[0].source);
-        let source_before_status = ctx.read_response(source_id(target)).unwrap().rect;
-        for _ in 0..4 {
-            frame_settings(&ctx, &mut editors, &mut settings, vec![]);
-        }
-        assert_eq!(
-            ctx.read_response(source_id(target)).unwrap().rect,
-            source_before_status,
-            "status must stay within the two toolbar rows"
-        );
-        editors.panels.search.query = "needle".into();
-        click_label_settings(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-replace-all"));
-        assert_eq!(editors.documents[0].source, "thread thread");
-        editors.documents[0].can_edit = false;
-        editors.panels.search.query = "thread".into();
-        editors.panels.search.replacement = "blocked".into();
-        click_label_settings(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-replace-all"));
-        assert_eq!(editors.documents[0].source, "thread thread");
-    }
-
-    #[test]
-    fn overlapping_search_stays_above_its_owner_without_covering_unrelated_windows() {
-        let ctx = egui::Context::default();
-        let mut editors = Editors::default();
-        let first = target(1);
-        let second = target(2);
-        for target in [first, second] {
-            let load = editors.open(target, "Layer ordering".into(), true, true, 0).unwrap();
-            editors.loaded(load, target, Ok("source".into()));
-        }
-        settle(&ctx, &mut editors);
-        super::super::widgets::place_floater(&ctx, &window(first), egui::pos2(260.0, 120.0), Vec2::new(1100.0, 650.0));
-        editors.panels.search.begin(&ctx, source_id(first), source_id(first), "source");
-        settle(&ctx, &mut editors);
-        let owner = egui::LayerId::new(egui::Order::Middle, egui::Id::unique(window(first)));
-        let other = egui::LayerId::new(egui::Order::Middle, egui::Id::unique(window(second)));
-        let search = egui::LayerId::new(egui::Order::Middle, egui::Id::unique(dialogs::Search::WINDOW));
-        for top in [owner, other] {
-            ctx.move_to_top(top);
-            settle(&ctx, &mut editors);
-            let layers = ctx.memory(|m| m.layer_ids().collect::<Vec<_>>());
-            let at = |layer| layers.iter().position(|&l| l == layer).unwrap();
-            assert!(at(search) > at(owner));
-            if top == other {
-                assert!(at(other) > at(search));
-            }
-        }
-    }
-
-    #[test]
-    fn dragging_scripts_can_cross_closed_edges_but_keeps_the_title_reachable() {
-        for delta in [
-            egui::vec2(-2000.0, 0.0),
-            egui::vec2(2000.0, 0.0),
-            egui::vec2(0.0, 2000.0),
-            egui::vec2(0.0, -2000.0),
-        ] {
-            let ctx = egui::Context::default();
-            let mut editors = Editors::default();
-            let target = target(1);
-            let load = editors.open(target, "Reachable".into(), true, true, 0).unwrap();
-            editors.loaded(load, target, Ok("source".into()));
-            settle(&ctx, &mut editors);
-            let id = egui::Id::unique(window(target));
-            let start = ctx.read_response(id.with("title_double_click")).unwrap().rect.center();
-            frame(&ctx, &mut editors, vec![egui::Event::PointerMoved(start)]);
-            frame(
-                &ctx,
-                &mut editors,
-                vec![egui::Event::PointerButton {
-                    pos: start,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::NONE,
-                }],
-            );
-            let end = start + delta;
-            frame(&ctx, &mut editors, vec![egui::Event::PointerMoved(end)]);
-            frame(
-                &ctx,
-                &mut editors,
-                vec![egui::Event::PointerButton {
-                    pos: end,
-                    button: egui::PointerButton::Primary,
-                    pressed: false,
-                    modifiers: egui::Modifiers::NONE,
-                }],
-            );
-            settle(&ctx, &mut editors);
-            let rect = ctx.memory(|m| m.area_rect(id)).unwrap();
-            let room = super::super::layout::move_area(&ctx);
-            let visible = rect.intersect(room);
-            assert!(visible.width() >= super::super::layout::TITLE_GRIP - 1.5, "{delta:?}: {rect:?}");
-            assert!(visible.height() >= super::super::layout::TITLE_BAR_H - 1.5, "{delta:?}: {rect:?}");
-            if delta.x < 0.0 {
-                assert!(rect.left() < room.left());
-            }
-            if delta.x > 0.0 {
-                assert!(rect.right() > room.right());
-            }
-            if delta.y > 0.0 {
-                assert!(rect.bottom() > room.bottom());
-            }
-            assert!(rect.top() >= room.top());
-            assert_eq!(
-                super::super::layout::edges_for(&ctx, egui::Id::unique("ordinary_window")),
-                super::super::layout::Edges::default()
-            );
-        }
-    }
-
-    #[test]
-    fn ctrl_f_follows_script_window_activation_without_needing_source_field_focus() {
-        fn show(ctx: &egui::Context, editors: &mut Editors, events: Vec<egui::Event>) -> egui::FullOutput {
-            frame_settings_extra(ctx, editors, &mut settings::ScriptSettings::default(), events, |ctx, p| {
-                let mut other = String::from("Another window");
-                super::super::widgets::Floater::new("script_shortcut_other", "Other", egui::pos2(1200.0, 720.0), Vec2::new(260.0, 200.0))
-                    .show(ctx, p, &mut true, |ui| {
-                        ui.add(egui::TextEdit::singleline(&mut other).id(egui::Id::unique("script_shortcut_other_field")));
-                    });
-            })
-        }
-        fn click(ctx: &egui::Context, editors: &mut Editors, pos: egui::Pos2) {
-            show(ctx, editors, vec![egui::Event::PointerMoved(pos)]);
-            for pressed in [true, false] {
-                show(
-                    ctx,
-                    editors,
-                    vec![egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    }],
-                );
-            }
-        }
-        let ctx = egui::Context::default();
-        let mut editors = Editors::default();
-        let first = target(1);
-        let second = target(2);
-        for (target, x) in [(first, 50.0), (second, 780.0)] {
-            let load = editors.open(target, "Activation".into(), true, true, 0).unwrap();
-            editors.loaded(load, target, Ok("source".into()));
-            super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(x, 100.0), Vec2::new(660.0, 520.0));
-        }
-        for _ in 0..4 {
-            show(&ctx, &mut editors, vec![]);
-        }
-        for (target, area) in [
-            (first, "title"),
-            (second, "header"),
-            (first, "control"),
-            (second, "footer"),
-            (first, "menu"),
-        ] {
-            editors.panels.search.open = false;
-            for _ in 0..2 {
-                show(&ctx, &mut editors, vec![]);
-            }
-            let parent = ctx.memory(|m| m.area_rect(egui::Id::unique(window(target)))).unwrap();
-            let editor = editors.documents.iter().find(|e| e.target == target).unwrap();
-            let pos = match area {
-                "title" => ctx
-                    .read_response(egui::Id::unique(window(target)).with("title_double_click"))
-                    .unwrap()
-                    .rect
-                    .center(),
-                "header" => egui::pos2(parent.right() - 25.0, editor.tools.body_top + 8.0),
-                "footer" => egui::pos2(parent.center().x, parent.bottom() - 25.0),
-                _ => {
-                    let label = if area == "menu" {
-                        aurora_i18n::tr!("script-menu-file")
-                    } else {
-                        aurora_i18n::tr!("script-target-mono")
-                    };
-                    show(&ctx, &mut editors, vec![])
-                        .shapes
-                        .iter()
-                        .find_map(|s| match &s.shape {
-                            egui::Shape::Text(t) if t.galley.job.text == label && parent.contains(t.pos) => {
-                                Some(t.pos + t.galley.size() * 0.5)
-                            }
-                            _ => None,
-                        })
-                        .unwrap()
-                }
-            };
-            click(&ctx, &mut editors, pos);
-            assert!(
-                super::super::find_shortcut::window_takes_it(&ctx),
-                "{area}: app must yield Ctrl+F to the script"
-            );
-            // Hovering another window does not move activation there.
-            show(&ctx, &mut editors, vec![egui::Event::PointerMoved(egui::pos2(1330.0, 800.0))]);
-            assert!(
-                super::super::find_shortcut::window_takes_it(&ctx),
-                "{area}: pointer hover must not steal it"
-            );
-            show(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-            for _ in 0..3 {
-                show(&ctx, &mut editors, vec![]);
-            }
-            assert!(
-                editors.panels.search.owns(source_id(target)),
-                "{area}: find must bind the clicked script"
-            );
-            assert!(ctx.memory(|m| m.has_focus(egui::Id::unique(dialogs::Search::WINDOW).with("query"))));
-        }
-        for outside in [
-            ctx.read_response(egui::Id::unique("script_shortcut_other").with("title_double_click"))
-                .unwrap()
-                .rect
-                .center(),
-            ctx.read_response(egui::Id::unique("script_shortcut_other_field"))
-                .unwrap()
-                .rect
-                .center(),
-            egui::pos2(1560.0, 950.0),
-        ] {
-            editors.panels.search.open = false;
-            for _ in 0..2 {
-                show(&ctx, &mut editors, vec![]);
-            }
-            let title = ctx
-                .read_response(egui::Id::unique(window(first)).with("title_double_click"))
-                .unwrap()
-                .rect
-                .center();
-            click(&ctx, &mut editors, title);
-            assert!(super::super::find_shortcut::window_takes_it(&ctx));
-            click(&ctx, &mut editors, outside);
-            assert!(
-                !super::super::find_shortcut::window_takes_it(&ctx),
-                "outside click must release script Ctrl+F"
-            );
-            show(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
-            assert!(!editors.panels.search.open);
-        }
-        editors.documents.clear();
-        show(&ctx, &mut editors, vec![]);
-        assert!(!super::super::find_shortcut::window_takes_it(&ctx));
-    }
-
-    fn target(n: u128) -> ScriptTarget {
-        ScriptTarget {
-            object: Uuid::nil(),
-            item: Uuid::from_u128(n),
-        }
-    }
-
-    #[test]
-    fn a_lua_script_is_saved_for_luau_without_the_lsl_preprocessor() {
-        let target = target(80);
-        let mut editors = Editors::default();
-        // SST_LUA in the item's low byte; other flag bits do not count
-        let load = editors.open(target, "Lua".into(), true, true, 0x0100_0001).unwrap();
-        editors.loaded(load, target, Ok("print(\"hi\")".into()));
-        // A running reply that says Mono does not turn a Lua source into LSL.
-        editors.running(target, true, Some(CompileTarget::Mono));
-        let e = &mut editors.documents[0];
-        e.processor_settings.preprocessor = true;
-        e.source = "#include \"x\"
-print(\"bye\")"
-            .into();
-        let Some(Action::Save { options, source, .. }) = e.save() else {
-            panic!("a Lua source is saved at once, not preprocessed")
-        };
-        assert!(e.processing.is_none());
-        assert_eq!(
-            source,
-            "#include \"x\"
-print(\"bye\")"
-        );
-        assert_eq!(options.compile, CompileTarget::Luau);
-    }
-
-    #[test]
-    fn an_lsl_script_on_the_luau_vm_keeps_it_and_the_first_reply_wins() {
-        let target = target(81);
-        let mut editors = Editors::default();
-        let load = editors.open(target, "LSL on Luau".into(), true, true, 0).unwrap();
-        editors.loaded(load, target, Ok("default {}".into()));
-        editors.running(target, true, Some(CompileTarget::LslLuau));
-        editors.running(target, false, None);
-        let e = &mut editors.documents[0];
-        e.source = "default { state_entry() {} }".into();
-        let Some(Action::Save { options, .. }) = e.save() else {
-            panic!("save")
-        };
-        assert_eq!(options.compile, CompileTarget::LslLuau);
-        assert!(!options.running);
-    }
-
-    #[test]
-    fn asynchronous_preprocessing_loads_includes_and_saves_a_snapshot_that_reopens_as_original_source() {
-        let target = target(70);
-        let mut editors = Editors::default();
-        let load = editors.open(target, "Main".into(), true, true, 0).unwrap();
-        editors.loaded(load, target, Ok("default {}".into()));
-        let original = "#include \"library.lsl\"\ndefault { state_entry() { greet(); } }";
-        let settings = settings::ScriptSettings {
-            preprocessor: true,
-            ..Default::default()
-        };
-        let e = &mut editors.documents[0];
-        e.processor_settings = settings.clone();
-        e.source = original.into();
-        assert!(e.save().is_none());
-        assert!(e.saving.is_some());
-        e.close_after_save = true;
-        let ctx = egui::Context::default();
-        let p = crate::theme::Theme::default().palette();
-        let mut settings = settings;
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let mut uploaded = None;
-        while std::time::Instant::now() < until && uploaded.is_none() {
-            let mut actions = Vec::new();
-            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                actions = editors.show(ui.ctx(), &p, &mut settings, &mut crate::ui::color_picker::Preferences::default())
-            });
-            // No renderer consumes texture updates in this headless test.
-            output.textures_delta.clear();
-            for action in actions {
-                match action {
-                    Action::Include { request, name } => {
-                        assert_eq!(name, "library.lsl");
-                        editors.include_asset(request, Uuid::from_u128(71));
-                        editors.loaded(request, target, Ok("greet() { llOwnerSay(__ASSETID__); }".into()));
-                    }
-                    Action::Save { request, source, .. } => uploaded = Some((request, source)),
-                    _ => {}
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        let (request, uploaded) = uploaded.expect("worker produced upload");
-        assert!(uploaded.contains(&Uuid::from_u128(71).to_string()));
-        assert_eq!(preprocessor::decode(&uploaded), original);
-        assert_eq!(editors.documents[0].source, original);
-        editors.saved(
-            request,
-            target,
-            &Ok(ScriptSaved {
-                asset: Uuid::from_u128(72),
-                compiled: true,
-                checked: true,
-                errors: vec![],
-            }),
-        );
-        assert!(editors.documents[0].closed);
-        editors.documents.clear();
-        let load = editors.open(target, "Main".into(), true, true, 0).unwrap();
-        editors.loaded(load, target, Ok(uploaded));
-        assert_eq!(editors.documents[0].source, original);
-        assert!(!editors.documents[0].dirty());
-    }
-
-    #[test]
-    fn failed_preprocessing_keeps_the_draft_and_emits_no_network_save() {
-        let target = target(80);
-        let mut editors = Editors::default();
-        let load = editors.open(target, "Main".into(), true, true, 0).unwrap();
-        editors.loaded(load, target, Ok("default {}".into()));
-        let mut settings = settings::ScriptSettings {
-            preprocessor: true,
-            ..Default::default()
-        };
-        editors.documents[0].processor_settings = settings.clone();
-        editors.documents[0].source = "#error test".into();
-        assert!(editors.documents[0].save().is_none());
-        let ctx = egui::Context::default();
-        let p = crate::theme::Theme::default().palette();
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        while editors.documents[0].processing.is_some() && std::time::Instant::now() < until {
-            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                assert!(
-                    !editors
-                        .show(ui.ctx(), &p, &mut settings, &mut crate::ui::color_picker::Preferences::default())
-                        .iter()
-                        .any(|a| matches!(a, Action::Save { .. }))
-                )
-            });
-            output.textures_delta.clear();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        let e = &editors.documents[0];
-        assert!(e.processing.is_none());
-        assert!(e.saving.is_none());
-        assert!(e.compile_failed);
-        assert!(e.dirty());
-        assert_eq!(e.source, "#error test");
-        assert_eq!(e.baseline, "default {}");
-        assert!(!e.tools.diagnostics_processed);
-    }
-
-    #[test]
-    fn experience_only_changes_and_removal_are_saved_with_their_snapshot() {
-        use aurora_net::scripts::experiences::ScriptExperiences;
-        let mut editors = Editors::default();
-        let target = ScriptTarget {
-            object: Uuid::from_u128(20),
-            item: Uuid::from_u128(1),
-        };
-        let request = editors.open(target, "Test".into(), true, true, 0).expect("load");
-        editors.loaded(request, target, Ok("original".into()));
-        editors.running(target, true, Some(CompileTarget::Mono));
-        let Action::Experiences { request, .. } = editors.load_experiences(target).expect("experiences") else {
-            panic!("load experiences")
-        };
-        editors.experiences_loaded(
-            request,
-            target,
-            ScriptExperiences {
-                associated: Ok(Uuid::nil()),
-                available: Ok(vec![]),
-            },
-        );
-        assert!(!editors.documents[0].dirty());
-        for id in [Uuid::from_u128(45), Uuid::nil()] {
-            editors.documents[0].experience.selected = Some(id);
-            assert!(!editors.prepare_exit());
-            let Action::Save {
-                request, options, source, ..
-            } = editors.documents[0].save().expect("save association")
-            else {
-                panic!("save")
-            };
-            assert_eq!(options.experience, id);
-            assert_eq!(source, "original");
-            editors.saved(
-                request,
-                target,
-                &Ok(ScriptSaved {
-                    asset: Uuid::from_u128(99),
-                    compiled: true,
-                    checked: true,
-                    errors: vec![],
-                }),
-            );
-            assert!(!editors.documents[0].dirty());
-        }
-    }
-
-    #[test]
-    fn unknown_association_requires_a_choice_and_disconnect_rejects_metadata() {
-        use aurora_net::scripts::experiences::ScriptExperiences;
-        let mut editors = Editors::default();
-        let target = ScriptTarget {
-            object: Uuid::from_u128(20),
-            item: Uuid::from_u128(1),
-        };
-        let request = editors.open(target, "Test".into(), true, true, 0).expect("load");
-        editors.loaded(request, target, Ok("original".into()));
-        editors.running(target, true, Some(CompileTarget::Mono));
-        editors.documents[0].source.push_str(" // edit");
-        let Action::Experiences { request, .. } = editors.load_experiences(target).expect("experiences") else {
-            panic!("load")
-        };
-        assert!(!editors.documents[0].can_save());
-        editors.experiences_loaded(
-            request,
-            target,
-            ScriptExperiences {
-                associated: Err("unavailable".into()),
-                available: Ok(vec![]),
-            },
-        );
-        assert!(!editors.documents[0].can_save());
-        editors.documents[0].experience.selected = Some(Uuid::nil());
-        assert!(editors.documents[0].can_save());
-        let Action::Experiences { request, .. } = editors.load_experiences(target).expect("retry") else {
-            panic!("load")
-        };
-        editors.disconnected();
-        editors.experiences_loaded(
-            request,
-            target,
-            ScriptExperiences {
-                associated: Ok(Uuid::from_u128(45)),
-                available: Ok(vec![]),
-            },
-        );
-        assert_eq!(editors.documents[0].experience.selected, Some(Uuid::nil()));
-        assert!(!editors.documents[0].can_save());
-    }
-
-    #[test]
-    fn loaded_sources_are_clean_and_reopening_waits_for_the_server() {
-        let mut editors = Editors::default();
-        for object in [Uuid::nil(), Uuid::from_u128(10)] {
-            let target = ScriptTarget {
-                object,
-                item: Uuid::from_u128(1),
-            };
-            let source = "default { state_entry() { llSay(0, \"Saved source\"); } }";
-            let request = editors.open(target, "Test".into(), true, true, 0).expect("request existing script");
-            assert!(editors.documents[0].source.is_empty());
-            assert!(!editors.documents[0].can_save());
-            editors.loaded(request, target, Ok(source.into()));
-            assert_eq!(editors.documents[0].source, source);
-            assert!(!editors.documents[0].dirty());
-            assert!(editors.prepare_exit());
-            assert!(editors.demo_close_clean(target));
-            let next = editors.open(target, "Test".into(), true, true, 0).expect("request again");
-            assert_ne!(request, next);
-            assert!(editors.documents[0].source.is_empty());
-            editors.loaded(request, target, Ok("stale".into()));
-            assert!(editors.documents[0].source.is_empty());
-            editors.loaded(next, target, Ok(source.into()));
-            assert_eq!(editors.documents[0].source, source);
-            assert!(!editors.documents[0].dirty());
-            editors.documents[0].source.push_str("\n// Unsaved edit");
-            assert!(!editors.demo_close_clean(target));
-            assert!(!editors.prepare_exit());
-            editors.documents.clear();
-        }
-    }
-
-    #[test]
-    fn cascade_inventory_and_object_scripts_share_one_group_without_replacing_drafts() {
-        let ctx = egui::Context::default();
-        let mut editors = Editors::default();
-        let mut settings = settings::ScriptSettings::default();
-        let mut colors = super::super::color_picker::Preferences::default();
-        let targets = [
-            ScriptTarget {
-                object: Uuid::nil(),
-                item: Uuid::from_u128(1),
-            },
-            ScriptTarget {
-                object: Uuid::from_u128(10),
-                item: Uuid::from_u128(1),
-            },
-        ];
-        let mut frame = 0;
-        for target in targets {
-            let request = editors.open(target, "Script".into(), true, true, 0).expect("load");
-            editors.loaded(request, target, Ok("default { state_entry() {} }".into()));
-            for _ in 0..8 {
-                frame += 1;
-                let mut output = ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1200.0))),
-                        time: Some(frame as f64 / 60.0),
-                        ..Default::default()
-                    },
-                    |ui| {
-                        editors.show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut settings, &mut colors);
-                    },
-                );
-                output.textures_delta.clear();
-            }
-        }
-        let rects: Vec<_> = targets
-            .iter()
-            .map(|t| {
-                ctx.memory(|m| {
-                    m.area_rect(egui::Id::unique(format!("script_editor_{}_{}", t.object, t.item)))
-                        .expect("script window")
-                })
-            })
-            .collect();
-        assert!(((rects[1].min - rects[0].min) - egui::Vec2::splat(32.0)).length() < 1.0);
-        editors.documents[0].source.push_str("\n// Unsaved draft");
-        assert!(editors.open(targets[0], "Script".into(), true, true, 0).is_none());
-        assert_eq!(editors.documents.len(), 2);
-        assert!(editors.documents[0].dirty());
-        assert!(editors.documents[0].source.ends_with("// Unsaved draft"));
-    }
-
-    #[test]
-    fn load_and_save_replies_are_scoped_to_the_request_and_document() {
-        let mut editors = Editors::default();
-        let target = target(1);
-        let request = editors.open(target, "Test".into(), true, true, 0).expect("load");
-        editors.loaded(Uuid::new_v4(), target, Ok("stale".into()));
-        assert!(editors.documents[0].source.is_empty());
-        editors.loaded(request, target, Ok("original".into()));
-        editors.documents[0].source = "edited".into();
-        let Action::Save { request, .. } = editors.documents[0].save().expect("save") else {
-            panic!("save action")
-        };
-        assert!(!editors.saved(
-            Uuid::new_v4(),
-            target,
-            &Ok(ScriptSaved {
-                asset: Uuid::from_u128(3),
-                compiled: true,
-                checked: true,
-                errors: vec![]
-            })
-        ));
-        assert!(editors.documents[0].dirty());
-        editors.saved(request, target, &Err("offline".into()));
-        assert!(editors.documents[0].dirty());
-        assert!(editors.documents[0].can_save());
-    }
-
-    #[test]
-    fn compiler_errors_keep_the_editor_open_but_track_the_saved_source() {
-        let mut editors = Editors::default();
-        let target = target(1);
-        let request = editors.open(target, "Test".into(), true, true, 0).expect("load");
-        editors.loaded(request, target, Ok("original".into()));
-        editors.documents[0].source = "invalid source".into();
-        let Action::Save { request, .. } = editors.documents[0].save().expect("save script") else {
-            panic!("save action")
-        };
-        editors.documents[0].close_after_save = true;
-        editors.saved(
-            request,
-            target,
-            &Ok(ScriptSaved {
-                asset: Uuid::from_u128(3),
-                compiled: false,
-                checked: true,
-                errors: vec!["(1, 1) Syntax error".into()],
-            }),
-        );
-        let e = &editors.documents[0];
-        assert!(!e.dirty());
-        assert!(!e.closed);
-        assert_eq!(e.errors, ["(1, 1) Syntax error"]);
-        assert!(e.can_save());
-    }
-
-    #[test]
-    fn reopening_a_script_keeps_the_target_it_was_saved_with() {
-        let mut editors = Editors::default();
-        let slua = target(1);
-        let request = editors.open(slua, "SLua".into(), true, true, 1).expect("load");
-        editors.loaded(request, slua, Ok("ll.Say(0, 'hi')".into()));
-        assert_eq!(editors.documents[0].compile, CompileTarget::Luau, "an SLua item opens as Lua");
-        let lsl = target(3);
-        let request = editors.open(lsl, "LSL".into(), true, true, 0).expect("load");
-        editors.loaded(request, lsl, Ok("default {}".into()));
-        editors.documents[1].compile = CompileTarget::Lsl2;
-        let Some(Action::Save { request, options, .. }) = editors.documents[1].save() else {
-            panic!("save action")
-        };
-        assert_eq!(options.compile, CompileTarget::Lsl2);
-        editors.saved(
-            request,
-            lsl,
-            &Ok(ScriptSaved {
-                asset: Uuid::from_u128(4),
-                compiled: true,
-                checked: true,
-                errors: vec![],
-            }),
-        );
-        // raised, not created again: the item's flags do not reset the choice
-        assert!(editors.open(lsl, "LSL".into(), true, true, 0).is_none());
-        assert_eq!(editors.documents[1].compile, CompileTarget::Lsl2);
-        assert!(!editors.documents[1].dirty());
-        // an object's script: the running reply wins over the item
-        let object = ScriptTarget {
-            object: Uuid::from_u128(2),
-            ..slua
-        };
-        editors.open(object, "LSL on Luau".into(), true, true, 0);
-        assert_eq!(editors.documents[2].compile, CompileTarget::Mono);
-        editors.running(object, true, Some(CompileTarget::LslLuau));
-        editors.open(object, "LSL on Luau".into(), true, true, 0);
-        assert_eq!(editors.documents[2].compile, CompileTarget::LslLuau);
-    }
-
-    #[test]
-    fn a_mono_line_does_not_move_lsl_on_lua_off_luau() {
-        let target = target(80);
-        let mut editors = Editors::default();
-        let load = editors.open(target, "Main".into(), true, true, 0).unwrap();
-        editors.loaded(load, target, Ok("default {}".into()));
-        let mut settings = settings::ScriptSettings {
-            preprocessor: true,
-            ..Default::default()
-        };
-        let e = &mut editors.documents[0];
-        e.processor_settings = settings.clone();
-        e.compile = CompileTarget::LslLuau;
-        e.source = "//mono\ndefault { state_entry() { llOwnerSay(\"hi\"); } }".into();
-        assert!(e.save().is_none(), "preprocessed first");
-        let ctx = egui::Context::default();
-        let p = crate::theme::Theme::default().palette();
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let mut saved = None;
-        while std::time::Instant::now() < until && saved.is_none() {
-            let mut actions = Vec::new();
-            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                actions = editors.show(ui.ctx(), &p, &mut settings, &mut crate::ui::color_picker::Preferences::default())
-            });
-            output.textures_delta.clear();
-            saved = actions.into_iter().find_map(|action| match action {
-                Action::Save { options, .. } => Some(options.compile),
-                _ => None,
-            });
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        assert_eq!(saved, Some(CompileTarget::LslLuau));
-        assert_eq!(editors.documents[0].compile, CompileTarget::LslLuau);
-    }
-
-    #[test]
-    fn same_item_uuid_in_inventory_and_object_has_independent_editors_and_exit_guard() {
-        let mut editors = Editors::default();
-        let inventory = target(1);
-        let object = ScriptTarget {
-            object: Uuid::from_u128(2),
-            ..inventory
-        };
-        for target in [inventory, object] {
-            let request = editors.open(target, "Test".into(), true, true, 0).expect("load");
-            editors.loaded(request, target, Ok("original".into()));
-        }
-        editors.running(object, false, Some(CompileTarget::Lsl2));
-        editors.documents[0].source = "inventory edit".into();
-        editors.documents[1].source = "object edit".into();
-        assert!(editors.open(inventory, "Again".into(), true, true, 0).is_none());
-        assert_eq!(editors.documents.len(), 2);
-        assert!(!editors.prepare_exit());
-        assert!(editors.documents.iter().all(|e| e.close_prompt));
-        let Action::Save { request, .. } = editors.documents[0].save().expect("save inventory") else {
-            panic!("save action")
-        };
-        editors.saved(
-            request,
-            inventory,
-            &Ok(ScriptSaved {
-                asset: Uuid::from_u128(4),
-                compiled: true,
-                checked: true,
-                errors: vec![],
-            }),
-        );
-        assert!(!editors.documents[0].dirty());
-        assert!(editors.documents[1].dirty());
-        assert_eq!(editors.documents[1].compile, CompileTarget::Lsl2);
-    }
-
-    #[test]
-    fn disconnect_keeps_unsaved_source_and_rejects_the_previous_sessions_reply() {
-        let mut editors = Editors::default();
-        let target = target(1);
-        let request = editors.open(target, "Test".into(), true, true, 0).expect("load");
-        editors.loaded(request, target, Ok("original".into()));
-        editors.documents[0].source = "unsaved".into();
-        let Action::Save { request, .. } = editors.documents[0].save().expect("save") else {
-            panic!("save action")
-        };
-        editors.disconnected();
-        assert_eq!(editors.documents[0].source, "unsaved");
-        assert!(editors.documents[0].dirty());
-        assert!(!editors.documents[0].can_save());
-        assert!(!editors.saved(
-            request,
-            target,
-            &Ok(ScriptSaved {
-                asset: Uuid::from_u128(3),
-                compiled: true,
-                checked: true,
-                errors: vec![]
-            })
-        ));
-    }
-}
+#[cfg(test)]
+mod tests;

@@ -17,6 +17,9 @@ use uuid::Uuid;
 const REFRESH: Duration = Duration::from_secs(7);
 const CACHE_AGE: Duration = Duration::from_secs(14);
 const QUERY_TIMEOUT: Duration = Duration::from_secs(5);
+/// How often the script editor's status bar asks the region for its
+/// object's script figure.
+const EDITOR_REFRESH: Duration = Duration::from_secs(10);
 
 struct Height {
     region: RegionHandle,
@@ -33,6 +36,9 @@ struct Inspection {
     attachment_names: HashMap<u8, String>,
     request: Option<Uuid>,
     at: Instant,
+    /// The editor's status bar asked for its object's script figure: no
+    /// report, the parsed figure goes to `editor_info` instead.
+    for_editor: bool,
 }
 
 #[derive(Default)]
@@ -46,6 +52,11 @@ pub struct Services {
     radar: Option<RadarRequest>,
     last_batch: Option<Instant>,
     inspection: Option<Inspection>,
+    /// The last figure the editor asked for, once (`take_editor_info`).
+    editor_info: Option<ScriptInfo>,
+    /// When each object's figure was last asked for, to ask once per
+    /// `EDITOR_REFRESH`.
+    editor_asked: HashMap<Uuid, Instant>,
 }
 
 impl Services {
@@ -66,6 +77,8 @@ impl Services {
             self.attempts.clear();
             self.radar = None;
             self.last_batch = None;
+            self.editor_info = None;
+            self.editor_asked.clear();
         }
         self.agent = agent;
         self.region = region;
@@ -96,8 +109,44 @@ impl Services {
             attachment_names: HashMap::new(),
             request: None,
             at: now,
+            for_editor: false,
         });
         true
+    }
+
+    /// The figure the script editor's status bar shows for `object`: its
+    /// scripts' counts and the memory the region sets aside for them
+    /// (`OBJECT_SCRIPT_MEMORY`, through the bridge's own `scripts` query).
+    /// Asked at most once per `EDITOR_REFRESH`, and queued only while no
+    /// other inspection is in flight; the reply lands in `take_editor_info`.
+    pub fn editor_script_info(&mut self, object: Uuid, now: Instant) -> bool {
+        if object.is_nil() || self.inspection.is_some() {
+            return false;
+        }
+        if self
+            .editor_asked
+            .get(&object)
+            .is_some_and(|at| now.duration_since(*at) < EDITOR_REFRESH)
+        {
+            return false;
+        }
+        if !Query::ScriptInfo(object).valid() {
+            return false;
+        }
+        self.editor_asked.insert(object, now);
+        self.inspection = Some(Inspection {
+            query: Query::ScriptInfo(object),
+            attachment_names: HashMap::new(),
+            request: None,
+            at: now,
+            for_editor: true,
+        });
+        true
+    }
+
+    /// The last figure an `editor_script_info` reply brought, once.
+    pub fn take_editor_info(&mut self) -> Option<ScriptInfo> {
+        self.editor_info.take()
     }
 
     pub fn update(&mut self, endpoint: Option<&Endpoint>, now: Instant) -> (Option<NetCommand>, Option<String>) {
@@ -108,7 +157,11 @@ impl Services {
             Duration::from_secs(60)
         };
         if now.duration_since(pending.at) >= timeout {
+            let for_editor = pending.for_editor;
             self.inspection = None;
+            if for_editor {
+                return (None, None);
+            }
             return (None, Some(aurora_i18n::tr!("bridge-query-timeout").into()));
         }
         if pending.request.is_some() {
@@ -199,6 +252,16 @@ impl Services {
     pub fn reply(&mut self, request: Uuid, result: Result<Reply, String>, now: Instant) -> Option<String> {
         if self.inspection.as_ref().is_some_and(|p| p.request == Some(request)) {
             let pending = self.inspection.take()?;
+            // the editor's figure: kept quietly, or dropped when late or
+            // unreadable, without a message over the world
+            if pending.for_editor {
+                if now.duration_since(pending.at) < QUERY_TIMEOUT
+                    && let Ok(Reply::ScriptInfo(info)) = result
+                {
+                    self.editor_info = Some(info);
+                }
+                return None;
+            }
             if now.duration_since(pending.at) >= QUERY_TIMEOUT {
                 return Some(aurora_i18n::tr!("bridge-query-timeout").into());
             }

@@ -160,6 +160,7 @@ mod safe_graphics;
 mod script_clicks;
 mod script_recovery;
 mod scripts;
+mod scripts_demo;
 mod second_camera;
 mod selection_turn;
 mod settings_backup;
@@ -780,6 +781,9 @@ pub struct App {
     empty_lists: DrawLists,
     quit_at: Option<Instant>,
     exit_prompt: ui::exit::ExitPrompt,
+    /// The quit held while the open scripts ask about their unsaved
+    /// text (`resume_exit`): `Some(action)` once the choice is made.
+    exit_pending: Option<ui::exit::Action>,
     /// The spinning cat behind the Konami code (`crate::oiia`).
     oiia: crate::oiia::Oiia,
     /// saves the window layout shortly after it changes (ui/layout.rs)
@@ -1330,6 +1334,11 @@ pub struct App {
     task_notecards: std::collections::HashMap<(uuid::Uuid, uuid::Uuid), task_notecards::TaskNotecard>,
     demo_documents: std::collections::HashMap<uuid::Uuid, Vec<u8>>,
     script_editors: ui::scripts::Editors,
+    /// When the inventory's script window's tree was built, and the tree
+    /// itself: the agent's own scripts grouped by the folder that holds each
+    /// (rebuilt when the inventory changes, `inventory_script_view`).
+    script_inventory_generation: Option<u64>,
+    script_inventory_prims: Vec<ui::scripts::LinksetPrim>,
     /// The scripts an earlier session left unsaved (app/script_recovery.rs).
     script_recovery: script_recovery::Recovery,
     demo_script_sources: std::collections::HashMap<aurora_net::scripts::ScriptTarget, String>,
@@ -2190,6 +2199,7 @@ impl App {
             empty_lists: DrawLists::default(),
             quit_at: None,
             exit_prompt: Default::default(),
+            exit_pending: None,
             oiia: Default::default(),
             layout_autosave: Default::default(),
             loading_stage: String::new(),
@@ -2521,6 +2531,8 @@ impl App {
             task_notecards: Default::default(),
             demo_documents: Default::default(),
             script_editors: Default::default(),
+            script_inventory_generation: None,
+            script_inventory_prims: Vec::new(),
             script_recovery: Default::default(),
             demo_script_sources: Default::default(),
             demo_script_experiences: Default::default(),
@@ -4049,6 +4061,9 @@ impl App {
             }
             if let Some(message) = self.bridge_services.reply(request, result, Instant::now()) {
                 self.world.system_message(message);
+            }
+            if let Some(info) = self.bridge_services.take_editor_info() {
+                self.script_editors.script_stats(&info);
             }
             return;
         }
@@ -7634,11 +7649,18 @@ impl App {
     }
 
     fn confirm_exit(&mut self, action: ui::exit::Action) {
-        if action != ui::exit::Action::Cancel
-            && (!self.close_wearable_editor() || !self.script_editors.prepare_exit() || !self.texture_library.prepare_exit(&self.egui_ctx))
-        {
-            self.exit_prompt.open = false;
-            return;
+        if action != ui::exit::Action::Cancel {
+            // The editors that ask something first (LLFloaterView::canCloseFloaters):
+            // the scripts' own prompts go on asking, and the quit waits for them
+            // (resume_exit); a Cancel there abandons it (Action::CloseCancelled).
+            let wearable = self.close_wearable_editor();
+            let scripts = wearable && self.script_editors.prepare_exit();
+            let textures = wearable && scripts && self.texture_library.prepare_exit(&self.egui_ctx);
+            if !(wearable && scripts && textures) {
+                self.exit_pending = (wearable && !scripts).then_some(action);
+                self.exit_prompt.open = false;
+                return;
+            }
         }
         if !self.exit_prompt.confirm(action, Instant::now()) {
             return;
@@ -7652,6 +7674,18 @@ impl App {
             self.release_bridge();
             self.net.send(NetCommand::Logout);
         }
+    }
+
+    /// The quit held while the open scripts asked about their text
+    /// (`confirm_exit`): once the last one is saved or discarded, it goes on,
+    /// as if the choice had just been made.
+    fn resume_exit(&mut self) {
+        let Some(action) = self.exit_pending else { return };
+        if !self.script_editors.exit_ready() {
+            return;
+        }
+        self.exit_pending = None;
+        self.confirm_exit(action);
     }
 
     /// Log out, save the window, layout, inventory cache and settings, exit.
@@ -19194,10 +19228,13 @@ impl App {
                 }
                 self.signup_window(&ctx, &p);
                 // Keep disconnected script drafts accessible for copying.
-                for action in self
-                    .script_editors
-                    .show(&ctx, &p, &mut self.settings.script_editor, &mut self.settings.build.color_picker)
-                {
+                for action in self.script_editors.show(
+                    &ctx,
+                    &p,
+                    &mut self.settings.script_editor,
+                    &mut self.settings.build.color_picker,
+                    &[],
+                ) {
                     self.apply_script_action(action);
                 }
             }
@@ -21527,6 +21564,8 @@ impl App {
                 }
                 self.show_task_notecards(&ctx, &p);
                 self.show_scripts(&ctx, &p);
+                // the last script's prompt answered: the quit goes on
+                self.resume_exit();
                 self.show_script_recovery(&ctx, &p);
                 for action in ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
                     self.apply_inventory_action(action);

@@ -3004,7 +3004,7 @@ tests compare the complete physical trajectories at 30–500 fps, variable
 rates, the smoothing between steps, the anchoring, the change of origin and
 the catch-up after a long frame.
 
-**`AURORA_DEMO_SCRIPTS=inventory|object|object-readonly|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|word-wrap|no-word-wrap|word-wrap-preferences|experience|experience-save|workbench|object-workbench|insert-filter|insert-empty|search|search-left|search-inline|search-overlay|search-outside|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error|lua|slua`**:
+**`AURORA_DEMO_SCRIPTS=linkset|split|new|simple|root-menu|script-menu|inventory|object|object-readonly|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|word-wrap|no-word-wrap|word-wrap-preferences|experience|experience-save|workbench|object-workbench|insert-filter|insert-empty|search|search-left|search-inline|search-overlay|search-outside|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error|lua|slua`**:
 `slua` opens an SLua script (the SLua subtype in its item flags, on a demo region with SLua enabled): Lua colors, `ll.` names and Lua help, the compile target on Lua.
 `object-readonly` opens an object script without Modify permission: its source
 and save controls stay unavailable, but Reset remains usable without waiting
@@ -3070,6 +3070,15 @@ also opens these preferences for an immediate toggle and localisation check.
 association. The other object demos start with "None". The selector also
 allows removing an association then saving. The personal inventory does not
 offer an experience association, like Firestorm.
+
+The script editor's window (`linkset`, `split`, `new`, `simple`, `root-menu`,
+`script-menu`, part 1 of the IDE): `linkset` opens an object's scripts in one
+window, the tree at the left and the open ones as tabs over the source;
+`split` shows two of them side by side; `simple` is the one-window-per-script
+layout the preference keeps; `new` opens the page that asks which language a
+new script is written in; `root-menu` and `script-menu` open the object's and
+the script's context menus. `AURORA_CAPTURE` and `AURORA_CAPTURE_FRAMES` take
+the pictures.
 
 `workbench` and `object-workbench` show the File / Edit / Help menus, the
 toolbar, the line numbers, the cursor and the function selector.

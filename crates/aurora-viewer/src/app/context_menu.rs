@@ -1270,6 +1270,32 @@ impl App {
             self.camera.zoom_avatar(avatar, &mut self.world.agent, &self.settings.camera);
         }
     }
+    /// The object menu's Take, Take copy and Delete for the linkset's root,
+    /// as the script editor's tree offers them on that prim: the facts the
+    /// object menu reads for it, with the locks RLVa greys them by
+    /// (enable_take, enable_object_take_copy, LLSelectMgr::canDoDelete, and
+    /// @fartouch's own distance test, as the right click's menu applies it).
+    pub(super) fn script_prim_menu(&self, object: Uuid) -> crate::ui::scripts::LinksetPrimMenu {
+        let Some(idx) = self.world.objects.index_of_uuid(&object) else {
+            return crate::ui::scripts::LinksetPrimMenu::default();
+        };
+        let root = linkset_root(&self.world, idx);
+        let mut f = self.object_facts(root);
+        if self.world.rlva.enabled() {
+            let removable = self.world.rlva_can_delete_or_return(root);
+            f.take &= removable;
+            f.delete &= removable;
+            f.take_copy &= self.world.rlva_can_take_copy(root);
+            if !self.world.rlva_within_fartouch(root) {
+                (f.take, f.delete, f.take_copy) = (false, false, false);
+            }
+        }
+        crate::ui::scripts::LinksetPrimMenu {
+            take: f.take,
+            take_copy: f.take_copy,
+            delete: f.delete,
+        }
+    }
 }
 
 /// The root prim of object `idx`'s linkset (not the avatar it is worn by).

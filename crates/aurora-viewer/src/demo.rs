@@ -2534,6 +2534,110 @@ fn teleport_failure_value(value: &str) -> Option<(String, bool)> {
     }
 }
 
+/// Three linked prims beside the plaza for the script editor's tree: a root
+/// and two children, each holding a script (DemoSim lists one named "Door
+/// Script" per prim; the demo renames them), so that the tree, the tabs and
+/// switching between the scripts of one linkset can be tried offline.
+pub fn script_linkset_events() -> Vec<NetEvent> {
+    let (cx, cy) = (140.0, 130.0);
+    let volume = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let root_id = 96_100;
+    let root = prim(
+        root_id,
+        Vec3::new(cx + 14.0, cy - 12.0, height(cx + 14.0, cy - 12.0) + 1.5),
+        Quat::IDENTITY,
+        Vec3::new(1.4, 0.2, 2.4),
+        volume,
+        te([0.24, 0.28, 0.62, 1.0], 2, false, 0.0),
+        ExtraParams::default(),
+        aurora_i18n::tr!("script-demo-panel"),
+    );
+    // a child's position is relative to its parent (ObjectUpdate does so, and
+    // Scene::object_transform composes it with the parent's): where it stands
+    // in the region, less where the root stands
+    let root_point = root.position;
+    let mut objects = vec![root];
+    for (k, name) in [aurora_i18n::tr!("script-demo-door"), aurora_i18n::tr!("script-demo-lamp")]
+        .iter()
+        .enumerate()
+    {
+        let x = cx + 16.5 + k as f32 * 2.5;
+        let mut child = prim(
+            root_id + 1 + k as u32,
+            Vec3::new(x, cy - 12.0, height(x, cy - 12.0) + 1.0) - root_point,
+            Quat::IDENTITY,
+            Vec3::new(1.0, 0.2, 1.6),
+            volume,
+            te([0.3 + 0.25 * k as f32, 0.3, 0.5, 1.0], 1, false, 0.0),
+            ExtraParams::default(),
+            name,
+        );
+        child.parent_id = root_id;
+        objects.push(child);
+    }
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
+/// `AURORA_DEMO_SCRIPTS=nested`: a linkset whose prims go two levels deep --
+/// the root, two children, and a child of one of them -- each with a script,
+/// so that the tree's groups and the scripts of prims nested under another
+/// can be tried offline.
+pub fn script_nested_events() -> Vec<NetEvent> {
+    let (cx, cy) = (140.0, 136.0);
+    let volume = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let root_id = 96_200;
+    let root = prim(
+        root_id,
+        Vec3::new(cx + 14.0, cy, height(cx + 14.0, cy) + 1.5),
+        Quat::IDENTITY,
+        Vec3::new(1.4, 0.2, 2.4),
+        volume,
+        te([0.24, 0.28, 0.62, 1.0], 2, false, 0.0),
+        ExtraParams::default(),
+        aurora_i18n::tr!("script-demo-panel"),
+    );
+    let mut objects = vec![root];
+    // (local id, parent, x, colour, name): the door holds the handle, and the
+    // lamp hangs from the root, so the family is two levels deep
+    for (local, parent, x, colour, name) in [
+        (
+            96_201,
+            root_id,
+            cx + 16.5,
+            [0.55, 0.3, 0.5, 1.0],
+            aurora_i18n::tr!("script-demo-door"),
+        ),
+        (
+            96_202,
+            96_201,
+            cx + 18.5,
+            [0.7, 0.4, 0.3, 1.0],
+            aurora_i18n::tr!("script-demo-handle"),
+        ),
+        (
+            96_203,
+            root_id,
+            cx + 20.5,
+            [0.3, 0.55, 0.5, 1.0],
+            aurora_i18n::tr!("script-demo-lamp"),
+        ),
+    ] {
+        let mut child = prim(
+            local,
+            Vec3::new(x, cy, height(x, cy) + 1.0),
+            Quat::IDENTITY,
+            Vec3::new(0.8, 0.2, 1.2),
+            volume,
+            te(colour, 1, false, 0.0),
+            ExtraParams::default(),
+            name,
+        );
+        child.parent_id = parent;
+        objects.push(child);
+    }
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
 #[cfg(test)]
 mod teleport_failure_tests {
     #[test]

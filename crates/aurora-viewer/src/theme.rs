@@ -141,6 +141,33 @@ impl Palette {
         let i = (x as usize).min(stops.len() - 2);
         stops[i].lerp_to_gamma(stops[i + 1], x - i as f32)
     }
+    /// The face of a row of a list: chosen, under the pointer, or plain (no
+    /// face at all -- the row it is on shows).
+    pub fn row_face(&self, selected: bool, hovered: bool) -> Color32 {
+        if selected {
+            self.selected_face()
+        } else if hovered {
+            self.raised
+        } else {
+            Color32::TRANSPARENT
+        }
+    }
+    /// The face of a tab of a strip: the surface under the strip when the tab
+    /// is in front, a lift under the pointer, and nothing at rest.
+    pub fn tab_face(&self, selected: bool, hovered: bool, surface: Color32) -> Color32 {
+        if selected {
+            surface
+        } else if hovered {
+            self.raised.gamma_multiply(0.30)
+        } else {
+            Color32::TRANSPARENT
+        }
+    }
+    /// The face of a row, a card or a pill when it is the one chosen: the
+    /// accent, dimmed so that the words on it stay in ink.
+    pub fn selected_face(&self) -> Color32 {
+        self.violet.gamma_multiply(0.28)
+    }
 }
 
 impl Theme {

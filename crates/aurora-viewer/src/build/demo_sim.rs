@@ -1257,4 +1257,25 @@ impl DemoSim {
             _ => Llsd::Undef,
         }
     }
+    /// The demo's own copy of an object's listing: names a script of it, or
+    /// adds one copied from the prim's first script when `item` is `None`,
+    /// returning its id. The script editor's demo shows these names, and a
+    /// listing asked again (a new inventory serial) replies with them rather
+    /// than with the generic fixture.
+    pub fn name_script(&mut self, object: Uuid, item: Option<Uuid>, name: &str) -> Option<Uuid> {
+        let (_, items) = self.contents.get_mut(&object)?;
+        let id = match item {
+            Some(id) => id,
+            None => {
+                let mut copy = items.iter().find(|item| item.asset_type == 10)?.clone();
+                copy.item_id = Uuid::from_u128(copy.item_id.as_u128() ^ 0x9e37_79b9);
+                copy.asset_id = Uuid::nil();
+                let id = copy.item_id;
+                items.push(copy);
+                id
+            }
+        };
+        items.iter_mut().find(|item| item.item_id == id)?.name = name.into();
+        Some(id)
+    }
 }

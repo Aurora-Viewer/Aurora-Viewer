@@ -1763,6 +1763,194 @@ pub fn search_demo_events(frame: u64) -> Vec<egui::Event> {
     }
 }
 
+/// [`item_keys`] greyed out when `enabled` is false (an empty `keys` shows
+/// none); true when clicked (the menu closes).
+pub fn item_keys_if(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, keys: &str) -> bool {
+    let end = if keys.is_empty() { End::None } else { End::Keys(keys) };
+    let clicked = row(ui, p, icon, label, enabled, end, false).clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked && enabled
+}
+
+/// `suggestion_row` for a name the language deprecated: its words struck
+/// through, as a reader's own editor strikes them.
+pub fn suggestion_row_struck(
+    ui: &mut Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    detail: &str,
+    selected: bool,
+    struck: bool,
+) -> egui::Response {
+    row_lead_sensed_struck(
+        ui,
+        p,
+        Lead::Icon(icon),
+        label,
+        true,
+        End::Keys(detail),
+        selected,
+        Sense::click(),
+        struck,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn row_lead_sensed_struck(
+    ui: &mut Ui,
+    p: &Palette,
+    lead: Lead,
+    label: &str,
+    enabled: bool,
+    end: End,
+    open: bool,
+    sense: Sense,
+    struck: bool,
+) -> egui::Response {
+    if !filter_row(ui, p, label) {
+        return hidden(ui);
+    }
+    let keyed = if enabled && sense.senses_click() { keyboard_row() } else { None };
+    let font = FontId::proportional(12.5);
+    let ink = if enabled { p.ink } else { p.muted_dim };
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
+    let keys = match end {
+        End::Keys(keys) | End::CheckKeys(_, keys) => {
+            let color = if enabled { p.muted } else { p.muted_dim };
+            Some(ui.painter().layout_no_wrap(keys.to_owned(), FontId::proportional(11.5), color))
+        }
+        End::Tag(tag) => Some(ui.painter().layout_no_wrap(tag.to_owned(), FontId::proportional(10.5), p.teal)),
+        _ => None,
+    };
+    let tag_room = match end {
+        End::Tag(_) => TAG_PAD * 2.0,
+        End::CheckKeys(..) => CHECK_ROOM,
+        _ => 0.0,
+    };
+    let right = keys.as_ref().map_or(RIGHT, |k| k.size().x + PAD * 2.0 + tag_room);
+    let natural = (PAD + ICON + PAD + galley.size().x + right + PAD).max(MIN_W);
+    // natural width while egui measures the menu, then the menu's width
+    let w = if ui.is_sizing_pass() {
+        natural
+    } else {
+        ui.available_width().max(natural)
+    };
+    let text_height = galley.size().y.max(keys.as_ref().map_or(0.0, |keys| keys.size().y));
+    // a whole number of points: a font with a tall line (OpenDyslexic)
+    // makes the row taller than ROW_H, and a fractional height left its
+    // letters 0.6 px off its middle at 1.25
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H.max((text_height + 6.0).ceil())), sense);
+    // a filtered row lights up when the arrow keys or the pointer select it,
+    // so that only one row is lit; Enter clicks the row it was lit on, never
+    // also the one the pointer reaches in the same frame
+    let hot = match keyed {
+        Some(k) => {
+            let selected = k.selected || (resp.hovered() && ui.input(|i| i.pointer.delta() != Vec2::ZERO) && point_row(k.index));
+            if selected && k.scroll {
+                resp.scroll_to_me(None);
+            }
+            if k.selected && k.activate {
+                resp.flags.insert(egui::response::Flags::FAKE_PRIMARY_CLICKED);
+            }
+            selected || open
+        }
+        None => enabled && (resp.hovered() || open),
+    };
+    track(ui, hot && resp.hovered());
+    if !ui.is_rect_visible(rect) {
+        return resp;
+    }
+    let painter = ui.painter();
+    let mut face = p.panel;
+    if hot {
+        let wash = p.violet.gamma_multiply(0.35);
+        painter.rect_filled(rect, ui.visuals().window_corner_radius, wash);
+        face = face.blend(wash);
+    }
+    let tint = if !enabled {
+        p.muted_dim
+    } else if hot {
+        p.ink
+    } else {
+        p.violet_light
+    };
+    let icon_rect = egui::Rect::from_center_size(rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0), Vec2::splat(ICON));
+    match lead {
+        Lead::Icon(icon) => paint_icon(painter, icon, icon_rect, tint),
+        Lead::Status(shape, color) => {
+            // Cuts must be opaque, including over the hover wash (#744).
+            super::presence::paint_mark(painter, icon_rect.center(), ICON * 0.38, shape, color, face);
+        }
+        Lead::Picture(Some(t), _) => {
+            let size = t.size_vec2();
+            let fit = egui::Rect::from_center_size(icon_rect.center(), size * (ICON / size.max_elem()));
+            painter.image(
+                t.id(),
+                fit,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                super::widgets::PICTURE_TINT,
+            );
+        }
+        Lead::Picture(None, text) => {
+            painter.text(
+                icon_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                FontId::proportional(13.0),
+                ink,
+            );
+        }
+    }
+    let text_left = rect.left() + PAD + ICON + PAD;
+    if struck {
+        let width = galley.size().x;
+        painter.hline(
+            egui::Rangef::new(text_left, text_left + width),
+            rect.center().y,
+            egui::Stroke::new(1.0, ink),
+        );
+    }
+    super::widgets::paint_row_text(painter, galley, text_left, rect.center().y, ink);
+    let end_rect = egui::Rect::from_center_size(rect.right_center() - Vec2::new(PAD + 6.0, 0.0), Vec2::splat(12.0));
+    match end {
+        End::None | End::Check(false) => {}
+        End::Caret => paint_icon(painter, "caret-right-filled", end_rect, if enabled { p.muted } else { p.muted_dim }),
+        End::Down => paint_icon(painter, "caret-down-filled", end_rect, if enabled { p.muted } else { p.muted_dim }),
+        End::Check(true) => paint_icon(painter, "check", end_rect, if enabled { p.violet_light } else { p.muted_dim }),
+        End::Keys(_) => {
+            if let Some(keys) = keys {
+                let pos = super::widgets::row_text_origin(painter, &keys, rect.right() - PAD - keys.size().x, rect.center().y);
+                painter.galley(pos, keys, p.muted);
+            }
+        }
+        End::CheckKeys(checked, _) => {
+            if checked {
+                paint_icon(painter, "check", end_rect, if enabled { p.violet_light } else { p.muted_dim });
+            }
+            if let Some(keys) = keys {
+                let right = rect.right() - CHECK_ROOM - keys.size().x;
+                let pos = super::widgets::row_text_origin(painter, &keys, right, rect.center().y);
+                painter.galley(pos, keys, if enabled { p.muted } else { p.muted_dim });
+            }
+        }
+        End::Tag(_) => {
+            if let Some(tag) = keys {
+                let height = 16.0_f32.max(tag.size().y + 2.0);
+                let pill = egui::Rect::from_min_size(
+                    egui::pos2(rect.right() - PAD - tag.size().x - TAG_PAD * 2.0, rect.center().y - height / 2.0),
+                    Vec2::new(tag.size().x + TAG_PAD * 2.0, height),
+                );
+                painter.rect_filled(pill, ui.visuals().window_corner_radius, p.teal.gamma_multiply(0.12));
+                super::widgets::paint_ink_centered(painter, tag, pill.center(), p.teal);
+            }
+        }
+    }
+    resp
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

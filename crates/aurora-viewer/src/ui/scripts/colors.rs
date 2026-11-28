@@ -284,7 +284,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                editors.show(ui.ctx(), &Theme::default().palette(), &mut ScriptSettings::default(), prefs);
+                editors.show(ui.ctx(), &Theme::default().palette(), &mut ScriptSettings::default(), prefs, &[]);
             },
         );
         output.textures_delta.clear();
@@ -339,7 +339,14 @@ mod tests {
             }
             let swatches = editors.documents[0].colors.swatches.clone();
             assert_eq!(swatches.len(), 2);
-            assert!(swatches[0].right() < swatches[1].left());
+            // one after the other, on one line or (a narrow window, the
+            // documentation pane beside the source) on the next
+            assert!(
+                swatches[0].right() < swatches[1].left() || swatches[0].bottom() < swatches[1].top(),
+                "the two swatches take their own room: {:?} / {:?}",
+                swatches[0],
+                swatches[1]
+            );
             click(&ctx, &mut editors, &mut prefs, swatches[0].center(), 0.1);
             assert_eq!(editors.color_open(), editable);
             assert_eq!(editors.documents[0].source, original);

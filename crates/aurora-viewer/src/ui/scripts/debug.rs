@@ -10,6 +10,12 @@ use crate::{
 use egui::{RichText, Vec2};
 use uuid::Uuid;
 
+/// What the window lists: every script error, and what an object says to
+/// its owner when the window is asked to show that too (its setting).
+fn shown(line: &crate::world::ChatLine, owner_say: bool) -> bool {
+    owner_say || matches!(line.kind, ChatKind::Object(aurora_net::ChatType::Debug))
+}
+
 #[derive(Default)]
 pub(super) struct Debug {
     pub open: bool,
@@ -36,16 +42,18 @@ impl Debug {
         )
         .show(ctx, p, &mut self.open, |ui| {
             ui.horizontal(|ui| {
+                let shown_lines: Vec<&crate::world::ChatLine> =
+                    messages.lines.iter().filter(|line| shown(line, messages.owner_say)).collect();
                 let name = self
                     .selected
-                    .and_then(|id| messages.lines.iter().find(|line| line.source == id))
+                    .and_then(|id| shown_lines.iter().find(|line| line.source == id))
                     .map(|line| line.from.as_str());
                 egui::ComboBox::from_id_salt("script_debug_object")
                     .selected_text(name.unwrap_or(aurora_i18n::tr!("script-debug-all")))
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut self.selected, None, aurora_i18n::tr!("script-debug-all"));
                         let mut seen = std::collections::HashSet::new();
-                        for line in &messages.lines {
+                        for &line in &shown_lines {
                             if seen.insert(line.source) {
                                 ui.selectable_value(&mut self.selected, Some(line.source), &line.from)
                                     .on_hover_text(line.source.to_string());
@@ -60,6 +68,7 @@ impl Debug {
                 for line in messages
                     .lines
                     .iter()
+                    .filter(|line| shown(line, messages.owner_say))
                     .filter(|line| self.selected.is_none_or(|id| id == line.source))
                 {
                     let text = format!("{}: {}", line.from, line.text);

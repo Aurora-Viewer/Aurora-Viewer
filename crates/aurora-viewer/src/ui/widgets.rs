@@ -4,6 +4,353 @@
 use crate::theme::Palette;
 use egui::{Color32, CornerRadius, RichText, Sense, Stroke, Vec2};
 
+/// `icon_button` with a larger glyph and hit target, in logical points.
+pub fn icon_button_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool, side: f32) -> bool {
+    sized_icon_button(ui, p, icon, tip, enabled, false, side)
+}
+
+/// `icon_button_sized` with its response, for the button a menu opens from:
+/// the same face and tip, and the click left to the caller.
+pub fn icon_button_sized_response(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool, side: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(side), if enabled { Sense::click() } else { Sense::hover() });
+    let (fill, col) = flat_face(p, enabled, false, response.hovered());
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+    if let Some(t) = super::icons::global(icon) {
+        ui.painter().image(
+            t.id(),
+            egui::Rect::from_center_size(rect.center(), Vec2::splat(side * 0.7)),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            col,
+        );
+    } else {
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            icon,
+            egui::FontId::proportional(10.0),
+            col,
+        );
+    }
+    response.on_hover_text(tip)
+}
+
+/// `icon_button_sized` with its name after the icon, on the same face and
+/// radius: the buttons of one row read as one row, a label or none. Its tip
+/// says what the name cannot, its shortcut.
+#[allow(clippy::too_many_arguments)]
+pub fn icon_label_button_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, tip: &str, enabled: bool, side: f32) -> bool {
+    let room = label_button_room(ui, label, enabled, side);
+    let (fill, ink) = flat_face(p, enabled, false, room.response.hovered());
+    ui.painter().rect_filled(room.rect, ui.visuals().window_corner_radius, fill);
+    if let Some(t) = super::icons::global(icon) {
+        ui.painter().image(
+            t.id(),
+            egui::Rect::from_center_size(
+                egui::pos2(room.rect.left() + 9.0 + room.glyph / 2.0, room.rect.center().y),
+                Vec2::splat(room.glyph),
+            ),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            ink,
+        );
+    }
+    ui.painter().galley(
+        egui::pos2(
+            room.rect.left() + 9.0 + room.glyph + 6.0,
+            room.rect.center().y - room.galley.size().y / 2.0,
+        ),
+        room.galley,
+        ink,
+    );
+    room.response.on_hover_text(tip).clicked() && enabled
+}
+
+/// `icon_label_button_sized` with a spinner in the icon's place: a command at
+/// work (a save waiting for the simulator's answer), its name kept and its
+/// face the same, so that the row does not move while it runs.
+pub fn spinner_label_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, side: f32) -> egui::Response {
+    let room = label_button_room(ui, label, false, side);
+    let (fill, ink) = flat_face(p, false, false, false);
+    ui.painter().rect_filled(room.rect, ui.visuals().window_corner_radius, fill);
+    ui.put(
+        egui::Rect::from_center_size(
+            egui::pos2(room.rect.left() + 9.0 + room.glyph / 2.0, room.rect.center().y),
+            Vec2::splat(room.glyph),
+        ),
+        egui::Spinner::new().size(room.glyph).color(p.muted),
+    );
+    ui.painter().galley(
+        egui::pos2(
+            room.rect.left() + 9.0 + room.glyph + 6.0,
+            room.rect.center().y - room.galley.size().y / 2.0,
+        ),
+        room.galley,
+        ink,
+    );
+    room.response.on_hover_text(tip)
+}
+
+/// The face, the name and the room of a labelled icon button: its icon's
+/// glyph is `side * 0.7` wide, its name after it, air on either side.
+struct LabelButtonRoom {
+    rect: egui::Rect,
+    response: egui::Response,
+    galley: std::sync::Arc<egui::Galley>,
+    glyph: f32,
+}
+
+fn label_button_room(ui: &mut egui::Ui, label: &str, enabled: bool, side: f32) -> LabelButtonRoom {
+    let font = control_font(ui, 12.5);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ui.visuals().text_color());
+    let glyph = (side * 0.7).round();
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(9.0 + glyph + 6.0 + galley.size().x + 9.0, side),
+        if enabled { Sense::click() } else { Sense::hover() },
+    );
+    LabelButtonRoom {
+        rect,
+        response,
+        galley,
+        glyph,
+    }
+}
+
+/// The edge of a side's panel: an 8-point strip that drags its width between
+/// `min` and `max`, lit while the pointer is on it, back to `default` on a
+/// double click. The strip lies `centre` points past the panel's edge, where
+/// the caller knows the room to what follows it lies: the line and the grip
+/// stand in the middle of the two faces, not on the panel's own edge. Returns
+/// the width it asks for, when it asks for one.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resize_side(
+    ui: &egui::Ui,
+    p: &Palette,
+    area: egui::Rect,
+    width: f32,
+    centre: f32,
+    default: f32,
+    min: f32,
+    max: f32,
+    id: egui::Id,
+) -> Option<f32> {
+    let x = area.left() + width + centre;
+    let hit = egui::Rect::from_min_max(egui::pos2(x - 4.0, area.top()), egui::pos2(x + 4.0, area.bottom()));
+    let response = ui
+        .interact(hit, id, egui::Sense::click_and_drag())
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+    if response.hovered() || response.dragged() {
+        ui.painter()
+            .vline(x, area.y_range(), border_stroke(p, egui::Stroke::new(1.0, p.violet_light)));
+    } else {
+        // a quiet grip at the middle of the edge, saying that it drags
+        let middle = hit.center();
+        for step in -1..=1 {
+            ui.painter().circle_filled(
+                egui::pos2(middle.x, middle.y + step as f32 * 5.0),
+                1.5,
+                p.muted_dim.gamma_multiply(0.9),
+            );
+        }
+    }
+    if response.double_clicked() {
+        return Some(default.clamp(min, max));
+    }
+    if response.dragged() && response.drag_delta().x != 0.0 {
+        return Some((width + response.drag_delta().x).clamp(min, max));
+    }
+    None
+}
+
+/// The face and the ink of a flat button of the theme: `field` at rest,
+/// `raised` under the pointer, the accent when it is a mode that is on.
+fn flat_face(p: &Palette, enabled: bool, on: bool, hovered: bool) -> (Color32, Color32) {
+    let fill = if on {
+        p.violet
+    } else if hovered && enabled {
+        p.raised
+    } else {
+        p.field
+    };
+    let ink = match (enabled, on) {
+        (false, _) => p.muted_dim,
+        (true, true) => p.on_accent,
+        (true, false) => p.ink,
+    };
+    (fill, ink)
+}
+
+fn tabs_row_full(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    selected: &mut usize,
+    labels: &[(&str, bool)],
+    stretched: bool,
+    compact: bool,
+    draggable: bool,
+    badges: Option<&[Option<&str>]>,
+    // whether a row with room to spare gives each tab a little of it (the flat
+    // strips), or leaves the tabs at their own width (the dock's, whose names
+    // keep the same form however wide the window is)
+    spread: bool,
+) -> TabsRow {
+    let mut changed = false;
+    let mut rects: Vec<egui::Rect> = Vec::new();
+    let mut responses: Vec<egui::Response> = Vec::new();
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = TAB_GAP;
+        let n = labels.len().max(1) as f32;
+        let font = control_font(ui, 12.0);
+        let minimum_height = if compact { 22.0 } else { 30.0 };
+        let height = if ui.style().override_font_id.is_some() {
+            (ui.fonts_mut(|f| f.row_height(&font)) + if compact { 8.0 } else { 12.0 }).max(minimum_height)
+        } else {
+            minimum_height
+        };
+        // a tab that may wear a badge keeps its room, whether it says
+        // something or not; the others are as wide as their name
+        let badge_room = |index: usize| {
+            if badges.and_then(|badges| badges.get(index)).is_some() {
+                BADGE_ROOM
+            } else {
+                0.0
+            }
+        };
+        let mut text_w = tab_widths(ui, labels, &font);
+        for (index, width) in text_w.iter_mut().enumerate() {
+            *width += badge_room(index);
+        }
+        let gaps = (n - 1.0) * ui.spacing().item_spacing.x;
+        let total: f32 = text_w.iter().sum::<f32>() + gaps;
+        let compact = ((ui.available_width() - gaps) / (total - gaps)).clamp(0.0, 1.0);
+        let extra = ((ui.available_width() - total) / n).max(0.0);
+        let even_width = ((ui.available_width() - gaps) / n).max(0.0);
+        for (i, (label, enabled)) in labels.iter().enumerate() {
+            let w = if stretched {
+                even_width
+            } else if spread {
+                text_w[i] * compact + extra.min(16.0)
+            } else {
+                // a name and its air, the same on both sides; a row too narrow
+                // for them all shrinks them, as it always did
+                text_w[i] * compact
+            };
+            let sense = if *enabled {
+                if draggable { Sense::click_and_drag() } else { Sense::click() }
+            } else {
+                Sense::hover()
+            };
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, height), sense);
+            rects.push(rect);
+            if draggable && *enabled {
+                responses.push(resp.clone());
+            }
+            let sel = *selected == i;
+            if sel || (resp.hovered() && *enabled) {
+                let fill = if sel {
+                    p.violet.gamma_multiply(0.18)
+                } else {
+                    p.raised.gamma_multiply(0.25)
+                };
+                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+            }
+            underline(ui, p, &resp, sel, *enabled);
+            let col = if !*enabled {
+                p.muted_dim
+            } else if sel {
+                p.ink
+            } else {
+                p.muted
+            };
+            let room = badge_room(i);
+            let galley = egui::WidgetText::from(*label).into_galley(
+                ui,
+                Some(egui::TextWrapMode::Truncate),
+                (rect.width() - 8.0 - room).max(0.0),
+                font.clone(),
+            );
+            let label_area = egui::Rect::from_min_max(rect.min, egui::pos2(rect.right() - room, rect.bottom()));
+            let left = label_area.center().x - galley.size().x / 2.0;
+            paint_row_text(ui.painter(), galley, left, rect.center().y, col);
+            let badge = badges.and_then(|badges| badges.get(i)).copied().flatten();
+            if let Some(badge) = badge.filter(|badge| !badge.is_empty()) {
+                let font = control_font(ui, 10.0);
+                let galley = ui.fonts_mut(|f| f.layout_no_wrap(badge.to_owned(), font, col));
+                ui.painter().galley(
+                    egui::pos2(rect.right() - 6.0 - galley.size().x, rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    col,
+                );
+            }
+            let tip = match badge.filter(|badge| !badge.is_empty()) {
+                Some(badge) => format!("{label} ({badge})"),
+                None => (*label).to_owned(),
+            };
+            let resp = if draggable && *enabled {
+                resp.on_hover_cursor(egui::CursorIcon::Grab)
+            } else {
+                resp
+            }
+            .on_hover_text(tip);
+            if resp.clicked() && !sel {
+                *selected = i;
+                changed = true;
+            }
+        }
+    });
+    if draggable && labels.len() > 1 {
+        // A tab dragged by its strip lifts with the pointer, and takes the
+        // place of the tab it is dropped on.
+        let ctx = ui.ctx().clone();
+        let drag = ui.scope_id().with("tab_drag");
+        for (index, response) in responses.iter().enumerate() {
+            if response.drag_started() {
+                ctx.data_mut(|d| d.insert_temp(drag, index));
+            }
+        }
+        let from = ctx.data(|d| d.get_temp::<usize>(drag));
+        if let Some(from) = from
+            && from < labels.len()
+        {
+            let pointer = ctx.input(|i| i.pointer.interact_pos());
+            if let Some(pos) = pointer
+                && ctx.input(|i| i.pointer.any_down())
+            {
+                let font = control_font(ui, 12.0);
+                let galley = ui.fonts_mut(|fonts| fonts.layout_no_wrap(labels[from].0.to_owned(), font, p.ink));
+                let lifted = egui::Rect::from_center_size(pos, galley.size() + Vec2::new(26.0, 12.0));
+                let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, drag));
+                painter.rect_filled(lifted, ui.visuals().window_corner_radius, p.field);
+                painter.rect_stroke(
+                    lifted,
+                    ui.visuals().window_corner_radius,
+                    egui::Stroke::new(1.0, p.violet),
+                    egui::StrokeKind::Inside,
+                );
+                painter.galley(lifted.center() - galley.size() / 2.0, galley, p.ink);
+            }
+            if ctx.input(|i| i.pointer.any_released()) {
+                let to = pointer
+                    .and_then(|pos| rects.iter().position(|rect| pos.x >= rect.left() && pos.x <= rect.right()))
+                    .unwrap_or(from);
+                ctx.data_mut(|d| d.remove_temp::<usize>(drag));
+                if to != from {
+                    return TabsRow { changed, rects };
+                }
+            }
+        }
+    }
+    TabsRow { changed, rects }
+}
+
+/// What a tab strip did: whether the selection changed, and the rect of each
+/// tab.
+struct TabsRow {
+    changed: bool,
+    rects: Vec<egui::Rect>,
+}
+
+/// Room a tab keeps after its name for a state badge.
+const BADGE_ROOM: f32 = 26.0;
+
 #[cfg(test)]
 pub(crate) mod alignment_tests;
 mod cascade;
@@ -56,9 +403,9 @@ pub use color::color_button;
 pub use copy_on_click::{copied_feedback, copy_on_click, show_copied};
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
-    chip_row, clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab,
-    pill_tab_wide, reveal_search_selection, search_box, search_cleared, search_list_item, search_scroll_to_column, search_scroll_to_row,
-    search_text_edit, search_text_edit_with_margin, select_on_focus,
+    TabPill, chip_row, clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width,
+    pill_tab, pill_tab_wide, reveal_search_selection, search_box, search_cleared, search_list_item, search_scroll_to_column,
+    search_scroll_to_row, search_text_edit, search_text_edit_with_margin, select_on_focus, tab_pill, tab_pill_width,
 };
 pub use text_field::text_field;
 pub use tracks::{
@@ -3673,7 +4020,8 @@ pub(crate) fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
 
 /// Flat tab strip. Returns true when the selection changed.
 pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, false, false).0
+    let row = tabs_row(ui, p, selected, labels, false, false);
+    row.changed
 }
 
 /// Keep tab labels whole by starting another row when their measured
@@ -3707,22 +4055,25 @@ pub fn wrapping_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, label
 /// The flat tab strip, with the rect of each tab (a tab that opens when
 /// something is dragged over it).
 pub fn tabs_at(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> (bool, Vec<egui::Rect>) {
-    tabs_row(ui, p, selected, labels, false, false)
+    let row = tabs_row(ui, p, selected, labels, false, false);
+    (row.changed, row.rects)
 }
 
 /// The same tab strip at the density of fixed inspector controls.
 pub fn compact_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, false, true).0
+    let row = tabs_row(ui, p, selected, labels, false, true);
+    row.changed
 }
 
 /// The compact tab strip, with the rect of each tab.
 pub fn compact_tabs_at(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> (bool, Vec<egui::Rect>) {
-    tabs_row(ui, p, selected, labels, false, true)
+    let row = tabs_row(ui, p, selected, labels, false, true);
+    (row.changed, row.rects)
 }
 
 /// Equal-width tabs spanning a data inspector, with the usual theme and input handling.
 pub fn stretched_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, true, false).0
+    tabs_row(ui, p, selected, labels, true, false).changed
 }
 
 const TAB_GAP: f32 = 4.0;
@@ -3734,73 +4085,8 @@ fn tab_widths(ui: &egui::Ui, labels: &[(&str, bool)], font: &egui::FontId) -> Ve
         .collect()
 }
 
-fn tabs_row(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    selected: &mut usize,
-    labels: &[(&str, bool)],
-    stretched: bool,
-    compact: bool,
-) -> (bool, Vec<egui::Rect>) {
-    let mut changed = false;
-    let mut rects = Vec::with_capacity(labels.len());
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = TAB_GAP;
-        let n = labels.len().max(1) as f32;
-        let font = control_font(ui, 12.0);
-        let minimum_height = if compact { 22.0 } else { 30.0 };
-        let height = if ui.style().override_font_id.is_some() {
-            (ui.fonts_mut(|f| f.row_height(&font)) + if compact { 8.0 } else { 12.0 }).max(minimum_height)
-        } else {
-            minimum_height
-        };
-        let text_w = tab_widths(ui, labels, &font);
-        let gaps = (n - 1.0) * ui.spacing().item_spacing.x;
-        let total: f32 = text_w.iter().sum::<f32>() + gaps;
-        let compact = ((ui.available_width() - gaps) / (total - gaps)).clamp(0.0, 1.0);
-        let extra = ((ui.available_width() - total) / n).max(0.0);
-        let even_width = ((ui.available_width() - gaps) / n).max(0.0);
-        for (i, (label, enabled)) in labels.iter().enumerate() {
-            let w = if stretched {
-                even_width
-            } else {
-                text_w[i] * compact + extra.min(40.0)
-            };
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, height), if *enabled { Sense::click() } else { Sense::hover() });
-            rects.push(rect);
-            let sel = *selected == i;
-            if sel || (resp.hovered() && *enabled) {
-                let fill = if sel {
-                    p.violet.gamma_multiply(0.18)
-                } else {
-                    p.raised.gamma_multiply(0.25)
-                };
-                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
-            }
-            underline(ui, p, &resp, sel, *enabled);
-            let col = if !*enabled {
-                p.muted_dim
-            } else if sel {
-                p.ink
-            } else {
-                p.muted
-            };
-            let galley = egui::WidgetText::from(*label).into_galley(
-                ui,
-                Some(egui::TextWrapMode::Truncate),
-                (rect.width() - 8.0).max(0.0),
-                font.clone(),
-            );
-            let left = rect.center().x - galley.size().x / 2.0;
-            paint_row_text(ui.painter(), galley, left, rect.center().y, col);
-            let resp = resp.on_hover_text(*label);
-            if resp.clicked() && !sel {
-                *selected = i;
-                changed = true;
-            }
-        }
-    });
-    (changed, rects)
+fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)], stretched: bool, compact: bool) -> TabsRow {
+    tabs_row_full(ui, p, selected, labels, stretched, compact, false, None, true)
 }
 
 /// Height of a `segmented` choice, room around its segments, and room

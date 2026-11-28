@@ -6,6 +6,8 @@
 //! LLKeywords::processTokens / findSegments (`mLuauLanguage`) and the bundled
 //! SLua keywords (`lsl_keywords::lua`). This lexer never changes the source.
 
+use super::Lang;
+
 use super::settings::{ColorRole, ScriptSettings};
 use crate::lsl_keywords::{self, Group};
 use crate::theme::Palette;
@@ -17,7 +19,7 @@ use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-enum Kind {
+pub(super) enum Kind {
     Plain,
     Variable,
     Keyword,
@@ -57,14 +59,24 @@ impl Kind {
     }
 }
 
+/// A type of the language: a parameter written with one alone names nothing
+/// (`integer`), and a value in brackets before one is a cast.
+pub(super) fn is_type(word: &str) -> bool {
+    matches!(
+        word,
+        "integer" | "float" | "string" | "key" | "vector" | "rotation" | "quaternion" | "list"
+    )
+}
+
 /// The keywords a script is colored with: SLua's, or the LSL ones in use.
-pub(super) fn catalog(lua: bool) -> &'static lsl_keywords::Catalog {
+pub(super) fn catalog(lang: Lang) -> &'static lsl_keywords::Catalog {
+    let lua = lang.is_lua();
     if lua { lsl_keywords::lua() } else { lsl_keywords::current() }
 }
 
 /// A built-in name's kind.
-fn keyword(name: &str, lua: bool) -> Option<Kind> {
-    catalog(lua).word(name).map(|group| match group {
+fn keyword(name: &str, lang: Lang) -> Option<Kind> {
+    catalog(lang).word(name).map(|group| match group {
         Group::Control => Kind::Keyword,
         Group::Type => Kind::Type,
         Group::Event => Kind::Event,
@@ -73,14 +85,14 @@ fn keyword(name: &str, lua: bool) -> Option<Kind> {
     })
 }
 
-struct Token {
-    bytes: Range<usize>,
-    kind: Kind,
+pub(super) struct Token {
+    pub(super) bytes: Range<usize>,
+    pub(super) kind: Kind,
 }
 
 pub(super) fn matching_open_brace(source: &str, close: usize) -> Option<usize> {
     let mut stack = Vec::new();
-    for token in tokens(source, false) {
+    for token in tokens(source, Lang::Lsl) {
         if token.bytes.start > close {
             break;
         }
@@ -170,11 +182,11 @@ fn color_literals(source: &str, tokens: &[Token]) -> Vec<ColorLiteral> {
 }
 
 pub(super) fn colors(source: &str) -> Vec<ColorLiteral> {
-    color_literals(source, &tokens(source, false))
+    color_literals(source, &tokens(source, Lang::Lsl))
 }
 
 pub(super) fn block_comment_at(source: &str, at: usize) -> Option<Range<usize>> {
-    tokens(source, false)
+    tokens(source, Lang::Lsl)
         .into_iter()
         .find(|token| {
             token.kind == Kind::Comment
@@ -185,10 +197,22 @@ pub(super) fn block_comment_at(source: &str, at: usize) -> Option<Range<usize>> 
         .map(|token| token.bytes)
 }
 
+/// The characters the editor reads as code, `false` for a comment or a
+/// string, by the language's own rules: LSL's `//` and `/* */`, Lua's `--` and
+/// its long brackets. One entry per char of `source`, in its order.
+pub(super) fn code_chars(source: &str, lang: Lang) -> Vec<bool> {
+    let mut mask = Vec::with_capacity(source.len());
+    for token in tokens(source, lang) {
+        let chars = source[token.bytes.clone()].chars().count();
+        mask.extend(std::iter::repeat_n(!matches!(token.kind, Kind::Comment | Kind::String), chars));
+    }
+    mask
+}
+
 pub(super) fn brace_pairs(source: &str) -> Vec<(usize, usize)> {
     let mut stack = Vec::new();
     let mut pairs = Vec::new();
-    for token in tokens(source, false) {
+    for token in tokens(source, Lang::Lsl) {
         if token.kind != Kind::Plain {
             continue;
         }
@@ -203,6 +227,32 @@ pub(super) fn brace_pairs(source: &str) -> Vec<(usize, usize)> {
         }
     }
     pairs.sort_unstable();
+    pairs
+}
+
+/// The pairs of a Lua script's blocks, as byte ranges of the word that opens
+/// one and of the word that closes it: `function`, `do`, `if` and `repeat`
+/// against the `end` or the `until` that closes them (`for` and `while` open
+/// through their own `do`, and `elseif` stays in its `if`, not another block).
+/// Only code: a word in a comment or a string opens nothing.
+pub(super) fn lua_block_pairs(source: &str) -> Vec<(Range<usize>, Range<usize>)> {
+    let mut open: Vec<Range<usize>> = Vec::new();
+    let mut pairs = Vec::new();
+    for token in tokens(source, Lang::Lua) {
+        if matches!(token.kind, Kind::Comment | Kind::String) {
+            continue;
+        }
+        match &source[token.bytes.clone()] {
+            "function" | "do" | "if" | "repeat" => open.push(token.bytes),
+            "end" | "until" => {
+                if let Some(block) = open.pop() {
+                    pairs.push((block, token.bytes));
+                }
+            }
+            _ => {}
+        }
+    }
+    pairs.sort_unstable_by_key(|(block, _)| block.start);
     pairs
 }
 
@@ -270,9 +320,10 @@ fn number_end(bytes: &[u8], mut end: usize) -> usize {
     end
 }
 
-fn tokens(source: &str, lua: bool) -> Vec<Token> {
+pub(super) fn tokens(source: &str, lang: Lang) -> Vec<Token> {
+    let lua = lang.is_lua();
     let mut result = if lua { lua_lex(source) } else { lsl_lex(source) };
-    resolve(source, &mut result, lua);
+    resolve(source, &mut result, lang);
     result
 }
 
@@ -473,19 +524,20 @@ fn lua_lex(source: &str) -> Vec<Token> {
 
 /// Names become keywords, functions or variables. LSL's `default`, state
 /// names and jump labels are sections.
-fn resolve(source: &str, result: &mut [Token], lua: bool) {
+fn resolve(source: &str, result: &mut [Token], lang: Lang) {
+    let lua = lang.is_lua();
     // Skip comments and whitespace when recognizing custom function calls.
     // A reverse pass avoids repeatedly scanning long comment blocks.
     let mut next_code = "";
     for token in result.iter_mut().rev() {
         let text = &source[token.bytes.clone()];
         if token.kind == Kind::Variable {
-            token.kind = keyword(text, lua).unwrap_or(if next_code == "(" { Kind::Function } else { Kind::Variable });
+            token.kind = keyword(text, lang).unwrap_or(if next_code == "(" { Kind::Function } else { Kind::Variable });
             if text == "default" && !lua {
                 token.kind = Kind::Section;
             }
             if token.kind == Kind::Constant
-                && let Some(entry) = catalog(lua).entry(text)
+                && let Some(entry) = catalog(lang).entry(text)
             {
                 token.kind = match entry.data_type.as_str() {
                     "string" | "key" => Kind::StringConstant,
@@ -516,8 +568,8 @@ fn resolve(source: &str, result: &mut [Token], lua: bool) {
 
 /// Semantic colors shared with fenced LSL in notecards. Tokenize on the
 /// document worker; resolve the current skin and custom colors when drawing.
-pub(crate) fn highlight(source: &str) -> Vec<(Range<usize>, ColorRole)> {
-    tokens(source, false)
+pub(crate) fn highlight(source: &str, lang: Lang) -> Vec<(Range<usize>, ColorRole)> {
+    tokens(source, lang)
         .into_iter()
         .map(|token| (token.bytes, token.kind.role()))
         .collect()
@@ -571,7 +623,7 @@ pub(super) struct Highlighter {
     /// The keywords' generation the job was colored with
     /// (`lsl_keywords::generation`): a region's own keywords recolor it.
     keywords: u64,
-    lua: bool,
+    lang: Lang,
     job: LayoutJob,
     pub colors: Vec<ColorLiteral>,
     /// Character-indexed Find matches, cached with the highlighted layout.
@@ -581,7 +633,7 @@ pub(super) struct Highlighter {
 impl Highlighter {
     #[cfg(test)]
     pub(super) fn layout(&mut self, source: &str, p: &Palette, font: FontId) -> LayoutJob {
-        self.custom(source, p, font, &ScriptSettings::default(), "", false, false, false)
+        self.custom(source, p, font, &ScriptSettings::default(), "", false, false, Lang::Lsl)
     }
 
     /// Reuse highlighted matches only for the source and search options
@@ -604,20 +656,24 @@ impl Highlighter {
         query: &str,
         insensitive: bool,
         whole_words: bool,
-        lua: bool,
+        lang: Lang,
     ) -> LayoutJob {
         let style = Style::new(p, font, settings, query, insensitive, whole_words);
         let keywords = lsl_keywords::generation();
-        if self.style.as_ref() != Some(&style) || self.job.text != source || self.keywords != keywords || self.lua != lua {
+        if self.style.as_ref() != Some(&style) || self.job.text != source || self.keywords != keywords || self.lang != lang {
             self.keywords = keywords;
-            self.lua = lua;
+            self.lang = lang;
             let mut job = LayoutJob {
                 text: source.into(),
                 ..Default::default()
             };
-            let tokens = tokens(source, lua);
+            let tokens = tokens(source, lang);
             // LSL's <r, g, b> literals; SLua writes vector(…) calls
-            self.colors = if lua { Vec::new() } else { color_literals(source, &tokens) };
+            self.colors = if lang.is_lua() {
+                Vec::new()
+            } else {
+                color_literals(source, &tokens)
+            };
             for token in tokens {
                 let format = TextFormat {
                     font_id: style.font.clone(),
@@ -689,7 +745,7 @@ mod tests {
     #[test]
     fn detects_only_literal_rgb_vectors_including_endpoints_and_numeric_notation() {
         let source = "// éあ <0,1,0>\nstring s = \"<1,0,0>\"; /* <0,0,1> */\nvector a = <0, 1, .5>; vector b = <+0.1, 1e-1, -0.0>; vector c = <0x0, 0X1, 1.>;\nvector d = <0.25, /*green*/ .75,\n 1>;";
-        let colors = color_literals(source, &tokens(source, false));
+        let colors = color_literals(source, &tokens(source, Lang::Lsl));
         assert_eq!(
             colors.iter().map(|c| c.rgb).collect::<Vec<_>>(),
             [[0.0, 1.0, 0.5], [0.1, 0.1, -0.0], [0.0, 1.0, 1.0], [0.25, 0.75, 1.0]]
@@ -710,7 +766,7 @@ mod tests {
             "<0,0,0.5foo>",
             "#define COLOR <0,1,0>",
         ] {
-            assert!(color_literals(literal, &tokens(literal, false)).is_empty(), "{literal}");
+            assert!(color_literals(literal, &tokens(literal, Lang::Lsl)).is_empty(), "{literal}");
         }
     }
 
@@ -722,7 +778,7 @@ mod tests {
         let settings = ScriptSettings::default();
         let source = "hi hi_there hi";
 
-        highlighter.custom(source, &palette, font.clone(), &settings, "hi", false, true, false);
+        highlighter.custom(source, &palette, font.clone(), &settings, "hi", false, true, Lang::Lsl);
 
         assert_eq!(highlighter.matches_for(source, "hi", false, true), Some(&[0..2, 12..14][..]));
         assert!(highlighter.matches_for("hi hi_there", "hi", false, true).is_none());
@@ -730,12 +786,12 @@ mod tests {
         assert!(highlighter.matches_for(source, "hi", true, true).is_none());
         assert!(highlighter.matches_for(source, "hi", false, false).is_none());
 
-        highlighter.custom(source, &palette, font.clone(), &settings, "hi", false, false, false);
+        highlighter.custom(source, &palette, font.clone(), &settings, "hi", false, false, Lang::Lsl);
 
         assert_eq!(highlighter.matches_for(source, "hi", false, false), Some(&[0..2, 3..5, 12..14][..]));
         assert!(highlighter.matches_for(source, "hi", false, true).is_none());
 
-        highlighter.custom("hi", &palette, font, &settings, "hi", false, true, false);
+        highlighter.custom("hi", &palette, font, &settings, "hi", false, true, Lang::Lsl);
 
         assert_eq!(
             highlighter.matches_for("hi", "hi", false, true),
@@ -756,7 +812,7 @@ mod tests {
             "hi",
             true,
             true,
-            false,
+            Lang::Lsl,
         );
         let highlight = Theme::default().palette().amber.gamma_multiply(0.3);
         let marks: Vec<_> = job
@@ -780,7 +836,7 @@ mod tests {
             "0",
             false,
             false,
-            false,
+            Lang::Lsl,
         );
         assert_eq!(job.text, source);
         assert_eq!(highlighter.colors.len(), 2);
@@ -792,11 +848,11 @@ mod tests {
     }
 
     fn lex(source: &str) -> Vec<(&str, Kind)> {
-        lex_as(source, false)
+        lex_as(source, Lang::Lsl)
     }
 
-    fn lex_as(source: &str, lua: bool) -> Vec<(&str, Kind)> {
-        let tokens = tokens(source, lua);
+    fn lex_as(source: &str, lang: Lang) -> Vec<(&str, Kind)> {
+        let tokens = tokens(source, lang);
         let mut cursor = 0;
         for token in &tokens {
             assert_eq!(token.bytes.start, cursor);
@@ -811,7 +867,7 @@ mod tests {
         let source = "local n = 0x_ff --[[ block\n]] -- line\n\
             function greet(who) ll.Say(0, `hi {who}` .. 'x' .. [==[long]] ]==]) end\n\
             if n then foo.bar(1_000.5e2) end";
-        let parsed = lex_as(source, true);
+        let parsed = lex_as(source, Lang::Lua);
         for (text, kind) in [
             ("local", Kind::Keyword),
             ("function", Kind::Keyword),
@@ -833,11 +889,11 @@ mod tests {
         }
         // the same words in LSL are not Lua's
         assert!(lex("ll.Say(0, x)").contains(&("ll", Kind::Variable)));
-        assert_eq!(keyword("local", false), None);
+        assert_eq!(keyword("local", Lang::Lsl), None);
         // unclosed: a quote stops at its line, a long bracket at the end
-        assert!(lex_as("x = 'open\ny", true).contains(&("'open", Kind::String)));
-        assert!(lex_as("--[[ open", true).contains(&("--[[ open", Kind::Comment)));
-        assert!(lex_as("a[1]", true).contains(&("[", Kind::Plain)));
+        assert!(lex_as("x = 'open\ny", Lang::Lua).contains(&("'open", Kind::String)));
+        assert!(lex_as("--[[ open", Lang::Lua).contains(&("--[[ open", Kind::Comment)));
+        assert!(lex_as("a[1]", Lang::Lua).contains(&("[", Kind::Plain)));
     }
 
     #[test]
@@ -862,10 +918,10 @@ mod tests {
             assert!(parsed.contains(&(text, kind)), "{text}: {parsed:?}");
             assert!(parsed.iter().filter(|(t, _)| *t == text).all(|(_, k)| *k == kind));
         }
-        assert_eq!(keyword("llsay", false), None);
-        assert_eq!(keyword("rotation", false), Some(Kind::Type));
-        assert_eq!(keyword("ALL_SIDES", false), Some(Kind::Constant));
-        assert_eq!(keyword("timer", false), Some(Kind::Event));
+        assert_eq!(keyword("llsay", Lang::Lsl), None);
+        assert_eq!(keyword("rotation", Lang::Lsl), Some(Kind::Type));
+        assert_eq!(keyword("ALL_SIDES", Lang::Lsl), Some(Kind::Constant));
+        assert_eq!(keyword("timer", Lang::Lsl), Some(Kind::Event));
     }
 
     #[test]
