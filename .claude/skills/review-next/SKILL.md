@@ -394,10 +394,17 @@ prose. On their yes, for each PR:
    merge queue's run (`gh run list --repo Aurora-Viewer/Aurora-Viewer
    --event merge_group`, then `gh run watch`), and read the outcome before
    the turn ends.
-   - **Merged**: the issues it closes are closed, and their Status on the
-     board says so (AGENTS.md section 15): `pwsh ./scripts/issue-board.ps1
-     -Issue <i>`, then `Done`, or `Waiting Review` while a 🟡 line of
-     TASKS.md waits for the QA.
+   - **Merged**: every issue it closes or names (`Closes`, `Refs`) gets
+     its confirmation comment (AGENTS.md section 15, "Reply and close"),
+     in a file of the review worktree's `.scratch/` or yours, then `gh
+     issue comment <i> --body-file …`: what was fixed, the PR and its merge
+     commit, how it was tested, what is still to check and by whom, and
+     whether a release has it yet (`gh release list`, then `git
+     merge-base --is-ancestor <merge> <tag>`: "not in a release yet, it
+     comes with the next one" until it is). Then its Status on the board
+     (`pwsh ./scripts/issue-board.ps1 -Issue <i>`): `Done` for an issue
+     the merge closed, `Waiting Review` for one whose check stays with the
+     QA or its reporter; never out of `Triage`.
    - **A queue run fails while `merge-pr.ps1` still waits**: the group it
      was tested in may hold another PR ahead of it; GitHub regroups and
      runs it again on its own. Keep waiting while the script does.

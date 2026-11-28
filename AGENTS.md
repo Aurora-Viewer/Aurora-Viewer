@@ -857,8 +857,9 @@ follows the steps below; on Linux the scripts run as `pwsh
    (`end-task.ps1 -Name review-<n> -Force`, once nothing is left to
    push).
 8. **The merge** of a ✅ PR is a question your human answers (rule 5),
-   then `merge-pr.ps1`; once merged, the Status of the issues it closes
-   (`issue-board.ps1`, section 15).
+   then `merge-pr.ps1`; once merged, a confirmation comment on every issue
+   it closes or names, and their Status (`issue-board.ps1`; section 15,
+   "Reply and close").
 
 The review, of your own PR or of someone else's, is posted as a comment
 (`gh pr comment <n> --body-file …`). The file given to `--body-file` (like
