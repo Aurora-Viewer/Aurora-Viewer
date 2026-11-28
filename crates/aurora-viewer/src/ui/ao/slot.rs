@@ -25,6 +25,9 @@ pub(super) const STOPS: [f32; 6] = [0.0, 10.0, 20.0, 30.0, 60.0, 120.0];
 /// Height of an entry's row, and the room between two.
 const ROW: f32 = 34.0;
 const ROW_GAP: f32 = 5.0;
+/// The turns card: the height of each of its lines and of its order button.
+const TURNS_LINE: f32 = 22.0;
+const ORDER_H: f32 = 26.0;
 /// The tabs over a slot's lists: their height, inner padding and gap.
 const TAB_H: f32 = 30.0;
 const TAB_PAD: f32 = 10.0;
@@ -175,23 +178,29 @@ pub(super) fn inventory_drop(
 
 /// The order menu's button: the order's icon in the accent, its name, and a
 /// chevron, on the entries' shade.
-fn order_button(ui: &mut egui::Ui, p: &Palette, order: Order, width: f32) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 30.0), egui::Sense::click());
+fn order_button(ui: &mut egui::Ui, p: &Palette, order: Order, most: f32) -> egui::Response {
+    // as wide as what it says, at the column's right
+    let font = egui::FontId::new(12.5, super::super::fonts::semibold(ui.ctx()));
+    let label = widgets::elided_galley(ui, RichText::new(order.label()).font(font), most - 52.0);
+    let width = 10.0 + 14.0 + 7.0 + label.size().x + 8.0 + 12.0 + 9.0;
+    let (row, _) = ui.allocate_exact_size(Vec2::new(most, ORDER_H), egui::Sense::hover());
+    let rect = egui::Rect::from_min_size(egui::pos2(row.right() - width, row.top()), Vec2::new(width, ORDER_H));
+    let response = ui.interact(rect, ui.scope_id().with("ao_order"), egui::Sense::click());
     let shade = super::shades(p);
     let fill = if response.hovered() { shade.item_hot } else { shade.item };
     ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, fill);
     let y = rect.center().y;
     widgets::paint_glyph(ui.painter(), order.icon(), egui::pos2(rect.left() + 17.0, y), 14.0, p.violet_pale);
-    let font = egui::FontId::new(12.5, super::super::fonts::semibold(ui.ctx()));
-    widgets::paint_elided(
-        ui,
-        order.label(),
-        egui::pos2(rect.left() + 30.0, y),
-        rect.width() - 54.0,
-        font,
-        p.ink,
+    let label_w = label.size().x;
+    widgets::paint_row_text(ui.painter(), label, rect.left() + 31.0, y, p.ink);
+    let chevron = if response.hovered() { p.ink } else { p.muted };
+    widgets::paint_glyph(
+        ui.painter(),
+        "chevron-down",
+        egui::pos2(rect.left() + 31.0 + label_w + 14.0, y),
+        13.0,
+        chevron,
     );
-    widgets::paint_glyph(ui.painter(), "chevron-down", egui::pos2(rect.right() - 15.0, y), 14.0, p.muted);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, order.label()));
     response
 }
@@ -427,16 +436,16 @@ impl Editor<'_> {
         egui::Frame::new()
             .fill(super::shades(p).card)
             .corner_radius(ui.visuals().widgets.inactive.corner_radius)
-            .inner_margin(egui::Margin::symmetric(12, 8))
+            .inner_margin(egui::Margin::symmetric(10, 5))
             .show(ui, |ui| {
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.horizontal(|ui| {
                         // (as tall as the card's two lines: centred against them)
-                        let (ring, _) = ui.allocate_exact_size(Vec2::new(38.0, 58.0), egui::Sense::hover());
+                        let (ring, _) = ui.allocate_exact_size(Vec2::new(34.0, 2.0 * TURNS_LINE), egui::Sense::hover());
                         let tint = if order == Order::Manual { p.muted } else { p.violet_light };
                         ui.painter()
-                            .circle_stroke(ring.center(), 15.0, egui::Stroke::new(2.5, tint.gamma_multiply(0.85)));
-                        widgets::paint_glyph(ui.painter(), order.icon(), ring.center(), 15.0, tint);
+                            .circle_stroke(ring.center(), 14.0, egui::Stroke::new(2.0, tint.gamma_multiply(0.85)));
+                        widgets::paint_glyph(ui.painter(), order.icon(), ring.center(), 14.0, tint);
                         // (the columns share the card: a narrow window keeps
                         // it inside its slot)
                         let room = ui.available_width();
@@ -444,9 +453,9 @@ impl Editor<'_> {
                         let middle = (room - right - 2.0 * ui.spacing().item_spacing.x).max(60.0);
                         ui.vertical(|ui| {
                             ui.set_width(middle);
-                            ui.spacing_mut().item_spacing.y = 2.0;
+                            ui.spacing_mut().item_spacing.y = 0.0;
                             ui.horizontal(|ui| {
-                                ui.set_height(28.0);
+                                ui.set_height(TURNS_LINE);
                                 if order == Order::Manual {
                                     ui.add(egui::Label::new(aurora_i18n::tr!("ao-turns-manual")).truncate());
                                 } else if edit.seconds > 0.0 {
@@ -468,7 +477,7 @@ impl Editor<'_> {
                                 }
                             });
                             ui.horizontal(|ui| {
-                                ui.set_height(28.0);
+                                ui.set_height(TURNS_LINE);
                                 ui.label(RichText::new(aurora_i18n::tr!("ao-each-time")).small().color(p.muted));
                                 let mut stop = stop_of(edit.seconds);
                                 let before = stop;
@@ -497,7 +506,9 @@ impl Editor<'_> {
                         });
                         ui.vertical(|ui| {
                             ui.set_width(right);
-                            ui.spacing_mut().item_spacing.y = 2.0;
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            // (the button and the line under it fill the card's two lines)
+                            ui.add_space((2.0 * TURNS_LINE - ORDER_H - 18.0) / 2.0);
                             let face = order_button(ui, p, order, right).on_hover_text(aurora_i18n::tr!("ao-order-tip"));
                             super::super::menu::dropdown(&face, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                                 for choice in [Order::Sequence, Order::Shuffle, Order::Manual] {
@@ -519,7 +530,7 @@ impl Editor<'_> {
                             };
                             step = ui
                                 .add_sized(
-                                    [right, 28.0],
+                                    [right, 18.0],
                                     egui::Button::new(RichText::new(&label).small().color(p.muted))
                                         .frame(false)
                                         .truncate(),
