@@ -4744,7 +4744,7 @@ impl Scene {
     /// what stands still: what moves in it lays its old shape under the
     /// snow and the rain, in the map's squares (#3642).
     pub(super) fn moves_for_shelter(world: &World, gpu: &[ObjGpu], mut idx: usize, now: Instant) -> bool {
-        for _ in 0..16 {
+        for _ in 0..sync_sets::MAX_DEPTH {
             let Some(o) = world.objects.get(idx) else {
                 return false;
             };
@@ -4788,7 +4788,7 @@ impl Scene {
     }
 
     fn wearer_avatar(world: &World, mut idx: usize) -> Option<(Uuid, usize)> {
-        for _ in 0..16 {
+        for _ in 0..sync_sets::MAX_DEPTH {
             let o = world.objects.get(idx)?;
             if o.is_avatar() {
                 return Some((o.full_id, idx));
@@ -6639,8 +6639,10 @@ impl Scene {
                 let o = world.objects.get(idx)?;
                 let (p, r, hud) = Self::object_transform(world, idx, now, 0)?;
                 if o.is_avatar() {
+                    // looking_at_self (LLHUDEffectLookAt::calcTargetPosition):
+                    // aimed at itself, an avatar stares 1 m in front, not at its head
                     let off = if obj == source && off.length_squared() < 1e-4 {
-                        Vec3::X
+                        crate::world::lookat::SELF_STARE.as_vec3()
                     } else {
                         off
                     };

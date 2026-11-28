@@ -8130,41 +8130,96 @@ pub fn rt_walk_events(wearer: u32) -> Vec<NetEvent> {
 /// by holes (an alpha layer), and hair in strands that fade out.
 pub const TEX_BAKE_SKIN: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0030);
 pub const TEX_BAKE_HAIR: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0031);
+/// Eyes of AURORA_DEMO_CLASSIC: a white sclera fading to a black pupil, so
+/// the gaze reads in captures (the system iris is too soft to tell).
+pub const TEX_BAKE_EYES: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0032);
 
-/// Pixels of the classic avatar bakes (RGBA8, 128 × 128).
+/// Pixels of a classic avatar bake, RGBA8 at 128 × 128.
 fn bake_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
-    const N: u32 = 128;
-    let hair = *id == TEX_BAKE_HAIR;
-    if !hair && *id != TEX_BAKE_SKIN {
-        return None;
+    match *id {
+        TEX_BAKE_SKIN => Some(classic_skin()),
+        TEX_BAKE_HAIR => Some(classic_hair()),
+        TEX_BAKE_EYES => Some(classic_eyes()),
+        _ => None,
     }
+}
+
+/// Skin of the classic body: soft alpha in a band (blended, the body would
+/// show what is behind it) and a row of holes (its alpha layer).
+fn classic_skin() -> (Vec<u8>, u32, u32) {
+    const N: u32 = 128;
     let mut px = Vec::with_capacity((N * N * 4) as usize);
     for y in 0..N {
         for x in 0..N {
             let (u, v) = (x as f32 / N as f32, y as f32 / N as f32);
-            if hair {
-                // strands along v, opaque at their root and fading to nothing
-                let strand = 0.5 + 0.5 * (u * std::f32::consts::TAU * 24.0).sin();
-                let a = (strand * 1.6 - 0.2).clamp(0.0, 1.0) * (1.15 - v).clamp(0.0, 1.0);
-                let shade = 0.55 + 0.45 * strand;
-                px.extend([(150.0 * shade) as u8, (96.0 * shade) as u8, (52.0 * shade) as u8, (a * 255.0) as u8]);
+            let band = if (0.40..0.60).contains(&v) {
+                0.35 + 0.5 * (v - 0.5).abs() / 0.1
             } else {
-                // soft alpha in a band (blended, the body would show what is
-                // behind it) and a row of holes
-                let band = if (0.40..0.60).contains(&v) {
-                    0.35 + 0.5 * (v - 0.5).abs() / 0.1
-                } else {
-                    1.0
-                };
-                let (cx, cy) = ((x % 32) as f32 - 16.0, y as f32 - 100.0);
-                let hole = cx * cx + cy * cy < 36.0;
-                let a = if hole { 0.0 } else { band };
-                let tone = 0.9 + 0.1 * (u * 40.0).sin() * (v * 40.0).sin();
-                px.extend([(214.0 * tone) as u8, (168.0 * tone) as u8, (140.0 * tone) as u8, (a * 255.0) as u8]);
-            }
+                1.0
+            };
+            let (cx, cy) = ((x % 32) as f32 - 16.0, y as f32 - 100.0);
+            let hole = cx * cx + cy * cy < 36.0;
+            let a = if hole { 0.0 } else { band };
+            let tone = 0.9 + 0.1 * (u * 40.0).sin() * (v * 40.0).sin();
+            px.extend([(214.0 * tone) as u8, (168.0 * tone) as u8, (140.0 * tone) as u8, (a * 255.0) as u8]);
         }
     }
-    Some((px, N, N))
+    (px, N, N)
+}
+
+/// Hair of the classic head: strands along v, opaque at their root and
+/// fading to nothing.
+fn classic_hair() -> (Vec<u8>, u32, u32) {
+    const N: u32 = 128;
+    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    for y in 0..N {
+        for x in 0..N {
+            let (u, v) = (x as f32 / N as f32, y as f32 / N as f32);
+            let strand = 0.5 + 0.5 * (u * std::f32::consts::TAU * 24.0).sin();
+            let a = (strand * 1.6 - 0.2).clamp(0.0, 1.0) * (1.15 - v).clamp(0.0, 1.0);
+            let shade = 0.55 + 0.45 * strand;
+            px.extend([(150.0 * shade) as u8, (96.0 * shade) as u8, (52.0 * shade) as u8, (a * 255.0) as u8]);
+        }
+    }
+    (px, N, N)
+}
+
+/// Eyes of the classic head: a white sclera fading to a black pupil at the
+/// texture's centre, which the eyeball's UVs put at the front of the eye.
+fn classic_eyes() -> (Vec<u8>, u32, u32) {
+    const N: u32 = 128;
+    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    let c = (N as f32 - 1.0) * 0.5;
+    for y in 0..N {
+        for x in 0..N {
+            let d = (((x as f32 - c) / (N as f32 * 0.5)).powi(2) + ((y as f32 - c) / (N as f32 * 0.5)).powi(2)).sqrt();
+            let lvl = (((d - 0.30) / 0.30).clamp(0.0, 1.0) * 255.0) as u8;
+            px.extend([lvl, lvl, lvl, 255]);
+        }
+    }
+    (px, N, N)
+}
+
+#[cfg(test)]
+mod classic_bake_tests {
+    use super::*;
+
+    #[test]
+    fn the_classic_bakes_are_served_and_the_eyes_have_a_readable_pupil() {
+        for id in [TEX_BAKE_SKIN, TEX_BAKE_HAIR, TEX_BAKE_EYES] {
+            assert_eq!(local_texture(&id).expect("classic bake served").1, 128, "{id}");
+        }
+        let (rgba, w, _) = local_texture(&TEX_BAKE_EYES).expect("eye bake");
+        let luma = |x: u32, y: u32| rgba[((y * w + x) * 4) as usize];
+        // the eyeball's UVs face the texture's centre outwards: a black pupil
+        // there, a white sclera at the edge
+        assert!(luma(63, 63) < 16, "pupil not dark");
+        assert!(luma(2, 2) > 240, "sclera not bright");
+        assert!(
+            local_texture(&Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0033)).is_none(),
+            "an id outside the bake range"
+        );
+    }
 }
 
 /// AURORA_DEMO_CLASSIC: the two avatars of the plaza as classic avatars, the
@@ -8181,6 +8236,8 @@ pub fn classic_events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEvent
             f.texture = match name {
                 "head" | "upper" | "lower" => TEX_BAKE_SKIN,
                 "hair" => TEX_BAKE_HAIR,
+                // the system eyes' texture is blank: use a generated pupil
+                "eyes" => TEX_BAKE_EYES,
                 _ => IMG_DEFAULT_AVATAR,
             };
         }

@@ -26,6 +26,41 @@ const NUM: u8 = 11;
 /// "Never" (MAX_TIMEOUT = F32_MAX / 2).
 pub const MAX_TIMEOUT: f32 = f32::MAX / 2.0;
 
+/// 1 m directly in front (`1,0,0` in the avatar's own frame): the offset
+/// `LLHUDEffectLookAt::calcTargetPosition` writes back for a look-at on our
+/// own avatar aimed at itself, which the others then receive too.
+pub const SELF_STARE: DVec3 = DVec3::X;
+
+/// The look-at offset a camera focus carries (`LLAgentCamera::setLookAt` +
+/// `calcTargetPosition`): `SELF_STARE` for our own avatar, none (its head)
+/// for another.
+pub fn focus_offset(avatar: Uuid, our_avatar: Uuid) -> DVec3 {
+    if avatar == our_avatar { SELF_STARE } else { DVec3::ZERO }
+}
+
+/// The avatar a camera focus on `object` resolves to, as `LLAgentCamera::setLookAt`
+/// (indra/newview/llagentcamera.cpp) rewrites it: an avatar as it is, and
+/// anything worn by us - at any depth, animated or not - as our own avatar;
+/// anything else (another's attachment, the land…) keeps its raw point: `None`.
+pub fn focus_avatar(objects: &crate::world::objects::ObjectStore, object: Uuid, me: Uuid) -> Option<Uuid> {
+    let mut idx = objects.index_of_uuid(&object)?;
+    if objects.get(idx)?.is_avatar() {
+        return Some(object);
+    }
+    // setLookAt walks the parents of an attachment and rewrites it into our
+    // own avatar when it reaches us, another avatar's attachment staying as it
+    // is. `skeleton_owner` would not do: our animesh attachment is its own
+    // skeleton root, not our avatar.
+    for _ in 0..crate::world::objects::MAX_PARENT_DEPTH {
+        idx = objects.parent_of(objects.get(idx)?)?;
+        let parent = objects.get(idx)?;
+        if parent.is_avatar() {
+            return (parent.full_id == me).then_some(me);
+        }
+    }
+    None
+}
+
 /// Attention table (attentions.xml): priority and timeout per type.
 const PRIORITY: [u8; NUM as usize] = [0, 1, 3, 2, 3, 4, 0, 6, 6, 7, 8];
 const TIMEOUT: [f32; NUM as usize] = [
@@ -714,6 +749,23 @@ mod tests {
         };
         assert_eq!(outgoing(listen, me, true, false), Some(listen));
         assert_eq!(outgoing(focus, me, true, true), None);
+        // a private self-focus (FOCUS, us, 1 m ahead) is spoofed the same way,
+        // never leaked to the others
+        let self_focus = Target {
+            kind: FOCUS,
+            object: Some(me),
+            offset: SELF_STARE,
+        };
+        assert_eq!(
+            outgoing(self_focus, me, true, false),
+            Some(Target {
+                kind: AUTO_LISTEN,
+                object: Some(me),
+                offset: DVec3::new(2.5, 0.0, 0.0),
+            })
+        );
+        assert_eq!(outgoing(self_focus, me, true, true), None);
+        assert_eq!(outgoing(self_focus, me, false, false), Some(self_focus));
     }
 
     #[test]
@@ -724,6 +776,81 @@ mod tests {
         let near = DVec3::new(10.5, 10.0, 21.0);
         assert_eq!(within(head, near, 2.0), near);
         assert_eq!(within(head, head, 2.0), head);
+    }
+
+    /// A camera focus on our own avatar stares 1 m in front; on another it
+    /// carries no offset, so that avatar's head is aimed at.
+    #[test]
+    fn a_camera_focus_keeps_the_head_or_stares_in_front() {
+        let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        assert_eq!(focus_offset(me, me), SELF_STARE);
+        assert_eq!(focus_offset(me, me).as_vec3(), Vec3::X);
+        assert_eq!(focus_offset(other, me), DVec3::ZERO);
+    }
+
+    /// The object a camera focus resolves to, as `LLAgentCamera::setLookAt`
+    /// keeps it: an avatar as itself, anything worn by us (an animated
+    /// attachment included) as our own avatar, and anything else as its point.
+    #[test]
+    fn a_camera_focus_resolves_the_focused_object_like_set_look_at() {
+        use crate::scene::avatar::AvatarLibrary;
+        use crate::world::World;
+        use aurora_prim::extra::EXTENDED_MESH_ANIMATED;
+        use std::sync::Arc;
+
+        // the demo's objects: 0xA0E0.. | local id
+        let demo_uuid = |local: u32| Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | local as u128);
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        for e in crate::demo::events() {
+            w.apply(e);
+        }
+        // the demo's animesh linksets: a ground one (9200), and one worn by
+        // the other avatar (9203, right hand)
+        for e in crate::demo::animesh_events() {
+            w.apply(e);
+        }
+        let me = w.agent_id;
+        let local = |w: &World, id: Uuid| w.objects.index_of_uuid(&id).and_then(|i| w.objects.get(i)).map(|o| o.key.local_id);
+        let me_local = local(&w, me).expect("our avatar");
+        let other = crate::demo::DEMO_LOUP;
+        // an animated (animesh) attachment worn by us: its own skeleton root
+        // must not stop the focus from resolving to our avatar
+        for e in crate::demo::own_rigged_events(me_local) {
+            if let aurora_net::NetEvent::ObjectUpdates { handle, mut objects } = e {
+                for o in &mut objects {
+                    o.extra.extended_mesh_flags = Some(EXTENDED_MESH_ANIMATED);
+                }
+                w.apply(aurora_net::NetEvent::ObjectUpdates { handle, objects });
+            }
+        }
+        let our_animesh = demo_uuid(crate::demo::OWN_RIGGED);
+        let other_animesh = demo_uuid(9203);
+        let ground_animesh = demo_uuid(9200);
+        let ground = w
+            .objects
+            .iter()
+            .find(|(_, o)| !o.is_avatar() && o.parent_id == 0)
+            .map(|(_, o)| o.full_id)
+            .expect("a ground object");
+
+        assert_eq!(focus_avatar(&w.objects, me, me), Some(me), "our own avatar");
+        assert_eq!(
+            focus_avatar(&w.objects, our_animesh, me),
+            Some(me),
+            "an animesh attachment worn by us"
+        );
+        assert_eq!(focus_avatar(&w.objects, other, me), Some(other), "another avatar");
+        assert_eq!(
+            focus_avatar(&w.objects, other_animesh, me),
+            None,
+            "an animesh attachment worn by another keeps its point"
+        );
+        assert_eq!(
+            focus_avatar(&w.objects, ground_animesh, me),
+            None,
+            "a ground animesh keeps its point"
+        );
+        assert_eq!(focus_avatar(&w.objects, ground, me), None, "a ground object keeps its point");
     }
 
     #[test]

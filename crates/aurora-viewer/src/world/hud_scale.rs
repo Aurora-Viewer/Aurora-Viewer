@@ -463,7 +463,7 @@ impl World {
 
     /// Only attachments of the local avatar can carry a local zoom.
     pub fn hud_root(&self, mut idx: usize) -> Option<usize> {
-        for _ in 0..16 {
+        for _ in 0..super::objects::MAX_PARENT_DEPTH {
             let o = self.objects.get(idx)?;
             let parent = self.objects.parent_of(o)?;
             let p = self.objects.get(parent)?;
