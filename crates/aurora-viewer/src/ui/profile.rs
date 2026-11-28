@@ -241,6 +241,91 @@ struct Window {
     demo_photo: Option<(PictureSlot, bool)>,
     /// Demo captures: the classic Picks tab clicks New once it shows.
     demo_new_pick: bool,
+    /// The pick this window last sent, and when: its confirmation is waited
+    /// for `PICK_CONFIRM_WAIT` before the notice says it is not confirmed.
+    pick_saved_at: Option<(Uuid, std::time::Instant)>,
+}
+
+/// The longest pick name and description sent, in bytes of UTF-8: the name
+/// fills `PickInfoUpdate`'s `Name`, a Variable 1 field (255 bytes, its NUL
+/// included), and the description the Legacy Viewer's `pick_desc` text
+/// editor's `max_length="1023"`, a byte limit (`mMaxTextByteLength`,
+/// panel_profile_pick.xml, lltextbase.cpp). Counted in characters, a
+/// text of styled letters (4 bytes each) could pass what the simulator
+/// keeps: the likely cause of #4916, where such a pick was never confirmed.
+pub(super) const PICK_NAME_MAX_BYTES: usize = 254;
+pub(super) const PICK_DESC_MAX_BYTES: usize = 1023;
+
+/// How long a saved pick's parcel is waited for before the notice says it
+/// was not confirmed (the simulator answers a stored pick within a second
+/// or two). `PickInfoUpdate` has no reply of its own: this is a timeout, not
+/// a refusal the simulator reports.
+const PICK_CONFIRM_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Cuts `text` to `max` bytes on a character boundary. True when something
+/// was cut. The editors limit at insertion ([`ByteLimited`]); this is the
+/// last guard of what is sent (`pick_of`).
+pub(super) fn fit_utf8(text: &mut String, max: usize) -> bool {
+    if text.len() <= max {
+        return false;
+    }
+    text.truncate(utf8_prefix(text, max).len());
+    true
+}
+
+/// The longest start of `text` within `max` bytes, ending on a character.
+fn utf8_prefix(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// A text field's buffer limited in bytes of UTF-8 at the insertion, as
+/// `LLTextEditor::addChar` (indra/llui/lltexteditor.cpp) refuses a keystroke
+/// that would pass `mMaxTextByteLength` and a paste is cut to what fits
+/// (FIRE-4885, `LLTextEditor::pasteHelper`): the text already there, its
+/// end included, is never cut. Typing, pasting, IME and undo all insert
+/// through `insert_text`.
+pub(super) struct ByteLimited<'a> {
+    text: &'a mut String,
+    max: usize,
+}
+
+impl<'a> ByteLimited<'a> {
+    pub(super) fn new(text: &'a mut String, max: usize) -> Self {
+        Self { text, max }
+    }
+}
+
+impl egui::TextBuffer for ByteLimited<'_> {
+    fn type_id(&self) -> std::any::TypeId {
+        std::any::TypeId::of::<ByteLimited<'static>>()
+    }
+    fn is_mutable(&self) -> bool {
+        true
+    }
+    fn as_str(&self) -> &str {
+        self.text
+    }
+    fn insert_text(&mut self, text: &str, at: egui::text::CharIndex) -> usize {
+        // (a text already past the limit, from the grid, takes nothing more)
+        let room = self.max.saturating_sub(self.text.len());
+        self.text.insert_text(utf8_prefix(text, room), at)
+    }
+    fn delete_char_range(&mut self, range: std::ops::Range<egui::text::CharIndex>) {
+        self.text.delete_char_range(range);
+    }
+}
+
+/// A pick's name and description kept within what the simulator stores.
+pub(super) fn fit_pick_text(name: &mut String, desc: &mut String) {
+    fit_utf8(name, PICK_NAME_MAX_BYTES);
+    fit_utf8(desc, PICK_DESC_MAX_BYTES);
 }
 
 enum CloseChoice {
@@ -290,6 +375,7 @@ impl Window {
             demo_classified: None,
             demo_photo: None,
             demo_new_pick: false,
+            pick_saved_at: None,
         }
     }
 
@@ -312,6 +398,7 @@ impl Window {
         edit.location = None;
         *base = edit.clone();
         self.pick_sel = Some(id);
+        self.pick_saved_at = Some((id, std::time::Instant::now()));
         actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick))));
         if refresh {
             self.asked.remove(&id);
@@ -327,6 +414,10 @@ impl Window {
         true
     }
 
+    /// A content edit of a pick whose parcel is not known yet is held, also
+    /// once the confirmation timed out: `PickInfoUpdate` with a nil
+    /// `ParcelID` makes the simulator take the agent's current parcel (#2016,
+    /// #2380). The notice and Retry say so meanwhile (#4916).
     fn pick_save_waits(&self) -> bool {
         self.pick_edit
             .as_ref()
@@ -340,11 +431,25 @@ impl Window {
         let Some(id) = self.pick_edit.as_ref().map(|(e, _)| e.id).or(self.pick_sel) else {
             return;
         };
-        let Some(wait) = world.profiles.pick_retry_in(self.id, id, std::time::Instant::now()) else {
+        let now = std::time::Instant::now();
+        let Some(wait) = world.profiles.pick_retry_in(self.id, id, now) else {
             return;
         };
+        let state = pick_wait_state(self.pick_saved_at, id, now);
         ui.horizontal_wrapped(|ui| {
-            ui.label(aurora_i18n::tr!("voice-waiting-for-parcel"));
+            match state {
+                PickWait::Saving(left) => {
+                    ui.label(aurora_i18n::tr!("ui-profile-pick-saving"));
+                    // (shown again when the wait turns into "not confirmed")
+                    ui.ctx().request_repaint_after(left);
+                }
+                PickWait::Unconfirmed => {
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-profile-pick-unconfirmed")).color(p.warn));
+                }
+                PickWait::Location => {
+                    ui.label(aurora_i18n::tr!("ui-profile-pick-location-pending"));
+                }
+            }
             if wait.is_zero() {
                 if flat_button(ui, p, aurora_i18n::tr!("script-retry")).clicked() {
                     actions.push(ProfileAction::Net(NetCommand::PickInfoRequest {
@@ -1104,12 +1209,37 @@ fn classified_of(e: &ClassifiedEdit) -> aurora_net::ClassifiedInfo {
     }
 }
 
+/// Where a pick's parcel wait stands for the notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickWait {
+    /// Just saved by this window: the confirmation can still come.
+    Saving(std::time::Duration),
+    /// Saved by this window and not confirmed within `PICK_CONFIRM_WAIT`
+    /// (a timeout: nothing in the protocol reports a refusal).
+    Unconfirmed,
+    /// A pick this window did not just save, its parcel not known yet.
+    Location,
+}
+
+fn pick_wait_state(saved_at: Option<(Uuid, std::time::Instant)>, id: Uuid, now: std::time::Instant) -> PickWait {
+    match saved_at.filter(|(saved, _)| *saved == id) {
+        Some((_, at)) => match PICK_CONFIRM_WAIT.checked_sub(now.saturating_duration_since(at)) {
+            Some(left) if !left.is_zero() => PickWait::Saving(left),
+            _ => PickWait::Unconfirmed,
+        },
+        None => PickWait::Location,
+    }
+}
+
 fn pick_of(e: &PickEdit) -> PickInfo {
+    // (the editors keep within it already; any other path is cut here)
+    let (mut name, mut desc) = (e.name.clone(), e.desc.clone());
+    fit_pick_text(&mut name, &mut desc);
     PickInfo {
         id: if e.id.is_nil() { Uuid::new_v4() } else { e.id },
         parcel: e.parcel,
-        name: e.name.clone(),
-        desc: e.desc.clone(),
+        name,
+        desc,
         snapshot: e.snapshot,
         pos_global: e.pos,
         enabled: true,
@@ -2197,7 +2327,11 @@ fn pick_detail(
     }
     ui.label(RichText::new(aurora_i18n::tr!("common-name-2")).size(12.0).strong().color(p.ink));
     if let (true, Some((e, _))) = (own, w.pick_edit.as_mut()) {
-        ui.add(egui::TextEdit::singleline(&mut e.name).desired_width(width).char_limit(63));
+        ui.add(
+            egui::TextEdit::singleline(&mut ByteLimited::new(&mut e.name, PICK_NAME_MAX_BYTES))
+                .desired_width(width)
+                .char_limit(63),
+        );
     } else {
         inset(ui, p, width, 22.0, |ui| {
             ui.label(RichText::new(&name).size(12.5).color(p.ink));
@@ -2228,7 +2362,9 @@ fn pick_detail(
                 let width = ui.available_width();
                 ui.add_sized(
                     [width, desc_h],
-                    egui::TextEdit::multiline(&mut e.desc).desired_width(width).char_limit(1023),
+                    egui::TextEdit::multiline(&mut ByteLimited::new(&mut e.desc, PICK_DESC_MAX_BYTES))
+                        .desired_width(width)
+                        .char_limit(1023),
                 );
             });
     } else {
@@ -3182,6 +3318,136 @@ mod tests {
         assert_eq!(saved.pos_global, edit.pos);
         assert_eq!(saved.id, edit.id);
         assert_eq!(saved.snapshot, edit.snapshot);
+    }
+
+    /// #4916: the pick's text is limited in bytes, as the Legacy editors
+    /// limit it, and cut on a character boundary: styled letters (4 bytes
+    /// each) can no longer make a description the simulator refuses.
+    #[test]
+    fn pick_text_stops_at_the_legacy_byte_limits_on_a_character_boundary() {
+        let styled = "\u{1D4D0}"; // MATHEMATICAL BOLD SCRIPT CAPITAL A, 4 bytes
+        let mut name = styled.repeat(100);
+        let mut desc = styled.repeat(PICK_DESC_MAX_BYTES);
+        fit_pick_text(&mut name, &mut desc);
+        assert!(
+            desc.len() <= PICK_DESC_MAX_BYTES && desc.len() > PICK_DESC_MAX_BYTES - 4,
+            "{}",
+            desc.len()
+        );
+        assert!(
+            name.len() <= PICK_NAME_MAX_BYTES && name.len() > PICK_NAME_MAX_BYTES - 4,
+            "{}",
+            name.len()
+        );
+        assert!(desc.chars().all(|c| c == '\u{1D4D0}') && name.chars().all(|c| c == '\u{1D4D0}'));
+        // plain text within the limit is left alone
+        let mut plain = "a".repeat(PICK_DESC_MAX_BYTES);
+        assert!(!fit_utf8(&mut plain, PICK_DESC_MAX_BYTES));
+        assert_eq!(plain.len(), PICK_DESC_MAX_BYTES);
+        // whatever the editor let through, the update sent stays within it
+        let edit = PickEdit {
+            name: styled.repeat(100),
+            desc: styled.repeat(PICK_DESC_MAX_BYTES),
+            ..Default::default()
+        };
+        let sent = pick_of(&edit);
+        assert!(sent.name.len() <= PICK_NAME_MAX_BYTES && sent.desc.len() <= PICK_DESC_MAX_BYTES);
+    }
+
+    /// #4916: a pick this window saved and the simulator never confirmed is
+    /// shown as not confirmed, and an edit made since stays held while the
+    /// parcel is unknown, after the timeout too: a nil `ParcelID` would make
+    /// the simulator take the agent's current parcel (#2016).
+    #[test]
+    fn a_pick_not_confirmed_in_time_is_shown_so_and_its_edit_waits_for_the_parcel() {
+        let id = Uuid::from_u128(4916);
+        let t = std::time::Instant::now();
+        let saved = Some((id, t));
+        assert!(matches!(
+            pick_wait_state(saved, id, t + std::time::Duration::from_secs(2)),
+            PickWait::Saving(_)
+        ));
+        assert_eq!(pick_wait_state(saved, id, t + PICK_CONFIRM_WAIT), PickWait::Unconfirmed);
+        // a pick this window did not just save keeps the neutral wait
+        assert_eq!(pick_wait_state(None, id, t), PickWait::Location);
+        assert_eq!(pick_wait_state(Some((Uuid::from_u128(1), t)), id, t), PickWait::Location);
+
+        let mut w = Window::new(Uuid::from_u128(40));
+        let info = PickInfo {
+            id,
+            pos_global: DVec3::new(256_001.0, 256_002.0, 30.0),
+            ..Default::default()
+        };
+        w.follow_pick(&info);
+        w.pick_edit.as_mut().unwrap().0.desc = "Edited while waiting".into();
+        w.pick_saved_at = Some((id, std::time::Instant::now()));
+        assert!(w.pick_save_waits(), "held back while the parcel can still come");
+        // not confirmed in time and no reply: still held, and Save sends nothing
+        w.pick_saved_at = Some((
+            id,
+            std::time::Instant::now() - PICK_CONFIRM_WAIT - std::time::Duration::from_secs(1),
+        ));
+        assert!(w.pick_save_waits(), "still held after the timeout");
+        let mut actions = Vec::new();
+        assert!(!w.save_pick(&mut actions));
+        assert!(actions.is_empty(), "no PickInfoUpdate with a nil parcel: {} actions", actions.len());
+        assert!(w.pick_edit.as_ref().unwrap().0.location.is_none(), "not turned into a move");
+        // a late reply gives its parcel, which the next save carries
+        let parcel = Uuid::from_u128(4917);
+        w.follow_pick(&PickInfo { parcel, ..info.clone() });
+        assert!(!w.pick_save_waits());
+        assert!(w.save_pick(&mut actions));
+        assert!(
+            matches!(&actions[..], [ProfileAction::Net(NetCommand::PickUpdate(pick))]
+                if pick.id == id && pick.parcel == parcel && pick.desc == "Edited while waiting" && pick.pos_global == info.pos_global),
+            "one content update with the replied parcel, no relocation request: {} actions",
+            actions.len()
+        );
+    }
+
+    /// #4916: the pick editors limit their text in bytes at the insertion,
+    /// as LLTextEditor::addChar refuses a keystroke past
+    /// mMaxTextByteLength: typing into a full text keeps its end, and a
+    /// paste is cut to whole characters that fit.
+    #[test]
+    fn a_full_pick_text_refuses_what_does_not_fit_and_keeps_its_end() {
+        use egui::TextBuffer as _;
+        use egui::text::CharIndex;
+        // a full description ending on a word: a letter typed in the middle
+        // is refused, nothing is cut at the end
+        let mut desc = format!("{}END", "a".repeat(PICK_DESC_MAX_BYTES - 3));
+        let full = desc.clone();
+        let mut buf = ByteLimited::new(&mut desc, PICK_DESC_MAX_BYTES);
+        assert_eq!(buf.insert_text("x", CharIndex(10)), 0);
+        assert_eq!(buf.insert_text("é", CharIndex(10)), 0, "an accented letter is 2 bytes");
+        assert_eq!(desc, full);
+        // one byte left: a 2-byte letter does not fit, a plain one does
+        let mut desc = "a".repeat(PICK_DESC_MAX_BYTES - 1);
+        let mut buf = ByteLimited::new(&mut desc, PICK_DESC_MAX_BYTES);
+        assert_eq!(buf.insert_text("é", CharIndex(5)), 0);
+        assert_eq!(buf.insert_text("b", CharIndex(5)), 1);
+        assert_eq!(desc.len(), PICK_DESC_MAX_BYTES);
+        assert_eq!(&desc[5..6], "b");
+        // a paste of Japanese (3 bytes each) into 10 free bytes: 3 whole
+        // characters, inserted in the middle, the text after them kept
+        let mut desc = format!("{}tail", "a".repeat(PICK_DESC_MAX_BYTES - 14));
+        let mut buf = ByteLimited::new(&mut desc, PICK_DESC_MAX_BYTES);
+        assert_eq!(buf.insert_text("日本語のテキスト", CharIndex(2)), 3);
+        assert_eq!(desc.len(), PICK_DESC_MAX_BYTES - 1);
+        assert!(desc.starts_with("aa日本語a") && desc.ends_with("tail"));
+        // styled letters (4 bytes each) in the name: whole letters only
+        let mut name = String::new();
+        let mut buf = ByteLimited::new(&mut name, PICK_NAME_MAX_BYTES);
+        let styled = "\u{1D4D0}".repeat(100);
+        assert_eq!(buf.insert_text(&styled, CharIndex(0)), PICK_NAME_MAX_BYTES / 4);
+        assert!(name.chars().all(|c| c == '\u{1D4D0}') && name.len() <= PICK_NAME_MAX_BYTES);
+        // deleting still works on a text already past the limit (from the
+        // grid), which takes nothing more
+        let mut long = "a".repeat(PICK_DESC_MAX_BYTES + 10);
+        let mut buf = ByteLimited::new(&mut long, PICK_DESC_MAX_BYTES);
+        assert_eq!(buf.insert_text("b", CharIndex(0)), 0);
+        buf.delete_char_range(CharIndex(0)..CharIndex(20));
+        assert_eq!(long.len(), PICK_DESC_MAX_BYTES - 10);
     }
 
     #[test]
