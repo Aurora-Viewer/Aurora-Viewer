@@ -13171,7 +13171,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MUSIC=<url>`, `1` or `fade` | Music of the demo parcel |
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `data`, `script`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
-| `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
+| `AURORA_DEMO_SOUND=1`, `ui`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible (`ui`: with no chime) |
 | `AURORA_DEMO_SOUND_OCCLUSION=1` | Three looping sounds: in the open, behind a wall, shut in a box; each one's occlusion in the log |
 | `AURORA_SOUND_OCCLUSION=0` or `1` | "Muffle sounds behind walls" forced off or on for this launch, without saving it |
 | `AURORA_DEMO_SOUND_HRTF=1`, `circle` or `updown` | A sound circling the listener and one rising above it and falling, for the 3D sound for headphones |
@@ -13632,8 +13632,8 @@ What the inventory must show with these scenarios:
   world (`text`: drag it anywhere, right click for the history, the copy
   and the window). `stop` ends the stream after the last title: "No
   stream playing", the history kept. No sound is played.
-- **`AURORA_DEMO_SOUND=1|hud|parcel-open|parcel-local|parcel-source`**: world sounds (looping chime) and interface
-  sounds (in a development build, taken from the sound cache of grid
+- **`AURORA_DEMO_SOUND=1|ui|hud|parcel-open|parcel-local|parcel-source`**: world sounds (looping chime) and interface
+  sounds; `ui`: the interface sounds alone, with no chime in the world (in a development build, taken from the sound cache of grid
   sessions if it holds them; otherwise, and in a `--release` build, a brief
   tick per sound). Without it the media play muted too: the viewer sends
   them a volume of 0, so a video in the demo is silent unless this is set.

@@ -46,6 +46,14 @@ fn money(amount: i32) -> String {
     format!("{} {}", aurora_i18n::currency(), aurora_i18n::integer(i64::from(amount.max(0))))
 }
 
+/// The width of the window whose body is `body` wide: the floater's margins
+/// and outline around it. Given the body's width alone, the window grew to
+/// hold its body while its title bar kept the width asked for, its buttons
+/// 22 px short of the right edge.
+fn window_width(ctx: &egui::Context, body: f32) -> f32 {
+    body + widgets::floater_chrome(ctx).x
+}
+
 /// How the windows pay, from the Preferences.
 #[derive(Clone, Copy, Debug)]
 pub struct Rules {
@@ -349,11 +357,12 @@ impl PayUi {
         let mut close = false;
         let mut again = false;
         let (name, sub) = Self::payee_name(world, payee);
+        let outer = window_width(ctx, WIDTH);
         Floater::new(
             "pay",
             title,
-            egui::pos2(center.x - WIDTH / 2.0, center.y - 200.0),
-            Vec2::new(WIDTH, 360.0),
+            egui::pos2(center.x - outer / 2.0, center.y - 200.0),
+            Vec2::new(outer, 360.0),
         )
         .auto_height()
         .show(ctx, p, &mut open, |ui| {
@@ -675,11 +684,12 @@ impl PayUi {
         let mut pay = None;
         let mut cancel = false;
         let mut give = None;
+        let outer = window_width(ctx, 300.0);
         Floater::new(
             "pay_classic",
             title,
-            egui::pos2(center.x - 150.0, center.y - 130.0),
-            Vec2::new(300.0, 260.0),
+            egui::pos2(center.x - outer / 2.0, center.y - 130.0),
+            Vec2::new(outer, 260.0),
         )
         .auto_height()
         .show(ctx, p, &mut open, |ui| {
@@ -821,11 +831,12 @@ impl PayUi {
                 .or_else(|| world.avatar_name(&props.owner_id))
                 .unwrap_or_else(|| aurora_i18n::tr!("ui-object-actions-loading-name").into())
         });
+        let outer = window_width(ctx, WIDTH);
         Floater::new(
             "object_payment",
             aurora_i18n::tr!("common-pay-object"),
-            egui::pos2(center.x - WIDTH / 2.0, center.y - 180.0),
-            Vec2::new(WIDTH, 300.0),
+            egui::pos2(center.x - outer / 2.0, center.y - 180.0),
+            Vec2::new(outer, 300.0),
         )
         .auto_height()
         .show(ctx, p, &mut open, |ui| {
