@@ -739,8 +739,9 @@ pub fn show(
     };
     let mut open = true;
     let entries = entries::world_menu(&m.target, f, m.point);
+    // Not while the arrangement is edited: Delete removes a separator there.
     if f.delete_key
-        && !customization.active()
+        && !customization.editing(prefs)
         && let Some(action) = delete_key_action(ctx, &entries)
     {
         request(ctx, action);
@@ -811,7 +812,10 @@ fn delete_key_action(ctx: &egui::Context, entries: &[entries::Entry]) -> Option<
             _ => None,
         })
     }
-    if ctx.egui_wants_keyboard_input() || !ctx.input(|i| i.key_pressed(egui::Key::Delete)) {
+    // Only a text field keeps the key (LLEditDelete defers to the focused
+    // editor): a focused menu row or button must not, as egui focuses them
+    // for keyboard navigation while the menu is open.
+    if ctx.text_edit_focused() || !ctx.input(|i| i.key_pressed(egui::Key::Delete)) {
         return None;
     }
     let action = find(entries)?.clone();
@@ -2073,8 +2077,16 @@ fn pie_hover_sound(hovered: Option<usize>, use_pie: bool, force_list: bool) -> O
 mod tests {
     use super::*;
 
-    /// One frame with the Delete key pressed, a text field focused or not.
-    fn delete_key_frame(entries: &[entries::Entry], typing: bool) -> Option<CtxAction> {
+    /// What has the keyboard focus when Delete is pressed.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Focus {
+        Nothing,
+        Text,
+        Button,
+    }
+
+    /// One frame with the Delete key pressed and `focus` focused.
+    fn delete_key_frame(entries: &[entries::Entry], focus: Focus) -> Option<CtxAction> {
         let ctx = egui::Context::default();
         let delete = egui::Event::Key {
             key: egui::Key::Delete,
@@ -2092,8 +2104,11 @@ mod tests {
             drop(ctx.run_ui(input, |ui| {
                 let mut text = String::new();
                 let field = ui.text_edit_singleline(&mut text);
-                if typing {
-                    field.request_focus();
+                let button = ui.button("row");
+                match focus {
+                    Focus::Text => field.request_focus(),
+                    Focus::Button => button.request_focus(),
+                    Focus::Nothing => {}
                 }
                 got = delete_key_action(ui.ctx(), entries);
             }));
@@ -2112,13 +2127,15 @@ mod tests {
         let mut facts = Facts::default();
         facts.object.delete = true;
         let entries = entries::world_menu(&target, &facts, Vec3::ZERO);
-        assert!(matches!(delete_key_frame(&entries, false), Some(CtxAction::Delete(who)) if who == id));
+        assert!(matches!(delete_key_frame(&entries, Focus::Nothing), Some(CtxAction::Delete(who)) if who == id));
+        // A focused menu row (keyboard navigation) does not take the key.
+        assert!(matches!(delete_key_frame(&entries, Focus::Button), Some(CtxAction::Delete(who)) if who == id));
         // A focused text field keeps the key (LLEditDelete prefers it).
-        assert!(delete_key_frame(&entries, true).is_none());
+        assert!(delete_key_frame(&entries, Focus::Text).is_none());
         // Greyed Delete (not deletable, or RLVa's rlvCanDeleteOrReturn): nothing.
         facts.object.delete = false;
         let entries = entries::world_menu(&target, &facts, Vec3::ZERO);
-        assert!(delete_key_frame(&entries, false).is_none());
+        assert!(delete_key_frame(&entries, Focus::Nothing).is_none());
         // A worn attachment's menu has no Delete row.
         let entries = entries::world_menu(
             &Target::Attachment {
@@ -2127,7 +2144,7 @@ mod tests {
             &facts,
             Vec3::ZERO,
         );
-        assert!(delete_key_frame(&entries, false).is_none());
+        assert!(delete_key_frame(&entries, Focus::Nothing).is_none());
     }
 
     #[test]

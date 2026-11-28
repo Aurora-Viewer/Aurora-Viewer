@@ -39,6 +39,14 @@ impl Customization {
     pub(super) fn active(&self) -> bool {
         self.scope.is_some()
     }
+    /// The list menu's arrangement is being edited (its profile unlocked).
+    /// `active` alone only says the list menu is drawn through this layer,
+    /// which it is on every frame it is open.
+    pub(super) fn editing(&self, prefs: &Preferences) -> bool {
+        self.scope
+            .as_deref()
+            .is_some_and(|scope| prefs.profiles.get(scope).is_some_and(|profile| !profile.locked))
+    }
     pub(crate) fn edit(&mut self, ctx: &egui::Context, menu: &ContextMenu, facts: &Facts, prefs: &mut Preferences) {
         let scope = scope(&menu.target, facts);
         self.close(ctx, prefs);
@@ -447,6 +455,25 @@ mod tests {
             pie_path: Vec::new(),
             pie_input_frame: None,
         }
+    }
+
+    #[test]
+    fn an_open_list_menu_is_not_an_edited_one() {
+        let ctx = egui::Context::default();
+        let facts = Facts::default();
+        let mut prefs = Preferences::default();
+        let mut custom = Customization::default();
+        assert!(!custom.editing(&prefs));
+        // the list menu is drawn through this layer with its profile locked
+        // (#5168: the Delete key still deletes there)
+        let scope = scope(&menu(1).target, &facts);
+        profile(&mut prefs, scope);
+        custom.scope = Some(scope.into());
+        assert!(custom.active() && !custom.editing(&prefs));
+        custom.edit(&ctx, &menu(1), &facts, &mut prefs);
+        assert!(custom.editing(&prefs));
+        custom.close(&ctx, &mut prefs);
+        assert!(!custom.editing(&prefs));
     }
 
     #[test]
