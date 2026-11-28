@@ -305,7 +305,7 @@ const PREVIEW_LEAST: f32 = 230.0;
 /// The least the page keeps between the sidebar and the preview.
 const PAGE_LEAST: f32 = 400.0;
 /// How wide the grip on the preview's left edge is.
-const HANDLE: f32 = 8.0;
+const HANDLE: f32 = 16.0;
 /// A saved window narrower than this is the old one-column AO window's.
 const OLD_WIDTH: f32 = 1000.0;
 /// The window's first size, and the least it can be made.

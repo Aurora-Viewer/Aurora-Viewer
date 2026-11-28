@@ -27,6 +27,8 @@ const ROW: f32 = 34.0;
 const ROW_GAP: f32 = 5.0;
 /// The turns card: the height of each of its lines and of its order button.
 const TURNS_LINE: f32 = 22.0;
+/// The track of stops under it, with their names.
+const TRACK_H: f32 = 30.0;
 /// How long a dropped order is shown after its save, waiting for the
 /// inventory to bring it back (a failed save then shows the saved one).
 const HELD_FOR: std::time::Duration = std::time::Duration::from_secs(3);
@@ -92,6 +94,7 @@ impl Order {
 }
 
 /// The slider position of a cycle time: the nearest stop.
+#[cfg(test)]
 pub(super) fn stop_of(seconds: f32) -> usize {
     if seconds <= 0.0 {
         return 0;
@@ -181,6 +184,119 @@ pub(super) fn inventory_drop(
 
 /// The order menu's button: the order's icon in the accent, its name, and a
 /// chevron, on the entries' shade.
+/// Where `seconds` sits on the track of stops, 0 to 1: at its stop, or
+/// between the two around it for a typed time.
+fn stop_place(seconds: f32) -> f32 {
+    let last = (STOPS.len() - 1) as f32;
+    if seconds <= 0.0 {
+        return 0.0;
+    }
+    for i in 1..STOPS.len() {
+        if seconds <= STOPS[i] {
+            let t = (seconds - STOPS[i - 1]) / (STOPS[i] - STOPS[i - 1]);
+            return ((i - 1) as f32 + t) / last;
+        }
+    }
+    1.0
+}
+
+#[cfg(test)]
+pub(super) fn stop_place_for_tests(seconds: f32) -> f32 {
+    stop_place(seconds)
+}
+
+/// A stop's name under the track.
+fn stop_label(i: usize) -> String {
+    match STOPS[i] {
+        s if s <= 0.0 => aurora_i18n::tr!("ao-each-time").to_owned(),
+        s if s >= 60.0 => aurora_i18n::tr!("ao-stop-minutes", count = (s / 60.0) as i64),
+        s => aurora_i18n::tr!("ao-stop-seconds", count = s as i64),
+    }
+}
+
+/// How often entries take turns, as a track of stops: each a notch with its
+/// name, the chosen time a knob lit in the accent (between two notches for a
+/// typed time), the way to it filled. A click on a notch, or a drag along
+/// the track, picks its stop. `fill` (0 to 1): how far the time to the next
+/// one has run, drawn round the knob. Returns the time picked.
+fn stops_track(ui: &mut egui::Ui, p: &Palette, seconds: f32, enabled: bool, fill: Option<f32>) -> Option<f32> {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), TRACK_H), egui::Sense::click_and_drag());
+    let enabled = enabled && ui.is_enabled();
+    let inset = 8.0;
+    let (x0, x1) = (rect.left() + inset, rect.right() - inset);
+    let y = rect.top() + 9.0;
+    let x_of = |t: f32| x0 + (x1 - x0) * t;
+    let last = STOPS.len() - 1;
+    let nearest = |x: f32| (((x - x0) / (x1 - x0)).clamp(0.0, 1.0) * last as f32).round() as usize;
+    // while held, the knob follows the stop under the pointer
+    let pointer = response
+        .interact_pointer_pos()
+        .filter(|_| enabled && response.is_pointer_button_down_on());
+    let shown = pointer.map_or(stop_place(seconds), |at| nearest(at.x) as f32 / last as f32);
+    let hover = response.hover_pos().filter(|_| enabled).map(|at| nearest(at.x));
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    let track = egui::Rect::from_min_max(egui::pos2(x0, y - 1.5), egui::pos2(x1, y + 1.5));
+    ui.painter().rect_filled(track, radius, p.raised);
+    let accent = if enabled { p.violet_light } else { p.muted_dim };
+    let done = egui::Rect::from_min_max(track.min, egui::pos2(x_of(shown), track.max.y));
+    ui.painter().rect_filled(done, radius, accent.gamma_multiply(0.85));
+    let small = egui::FontId::proportional(10.5);
+    let chosen = stop_place(seconds);
+    for i in 0..=last {
+        let at = i as f32 / last as f32;
+        let x = x_of(at);
+        let notch = if at <= shown + 1e-3 { accent } else { p.muted.gamma_multiply(0.6) };
+        ui.painter().circle_filled(egui::pos2(x, y), 2.5, notch);
+        let lit = hover == Some(i) || (chosen - at).abs() < 1e-3;
+        let ink = if !enabled {
+            p.muted_dim
+        } else if lit {
+            p.ink
+        } else {
+            p.muted
+        };
+        let galley = ui.painter().layout_no_wrap(stop_label(i), small.clone(), ink);
+        let w = galley.size().x;
+        // the ends' names keep inside the track
+        let left = if i == 0 {
+            x - 4.0
+        } else if i == last {
+            x - w + 4.0
+        } else {
+            x - w / 2.0
+        };
+        ui.painter().galley(egui::pos2(left, y + 7.0), galley, ink);
+    }
+    let knob = egui::pos2(x_of(shown), y);
+    if enabled {
+        ui.painter().circle_filled(knob, 9.0, p.violet.gamma_multiply(0.22));
+        // the time to the next one runs round the knob
+        if let Some(fill) = fill.filter(|f| *f > 0.0) {
+            let steps = 32;
+            let points: Vec<egui::Pos2> = (0..=((steps as f32 * fill) as usize).max(1))
+                .map(|k| {
+                    let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * (k as f32 / steps as f32).min(fill);
+                    knob + 9.0 * Vec2::angled(a)
+                })
+                .collect();
+            ui.painter().add(egui::Shape::line(points, egui::Stroke::new(1.5, p.violet_light)));
+        }
+    }
+    ui.painter()
+        .circle_filled(knob, 5.5, if enabled { p.violet_light } else { p.muted_dim });
+    ui.painter().circle_filled(knob, 2.5, if enabled { p.on_accent } else { p.raised });
+    response.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(seconds), aurora_i18n::tr!("ao-turns-every")));
+    if !enabled {
+        return None;
+    }
+    let released = response.drag_stopped() || response.clicked();
+    released
+        .then(|| response.interact_pointer_pos().or(response.hover_pos()))
+        .flatten()
+        .map(|at| STOPS[nearest(at.x)])
+        .filter(|s| (*s - seconds).abs() > f32::EPSILON)
+}
+
 fn order_button(ui: &mut egui::Ui, p: &Palette, order: Order, most: f32) -> egui::Response {
     // as wide as what it says, at the column's right
     let font = egui::FontId::new(12.5, super::super::fonts::semibold(ui.ctx()));
@@ -471,8 +587,10 @@ impl Editor<'_> {
         }
     }
 
-    /// How the list's entries take turns: its order, how often, and which
-    /// one comes next. A list of one says that a second one would take turns.
+    /// How the list's entries take turns: how often, on a track of stops
+    /// from "Each time" to two minutes (a typed time sits between them), the
+    /// time left to the next one while the slot plays, and the order on the
+    /// right. A list of one says that a second one would take turns.
     fn turns(&mut self, ui: &mut egui::Ui, c: &StateConfig, track: Option<&Track>) {
         let (id, saved, len) = track.map_or((c.folder, &c.cycle, c.steps.len()), |t| (t.id, &t.cycle, t.members.len()));
         if len == 1 {
@@ -489,38 +607,41 @@ impl Editor<'_> {
         };
         let order = Order::of(&edit);
         let mut commit = false;
-        let mut step = false;
         let busy = self.busy();
         let p = self.p;
-        let (next, now) = self.next_name(c, track);
+        // the time left before the next one, while this slot plays on a timer
+        let left = (order != Order::Manual && edit.seconds > 0.0 && self.runtime.current == Some(self.state.state))
+            .then(|| self.runtime.next_switch(self.state.state, id))
+            .flatten()
+            .map(|at| at.saturating_duration_since(std::time::Instant::now()).as_secs_f32());
         egui::Frame::new()
             .fill(super::shades(p).card)
             .corner_radius(ui.visuals().widgets.inactive.corner_radius)
-            .inner_margin(egui::Margin::symmetric(10, 5))
+            .inner_margin(egui::Margin {
+                left: 12,
+                right: 10,
+                top: 8,
+                bottom: 6,
+            })
             .show(ui, |ui| {
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.horizontal(|ui| {
-                        // (as tall as the card's two lines: centred against them)
-                        let (ring, _) = ui.allocate_exact_size(Vec2::new(34.0, 2.0 * TURNS_LINE), egui::Sense::hover());
-                        let tint = if order == Order::Manual { p.muted } else { p.violet_light };
-                        ui.painter()
-                            .circle_stroke(ring.center(), 14.0, egui::Stroke::new(2.0, tint.gamma_multiply(0.85)));
-                        widgets::paint_glyph(ui.painter(), order.icon(), ring.center(), 14.0, tint);
-                        // (the columns share the card: a narrow window keeps
-                        // it inside its slot)
-                        let room = ui.available_width();
-                        let right = (room * 0.42).min(140.0);
-                        let middle = (room - right - 2.0 * ui.spacing().item_spacing.x).max(60.0);
+                        // the order's button keeps its width at the right,
+                        // centred on the card's height
+                        let right = 130.0_f32.min(ui.available_width() * 0.4);
+                        let middle = (ui.available_width() - right - ui.spacing().item_spacing.x).max(80.0);
+                        let height = TURNS_LINE + 2.0 + TRACK_H;
                         ui.vertical(|ui| {
                             ui.set_width(middle);
-                            ui.spacing_mut().item_spacing.y = 0.0;
+                            ui.spacing_mut().item_spacing.y = 2.0;
                             ui.horizontal(|ui| {
                                 ui.set_height(TURNS_LINE);
                                 if order == Order::Manual {
                                     ui.add(egui::Label::new(aurora_i18n::tr!("ao-turns-manual")).truncate());
                                 } else if edit.seconds > 0.0 {
-                                    // (the seconds' field keeps its room after it)
-                                    let room = (ui.available_width() - 64.0).max(20.0);
+                                    let field = 60.0;
+                                    let countdown = if left.is_some() { 70.0 } else { 0.0 };
+                                    let room = (ui.available_width() - field - countdown).max(20.0);
                                     ui.add(widgets::elided_label(ui, aurora_i18n::tr!("ao-turns-every"), room));
                                     let response = ui.add(
                                         egui::DragValue::new(&mut edit.seconds)
@@ -532,43 +653,24 @@ impl Editor<'_> {
                                             .suffix(aurora_i18n::tr!("ao-seconds-suffix")),
                                     );
                                     commit |= response.drag_stopped() || response.lost_focus();
+                                    if let Some(left) = left {
+                                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+                                        let line = aurora_i18n::tr!("ao-next-in", seconds = left.ceil() as i64);
+                                        ui.label(RichText::new(line).size(11.0).color(p.violet_pale));
+                                    }
                                 } else {
                                     ui.add(egui::Label::new(aurora_i18n::tr!("ao-turns-each-time")).truncate());
                                 }
                             });
-                            ui.horizontal(|ui| {
-                                ui.set_height(TURNS_LINE);
-                                ui.label(RichText::new(aurora_i18n::tr!("ao-each-time")).small().color(p.muted));
-                                let mut stop = stop_of(edit.seconds);
-                                let before = stop;
-                                // the slider takes what its end label leaves
-                                let end = ui
-                                    .painter()
-                                    .layout_no_wrap(
-                                        aurora_i18n::tr!("ao-two-minutes").to_owned(),
-                                        egui::TextStyle::Small.resolve(ui.style()),
-                                        p.muted,
-                                    )
-                                    .size()
-                                    .x;
-                                let room = ui.available_width() - end - 2.0 * ui.spacing().item_spacing.x;
-                                ui.spacing_mut().slider_width = room.max(24.0);
-                                let response = ui.add_enabled(
-                                    order != Order::Manual,
-                                    egui::Slider::new(&mut stop, 0..=STOPS.len() - 1).show_value(false),
-                                );
-                                if stop != before {
-                                    edit.seconds = STOPS[stop];
-                                }
-                                commit |= (response.changed() && !response.dragged()) || response.drag_stopped();
-                                ui.label(RichText::new(aurora_i18n::tr!("ao-two-minutes")).small().color(p.muted));
-                            });
+                            let fill = left.map(|left| 1.0 - (left / edit.seconds.max(0.01)).clamp(0.0, 1.0));
+                            if let Some(seconds) = stops_track(ui, p, edit.seconds, order != Order::Manual, fill) {
+                                edit.seconds = seconds;
+                                commit = true;
+                            }
                         });
                         ui.vertical(|ui| {
                             ui.set_width(right);
-                            ui.spacing_mut().item_spacing.y = 0.0;
-                            // (the button and the line under it fill the card's two lines)
-                            ui.add_space((2.0 * TURNS_LINE - ORDER_H - 18.0) / 2.0);
+                            ui.add_space(((height - ORDER_H) / 2.0).max(0.0));
                             let face = order_button(ui, p, order, right).on_hover_text(aurora_i18n::tr!("ao-order-tip"));
                             super::super::menu::dropdown(&face, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                                 for choice in [Order::Sequence, Order::Shuffle, Order::Manual] {
@@ -580,30 +682,10 @@ impl Editor<'_> {
                                     }
                                 }
                             });
-                            let label = if order == Order::Manual {
-                                aurora_i18n::tr!("ao-stays-on", name = now.as_str())
-                            } else if order == Order::Shuffle {
-                                // (the next one is drawn at random)
-                                aurora_i18n::tr!("ao-up-next-random").to_owned()
-                            } else {
-                                aurora_i18n::tr!("ao-up-next", name = next.as_str())
-                            };
-                            step = ui
-                                .add_sized(
-                                    [right, 18.0],
-                                    egui::Button::new(RichText::new(&label).small().color(p.muted))
-                                        .frame(false)
-                                        .truncate(),
-                                )
-                                .on_hover_text(aurora_i18n::tr!("ao-next-tip"))
-                                .clicked();
                         });
                     });
                 });
             });
-        if step {
-            self.step(c, track);
-        }
         if let Some((_, buffered)) = self.state.cycle_edit.as_mut() {
             *buffered = edit.clone();
         }
@@ -618,28 +700,6 @@ impl Editor<'_> {
                 inventory::save_cycle(self.inv, self.state.state, &c)
             };
             push(self.out, self.state, change);
-        }
-    }
-
-    /// The names of the entry after the one playing, and of the one playing.
-    fn next_name(&self, c: &StateConfig, track: Option<&Track>) -> (String, String) {
-        let names: Vec<&str> = track.map_or_else(
-            || c.steps.iter().map(|s| s.name.as_str()).collect(),
-            |t| t.members.iter().map(|m| m.name.as_str()).collect(),
-        );
-        let owner = track.map_or(c.folder, |t| t.id);
-        let index = self.runtime.index(self.state.state, owner).min(names.len().saturating_sub(1));
-        let now = names.get(index).copied().unwrap_or_default();
-        let next = names.get((index + 1) % names.len().max(1)).copied().unwrap_or_default();
-        (next.to_owned(), now.to_owned())
-    }
-
-    /// Plays the next entry now (AOEngine::cycle(CycleNext)).
-    fn step(&mut self, c: &StateConfig, track: Option<&Track>) {
-        let (owner, len) = track.map_or((c.folder, c.steps.len()), |t| (t.id, t.members.len()));
-        if len > 0 {
-            let index = (self.runtime.index(self.state.state, owner) + 1) % len;
-            self.runtime.choose(self.state.state, owner, index);
         }
     }
 

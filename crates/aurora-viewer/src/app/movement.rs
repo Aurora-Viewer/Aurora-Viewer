@@ -593,6 +593,7 @@ impl App {
             account.enabled = saved.enabled;
             account.selected = saved.selected;
             account.mini_open = saved.mini_open;
+            account.set_order = saved.set_order.clone();
         }
         let prior_mini_open = account.mini_open;
         let mut actions = self.toolbar_ui.ao_quick.show(

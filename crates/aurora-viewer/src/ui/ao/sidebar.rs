@@ -320,8 +320,6 @@ fn sets_panel(
 ) {
     let busy = state.busy() || catalog.loading;
     let open = state.edited(catalog, account).map(|s| s.id);
-    // (a bar over the panel, not beside it: the lines keep their width)
-    ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
     egui::ScrollArea::vertical()
         .id_salt("ao_sets")
         .auto_shrink([false, false])

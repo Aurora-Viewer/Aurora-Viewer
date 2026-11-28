@@ -1886,3 +1886,15 @@ fn a_dropped_entry_stays_put_and_a_move_during_a_save_waits() {
     let out = f.draw(Vec::new()).0;
     assert!(matches!(out.as_slice(), [Action::Edit(_, None)]), "the waiting move is sent");
 }
+
+/// The track of stops puts a time at its stop, and a typed time between the
+/// two stops around it.
+#[test]
+fn a_typed_time_sits_between_its_two_stops() {
+    use super::slot::stop_place_for_tests as place;
+    assert_eq!(place(0.0), 0.0, "Each time: the start");
+    assert!((place(10.0) - 0.2).abs() < 1e-5, "10 s: the second stop");
+    assert!((place(120.0) - 1.0).abs() < 1e-5, "2 min: the end");
+    assert!((place(15.0) - 0.3).abs() < 1e-5, "15 s: half way from 10 s to 20 s");
+    assert_eq!(place(600.0), 1.0, "past 2 min: at the end");
+}
