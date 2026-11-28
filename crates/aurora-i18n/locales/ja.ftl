@@ -16049,6 +16049,11 @@ picker-pipette-no-texture = コピー可能なテクスチャがインベント�
 picker-pipette-no-material = コピー可能なマテリアルがインベントリにありません。
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
+poser-joint-pose = この関節をポーズする
+poser-joint-pose-tip = オフにすると、現在のアニメーションがこの関節を動かします。
+poser-joint-off = アニメーションに追従
+poser-world-lock-animation-tip = 上位の関節がアニメーションに追従している場合、固定した関節も動くことがあります。
+
 
 # Main menu and toolbar customization
 toolbar-button-icons = アイコンのみ

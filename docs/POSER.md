@@ -146,6 +146,11 @@ picked in the world shows its side in the selector. The Hands tab has the
 five presets, applied to the chosen side (both in Mirror, in one undo step),
 and a finger grid: finger × base, middle and tip. Edited joints have violet dots, including their
 in-world markers.
+The **Pose this joint** switch in each row or finger cell and in the selected
+joint pane lets the current animation move that joint again. Off joints have
+hollow markers and greyed transform controls; their saved pose values stay
+available when switched back on. Mirror changes both sides in one undo step.
+
 **Several joints at once**: Shift + click a joint's marker, row or finger
 cell (Ctrl + click works in the lists too) adds it to the selected joint, or
 takes it out; a plain click selects one joint again, and "Only this one"
@@ -187,6 +192,9 @@ rings, shown in amber when the pointer comes near it: dragging it turns the
 joint about the line from the camera to the joint, in the pointer's
 direction. The axis rings win where they are close; locks, Mirror and undo
 apply as for the axis rings.
+
+A pin below a joint that follows animation can move with that animation:
+the live channels take priority over the pin.
 Scale has local X/Y/Z cube handles and a central uniform-scale cube. Drag an
 axis cube outward to enlarge that channel, or drag the central cube right/up
 to enlarge all three channels. Scale values stay bounded and keep their
@@ -233,7 +241,8 @@ otherwise, and "Open a file".
 Load accepts Aurora pose documents, native `.anim` files and `.bvh` files,
 up to 4 MiB. Animation imports sample their first frame. The four load modes
 are All, Rotations only, Unedited joints and Selective rotations. Selective
-loads preserve joints already edited in the current pose. Loading finishes
+loads preserve joints already edited and still posed in the current pose;
+switched-off joints receive the file values and turn back on. Loading finishes
 on the subject originally chosen, even if the picker changes during I/O.
 World locks are reanchored to the destination subject.
 

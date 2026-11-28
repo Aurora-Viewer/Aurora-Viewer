@@ -65,10 +65,11 @@ pub(super) fn document(bytes: &[u8], name: String, rig: &Rig) -> Result<Document
         if !value.is_map() || joints.iter().any(|(b, _)| *b == bone) {
             continue;
         }
-        // a joint left out of the posing keeps what moves it already
-        if value.has("enabled") && !value.get("enabled").as_bool() {
-            continue;
-        }
+        // a joint left out of the posing keeps its values and is loaded
+        // switched off: the animation under the pose moves it again
+        // (FSFloaterPoser::loadPoseFromXml, setPosingAvatarJoint(enabled ||
+        // loadSelective), indra/newview/fsfloaterposer.cpp)
+        let enabled = !value.has("enabled") || value.get("enabled").as_bool();
         let vector = |field: &str| value.has(field).then(|| Vec3::from_array(value.get(field).as_vec3()));
         let euler = vector("rotation").unwrap_or(Vec3::ZERO);
         // translateRotationToQuaternion with SWAP_NOTHING: LLMatrix3(roll,
@@ -115,7 +116,8 @@ pub(super) fn document(bytes: &[u8], name: String, rig: &Rig) -> Result<Document
                 scale,
                 locked,
                 !zero_base || collision_volume,
-            ),
+            )
+            .with_enabled(enabled),
         ));
     }
     joints.sort_by_key(|(bone, _)| *bone);
@@ -408,6 +410,7 @@ mod tests {
             locks: std::collections::HashMap::new(),
             origin: rig.local_rot.clone(),
             hold_rotation: vec![false; rig.len()],
+            enabled: vec![true; rig.len()],
         })
     }
 
@@ -446,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn disabled_joints_and_unknown_keys_are_left_out() {
+    fn disabled_joints_load_switched_off_and_unknown_keys_are_left_out() {
         let rig = rig();
         let bytes = file(
             8,
@@ -456,7 +459,19 @@ mod tests {
                 + &joint("mChest", true, [0.2, 0.0, 0.0], [0.0; 3], [0.0; 3], "")),
         );
         let document = document(&bytes, "Chest".into(), &rig).expect("pose");
-        assert_eq!(document.joints.iter().map(|j| j.name.as_str()).collect::<Vec<_>>(), ["mChest"]);
+        assert_eq!(
+            document.joints.iter().map(|j| j.name.as_str()).collect::<Vec<_>>(),
+            ["mChest", "mHead"]
+        );
+        assert!(!find(&document, "mHead").expect("head").enabled());
+        assert!(find(&document, "mChest").expect("chest").enabled());
+        // a whole load switches the head off, a selective one keeps it posed
+        let head = rig.names["mHead"];
+        for (mode, posed) in [(document::LoadMode::All, false), (document::LoadMode::Selective, true)] {
+            let mut session = session(&rig);
+            assert!(document.apply(&rig, &mut session, mode, Mat4::IDENTITY));
+            assert_eq!(session.pose.enabled[head], posed, "{mode:?}");
+        }
     }
 
     #[test]

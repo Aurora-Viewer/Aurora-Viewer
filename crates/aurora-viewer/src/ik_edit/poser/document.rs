@@ -25,6 +25,15 @@ pub(super) struct Joint {
     /// a deliberate T-pose; absence keeps older files sparse on upload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     change: Option<bool>,
+    /// Absent in existing pose files; all joints used to be enabled.
+    #[serde(default = "enabled_by_default", skip_serializing_if = "is_enabled")]
+    enabled: bool,
+}
+fn enabled_by_default() -> bool {
+    true
+}
+fn is_enabled(enabled: &bool) -> bool {
+    *enabled
 }
 impl Joint {
     pub fn new(name: String, rotation: Quat, translation: Vec3, scale: Vec3, locked: bool, change: bool) -> Self {
@@ -35,7 +44,13 @@ impl Joint {
             scale: scale.to_array(),
             locked,
             change: change.then_some(true),
+            enabled: true,
         }
+    }
+    /// The joint left out of the posing, or in it: a Legacy file's `enabled`.
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
     }
 }
 #[cfg(test)]
@@ -51,6 +66,9 @@ impl Joint {
     }
     pub fn change(&self) -> bool {
         self.change.unwrap_or(false)
+    }
+    pub fn enabled(&self) -> bool {
+        self.enabled
     }
 }
 /// What a document's translations and scales are measured from. Aurora's
@@ -128,6 +146,7 @@ impl Document {
                         } else {
                             (!complete).then_some(true)
                         },
+                        enabled: session.pose.enabled[bone],
                     }
                 })
                 .collect(),
@@ -170,7 +189,7 @@ impl Document {
         let mut lock = Vec::new();
         for joint in &self.joints {
             let Some(&bone) = rig.names.get(&joint.name) else { continue };
-            if selective && session.edited(bone) {
+            if selective && session.edited(bone) && session.pose.enabled[bone] {
                 continue;
             }
             let rotation = Quat::from_array(joint.rotation).normalize();
@@ -196,6 +215,8 @@ impl Document {
                 pose.scales[bone] = if data::scale_valid(scale) { scale } else { base.1 };
             }
             pose.locks.remove(&bone);
+            // The Legacy Viewer's selective load re-enables each loaded joint.
+            pose.enabled[bone] = if selective { true } else { joint.enabled };
             if joint.locked {
                 lock.push(bone);
             }

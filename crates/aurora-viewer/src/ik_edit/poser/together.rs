@@ -181,6 +181,7 @@ mod tests {
             locks: Default::default(),
             origin: rig.local_rot.clone(),
             hold_rotation: vec![false; rig.len()],
+            enabled: vec![true; rig.len()],
         }
     }
 

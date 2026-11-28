@@ -661,36 +661,7 @@ impl Editor {
                     }
                 }
                 storage::Loaded::Animation(animation, mode) => {
-                    let mut pose = ik::LocalPose {
-                        rotations: session.pose.rotations.clone(),
-                        positions: session.pose.positions.clone(),
-                    };
-                    let sample = ik::animations::Sample {
-                        animation: Arc::new(BoundAnim::bind(animation, &world.avatar_lib.rig)),
-                        frame: 0,
-                        time_seconds: None,
-                    };
-                    ik::animations::apply(&world.avatar_lib.rig, &mut pose, Vec3::ZERO, &[sample]);
-                    let selective = matches!(mode, document::LoadMode::Selective | document::LoadMode::SelectiveRotations);
-                    let rotations = matches!(mode, document::LoadMode::Rotations | document::LoadMode::SelectiveRotations);
-                    let edited: Vec<_> = (0..world.avatar_lib.rig.len()).map(|b| session.edited(b)).collect();
-                    session.checkpoint();
-                    let current = Arc::make_mut(&mut session.pose);
-                    for (bone, edited) in edited.iter().enumerate() {
-                        if selective && *edited {
-                            continue;
-                        }
-                        // a joint the file drives is the file's, not the capture's
-                        if current.rotations[bone].dot(pose.rotations[bone]).abs() < 0.9999999 {
-                            current.origin[bone] = world.avatar_lib.rig.local_rot[bone];
-                        }
-                        current.rotations[bone] = pose.rotations[bone];
-                        if !rotations {
-                            current.positions[bone] = pose.positions[bone];
-                        }
-                        current.locks.remove(&bone);
-                    }
-                    current.keep_offsets(&world.avatar_lib.rig, &session.base);
+                    load_animation(&world.avatar_lib.rig, session, animation, mode);
                 }
             }
             self.refresh = true;
@@ -753,6 +724,14 @@ impl Editor {
             }
             if mode == "poser-connected" {
                 self.pose_operation(rig, &pose, controls::Operation::TPose);
+            } else if mode == "poser-joint-off" {
+                self.toggle_pose_joint(rig.names["mHead"]);
+            } else if mode == "poser-finger-off" {
+                self.poser.group = 2;
+                self.set_pose_side(Side::Mirror, rig, &pose);
+                let bone = rig.names["mHandIndex1Left"];
+                self.select(bone, rig, &pose);
+                self.toggle_pose_joint(bone);
             } else if mode == "poser-scale" {
                 self.poser.transform = 2;
             } else if mode == "poser-hands" {
@@ -819,4 +798,54 @@ impl Editor {
             }
         }
     }
+}
+
+/// An animation or BVH file loaded into the poser: its first frame poses the
+/// joints it drives. A selective load leaves the joints the user posed, but
+/// not one switched off, and a joint the file drives is posed again, as a
+/// pose file's selective load does (FSFloaterPoser::loadPoseFromXml,
+/// setPosingAvatarJoint(enabled || loadSelective)): the file's value would
+/// not show on a joint left to the animations.
+fn load_animation(rig: &Rig, session: &mut data::Session, animation: aurora_assets::anim::Animation, mode: document::LoadMode) {
+    let mut pose = ik::LocalPose {
+        rotations: session.pose.rotations.clone(),
+        positions: session.pose.positions.clone(),
+    };
+    let bound = Arc::new(BoundAnim::bind(animation, rig));
+    let mut driven = vec![false; rig.len()];
+    for bone in bound.joints.iter().flatten() {
+        if let Some(d) = driven.get_mut(*bone) {
+            *d = true;
+        }
+    }
+    let sample = ik::animations::Sample {
+        animation: bound,
+        frame: 0,
+        time_seconds: None,
+    };
+    ik::animations::apply(rig, &mut pose, Vec3::ZERO, &[sample]);
+    let selective = matches!(mode, document::LoadMode::Selective | document::LoadMode::SelectiveRotations);
+    let rotations = matches!(mode, document::LoadMode::Rotations | document::LoadMode::SelectiveRotations);
+    let edited: Vec<_> = (0..rig.len()).map(|b| session.edited(b)).collect();
+    let enabled = session.pose.enabled.clone();
+    session.checkpoint();
+    let current = Arc::make_mut(&mut session.pose);
+    for (bone, edited) in edited.iter().enumerate() {
+        if selective && *edited && enabled[bone] {
+            continue;
+        }
+        // a joint the file drives is the file's, not the capture's
+        if current.rotations[bone].dot(pose.rotations[bone]).abs() < 0.9999999 {
+            current.origin[bone] = rig.local_rot[bone];
+        }
+        current.rotations[bone] = pose.rotations[bone];
+        if !rotations {
+            current.positions[bone] = pose.positions[bone];
+        }
+        current.locks.remove(&bone);
+        if driven[bone] {
+            current.enabled[bone] = true;
+        }
+    }
+    current.keep_offsets(rig, &session.base);
 }

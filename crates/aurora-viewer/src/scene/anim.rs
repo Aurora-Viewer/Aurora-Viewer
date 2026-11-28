@@ -1968,7 +1968,7 @@ impl Controller {
         let rotations = bent.as_deref().unwrap_or(rotations);
         let world = self.poser.as_ref().map_or_else(
             || rig.world_with(rotations, pelvis, positions, scale),
-            |(pose, model)| pose.matrices(rig, *model),
+            |(pose, model)| pose.matrices_with_animation(rig, *model, rotations, positions, pelvis),
         );
         if !hold_pose {
             self.update_live_morphs(now);

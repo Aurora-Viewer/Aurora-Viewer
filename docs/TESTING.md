@@ -4190,6 +4190,7 @@ To check with these scenarios:
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_IK_EDIT=<mode>` | Local pose and animation editor (IK Edit, Poser, native animation creation) |
 | `AURORA_DEMO_COUPLE=1\|leave\|clip\|hover\|mirror` | The animation editor's couple mode with a partner who accepts (see Details) |
+| `AURORA_DEMO_POSER=<mode>` | Photo poser, consent and per-joint animation switches (`joint-off`, `finger-off`) |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
 | `AURORA_DEMO_SHAPE_MORPH=1` | The Wolf and the crowd change shape every 200 frames, gliding over 0.65 s (see Details) |
@@ -4370,7 +4371,7 @@ That ignored test creates and removes its own isolated profile.
   you wear but not your HUDs, stands 1 m in front of you facing you as Person
   B, with no name tag, and goes when couple mode ends. The scripted modes turn
   the view to the side once B is there. Capture from frame 1400.
-- **`AURORA_DEMO_POSER=self|frame|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|shape-change|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
+- **`AURORA_DEMO_POSER=self|frame|connected|camera|scale|hands|joint-off|finger-off|face|together|misc|physics|library|settings|close|square-head|shape-change|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar.
   The additional `connected` mode restores a T-pose at 450 and moves the
@@ -4389,6 +4390,10 @@ That ignored test creates and removes its own isolated profile.
   `scale` shows the head's local
   scale handles; `physics` shows the collision volume scale handles. All
   body-part scenarios display only the selected tab's joints and shafts.
+  `joint-off` switches the selected head off at 450; `finger-off` switches
+  both index base joints off in Mirror mode. Capture 620 for row/cell
+  switches, hollow markers, the following-animation label and greyed
+  transform controls. Repeat with `--language en`, `fr` and `ja`.
   Open at frame 420, edit at 450, capture 620. Animesh selects an
   owned synthetic control skeleton. Consent fixtures request at 450, answer
   or expire at 480, and optionally withdraw at 560 (the resident's Stop); the

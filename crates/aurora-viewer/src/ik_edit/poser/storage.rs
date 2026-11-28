@@ -162,7 +162,15 @@ pub(super) fn native(rig: &Rig, pose: &SubjectPose, name: String, priority: i32)
     let mut animation = clip::document::Document::new().meta;
     animation.base_priority = priority;
     let times = [0.0, animation.duration];
-    for (bone, joint_name) in rig.canonical_names.iter().enumerate().filter(|(_, name)| name.starts_with('m')) {
+    // a joint left out of the pose (its switch off) writes no track: the
+    // animations under the pose keep it (FSPoserJoint's enabled state)
+    let posed = |bone: usize| pose.enabled.get(bone).copied().unwrap_or(false);
+    for (bone, joint_name) in rig
+        .canonical_names
+        .iter()
+        .enumerate()
+        .filter(|(bone, name)| name.starts_with('m') && posed(*bone))
+    {
         let rotation = pose.rotations[bone];
         let rest = rig.local_rot[bone];
         // q and -q encode the same rotation. Compare their components to
