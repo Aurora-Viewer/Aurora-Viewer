@@ -15,6 +15,7 @@ pub(crate) use pages::aurora::aurora_word;
 pub use phototools::{PhotoLayer, PhotoState, Section as PhotoSection};
 mod saved_graphics;
 mod scale;
+pub mod share;
 
 pub(crate) use pages::aurora::{Look, set_all as set_look};
 pub use pages::privacy;
@@ -379,6 +380,8 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         }
     } else if what == "cogs" {
         st.demo_open_cogs = true;
+    } else if what == "share" || what == "share-import" {
+        st.share.demo = Some(what == "share-import");
     } else if what == "system-fonts" || what == "system-fonts-scroll" {
         st.demo_font_list = Some(what == "system-fonts-scroll");
     } else if let Some(query) = what.strip_prefix("search=") {
@@ -648,6 +651,8 @@ pub struct OptionsUi {
     pub restore: Option<backup::Pending>,
     pub backup_status: String,
     pub restore_status: String,
+    /// The share code's windows and the undo of the last import.
+    pub share: share::State,
 }
 
 impl OptionsUi {
@@ -1463,6 +1468,53 @@ pub fn describe_settings() -> Vec<(String, String, String)> {
     out
 }
 
+/// The page of each setting a row of Preferences edits (`Page::key`), its
+/// path and the row's label after its group's title, in the interface's
+/// language: what a share code may carry (`settings/share.rs`). A setting
+/// a page only keeps in step (`Cx::track`) has its path for a label; a
+/// setting another page shows too (`Cx::borrow`) comes again with that
+/// page, after every page's own rows.
+pub fn setting_pages() -> Vec<(&'static str, String, String)> {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut s = Settings::default();
+    let d = Settings::default();
+    let mut st = OptionsUi::default();
+    let mut r = OptionsResult::default();
+    let mut out = Vec::new();
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Collect, "");
+        for page in Page::ALL {
+            run_page(&mut cx, page, None);
+        }
+        let groups: HashMap<&'static str, String> = std::mem::take(&mut cx.grouped).into_iter().collect();
+        // a label alone ("Direct") may need its group ("Chat colours")
+        let labels: HashMap<String, String> = std::mem::take(&mut cx.described)
+            .into_iter()
+            .map(|(path, label, _)| {
+                let label = match groups.get(path) {
+                    Some(group) if !group.is_empty() && !label.contains(group.as_str()) => format!("{group} › {label}"),
+                    _ => label,
+                };
+                (path.replace(' ', ""), label)
+            })
+            .collect();
+        // the rows a page borrows come after every page's own rows: the
+        // owner keeps the setting, unless the borrower is never shared
+        let borrowed = std::mem::take(&mut cx.borrowed);
+        out = std::mem::take(&mut cx.collected)
+            .into_iter()
+            .chain(borrowed)
+            .map(|(page, path)| {
+                let path = path.replace(' ', "");
+                let label = labels.get(&path).cloned().unwrap_or_else(|| path.clone());
+                (page.key(), path, label)
+            })
+            .collect();
+    });
+    out
+}
+
 /// Unambiguous link destinations and their labels in the current UI language.
 type SettingLabels = HashMap<String, Option<String>>;
 
@@ -1657,6 +1709,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     chat_import_modal(ctx, p, st, &mut r, *open);
     legacy_lists::modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
+    share::modals(ctx, p, s, st, &mut r, *open);
     saved_graphics::confirm(ctx, p, s, st, &mut r, *open);
     st.defaults = Some(d);
     r

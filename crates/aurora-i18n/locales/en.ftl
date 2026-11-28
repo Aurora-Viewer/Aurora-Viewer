@@ -3771,6 +3771,58 @@ ui-options-backup-account-kept = The account logged in keeps its own files: rest
 ui-options-backup-restore-confirm = Restore
 ui-options-backup-restored = Settings restored from the backup.
 ui-options-backup-restore-failed = Some files of the backup could not be written.
+ui-options-share = Share with friends
+ui-options-share-keywords = share code export import copy paste friend looks preset clipboard
+ui-options-share-export = Share my settings
+ui-options-share-export-help = Copies a share code of the pages you pick (graphics, colors, camera…) to paste to a friend in a notecard or a message. Only the settings you changed go in: never your login, this PC's devices and folders, the Privacy, Protections, RLVa, Network, Language and updates, Confirmations, Commands and Game Controls pages, nor the settings that protect you (auto-accepting inventory, media and music that play by themselves, media on other avatars, link previews loading by themselves, announces and script errors on a chat channel, the warnings before items move into an object, the bridge).
+ui-options-share-export-button = Share…
+ui-options-share-import = Use shared settings
+ui-options-share-import-help = Paste a share code a friend gave you: every change is listed, page by page, before anything is applied, and the last import can be undone. A code never changes your confirmations, chat commands or the settings that protect you.
+ui-options-share-import-button = Import…
+ui-options-share-undo = Undo the last import
+ui-options-share-title = Share my settings
+ui-options-share-intro = Pick the pages to share. Only the settings you changed from the defaults go in the code; your login, this PC's devices and folders, the Privacy, Protections, RLVa, Network, Language and updates, Confirmations, Commands and Game Controls pages, and the settings that protect you (auto-accepting inventory, media and music that play by themselves, media on other avatars, link previews loading by themselves, announces and script errors on a chat channel, the warnings before items move into an object, the bridge) never do.
+ui-options-share-looks = Looks only
+ui-options-share-everything = Everything changed
+ui-options-share-none = None
+ui-options-share-page = { $page } ({ $count })
+ui-options-share-name = Name of the code (optional), e.g. Cozy evening
+ui-options-share-count = { $count ->
+    [one] { $count } setting in the code.
+   *[other] { $count } settings in the code.
+    }
+ui-options-share-copied = { $count ->
+    [one] Copied: { $count } setting. Paste it to a friend in a notecard or a message.
+   *[other] Copied: { $count } settings. Paste it to a friend in a notecard or a message.
+    }
+ui-options-share-copy = Copy the code
+ui-options-share-import-title = Use shared settings
+ui-options-share-import-intro = Paste a share code below. Every change is listed with your value and the new one; nothing changes until you apply.
+ui-options-share-not-a-code = This is not a share code of Aurora's settings.
+ui-options-share-too-long = This code is too long to be read.
+ui-options-share-left-out = { $count ->
+    [one] { $count } line left out: a setting this viewer does not know, or never takes from a code.
+   *[other] { $count } lines left out: settings this viewer does not know, or never takes from a code.
+    }
+ui-options-share-reset-others = Also put the other settings of these pages back to their defaults
+ui-options-share-reset-others-help = So that these pages end up exactly as the sender's: your own changes on them that the code does not name go back to their defaults.
+ui-options-share-nothing = You already have all these settings.
+ui-options-share-on = On
+ui-options-share-off = Off
+ui-options-share-to-default = { $value } (default)
+ui-options-share-apply = { $count ->
+    [one] Apply { $count } change
+   *[other] Apply { $count } changes
+    }
+ui-options-share-applied = { $count ->
+    [one] { $count } setting taken from the code.
+   *[other] { $count } settings taken from the code.
+    }
+ui-options-share-applied-named = { $count ->
+    [one] { $count } setting taken from “{ $name }”.
+   *[other] { $count } settings taken from “{ $name }”.
+    }
+ui-options-share-undone = The last import was undone.
 ui-options-remove-aurora = Remove Aurora from this computer
 ui-options-remove-aurora-help = Removes what Aurora registered on this computer outside its own folders: the link handler, the keys and saved passwords of the system's credential store, the Blender add-on. Then lists the folders that remain, for you to delete with the viewer.
 ui-options-remove-aurora-button = Remove…

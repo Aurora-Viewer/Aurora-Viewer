@@ -257,6 +257,55 @@ pub fn page(cx: &mut Cx) {
             },
         );
     });
+    // a share code (options/share.rs): settings handed to a friend, page
+    // by page, after a preview; outside the page's reset like the backup
+    cx.group(tr!("ui-options-share"), |cx| {
+        use crate::ui::widgets::{ActionKind, action_button};
+        let size = Vec2::new(0.0, 26.0);
+        cx.keywords(tr!("ui-options-share-keywords")).row_with(
+            tr!("ui-options-share-export"),
+            tr!("ui-options-share-export-help"),
+            &Nothing,
+            |ui, s, st, _| {
+                if action_button(ui, &p, "share", tr!("ui-options-share-export-button"), ActionKind::Flat, size).clicked() {
+                    st.share.open_export(s);
+                }
+                false
+            },
+        );
+        cx.keywords(tr!("ui-options-share-keywords")).row_with(
+            tr!("ui-options-share-import"),
+            tr!("ui-options-share-import-help"),
+            &Nothing,
+            |ui, s, st, r| {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        if action_button(
+                            ui,
+                            &p,
+                            "clipboard-text-filled",
+                            tr!("ui-options-share-import-button"),
+                            ActionKind::Flat,
+                            size,
+                        )
+                        .clicked()
+                        {
+                            st.share.open_import();
+                        }
+                        if st.share.can_undo()
+                            && action_button(ui, &p, "arrow-back-up", tr!("ui-options-share-undo"), ActionKind::Flat, size).clicked()
+                        {
+                            super::super::share::undo(s, st, r);
+                        }
+                    });
+                    if !st.share.status.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(&st.share.status).size(11.5).color(p.muted)).wrap());
+                    }
+                });
+                false
+            },
+        );
+    });
     // the Legacy Viewer's uninstaller, from the viewer (uninstall.rs): what
     // it registered outside its folders, confirmed first
     cx.group(tr!("ui-options-remove-aurora"), |cx| {

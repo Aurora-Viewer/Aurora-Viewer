@@ -3774,6 +3774,58 @@ ui-options-backup-account-kept = Le compte connecté garde ses propres fichiers 
 ui-options-backup-restore-confirm = Restaurer
 ui-options-backup-restored = Réglages restaurés depuis la sauvegarde.
 ui-options-backup-restore-failed = Certains fichiers de la sauvegarde n'ont pas pu être écrits.
+ui-options-share = Partager avec des amis
+ui-options-share-keywords = partager code exporter importer copier coller ami apparence préréglage presse-papiers share export import
+ui-options-share-export = Partager mes réglages
+ui-options-share-export-help = Copie un code de partage des pages choisies (graphismes, couleurs, caméra…) à coller à un ami dans une notecard ou un message. Seuls les réglages que vous avez changés y figurent : jamais votre connexion, les périphériques et dossiers de ce PC, les pages Confidentialité, Protections, RLVa, Réseau, Langue et mises à jour, Confirmations, Commandes et Contrôles de jeu, ni les réglages qui vous protègent (acceptation automatique de l'inventaire, médias et musique qui démarrent seuls, médias sur les autres avatars, aperçus de liens chargés seuls, annonces et erreurs de script sur un canal de chat, avertissements avant de déplacer des objets dans un objet, le bridge).
+ui-options-share-export-button = Partager…
+ui-options-share-import = Utiliser des réglages partagés
+ui-options-share-import-help = Collez un code de partage reçu d'un ami : chaque changement est listé, page par page, avant que rien ne soit appliqué, et le dernier import peut être annulé. Un code ne change jamais vos confirmations, vos commandes de chat ni les réglages qui vous protègent.
+ui-options-share-import-button = Importer…
+ui-options-share-undo = Annuler le dernier import
+ui-options-share-title = Partager mes réglages
+ui-options-share-intro = Choisissez les pages à partager. Seuls les réglages que vous avez changés par rapport aux valeurs par défaut vont dans le code ; votre connexion, les périphériques et dossiers de ce PC, les pages Confidentialité, Protections, RLVa, Réseau, Langue et mises à jour, Confirmations, Commandes et Contrôles de jeu, et les réglages qui vous protègent (acceptation automatique de l'inventaire, médias et musique qui démarrent seuls, médias sur les autres avatars, aperçus de liens chargés seuls, annonces et erreurs de script sur un canal de chat, avertissements avant de déplacer des objets dans un objet, le bridge) n'y vont jamais.
+ui-options-share-looks = Apparence seulement
+ui-options-share-everything = Tout ce qui a changé
+ui-options-share-none = Aucune
+ui-options-share-page = { $page } ({ $count })
+ui-options-share-name = Nom du code (facultatif), par ex. Soirée douce
+ui-options-share-count = { $count ->
+    [one] { $count } réglage dans le code.
+   *[other] { $count } réglages dans le code.
+    }
+ui-options-share-copied = { $count ->
+    [one] Copié : { $count } réglage. Collez-le à un ami dans une notecard ou un message.
+   *[other] Copié : { $count } réglages. Collez-le à un ami dans une notecard ou un message.
+    }
+ui-options-share-copy = Copier le code
+ui-options-share-import-title = Utiliser des réglages partagés
+ui-options-share-import-intro = Collez un code de partage ci-dessous. Chaque changement est listé avec votre valeur et la nouvelle ; rien ne change avant que vous appliquiez.
+ui-options-share-not-a-code = Ce n'est pas un code de partage des réglages d'Aurora.
+ui-options-share-too-long = Ce code est trop long pour être lu.
+ui-options-share-left-out = { $count ->
+    [one] { $count } ligne écartée : un réglage que ce viewer ne connaît pas, ou ne prend jamais d'un code.
+   *[other] { $count } lignes écartées : des réglages que ce viewer ne connaît pas, ou ne prend jamais d'un code.
+    }
+ui-options-share-reset-others = Remettre aussi les autres réglages de ces pages à leurs valeurs par défaut
+ui-options-share-reset-others-help = Pour que ces pages soient exactement celles de l'expéditeur : vos propres changements sur ces pages que le code ne nomme pas reviennent à leurs valeurs par défaut.
+ui-options-share-nothing = Vous avez déjà tous ces réglages.
+ui-options-share-on = Activé
+ui-options-share-off = Désactivé
+ui-options-share-to-default = { $value } (par défaut)
+ui-options-share-apply = { $count ->
+    [one] Appliquer { $count } changement
+   *[other] Appliquer { $count } changements
+    }
+ui-options-share-applied = { $count ->
+    [one] { $count } réglage pris du code.
+   *[other] { $count } réglages pris du code.
+    }
+ui-options-share-applied-named = { $count ->
+    [one] { $count } réglage pris de « { $name } ».
+   *[other] { $count } réglages pris de « { $name } ».
+    }
+ui-options-share-undone = Le dernier import a été annulé.
 ui-options-remove-aurora = Retirer Aurora de cet ordinateur
 ui-options-remove-aurora-help = Retire ce qu'Aurora a enregistré sur cet ordinateur hors de ses propres dossiers : le gestionnaire de liens, les clés et mots de passe enregistrés dans le coffre d'identifiants du système, le module Blender. Puis liste les dossiers qui restent, à supprimer vous-même avec le viewer.
 ui-options-remove-aurora-button = Retirer…

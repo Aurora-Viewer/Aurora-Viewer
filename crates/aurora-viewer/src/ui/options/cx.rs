@@ -334,6 +334,12 @@ pub(super) struct Cx<'a> {
     pub collected: Vec<(Page, &'static str)>,
     /// `Mode::Collect`: each setting a row edits, with its label and hint.
     pub described: Vec<(&'static str, String, String)>,
+    /// `Mode::Collect`: the group each setting's row is in.
+    pub grouped: Vec<(&'static str, String)>,
+    /// `Mode::Collect`: the settings a page shows from another page's rows
+    /// (`Cx::borrow`), with the page that shows them. A share code refuses
+    /// a setting that a page never shared shows, whichever page owns it.
+    pub borrowed: Vec<(Page, &'static str)>,
     /// A setting changed (the app saves and applies them).
     pub changed: bool,
 }
@@ -407,6 +413,8 @@ impl<'a> Cx<'a> {
             row_paths: Vec::new(),
             collected: Vec::new(),
             described: Vec::new(),
+            grouped: Vec::new(),
+            borrowed: Vec::new(),
             changed: false,
         }
     }
@@ -501,6 +509,9 @@ impl<'a> Cx<'a> {
     /// counts and the resets reach them on their page, a setting keeping
     /// one page. They show in the order of that page, without its cogs.
     pub fn borrow(&mut self, page: Page, tab: usize, paths: &[&'static str]) {
+        if self.mode == Mode::Collect && self.pick.is_none() {
+            self.borrowed.extend(paths.iter().map(|path| (self.page, *path)));
+        }
         if self.mode != Mode::Show || self.pick.is_some() {
             return;
         }
@@ -676,6 +687,7 @@ impl<'a> Cx<'a> {
                 t.paths(&mut paths);
                 self.described
                     .extend(paths.iter().map(|path| (*path, label.to_owned(), hint.to_owned())));
+                self.grouped.extend(paths.iter().map(|path| (*path, self.group.clone())));
                 self.collected.extend(paths.into_iter().map(|p| (self.page, p)));
                 return false;
             }
