@@ -34,7 +34,7 @@ fn name_available(c: Option<&StateConfig>, name: &str, except: Option<Uuid>) -> 
         c.steps.iter().any(|s| s.group && Some(s.id) != except && s.name == name)
             || c.tracks.iter().any(|t| Some(t.id) != except && t.name == name)
     }) {
-        return Err(aurora_i18n::tr!("ao-combine-name-exists").into());
+        return Err(aurora_i18n::tr!("ao-stack-name-exists").into());
     }
     Ok(name)
 }

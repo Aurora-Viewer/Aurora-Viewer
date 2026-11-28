@@ -70,6 +70,7 @@ pub mod preview;
 mod preview_blend;
 mod preview_mesh;
 mod preview_mips;
+mod preview_veil;
 pub mod probes;
 pub mod projector_shadows;
 mod readback;

@@ -5,6 +5,7 @@
 use crate::pipeline_cache::CachedPipelines;
 use crate::preview_blend::{Exact, Order};
 pub use crate::preview_mesh::paint as paint_antialiased_mesh;
+pub use crate::preview_veil::Veil;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use std::{
@@ -188,6 +189,8 @@ struct Region {
     view: View,
     pose: Option<Pose>,
     highlight: Option<Highlight>,
+    /// Its bottom band blurred (preview_veil.rs).
+    veil: Option<Veil>,
 }
 
 /// A window that shows previews: the viewer's own, or one of the interface
@@ -269,6 +272,7 @@ fn paint_tile(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: View, si
                 view,
                 pose: None,
                 highlight: None,
+                veil: None,
             }),
         }));
     }
@@ -311,6 +315,7 @@ pub fn paint_with_pose(
             view: *view,
             pose,
             highlight: None,
+            veil: None,
         }),
     }));
     response
@@ -327,6 +332,22 @@ pub fn paint_stage(
     pose: Option<Pose>,
     highlight: Option<Highlight>,
 ) {
+    paint_stage_veiled(ui, id, model, view, rect, pose, highlight, None);
+}
+
+/// `paint_stage` with its bottom band blurred more and more toward the
+/// bottom edge (`Veil`, preview_veil.rs), under a caption laid there.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_stage_veiled(
+    ui: &egui::Ui,
+    id: egui::Id,
+    model: Arc<Model>,
+    view: View,
+    rect: egui::Rect,
+    pose: Option<Pose>,
+    highlight: Option<Highlight>,
+    veil: Option<Veil>,
+) {
     if ui.is_rect_visible(rect) {
         ui.painter().add(egui::Shape::Callback(egui::PaintCallback {
             rect,
@@ -336,6 +357,7 @@ pub fn paint_stage(
                 view,
                 pose,
                 highlight,
+                veil,
             }),
         }));
     }
@@ -400,6 +422,8 @@ struct Pipelines {
     /// The exact order of the see-through faces, for each of `passes`.
     order: [Option<Order>; 2],
     mips: crate::preview_mips::Mips,
+    /// The veil's pass, made when first used (preview_veil.rs).
+    veil: Option<crate::preview_veil::Pipeline>,
     sampler: wgpu::Sampler,
     /// The shadow map, for the passes that read it, and the map of none.
     shadow_layout: wgpu::BindGroupLayout,
@@ -425,6 +449,9 @@ struct Target {
     last: Option<View>,
     last_pose: Option<Pose>,
     last_highlight: Option<Highlight>,
+    last_veil: Option<Veil>,
+    /// The picture's copy its veil is drawn from (preview_veil.rs).
+    veil: Option<crate::preview_veil::Copy>,
     shadow: Option<Shadow>,
     outline: Option<Outline>,
     /// For its see-through faces, in a studio.
@@ -603,6 +630,7 @@ impl Pipelines {
             extras: None,
             order: [None, None],
             mips: crate::preview_mips::Mips::new(device),
+            veil: None,
             sampler,
             shadow_layout,
             shadow_sampler,
@@ -941,7 +969,7 @@ impl Target {
     /// What it draws to: the picture, the samples before it (with
     /// anti-aliasing), the depth.
     fn surfaces(device: &wgpu::Device, size: [u32; 2], samples: u32) -> (wgpu::TextureView, Option<wgpu::TextureView>, wgpu::TextureView) {
-        let target = |label, format, samples| {
+        let target = |label, format, samples, copied: bool| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some(label),
@@ -954,14 +982,21 @@ impl Target {
                     sample_count: samples,
                     dimension: wgpu::TextureDimension::D2,
                     format,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    // (the picture is copied for its veil, preview_veil.rs)
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | if copied {
+                            wgpu::TextureUsages::COPY_SRC
+                        } else {
+                            wgpu::TextureUsages::empty()
+                        },
                     view_formats: &[],
                 })
                 .create_view(&Default::default())
         };
-        let color = target("Preview color", wgpu::TextureFormat::Rgba8Unorm, 1);
-        let smooth = (samples > 1).then(|| target("Preview samples", wgpu::TextureFormat::Rgba8Unorm, samples));
-        let depth = target("Preview depth", wgpu::TextureFormat::Depth32Float, samples);
+        let color = target("Preview color", wgpu::TextureFormat::Rgba8Unorm, 1, true);
+        let smooth = (samples > 1).then(|| target("Preview samples", wgpu::TextureFormat::Rgba8Unorm, samples, false));
+        let depth = target("Preview depth", wgpu::TextureFormat::Depth32Float, samples, false);
         (color, smooth, depth)
     }
 
@@ -1158,6 +1193,8 @@ impl Target {
             last: None,
             last_pose: None,
             last_highlight: None,
+            last_veil: None,
+            veil: None,
             shadow: None,
             outline: None,
             exact: None,
@@ -1174,7 +1211,8 @@ impl Target {
         view: View,
         pose: Option<&Pose>,
         highlight: Option<&Highlight>,
-    ) {
+        veil: Option<Veil>,
+    ) -> bool {
         // nothing outlined, or not at all: no outline to draw
         let highlight = highlight.filter(|h| {
             h.classes
@@ -1189,10 +1227,11 @@ impl Target {
         let same_highlight = Highlight::same(highlight, self.last_highlight.as_ref());
         // (the last picture may have found its pool too small)
         let short = self.exact.as_ref().is_some_and(|e| e.short(device));
-        if self.last == Some(view) && same_pose && same_highlight && !short {
-            return;
+        if self.last == Some(view) && same_pose && same_highlight && self.last_veil == veil && !short {
+            return false;
         }
         self.last = Some(view);
+        self.last_veil = veil;
         self.last_pose = pose.cloned();
         self.last_highlight = highlight.cloned();
         pipeline.prepare(device, self.samples);
@@ -1415,7 +1454,7 @@ impl Target {
             });
         }
         let (Some(highlight), Some(outline), Some(extras)) = (highlight, &self.outline, &pipeline.extras) else {
-            return;
+            return true;
         };
         let uniform = OutlineUniform {
             colors: highlight.colors,
@@ -1475,6 +1514,7 @@ impl Target {
         pass.set_pipeline(&extras.outline);
         pass.set_bind_group(0, &outline.group, &[]);
         pass.draw(0..3, 0..1);
+        true
     }
 }
 
@@ -1585,7 +1625,7 @@ impl Cache {
             if (target.size, target.samples) != (size, samples) {
                 target.resize(device, egui, pipeline, size, samples);
             }
-            target.draw(
+            let drawn = target.draw(
                 device,
                 queue,
                 encoder,
@@ -1593,7 +1633,21 @@ impl Cache {
                 region.view,
                 region.pose.as_ref(),
                 region.highlight.as_ref(),
+                region.veil,
             );
+            if drawn && let Some(veil) = region.veil {
+                crate::preview_veil::record(
+                    device,
+                    queue,
+                    encoder,
+                    &mut pipeline.veil,
+                    &pipeline.mips,
+                    &mut target.veil,
+                    &target.color,
+                    target.size,
+                    veil,
+                );
+            }
             seen.insert(region.id);
             let mut mesh = egui::Mesh::with_texture(target.texture);
             mesh.add_rect_with_uv(
@@ -1702,7 +1756,7 @@ mod tests {
                 background: [0.0, 0.0, 0.0, 1.0],
                 ..Default::default()
             };
-            target.draw(&device, &queue, &mut encoder, &mut pipeline, view, None, None);
+            target.draw(&device, &queue, &mut encoder, &mut pipeline, view, None, None, None);
             let pixels = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Edge pixels"),
                 size: crate::readback::readback_size(u64::from(SIZE * SIZE * 4)),
@@ -1814,7 +1868,7 @@ mod tests {
                 studio: Some(Studio { floor: None }),
                 ..Default::default()
             };
-            target.draw(&device, &queue, &mut encoder, &mut pipeline, view, None, None);
+            target.draw(&device, &queue, &mut encoder, &mut pipeline, view, None, None, None);
             let pixels = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Order pixels"),
                 size: crate::readback::readback_size(u64::from(SIZE * SIZE * 4)),
@@ -1967,6 +2021,7 @@ mod tests {
                     distance: 3.0,
                     ..Default::default()
                 },
+                None,
                 None,
                 None,
             );

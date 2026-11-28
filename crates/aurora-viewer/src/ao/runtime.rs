@@ -291,6 +291,12 @@ impl Runtime {
     pub fn index(&self, state: State, slot: Uuid) -> usize {
         self.cursors.get(&(state, slot)).map_or(0, |c| c.index)
     }
+    /// When the list of `slot` switches to its next entry on its timer, if
+    /// it does (the AO window's countdown).
+    pub fn next_switch(&self, state: State, slot: Uuid) -> Option<Instant> {
+        self.cursors.get(&(state, slot)).and_then(|c| c.next)
+    }
+
     pub fn choose(&mut self, state: State, slot: Uuid, index: usize) {
         let c = self.cursors.entry((state, slot)).or_default();
         c.index = index;
@@ -313,6 +319,12 @@ impl Runtime {
         self.choose(state, config.folder, index);
         true
     }
+    /// Whether the AO plays `id` on our avatar now (the AO window's preview
+    /// leaves these out of what it lays its entry over).
+    pub fn plays(&self, id: &Uuid) -> bool {
+        self.active.iter().any(|a| a.id == *id)
+    }
+
     pub fn finished(&mut self, id: Uuid) {
         if self.owned.contains_key(&id) {
             self.completed.insert(id);

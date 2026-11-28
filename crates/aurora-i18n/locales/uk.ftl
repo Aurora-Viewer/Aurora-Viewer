@@ -1579,10 +1579,7 @@ inventory-move-confirm = Перемістити
 inventory-move-connection-unavailable = Неможливо перемістити: з'єднання з регіоном недоступне.
 inventory-move-invalid-target = Не вдалося знайти предмет або папку призначення. Перезавантажте інвентар.
 ao-title = AO · Анімації аватара
-ao-help = Виберіть стан ліворуч. Клацніть анімацію, щоб вибрати її, або перетягніть, щоб змінити її порядок. «Об'єднати…» створює одночасну групу або доріжку з власним циклом. Набори й параметри зберігаються в #Aurora/Aurora AO.
 ao-enabled = Увімкнути AO
-ao-pause = Пауза
-ao-stands = Стійки й повороти
 ao-set = Набір
 ao-reload = Перезавантажити набори з інвентаря
 ao-new = Новий набір
@@ -1605,22 +1602,16 @@ ao-empty = Щоб почати, створіть набір або імпорт�
 ao-sits = Замінювати сидіння
 ao-smart = Розумне сидіння
 ao-mouselook = Вимикати стояння у вигляді від першої особи
-ao-default = Набір за замовчуванням
 ao-current = Поточний стан: { $state }
 ao-previous = Попередня анімація
 ao-next = Наступна анімація
-ao-add = Додати анімацію
 ao-play-tip = Двічі клацніть, щоб вибрати цю анімацію
 ao-up = Вгору
 ao-down = Вниз
-ao-track = Доріжка
-ao-group = Група
-ao-drop = Додайте або перетягніть сюди анімацію.
 ao-container-name = Назва групи або доріжки
 ao-target = Додати в: { $name }
 ao-state-root = Основний стан
 ao-cycle = По колу
-ao-random = Випадково
 ao-set-name = Назва набору AO
 ao-remove-confirm = Вилучити цей запис AO? Початкові анімації збережуться. Вилучені папки переміщуються в Кошик.
 ao-choose = Вибрати з інвентаря
@@ -1670,7 +1661,6 @@ ao-water-shore-exit = Стрибок на перешкоду
 ao-swim-slots = Анімації плавання цього набору
 ao-swim-required = Бракує обов'язкових анімацій плавання.
 ao-swim-required-missing = Потрібна, щоб увімкнути плавання: анімації немає.
-ao-swim-required-present = Потрібна, щоб увімкнути плавання: анімацію призначено.
 ao-swim-choose = Виберіть анімацію…
 ao-swim-ready = Обов'язкові анімації плавання призначено.
 ao-swimming-forward = Плавання на поверхні
@@ -1681,7 +1671,6 @@ ao-water-dive-entry = Пірнання · вхід у воду
 ao-water-cannonball = Бомбочка
 ao-swim-optional = Необов'язково. Ваші поточні анімації плавання працюють і без цього слота.
 movement-water-jumps = Стрибки з пірнанням і бомбочки
-movement-water-jumps-help = Після стрибка натисніть протягом 0,45 с, щоб пірнути. Пізніше натискання, ще одне натискання під час пірнання або натискання в польоті над водою виконує бомбочку.
 ao-swimming-up = Спливання
 ao-swimming-down = Занурення
 ao-always = Завжди
@@ -13471,19 +13460,7 @@ movement-running = Покращити біг
 movement-fly-assist = Покращити політ
 movement-swimming = Увімкнути плавання
 movement-jump-obstacles = Вистрибувати з води біля крутих перешкод
-movement-key-unbound = Не призначено
-movement-key-double = Подвійне натискання
-movement-water-submerge = На поверхні: зануритися
-movement-water-surface = Під водою: повернутися на поверхню
-movement-water-leap = На поверхні: вистрибнути з води
-movement-water-takeoff = На поверхні: злетіти
-movement-water-dive = Пірнання: одразу після стрибка
-movement-water-cannonball = «Бомбочка»: у польоті або повторне натискання під час пірнання
-movement-water-walk-crouch = Присісти / іти навпочіпки
-movement-water-walk-jump = Стрибнути й приземлитися на воду
 movement-water-walk = Іти / бігти по воді
-movement-run-multiplier = Множник бігу
-movement-run-help = ×1 залишає звичайний біг без змін. Збільште до ×5, щоб прискорити біг; ходьба не змінюється.
 movement-run-awaiting-script = Біг: очікування свіжої відповіді від моста.
 movement-run-no-command = Біг: скрипт зараз не отримує команди прискорення.
 movement-run-no-controls = очікування клавіш руху
@@ -13499,8 +13476,6 @@ movement-run-ramping = поступове прискорення
 movement-run-saturated = досягнуто межі тяги
 movement-run-regulation = Запитана тяга: { $power } %; ціль розгону: { $ramp } м/с; перезапусків: { $restarts }.
 movement-run-feedback = Біг: { $state }. Ціль { $target } м/с; скрипт вимірює { $speed } м/с; оновлень тяги: { $pushes }.
-movement-swim-speed = Плавання
-movement-fly-multiplier = Множник польоту
 movement-float-height = Висота плавучості
 movement-float-help = Зсув від положення на поверхні за замовчуванням: додатне значення — вище, від'ємне — нижче. 0 м повертає висоту за замовчуванням.
 movement-speed-help = Кожне покращення можна вмикати окремо. Фізика симулятора й затримка можуть обмежувати швидкість. Фіксація положення має пріоритет.
@@ -13603,26 +13578,8 @@ bridge-request-http = Симулятор відхилив запит мосту 
 bridge-request-gone = Адреса мосту змінилася разом із регіоном. Повторне з'єднання.
 bridge-request-response = Міст повернув нечитабельний або неповний стан. Повторна спроба.
 bridge-request-sequence = Відповідь мосту не відповідає надісланій команді. Повторна спроба.
-ao-design-title = Дослідження компонування AO
-ao-design-help = Порівняйте поточне вбудоване вікно AO з двома компонуваннями руху. Наявні елементи керування AO використовують те саме вікно й віджети.
-ao-design-current = Поточне вікно
-ao-design-tabs = Вкладки «Анімації» / «Рух»
-ao-design-section = Згортуваний розділ руху
-ao-design-avatar = Стан попереднього перегляду аватара
-ao-design-animations = Анімації
-ao-design-movement = Рух
-ao-design-swim-animations = Вибрати анімації плавання в AO
-ao-design-open = Відкрити AO
-ao-design-reset = Скинути значення руху
-ao-design-session = Офлайн-прототип. Значення руху тимчасові; жоден двигун чи онлайн-обліковий запис не змінюється.
-ao-design-movement-help = Кожна допомога в русі незалежна. Активація AO керує відтворенням анімацій.
-ao-design-animation-help = Анімації плавання вибираються в станах плавання AO, з його списків інвентарю.
-ao-design-passage = Лише попередній перегляд: тут було б надіслано запит на прохід крізь перешкоду.
-ao-tab-animations = Анімації
-ao-tab-movement = Рух (ЕКСПЕРИМЕНТАЛЬНО)
 ao-movement-help = Допомога в русі налаштовується незалежно від інших анімацій AO.
 movement-pass-enable = Прохід крізь перешкоди
-movement-fly-help = ×1 залишає звичайний політ. Збільште до ×5, щоб літати швидше.
 radar-opt-bridge = Виправляти відсутні висоти за допомогою мосту Aurora
 bridge-script-info-loading = Отримання інформації про скрипти через міст Aurora…
 bridge-script-info-region = Інформація про скрипти доступна лише для об'єкта у вашому поточному регіоні.
@@ -13659,60 +13616,11 @@ bridge-object-info-result =
     Ваше поточне положення: { $observer }
 bridge-query-timeout = Міст не повернув запитану інформацію вчасно. Спробуйте ще раз.
 bridge-query-interrupted = Запит інформації перервано зміною регіону або з'єднання з мостом. Спробуйте ще раз.
-ao-states = Стани
-ao-combine = Об'єднати…
 ao-combine-title = Об'єднання анімацій
-ao-new-group = Нова група
-ao-new-track = Нова доріжка
-ao-group-name = Назва групи
-ao-track-name = Назва доріжки
-ao-create-group = Створити групу
-ao-create-track = Створити доріжку
-ao-combine-name-exists = Група або доріжка з такою назвою вже існує.
-ao-rename-combination = Перейменувати групу або доріжку
-ao-group-example = Група відтворює кілька анімацій одночасно. Наприклад: позу тіла й анімацію рук.
-ao-track-example = Доріжка має власний цикл поряд з основним. Наприклад: жести руками змінюються, а пози тіла йдуть своїм циклом.
 ao-combine-existing = Перемістити сюди анімації зі стану { $state }
 ao-combine-existing-help = Позначені анімації буде вилучено з основного списку.
-ao-back-state = ← Назад до { $state }
-ao-group-kind = Група · Одночасне відтворення
-ao-track-kind = Доріжка · Незалежний цикл
-ao-group-explanation = Усі анімації цієї групи відтворюються разом.
-ao-track-explanation = По одній анімації за раз, поряд із циклом { $state }.
-ao-add-group = Додати до групи
-ao-add-track = Додати до доріжки
-ao-group-cycle-help = Ця група — один запис у чергуванні { $state }.
-ao-dissolve-group = Розгрупувати анімації
-ao-dissolve-track = Розформувати доріжку
 ao-combine-empty = Додайте сюди анімації.
-ao-parallel-tracks = Паралельні доріжки
-ao-entry-help = Клацніть, щоб вибрати або відкрити · Перетягніть, щоб змінити порядок
-ao-track-cycle = Чергування доріжки
-ao-state-cycle = Чергування { $state }
-ao-auto-cycle = Перемикати автоматично
-ao-cycle-interval = Інтервал
-ao-group-summary = { $count ->
-    [one] Група · { $count } анімація
-    [few] Група · { $count } анімації разом
-    [many] Група · { $count } анімацій разом
-   *[other] Група · { $count } анімації разом
-    }
-ao-track-summary = { $count ->
-    [one] Доріжка · { $count } анімація · Незалежний цикл
-    [few] Доріжка · { $count } анімації · Незалежний цикл
-    [many] Доріжка · { $count } анімацій · Незалежний цикл
-   *[other] Доріжка · { $count } анімації · Незалежний цикл
-    }
-ao-group-count = { $count ->
-    [one] { $count } анімація для відтворення
-    [few] { $count } анімації для спільного відтворення
-    [many] { $count } анімацій для спільного відтворення
-   *[other] { $count } анімації для спільного відтворення
-    }
-movement-run-speed = Швидкість бігу
-movement-flight-speed = Швидкість польоту
 ao-combine-group-choice = Відтворювати кілька анімацій разом
-ao-combine-track-choice = Додати незалежний цикл
 numeric-increase = Збільшити
 numeric-decrease = Зменшити
 build-status-no-mod = Не можна змінювати

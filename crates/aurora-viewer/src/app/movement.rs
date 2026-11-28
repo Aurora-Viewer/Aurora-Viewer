@@ -568,12 +568,10 @@ impl App {
     pub(super) fn open_movement(&mut self) {
         self.ao_ui.tab = 1;
         crate::ui::widgets::open_floater(&self.egui_ctx, "ao", &mut self.panels.ao);
-        if let Some(prototype) = &mut self.ao_ui.prototype {
-            prototype.open_movement();
-        }
     }
 
     pub(super) fn ao_window(&mut self, ctx: &egui::Context, p: &Palette) {
+        self.ao_preview_stage(ctx);
         self.movement_ui.measured_speed = self.world.agent.velocity.length();
         let mut prefs = self.settings.movements.get(&self.world.agent_id).cloned().unwrap_or_default();
         self.movement_ui.motor_status =
@@ -595,6 +593,7 @@ impl App {
             account.enabled = saved.enabled;
             account.selected = saved.selected;
             account.mini_open = saved.mini_open;
+            account.set_order = saved.set_order.clone();
         }
         let prior_mini_open = account.mini_open;
         let mut actions = self.toolbar_ui.ao_quick.show(
@@ -631,7 +630,6 @@ impl App {
             &mut open,
             &mut self.movement_ui,
             &mut prefs,
-            &self.settings.keybinds,
             status,
         ));
         self.panels.ao = open;
@@ -645,6 +643,8 @@ impl App {
             let saved = self.settings.ao.accounts.entry(self.world.agent_id).or_default();
             saved.enabled = account.enabled;
             saved.selected = account.selected;
+            // (the order "Your sets" was dragged into)
+            saved.set_order = account.set_order.clone();
         }
         if prior_mini_open != account.mini_open {
             self.settings.ao.accounts.entry(self.world.agent_id).or_default().mini_open = account.mini_open;

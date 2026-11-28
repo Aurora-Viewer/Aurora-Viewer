@@ -729,10 +729,9 @@ pub(crate) fn island_shape(ctx: &egui::Context, p: &Palette, rect: egui::Rect) -
         ..visuals.window_shadow
     }
     .as_shape(rect, radius);
-    let border = super::border_stroke(p, Stroke::new(1.0, p.ink.gamma_multiply(0.07)));
+    let border = island_border(p);
     let face = if p.panel_alpha < 255 {
-        let alpha = (f32::from(p.panel_alpha) * ISLAND_TINT).round() as u8;
-        faded_glass(rect.shrink(1.0), f32::from(radius.nw), p.bar, alpha, opacity)
+        faded_glass(rect.shrink(1.0), f32::from(radius.nw), p.bar, island_alpha(p), opacity)
     } else {
         egui::Shape::rect_filled(rect, radius, p.bar.gamma_multiply(opacity))
     };
@@ -745,6 +744,20 @@ pub(crate) fn island_shape(ctx: &egui::Context, p: &Palette, rect: egui::Rect) -
 
 /// The islands' tint against the bars' (0.80 / 0.90).
 const ISLAND_TINT: f32 = 0.8 / 0.9;
+
+/// The alpha of an island's tint (an opaque skin keeps its own).
+pub(crate) fn island_alpha(p: &Palette) -> u8 {
+    if p.panel_alpha < 255 {
+        (f32::from(p.panel_alpha) * ISLAND_TINT).round() as u8
+    } else {
+        p.panel_alpha
+    }
+}
+
+/// An island's hairline border.
+pub(crate) fn island_border(p: &Palette) -> Stroke {
+    super::border_stroke(p, Stroke::new(1.0, p.ink.gamma_multiply(0.07)))
+}
 
 /// Content-sized island sharing the top bars' glass and vertical inset,
 /// with room for the first and last labels at its sides.
