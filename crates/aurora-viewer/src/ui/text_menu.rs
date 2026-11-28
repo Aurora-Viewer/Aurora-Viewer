@@ -131,14 +131,20 @@ fn copy_entry_id(field: Id) -> Id {
 /// greyed out while it is None. Given again each frame the field is drawn,
 /// so the entry always copies what the field holds now.
 pub(crate) fn copy_entry(ctx: &Context, field: Id, icon: &'static str, label: &'static str, text: Option<String>) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = copy_entry_frame(ctx);
     ctx.data_mut(|d| d.insert_temp(copy_entry_id(field), CopyEntry { icon, label, text, frame }));
 }
 
 /// The entry `field` gave this frame: a field no longer drawn gives none.
 fn field_copy_entry(ctx: &Context, field: Id) -> Option<CopyEntry> {
     ctx.data(|d| d.get_temp::<CopyEntry>(copy_entry_id(field)))
-        .filter(|entry| entry.frame == ctx.cumulative_frame_nr())
+        .filter(|entry| entry.frame == copy_entry_frame(ctx))
+}
+
+/// The viewer's own window's frame, also for a field in a window drawn
+/// outside it, whose pass shares those numbers (outside.rs).
+fn copy_entry_frame(ctx: &Context) -> u64 {
+    ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)
 }
 
 /// The misspelled word under the right click: its characters and itself.
