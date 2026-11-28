@@ -2265,7 +2265,10 @@ impl AnimStreamer {
                 if let Some(e) = self.entries.get_mut(&id) {
                     e.state = 4;
                     e.failures += 1;
-                    e.retry_at = Some(Instant::now() + Duration::from_secs(if r.status == 404 { 600 } else { 10 }));
+                    // missing (404, or the asset CDN's 403, #1859): asked
+                    // again in ten minutes, not every ten seconds
+                    let missing = aurora_net::fetch::asset_missing(r.status);
+                    e.retry_at = Some(Instant::now() + Duration::from_secs(if missing { 600 } else { 10 }));
                 }
             }
         }

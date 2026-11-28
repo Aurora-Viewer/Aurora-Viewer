@@ -233,8 +233,9 @@ impl SettingsStreamer {
             Err(err) => {
                 log::info!("settings asset {id}: HTTP {} {err}", r.status);
                 if let Some(e) = self.entries.get_mut(&id) {
-                    if r.status == 404 {
-                        // no such asset (e.g. a grid without Linden's library)
+                    if aurora_net::fetch::asset_missing(r.status) {
+                        // no such asset (e.g. a grid without Linden's
+                        // library; the asset CDN answers 403, #1859)
                         e.step = Step::Failed;
                     } else {
                         Self::failed(e, Duration::from_secs(10));

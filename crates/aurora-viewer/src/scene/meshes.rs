@@ -833,7 +833,9 @@ impl MeshStreamer {
                 );
             }
             _ => {
-                let missing = r.status == 404;
+                // 403 too: the asset CDN's answer for a key it does not
+                // hold (#1859)
+                let missing = aurora_net::fetch::asset_missing(r.status);
                 let backoff = if missing {
                     Duration::from_secs(600)
                 } else {
@@ -1350,7 +1352,7 @@ impl MaterialStreamer {
                 e.last_status = r.status;
                 // the asset CDN answers 403 for a missing asset (S3); LL's
                 // asset storage does not retry a missing asset either
-                if matches!(r.status, 403 | 404) || e.failures >= MATERIAL_ATTEMPTS {
+                if aurora_net::fetch::asset_missing(r.status) || e.failures >= MATERIAL_ATTEMPTS {
                     Self::give_up(&id, e);
                     self.generation += 1;
                     self.changed.push(id);
@@ -1856,6 +1858,14 @@ mod tests {
         s.on_fetch(failed(key, 404), &jobs);
         assert!(s.failed(&missing));
         assert!(s.describe(&missing).starts_with("unavailable"), "{}", s.describe(&missing));
+        // the asset CDN's 403 for a key it does not hold is the same
+        // missing asset, asked again in ten minutes, not in a few seconds
+        // as a transient error (#1859)
+        let refused = Uuid::from_u128(5);
+        let key = mesh_fetching(&mut s, refused);
+        s.on_fetch(failed(key, 403), &jobs);
+        assert!(s.failed(&refused));
+        assert!(s.entries[&refused].retry_at.expect("retry time") - Instant::now() > Duration::from_secs(590));
         // a transient error is retried: expected until the fourth failure
         let flaky = Uuid::from_u128(2);
         for attempt in 1..=4 {
@@ -1914,10 +1924,11 @@ mod tests {
         let asset = rigged_asset(&lib);
         let mut s = mesh_streamer();
         let id = Uuid::from_u128(1);
-        // (403: what the fetcher does not retry itself)
+        // (401: what the fetcher does not retry itself, and not a missing
+        // asset, which 403 is since #1859)
         for _ in 0..=EXPECTED_FAILURES {
             let key = mesh_fetching(&mut s, id);
-            s.on_fetch(failed(key, 403), &jobs);
+            s.on_fetch(failed(key, 401), &jobs);
         }
         assert!(s.failed(&id), "its wearer no longer waits for it");
         let wait = s.entries[&id].retry_at.expect("retry time") - Instant::now();
