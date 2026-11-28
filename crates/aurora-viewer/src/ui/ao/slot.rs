@@ -225,6 +225,16 @@ impl Editor<'_> {
         self.state.busy()
     }
 
+    /// Plays that entry of a list (`owner`: its folder) in the world; the
+    /// open set is put in use first when another one is (FloaterAO's
+    /// double-click, indra/newview/ao.cpp).
+    fn play(&mut self, owner: Uuid, index: usize) {
+        if self.state.active_set != self.set.id {
+            self.state.use_set = Some(self.set.id);
+        }
+        self.runtime.choose(self.state.state, owner, index);
+    }
+
     /// The picker of animations, into `container` (a group or a layer) or
     /// the main list.
     fn picker(&mut self, container: Option<Uuid>) {
@@ -611,7 +621,7 @@ impl Editor<'_> {
             }
             self.entry_menu(&response, c, step, index);
             if in_world(ui, &response) {
-                self.runtime.choose(self.state.state, c.folder, index);
+                self.play(c.folder, index);
                 self.state.preview.show_entry(index);
             } else if response.clicked() {
                 self.state.preview.show_entry(index);
@@ -629,7 +639,7 @@ impl Editor<'_> {
                 self.state.preview.show_entry(index);
             }
             if super::super::menu::item(ui, p, "player-play-filled", aurora_i18n::tr!("ao-play-in-world")) {
-                self.runtime.choose(self.state.state, c.folder, index);
+                self.play(c.folder, index);
                 self.state.preview.show_entry(index);
             }
             // a stack made from this entry and others of the slot (the guided
@@ -715,7 +725,7 @@ impl Editor<'_> {
                     self.state.preview.show_layer(track.id, index);
                 }
                 if super::super::menu::item(ui, p, "player-play-filled", aurora_i18n::tr!("ao-play-in-world")) {
-                    self.runtime.choose(self.state.state, track.id, index);
+                    self.play(track.id, index);
                 }
                 super::super::menu::separator(ui, p);
                 if super::super::menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !busy) {
@@ -723,7 +733,7 @@ impl Editor<'_> {
                 }
             });
             if in_world(ui, &response) {
-                self.runtime.choose(self.state.state, track.id, index);
+                self.play(track.id, index);
                 self.state.preview.show_layer(track.id, index);
             } else if response.clicked() {
                 self.state.preview.show_layer(track.id, index);

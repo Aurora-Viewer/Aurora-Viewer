@@ -96,6 +96,15 @@ pub struct AoUi {
     rows_key: Option<(u64, String, bool, super::inventory::view::Sort)>,
     cycle_edit: Option<(Uuid, Cycle)>,
     selected_set: Uuid,
+    /// The set open in the window, to edit; None: the one in use. Opening a
+    /// set does not make it play: "Use this set" does (FloaterAO::onSelectSet
+    /// and onClickActivate, indra/newview/ao.cpp).
+    pub editing: Option<Uuid>,
+    /// The set in use this frame, and a set to put in use (an entry of the
+    /// open set played in the world, as FloaterAO::onAnimationListDoubleClick
+    /// activates its set first).
+    active_set: Uuid,
+    use_set: Option<Uuid>,
     /// Only the six slots everyone notices (`page::ESSENTIALS`).
     essentials: bool,
     /// The "Your sets" panel replaces the groups in the left column.
@@ -182,6 +191,13 @@ impl AoUi {
 
     pub fn reset_cycle(&mut self) {
         self.cycle_edit = None;
+    }
+
+    /// The set open in the window: the one opened, else the one in use.
+    pub(super) fn edited<'a>(&self, catalog: &'a inventory::Catalog, account: &Account) -> Option<&'a Set> {
+        self.editing
+            .and_then(|id| catalog.sets.iter().find(|s| s.id == id))
+            .or_else(|| catalog.selected(account.selected))
     }
 
     /// An edit was saved: said a moment over the preview, in place of a
@@ -324,9 +340,10 @@ pub fn show(
     movement_status: &str,
 ) -> Vec<Action> {
     let mut out = Vec::new();
-    let selected = catalog.selected(account.selected);
+    let selected = state.edited(catalog, account);
+    state.active_set = catalog.selected(account.selected).map_or(Uuid::nil(), |s| s.id);
     movement.swim_ready = catalog.swimming_ready(account.selected);
-    movement.swim_slots = selected.map_or(0, Set::core_swimming_slots);
+    movement.swim_slots = catalog.selected(account.selected).map_or(0, Set::core_swimming_slots);
     let selected_id = selected.map_or(Uuid::nil(), |s| s.id);
     if state.selected_set != selected_id {
         state.selected_set = selected_id;
@@ -379,6 +396,12 @@ pub fn show(
         }
         preview_edge(ui, p, full, preview_w);
     });
+    if let Some(id) = state.use_set.take()
+        && account.selected != id
+    {
+        account.selected = id;
+        out.push(Action::Preferences);
+    }
     if on != account.enabled {
         account.enabled = on;
         if on {

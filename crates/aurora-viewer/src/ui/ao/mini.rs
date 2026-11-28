@@ -234,8 +234,10 @@ fn now_playing(
     if busy || catalog.sets.is_empty() {
         return;
     }
+    // in the order "Your sets" gives them
+    let sets = account.ordered(&catalog.sets);
     super::super::menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-        for set in &catalog.sets {
+        for set in sets {
             let tag = if set.default {
                 aurora_i18n::tr!("ao-loads-at-login")
             } else if set.swimming_ready() {

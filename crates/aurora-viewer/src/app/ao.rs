@@ -534,10 +534,17 @@ impl App {
             Ok(reply) => {
                 self.world.inventory.remove(&reply.removed);
                 self.world.inventory.apply(reply.contents);
+                // A set made (new, duplicated, imported, brought over) opens in
+                // the window to edit, as FloaterAO selects it; it plays only
+                // once "Use this set" is pressed, or when no set was in use.
                 if let Some(id) = pending.select.and_then(|id| reply.created.get(&id).copied()) {
-                    self.settings.ao.accounts.entry(self.world.agent_id).or_default().selected = id;
-                    if !self.demo {
-                        self.settings.save();
+                    self.ao_ui.editing = Some(id);
+                    let account = self.settings.ao.accounts.entry(self.world.agent_id).or_default();
+                    if !self.ao_catalog.sets.iter().any(|s| s.id == account.selected) {
+                        account.selected = id;
+                        if !self.demo {
+                            self.settings.save();
+                        }
                     }
                 }
                 self.ao_catalog.invalidate();

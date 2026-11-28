@@ -14,6 +14,12 @@ use super::*;
 const CARD: f32 = 58.0;
 /// Height of a group's row.
 const GROUP_ROW: f32 = 44.0;
+/// A set's line in "Your sets", the gap between two, and its "Use" button.
+const SET_ROW: f32 = 46.0;
+const SET_GAP: f32 = 4.0;
+const USE_W: f32 = 40.0;
+/// The tiles that make a set.
+const TILE_H: f32 = 64.0;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show(
@@ -26,8 +32,9 @@ pub(super) fn show(
     out: &mut Vec<Action>,
 ) {
     ui.spacing_mut().item_spacing.y = 8.0;
-    let selected = catalog.selected(account.selected);
+    let selected = state.edited(catalog, account);
     set_card(ui, p, catalog, selected, state);
+    use_banner(ui, p, catalog, selected, account, out);
     if state.sets_open {
         sets_panel(ui, p, inv, catalog, account, state, out);
         return;
@@ -127,7 +134,7 @@ fn set_card(ui: &mut egui::Ui, p: &Palette, catalog: &inventory::Catalog, set: O
         );
         let text_x = inner.right() - galley.size().x;
         widgets::paint_row_text(ui.painter(), galley, text_x, bottom, ink);
-        widgets::paint_glyph(ui.painter(), "login-2", egui::pos2(text_x - 9.0, bottom), 12.0, ink);
+        widgets::paint_glyph(ui.painter(), "circle-check-filled", egui::pos2(text_x - 9.0, bottom), 12.0, ink);
     }
     let response = response.on_hover_text(aurora_i18n::tr!("ao-sets-tip"));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
@@ -136,6 +143,45 @@ fn set_card(ui: &mut egui::Ui, p: &Palette, catalog: &inventory::Catalog, set: O
         state.renaming = None;
         state.confirm_delete = None;
     }
+}
+
+/// Under the set card while the open set is not the one in use: which one
+/// plays, and "Use this set" (FloaterAO's Activate).
+fn use_banner(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    catalog: &inventory::Catalog,
+    open: Option<&Set>,
+    account: &mut Account,
+    out: &mut Vec<Action>,
+) {
+    let (Some(open), Some(active)) = (open, catalog.selected(account.selected)) else {
+        return;
+    };
+    if open.id == active.id {
+        return;
+    }
+    let shade = super::shades(p);
+    egui::Frame::new()
+        .fill(shade.slot.lerp_to_gamma(p.amber, 0.06))
+        .corner_radius(ui.visuals().window_corner_radius)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.add(
+                egui::Label::new(
+                    RichText::new(aurora_i18n::tr!("ao-not-in-use", set = active.name.as_str()))
+                        .size(11.5)
+                        .color(p.muted),
+                )
+                .wrap(),
+            );
+            let size = Vec2::new(ui.available_width(), 28.0);
+            if widgets::primary_button_sized(ui, p, aurora_i18n::tr!("ao-use-this-set"), size).clicked() {
+                account.selected = open.id;
+                out.push(Action::Preferences);
+            }
+        });
 }
 
 /// A group of slots: its name, what it holds below, and its count on the
@@ -260,8 +306,9 @@ fn essentials_switch(ui: &mut egui::Ui, p: &Palette, essentials: bool, total: us
     chosen
 }
 
-/// "Your sets": every set with its ⋯ menu, the open set's options, and the
-/// ways to make or bring a set.
+/// "Your sets": every set, dragged up and down to order them, opened by a
+/// click and put in use by "Use"; the open set's options; the ways to make
+/// or bring a set.
 fn sets_panel(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -271,142 +318,384 @@ fn sets_panel(
     state: &mut AoUi,
     out: &mut Vec<Action>,
 ) {
-    // an eyebrow, as the board's sections have them
-    ui.horizontal(|ui| {
-        ui.add_space(4.0);
-        let eyebrow = egui::FontId::new(11.0, super::super::fonts::semibold(ui.ctx()));
-        ui.label(
-            RichText::new(aurora_i18n::tr!("ao-your-sets").to_uppercase())
-                .font(eyebrow)
-                .color(p.muted),
-        );
-        ui.label(RichText::new(catalog.sets.len().to_string()).size(11.0).color(p.muted_dim));
-    });
     let busy = state.busy() || catalog.loading;
-    let height = (ui.available_height() - 112.0).max(120.0);
+    let open = state.edited(catalog, account).map(|s| s.id);
     egui::ScrollArea::vertical()
         .id_salt("ao_sets")
-        .max_height(height)
-        .auto_shrink([false, true])
+        .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            for set in &catalog.sets {
-                ui.push_id(set.id, |ui| set_row(ui, p, inv, catalog, set, account, state, busy, out));
-            }
+            ui.spacing_mut().item_spacing.y = 8.0;
+            eyebrow(ui, p, aurora_i18n::tr!("ao-your-sets"), Some(catalog.sets.len()));
             if catalog.sets.is_empty() {
                 ui.label(RichText::new(aurora_i18n::tr!("ao-empty")).color(p.muted));
             }
-        });
-    ui.add_enabled_ui(!busy, |ui| {
-        ui.horizontal(|ui| {
-            let half = Vec2::new((ui.available_width() - ui.spacing().item_spacing.x) / 2.0, 28.0);
-            if widgets::action_button(ui, p, "plus", aurora_i18n::tr!("ao-new"), widgets::ActionKind::Flat, half).clicked() {
-                state.name.clear();
-                state.new_dialog = Some(SetDialog::New);
+            set_list(ui, p, inv, catalog, account, state, open, busy, out);
+            if let Some(set) = state.confirm_delete.and_then(|id| catalog.sets.iter().find(|s| s.id == id)) {
+                confirm_delete(ui, p, inv, set, state, busy, out);
             }
-            if widgets::action_button(
-                ui,
-                p,
-                "file-text-filled",
-                aurora_i18n::tr!("ao-import"),
-                widgets::ActionKind::Flat,
-                half,
-            )
-            .clicked()
-            {
-                state.picker = Some(true);
-                state.folder = inv.root;
+            if let Some(set) = open.and_then(|id| catalog.sets.iter().find(|s| s.id == id)) {
+                ui.add_space(4.0);
+                eyebrow(ui, p, aurora_i18n::tr!("ao-set-options"), None);
+                set_options(ui, p, inv, set, state, busy, out);
             }
+            ui.add_space(4.0);
+            eyebrow(ui, p, aurora_i18n::tr!("ao-add-sets"), None);
+            ui.add_enabled_ui(!busy, |ui| create_tiles(ui, p, inv, state));
+            more_ways(ui, p, state, busy, out);
         });
-        ui.add_enabled_ui(!state.startup_loading, |ui| {
-            if link(ui, p, "arrows-exchange", aurora_i18n::tr!("ao-migrate-link")).clicked() {
-                state.migration = Some(Default::default());
-            }
-        });
-        if link(ui, p, "refresh", aurora_i18n::tr!("ao-reload")).clicked() {
-            out.push(Action::Reload);
+}
+
+/// A section's name in small capitals, with its count.
+fn eyebrow(ui: &mut egui::Ui, p: &Palette, label: &str, count: Option<usize>) {
+    ui.horizontal(|ui| {
+        ui.add_space(4.0);
+        let font = egui::FontId::new(11.0, super::super::fonts::semibold(ui.ctx()));
+        ui.label(RichText::new(label.to_uppercase()).font(font).color(p.muted));
+        if let Some(count) = count {
+            ui.label(RichText::new(count.to_string()).size(11.0).color(p.muted_dim));
         }
     });
 }
 
-/// A quiet way, for the less used ones in the sets panel: its icon and
-/// name, lit under the pointer.
-fn link(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str) -> egui::Response {
-    let font = egui::FontId::proportional(12.0);
-    let galley = widgets::elided_galley(ui, RichText::new(label).font(font), ui.available_width() - 26.0);
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(galley.size().x + 26.0, 22.0), egui::Sense::click());
-    let enabled = ui.is_enabled();
-    let ink = if !enabled {
-        p.muted_dim
-    } else if response.hovered() {
-        p.violet_light
-    } else {
-        p.muted
-    };
-    widgets::paint_glyph(ui.painter(), icon, egui::pos2(rect.left() + 10.0, rect.center().y), 13.0, ink);
-    widgets::paint_row_text(ui.painter(), galley, rect.left() + 24.0, rect.center().y, ink);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
-    response
-}
-
+/// The sets, one line each, in the user's order: a drag lifts a line and
+/// the others make room, as the Effects window's filters do
+/// (`widgets::reorder`).
 #[allow(clippy::too_many_arguments)]
-fn set_row(
+fn set_list(
     ui: &mut egui::Ui,
     p: &Palette,
     inv: &mut Inventory,
     catalog: &inventory::Catalog,
-    set: &Set,
     account: &mut Account,
     state: &mut AoUi,
+    open: Option<Uuid>,
     busy: bool,
     out: &mut Vec<Action>,
 ) {
-    let active = set.id == account.selected;
-    if state.renaming == Some(set.id) {
-        rename_field(ui, inv, catalog, set, state, out);
-    } else {
-        let response = set_line(ui, p, set, active, busy);
-        if response.clicked() && !busy && !active {
-            account.selected = set.id;
-            state.sets_open = false;
-            out.push(Action::Preferences);
-        }
-        set_menu(ui, p, inv, catalog, set, state, busy, response.rect, out);
-    }
-    if state.confirm_delete == Some(set.id) {
-        widgets::surface(ui, p, |ui| {
-            ui.add(egui::Label::new(aurora_i18n::tr!("ao-delete-set-confirm", set = set.name.as_str())).wrap());
-            ui.horizontal(|ui| {
-                let size = Vec2::new(90.0, 26.0);
-                if widgets::action_button_if(
-                    ui,
-                    p,
-                    "trash-filled",
-                    aurora_i18n::tr!("common-delete"),
-                    widgets::ActionKind::Danger,
-                    size,
-                    // (an edit under way would drop it: it waits)
-                    !busy,
-                )
-                .clicked()
-                {
-                    push(out, state, inventory::remove(inv, set.id));
-                    state.confirm_delete = None;
-                }
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
-                    state.confirm_delete = None;
-                }
+    let sets = account.ordered(&catalog.sets);
+    let keys: Vec<Uuid> = sets.iter().map(|s| s.id).collect();
+    let width = ui.available_width();
+    let responses: Vec<egui::Response> = ui
+        .scope(|ui| {
+            ui.spacing_mut().item_spacing.y = SET_GAP;
+            sets.iter()
+                .map(|set| {
+                    let (_, rect) = ui.allocate_space(Vec2::new(width, SET_ROW));
+                    ui.interact(rect, ui.scope_id().with(("ao_set_row", set.id)), egui::Sense::click_and_drag())
+                })
+                .collect()
+        })
+        .inner;
+    let id = ui.scope_id().with("ao_set_order");
+    let still = busy || state.renaming.is_some();
+    let layout = widgets::reorder::update(ui, id, &keys, &responses, !still, None);
+    for (i, set) in sets.iter().enumerate() {
+        let rect = layout.rect(i, responses[i].rect);
+        let line = SetLine {
+            open: Some(set.id) == open,
+            active: set.id == state.active_set,
+            quiet: layout.busy(),
+        };
+        if layout.lifted == Some(i) {
+            widgets::reorder::lifted_card(ui, p, id.with(i), rect, |ui| {
+                paint_set(ui, p, set, rect, &responses[i], line, true);
             });
+            continue;
+        }
+        if state.renaming == Some(set.id) {
+            rename_field(ui, rect, inv, catalog, set, state, out);
+            continue;
+        }
+        let use_clicked = paint_set(ui, p, set, rect, &responses[i], line, busy);
+        if use_clicked && !busy {
+            account.selected = set.id;
+            out.push(Action::Preferences);
+        } else if responses[i].clicked() && !busy && !line.open {
+            // opened to edit; it plays only once put in use
+            state.editing = Some(set.id);
+            state.sets_open = false;
+        }
+        if !layout.busy() {
+            set_menu(ui, p, inv, catalog, set, state, account, busy, rect, out);
+        }
+    }
+    if let Some((from, to)) = layout.moved {
+        account.move_set(&keys, from, to);
+        out.push(Action::Preferences);
+    }
+}
+
+/// How a set's line is shown.
+#[derive(Clone, Copy)]
+struct SetLine {
+    /// Open in the window.
+    open: bool,
+    /// The set the AO plays.
+    active: bool,
+    /// One is carried: no hover.
+    quiet: bool,
+}
+
+/// One set's line: its name over its count and "Active", the login mark,
+/// and "Use" under the pointer for a set not in use. The open set is lit in
+/// the accent. Returns whether "Use" was clicked.
+fn paint_set(ui: &mut egui::Ui, p: &Palette, set: &Set, rect: egui::Rect, response: &egui::Response, line: SetLine, busy: bool) -> bool {
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    let shade = super::shades(p);
+    let hovered = !line.quiet && ui.rect_contains_pointer(rect) && !busy;
+    if line.open {
+        ui.painter().rect(
+            rect,
+            radius,
+            shade.item.lerp_to_gamma(p.violet, 0.16),
+            egui::Stroke::new(1.0, p.violet_light.gamma_multiply(0.35)),
+            egui::StrokeKind::Inside,
+        );
+        let edge = egui::Rect::from_min_size(rect.left_top() + Vec2::new(0.0, 9.0), Vec2::new(3.0, rect.height() - 18.0));
+        ui.painter().rect_filled(edge, radius, p.violet_light);
+    } else if hovered || response.dragged() {
+        ui.painter().rect_filled(rect, radius, shade.slot);
+    } else {
+        ui.painter().rect_filled(rect, radius, shade.slot.gamma_multiply(0.45));
+    }
+    let x = rect.left() + 14.0;
+    // the login mark and the ⋯ button keep the right end; "Use" comes
+    // before them under the pointer
+    let use_w = if hovered && !line.active { USE_W + 6.0 } else { 0.0 };
+    let marks = 30.0 + if set.default { 20.0 } else { 0.0 } + use_w;
+    let room = rect.right() - x - marks;
+    let title = egui::FontId::new(13.0, super::super::fonts::semibold(ui.ctx()));
+    widgets::paint_elided(ui, &set.name, egui::pos2(x, rect.center().y - 8.0), room, title, p.ink);
+    let count = aurora_i18n::tr!("ao-animation-count", count = page::animations(set));
+    let small = egui::FontId::proportional(11.5);
+    let count_w = widgets::elided_galley(ui, RichText::new(&count).font(small.clone()), room).size().x;
+    widgets::paint_elided(ui, &count, egui::pos2(x, rect.center().y + 9.0), room, small.clone(), p.muted);
+    if line.active {
+        // the set the AO plays: a live dot and "Active", as "Playing now"
+        let at = x + count_w + 10.0;
+        ui.painter().circle_filled(egui::pos2(at, rect.center().y + 9.0), 2.5, p.teal);
+        let label = aurora_i18n::tr!("ao-active");
+        widgets::paint_elided(
+            ui,
+            label,
+            egui::pos2(at + 6.0, rect.center().y + 9.0),
+            (room - count_w - 16.0).max(0.0),
+            small,
+            p.teal,
+        );
+    }
+    let mut right = rect.right() - 30.0;
+    if set.default {
+        let at = egui::pos2(right - 8.0, rect.center().y);
+        widgets::paint_glyph(ui.painter(), "circle-check-filled", at, 14.0, p.muted);
+        let mark = egui::Rect::from_center_size(at, Vec2::splat(18.0));
+        ui.interact(mark, ui.scope_id().with(("ao_login_mark", set.id)), egui::Sense::hover())
+            .on_hover_text(aurora_i18n::tr!("ao-loads-at-login"));
+        right -= 20.0;
+    }
+    let mut used = false;
+    if use_w > 0.0 {
+        let pill = egui::Rect::from_min_size(egui::pos2(right - USE_W - 2.0, rect.center().y - 11.0), Vec2::new(USE_W, 22.0));
+        let r = ui
+            .interact(pill, ui.scope_id().with(("ao_use_set", set.id)), egui::Sense::click())
+            .on_hover_text(aurora_i18n::tr!("ao-use-set-tip"));
+        let fill = if r.hovered() { p.violet } else { shade.item_hot };
+        let ink = if r.hovered() { p.on_accent } else { p.ink };
+        ui.painter().rect_filled(pill, radius, fill);
+        let font = egui::FontId::new(11.5, super::super::fonts::semibold(ui.ctx()));
+        ui.painter().text(
+            pill.center(),
+            egui::Align2::CENTER_CENTER,
+            aurora_i18n::tr!("ao-use-set"),
+            font,
+            ink,
+        );
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, aurora_i18n::tr!("ao-use-set")));
+        used = r.clicked();
+    }
+    let mut label = set.name.clone();
+    if line.active {
+        label = format!("{label}, {}", aurora_i18n::tr!("ao-active"));
+    }
+    if set.default {
+        label = format!("{label}, {}", aurora_i18n::tr!("ao-loads-at-login"));
+    }
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, !busy, line.open, &label));
+    used
+}
+
+/// Deleting a set asks first, under the list.
+fn confirm_delete(ui: &mut egui::Ui, p: &Palette, inv: &mut Inventory, set: &Set, state: &mut AoUi, busy: bool, out: &mut Vec<Action>) {
+    widgets::surface(ui, p, |ui| {
+        ui.add(egui::Label::new(aurora_i18n::tr!("ao-delete-set-confirm", set = set.name.as_str())).wrap());
+        ui.horizontal(|ui| {
+            let size = Vec2::new(90.0, 26.0);
+            if widgets::action_button_if(
+                ui,
+                p,
+                "trash-filled",
+                aurora_i18n::tr!("common-delete"),
+                widgets::ActionKind::Danger,
+                size,
+                // (an edit under way would drop it: it waits)
+                !busy,
+            )
+            .clicked()
+            {
+                push(out, state, inventory::remove(inv, set.id));
+                state.confirm_delete = None;
+            }
+            if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                state.confirm_delete = None;
+            }
         });
+    });
+}
+
+/// The two ways to make a set, as tiles: a new empty one, and one read from
+/// a notecard.
+fn create_tiles(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut AoUi) {
+    let gap = 8.0;
+    let width = (ui.available_width() - gap) / 2.0;
+    let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), TILE_H), egui::Sense::hover());
+    let left = egui::Rect::from_min_size(row.min, Vec2::new(width, TILE_H));
+    let right = egui::Rect::from_min_size(egui::pos2(left.right() + gap, row.top()), Vec2::new(width, TILE_H));
+    if tile(ui, p, left, "plus", aurora_i18n::tr!("ao-new"), aurora_i18n::tr!("ao-new-line")).clicked() {
+        state.name.clear();
+        state.new_dialog = Some(SetDialog::New);
     }
-    if active {
-        set_options(ui, p, inv, set, state, busy, out);
+    if tile(
+        ui,
+        p,
+        right,
+        "file-text-filled",
+        aurora_i18n::tr!("ao-import-short"),
+        aurora_i18n::tr!("ao-import-tile-line"),
+    )
+    .clicked()
+    {
+        state.picker = Some(true);
+        state.folder = inv.root;
     }
+}
+
+/// A tile: its icon in a disc, its name, what it makes; lit under the
+/// pointer.
+fn tile(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, title: &str, line: &str) -> egui::Response {
+    let response = ui.interact(rect, ui.scope_id().with(("ao_tile", icon)), egui::Sense::click());
+    let enabled = ui.is_enabled();
+    let hot = response.hovered() && enabled;
+    let lit = ui.ctx().animate_bool(response.id.with("lit"), hot);
+    let shade = super::shades(p);
+    let radius = ui.visuals().window_corner_radius;
+    ui.painter().rect(
+        rect,
+        radius,
+        shade.slot.lerp_to_gamma(p.violet, 0.10 * lit),
+        egui::Stroke::new(1.0, shade.edge.lerp_to_gamma(p.violet_light, 0.55 * lit)),
+        egui::StrokeKind::Inside,
+    );
+    let disc = egui::pos2(rect.left() + 22.0, rect.top() + 22.0);
+    ui.painter().circle_filled(disc, 12.0, p.violet.gamma_multiply(0.22 + 0.5 * lit));
+    let glyph = if enabled {
+        p.violet_pale.lerp_to_gamma(p.on_accent, lit)
+    } else {
+        p.muted_dim
+    };
+    widgets::paint_glyph(ui.painter(), icon, disc, 13.0, glyph);
+    let room = rect.width() - 20.0;
+    let title_font = egui::FontId::new(12.5, super::super::fonts::semibold(ui.ctx()));
+    let ink = if enabled { p.ink } else { p.muted };
+    widgets::paint_elided(
+        ui,
+        title,
+        egui::pos2(rect.left() + 10.0, rect.bottom() - 26.0),
+        room,
+        title_font,
+        ink,
+    );
+    widgets::paint_elided(
+        ui,
+        line,
+        egui::pos2(rect.left() + 10.0, rect.bottom() - 11.0),
+        room,
+        egui::FontId::proportional(11.0),
+        p.muted,
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, title));
+    response
+}
+
+/// The less used ways, as a grouped list: bring sets from another viewer,
+/// and read the sets again from the inventory.
+fn more_ways(ui: &mut egui::Ui, p: &Palette, state: &mut AoUi, busy: bool, out: &mut Vec<Action>) {
+    let shade = super::shades(p);
+    egui::Frame::new()
+        .fill(shade.slot.lerp_to_gamma(p.violet, 0.05))
+        .corner_radius(ui.visuals().window_corner_radius)
+        .inner_margin(egui::Margin::same(4))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let migrate = !busy && !state.startup_loading;
+            if way(ui, p, "arrows-exchange", aurora_i18n::tr!("ao-migrate-link"), migrate).clicked() && migrate {
+                state.migration = Some(Default::default());
+            }
+            if way(ui, p, "refresh", aurora_i18n::tr!("ao-reload"), !busy).clicked() && !busy {
+                out.push(Action::Reload);
+            }
+        });
+}
+
+/// One row of the grouped list: its icon, its name, a chevron.
+fn way(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, enabled: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), egui::Sense::click());
+    let hot = response.hovered() && enabled;
+    if hot {
+        ui.painter()
+            .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised.gamma_multiply(0.45));
+    }
+    let y = rect.center().y;
+    let tint = if !enabled {
+        p.muted_dim
+    } else if hot {
+        p.violet_light
+    } else {
+        p.violet_pale
+    };
+    widgets::paint_glyph(ui.painter(), icon, egui::pos2(rect.left() + 14.0, y), 14.0, tint);
+    let ink = if enabled { p.ink } else { p.muted };
+    widgets::paint_elided(
+        ui,
+        label,
+        egui::pos2(rect.left() + 30.0, y),
+        rect.width() - 52.0,
+        egui::FontId::proportional(12.5),
+        ink,
+    );
+    let chevron = if hot { p.ink } else { p.muted_dim };
+    widgets::paint_glyph(ui.painter(), "chevron-right", egui::pos2(rect.right() - 14.0, y), 13.0, chevron);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    response
 }
 
 /// The set's name edited in place: Enter saves, Escape or a click away
 /// cancels.
-fn rename_field(ui: &mut egui::Ui, inv: &Inventory, catalog: &inventory::Catalog, set: &Set, state: &mut AoUi, out: &mut Vec<Action>) {
+fn rename_field(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    inv: &Inventory,
+    catalog: &inventory::Catalog,
+    set: &Set,
+    state: &mut AoUi,
+    out: &mut Vec<Action>,
+) {
+    // in place of the set's line
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(Vec2::new(6.0, 0.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    let ui = &mut child;
     let response = widgets::restricted_text_field(ui, true, &mut state.name, widgets::TextPolicy::AoName, |b, _| {
         egui::TextEdit::singleline(b).desired_width(f32::INFINITY)
     });
@@ -452,15 +741,13 @@ fn set_default(inv: &Inventory, catalog: &inventory::Catalog, set: &Set, on: boo
     push(out, state, result.map(|()| change));
 }
 
-/// The set in use's own options in a grouped card under its row: each its
+/// The open set's own options in a grouped card: each its
 /// icon, name and what it does, its switch on the right; a click anywhere
 /// on a row switches it.
 fn set_options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, set: &Set, state: &mut AoUi, busy: bool, out: &mut Vec<Action>) {
     let (mut sits, mut smart, mut mouselook) = (set.sits, set.smart, set.mouselook);
     let mut changed = false;
     let shade = super::shades(p);
-    // (tucked under the row it belongs to)
-    ui.add_space(-ui.spacing().item_spacing.y + 2.0);
     ui.add_enabled_ui(!busy, |ui| {
         egui::Frame::new()
             .fill(shade.slot.lerp_to_gamma(p.violet, 0.05))
@@ -529,86 +816,6 @@ fn option(ui: &mut egui::Ui, p: &Palette, icon: &str, key: &'static str, line: &
     changed
 }
 
-/// A set's line in "Your sets": its crest (its first letter on a tile of its
-/// own colours), its name over its count, the login mark of the set that
-/// loads at login. The set in use is lit in the accent.
-fn set_line(ui: &mut egui::Ui, p: &Palette, set: &Set, active: bool, busy: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), egui::Sense::click());
-    let radius = ui.visuals().widgets.inactive.corner_radius;
-    let shade = super::shades(p);
-    let hovered = response.hovered() && !busy;
-    if active {
-        ui.painter().rect(
-            rect,
-            radius,
-            shade.item.lerp_to_gamma(p.violet, 0.16),
-            egui::Stroke::new(1.0, p.violet_light.gamma_multiply(0.35)),
-            egui::StrokeKind::Inside,
-        );
-        let edge = egui::Rect::from_min_size(rect.left_top() + Vec2::new(0.0, 9.0), Vec2::new(3.0, rect.height() - 18.0));
-        ui.painter().rect_filled(edge, radius, p.violet_light);
-    } else if hovered {
-        ui.painter().rect_filled(rect, radius, shade.slot);
-    }
-    let tile = egui::Rect::from_center_size(egui::pos2(rect.left() + 26.0, rect.center().y), Vec2::splat(30.0));
-    crest(ui, p, tile, &set.name);
-    let x = tile.right() + 10.0;
-    // room for the login mark and the ⋯ button
-    let room = rect.right() - x - 30.0 - if set.default { 22.0 } else { 0.0 };
-    let title = egui::FontId::new(13.0, super::super::fonts::semibold(ui.ctx()));
-    let ink = if active { p.ink } else { p.ink.gamma_multiply(0.92) };
-    widgets::paint_elided(ui, &set.name, egui::pos2(x, rect.center().y - 8.0), room, title, ink);
-    let mut line = aurora_i18n::tr!("ao-animation-count", count = page::animations(set));
-    if active {
-        line = format!("{line} · {}", aurora_i18n::tr!("ao-in-use"));
-    }
-    let line_ink = if active { p.violet_pale } else { p.muted };
-    widgets::paint_elided(
-        ui,
-        &line,
-        egui::pos2(x, rect.center().y + 9.0),
-        room,
-        egui::FontId::proportional(11.5),
-        line_ink,
-    );
-    if set.default {
-        let at = egui::pos2(rect.right() - 42.0, rect.center().y);
-        widgets::paint_glyph(ui.painter(), "login-2", at, 14.0, if active { p.violet_pale } else { p.muted });
-        let mark = egui::Rect::from_center_size(at, Vec2::splat(20.0));
-        ui.interact(mark, ui.scope_id().with("ao_login_mark"), egui::Sense::hover())
-            .on_hover_text(aurora_i18n::tr!("ao-loads-at-login"));
-    }
-    let label = if set.default {
-        format!("{}, {}", set.name, aurora_i18n::tr!("ao-loads-at-login"))
-    } else {
-        set.name.clone()
-    };
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, !busy, active, &label));
-    response
-}
-
-/// A set's crest: its first letter or digit on a tile in two of the theme's
-/// colours, chosen by its name, so each set keeps its own.
-fn crest(ui: &egui::Ui, p: &Palette, tile: egui::Rect, name: &str) {
-    let hues = [p.violet, p.indigo, p.teal, p.amber, p.rose, p.indigo_light];
-    let hash = name.bytes().fold(2166136261u32, |h, b| (h ^ u32::from(b)).wrapping_mul(16777619));
-    let base = hues[hash as usize % hues.len()];
-    let radius = ui.visuals().widgets.inactive.corner_radius;
-    ui.painter().rect_filled(tile, radius, base.lerp_to_gamma(p.bar, 0.45));
-    // a sheen on its top half
-    let top = egui::Rect::from_min_max(tile.min, egui::pos2(tile.right(), tile.center().y));
-    let mut upper = radius;
-    (upper.sw, upper.se) = (0, 0);
-    ui.painter().rect_filled(top, upper, p.ink.gamma_multiply(0.07));
-    let letter = name
-        .chars()
-        .find(|c| c.is_alphanumeric())
-        .map_or_else(|| "·".to_owned(), |c| c.to_uppercase().collect());
-    let font = egui::FontId::new(14.0, super::super::fonts::semibold(ui.ctx()));
-    ui.painter()
-        .text(tile.center(), egui::Align2::CENTER_CENTER, letter, font, p.on_accent);
-}
-
 /// A set's ⋯ button, at the right end of its line, and its menu.
 #[allow(clippy::too_many_arguments)]
 fn set_menu(
@@ -618,13 +825,14 @@ fn set_menu(
     catalog: &inventory::Catalog,
     set: &Set,
     state: &mut AoUi,
+    account: &mut Account,
     busy: bool,
     line: egui::Rect,
     out: &mut Vec<Action>,
 ) {
     let more = egui::Rect::from_center_size(egui::pos2(line.right() - 16.0, line.center().y), Vec2::splat(26.0));
     let response = ui
-        .interact(more, ui.scope_id().with("ao_set_more"), egui::Sense::click())
+        .interact(more, ui.scope_id().with(("ao_set_more", set.id)), egui::Sense::click())
         .on_hover_text(aurora_i18n::tr!("ao-set-more"));
     if response.hovered() && !busy {
         ui.painter()
@@ -646,6 +854,12 @@ fn set_menu(
         return;
     }
     super::super::menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        let active = set.id == state.active_set;
+        if super::super::menu::item_if(ui, p, "player-play-filled", aurora_i18n::tr!("ao-use-this-set"), !active) {
+            account.selected = set.id;
+            out.push(Action::Preferences);
+        }
+        super::super::menu::separator(ui, p);
         if super::super::menu::item(ui, p, "edit-filled", aurora_i18n::tr!("common-rename")) {
             state.name = set.name.clone();
             state.renaming = Some(set.id);

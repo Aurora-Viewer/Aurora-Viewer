@@ -1732,3 +1732,91 @@ fn a_saved_edit_shows_a_moment_over_the_preview() {
     f.settle();
     assert!(!shows_text(&mut f, aurora_i18n::tr!("ao-saved")), "gone after its moment");
 }
+
+/// Opening a set in "Your sets" opens it to edit and leaves the set in use
+/// playing; "Use this set" puts it in use (FloaterAO::onSelectSet and
+/// onClickActivate).
+#[test]
+fn opening_a_set_edits_it_and_use_this_set_plays_it() {
+    let mut f = Fixture::new();
+    let mut other = f.catalog.selected(f.account.selected).expect("set").clone();
+    other.id = Uuid::from_u128(0x0e7e);
+    other.name = "Other set".into();
+    other.default = false;
+    f.catalog.sets.push(other.clone());
+    let in_use = f.account.selected;
+    f.state.sets_open = true;
+    f.settle();
+    let out = f.click("Other set");
+    assert!(out.is_empty(), "nothing saved: {}", out.len());
+    assert_eq!(f.state.editing, Some(other.id), "open to edit");
+    assert_eq!(f.account.selected, in_use, "the set in use keeps playing");
+    assert!(!f.state.sets_open);
+    f.settle();
+    let out = f.click(aurora_i18n::tr!("ao-use-this-set"));
+    assert!(matches!(&out[..], [Action::Preferences]));
+    assert_eq!(f.account.selected, other.id, "in use now");
+    f.settle();
+    assert!(!shows_text(&mut f, aurora_i18n::tr!("ao-use-this-set")), "the banner goes");
+}
+
+/// An entry of the open set played in the world puts its set in use first,
+/// as FloaterAO's double-click does.
+#[test]
+fn playing_an_entry_of_another_set_puts_it_in_use() {
+    let mut f = Fixture::new();
+    let mut other = f.catalog.selected(f.account.selected).expect("set").clone();
+    other.id = Uuid::from_u128(0x0e7f);
+    other.name = "Other set".into();
+    other.default = false;
+    f.catalog.sets.push(other.clone());
+    f.state.editing = Some(other.id);
+    f.settle();
+    click_with(&mut f, "Aurora Stand B", egui::PointerButton::Secondary, Default::default());
+    let out = f.click(aurora_i18n::tr!("ao-play-in-world"));
+    assert!(matches!(&out[..], [Action::Preferences]));
+    assert_eq!(f.account.selected, other.id);
+}
+
+/// A set's line dragged down "Your sets" moves it there, the order kept in
+/// the account's settings.
+#[test]
+fn a_set_dragged_in_your_sets_keeps_its_new_place() {
+    let mut f = Fixture::new();
+    let first = f.catalog.selected(f.account.selected).expect("set").clone();
+    for (n, name) in [(0x0e80u128, "Zeta set"), (0x0e81, "Zulu set")] {
+        let mut other = first.clone();
+        other.id = Uuid::from_u128(n);
+        other.name = name.into();
+        other.default = false;
+        f.catalog.sets.push(other);
+    }
+    f.state.sets_open = true;
+    f.settle();
+    let mut rows = Vec::new();
+    for shape in f.draw(Vec::new()).1 {
+        text_rects(&shape.shape, &first.name, &mut rows);
+    }
+    // the set's line in the list (the set card above shows its name too)
+    let from = rows.iter().max_by(|a, b| a.top().total_cmp(&b.top())).expect("its line").center();
+    let press = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    f.draw(vec![egui::Event::PointerMoved(from), press(from, true)]);
+    let mut out = Vec::new();
+    for dy in [10.0, 40.0, 80.0, 110.0, 110.0] {
+        out.extend(f.draw(vec![egui::Event::PointerMoved(from + egui::vec2(0.0, dy))]).0);
+    }
+    let end = from + egui::vec2(0.0, 110.0);
+    out.extend(f.draw(vec![egui::Event::PointerMoved(end), press(end, false)]).0);
+    for _ in 0..30 {
+        out.extend(f.draw(Vec::new()).0);
+    }
+    assert!(out.iter().any(|a| matches!(a, Action::Preferences)), "the order is saved");
+    let order: Vec<String> = f.account.ordered(&f.catalog.sets).iter().map(|s| s.name.clone()).collect();
+    assert_eq!(order.last(), Some(&first.name), "moved to the end: {order:?}");
+    assert_eq!(f.account.selected, first.id, "a drag does not change the set in use");
+}
