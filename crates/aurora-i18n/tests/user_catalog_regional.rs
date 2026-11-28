@@ -1,4 +1,4 @@
-use aurora_i18n::{install_user_catalog, language, select_with, text, tr, user_catalog_selected};
+use aurora_i18n::{install_user_catalog, key_of, language, lookup, select_with, text, tr, user_catalog_selected};
 
 #[test]
 fn australian_user_catalog_inherits_british_then_american_english() {
@@ -16,9 +16,21 @@ fn australian_user_catalog_inherits_british_then_american_english() {
     assert_eq!(text("common-apply"), "Custom apply");
     assert_eq!(text("inventory-tab-favorites"), "Favourites");
     assert_eq!(text("common-cancel"), "Cancel");
+    for (key, label) in [
+        ("common-apply", "Custom apply"),
+        ("inventory-tab-favorites", "Favourites"),
+        ("common-cancel", "Cancel"),
+    ] {
+        assert_eq!(lookup(key), Some(label));
+        assert_eq!(key_of(text(key)), Some(key));
+    }
     assert_eq!(
         tr!("landmark-star-in-favorites", name = "Home"),
         "In Favourites: Home\nClick to edit it"
     );
     assert_eq!(tr!("language-item-count", count = 2), "2 items");
+
+    select_with("en-AU", false, None);
+    assert_eq!(lookup("common-apply"), Some("Apply"));
+    assert_eq!(key_of(text("common-apply")), Some("common-apply"));
 }

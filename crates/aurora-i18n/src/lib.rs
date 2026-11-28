@@ -23,6 +23,7 @@ struct Catalog {
     // Resolve plain messages once, so labels neither allocate nor lock in
     // the frame loop. Both catalogs live for the lifetime of the process.
     plain: HashMap<String, String>,
+    plain_keys: OnceLock<HashMap<(usize, usize), &'static str>>,
 }
 
 static CATALOGS: OnceLock<Vec<OnceLock<Catalog>>> = OnceLock::new();
@@ -113,7 +114,15 @@ fn assemble(code: &'static str, resource: FluentResource, user: bool) -> (Catalo
             }
         }
     }
-    (Catalog { code, bundle, plain }, messages)
+    (
+        Catalog {
+            code,
+            bundle,
+            plain,
+            plain_keys: OnceLock::new(),
+        },
+        messages,
+    )
 }
 
 /// Largest catalog file read: the bundled ones are about 1 MB.
@@ -422,34 +431,27 @@ pub fn available_languages() -> impl Iterator<Item = (&'static str, &'static str
 
 /// Resolve a persisted semantic message key without allocating a fallback.
 pub fn lookup(key: &str) -> Option<&'static str> {
-    current()
-        .plain
-        .get(key)
-        .or_else(|| bundled(english()).plain.get(key))
-        .map(|text| wrap(text))
+    plain_message(current(), key).map(wrap)
 }
 
 /// Recover the key of a borrowed plain label for command metadata. Exact string
 /// addresses disambiguate equal translations belonging to different messages.
-/// Labels come from the catalog in use or its English fallback, so only those
-/// two are indexed: the other languages stay unloaded.
+/// Index each catalog lazily as its labels are needed.
 pub fn key_of(text: &str) -> Option<&'static str> {
-    type Keys = HashMap<(usize, usize), &'static str>;
-    fn keys(catalog: &'static Catalog) -> Keys {
-        catalog
-            .plain
-            .iter()
-            .map(|(key, value)| ((value.as_ptr() as usize, value.len()), key.as_str()))
-            .collect()
-    }
-    static SELECTED: Localized<Keys> = Localized::new();
-    static ENGLISH: OnceLock<Keys> = OnceLock::new();
     let address = (text.as_ptr() as usize, text.len());
-    SELECTED
-        .get(|| keys(current()))
-        .get(&address)
-        .or_else(|| ENGLISH.get_or_init(|| keys(bundled(english()))).get(&address))
-        .copied()
+    plain_catalogs(current()).find_map(|catalog| {
+        catalog
+            .plain_keys
+            .get_or_init(|| {
+                catalog
+                    .plain
+                    .iter()
+                    .map(|(key, value)| ((value.as_ptr() as usize, value.len()), key.as_str()))
+                    .collect()
+            })
+            .get(&address)
+            .copied()
+    })
 }
 
 /// The system's closest bundled language first, then commonly requested
@@ -533,13 +535,18 @@ fn regional_parent(catalog: &Catalog) -> Option<&'static Catalog> {
     }
 }
 
+fn plain_catalogs(catalog: &'static Catalog) -> impl Iterator<Item = &'static Catalog> {
+    std::iter::once(catalog)
+        .chain(std::iter::once_with(move || regional_parent(catalog)).flatten())
+        .chain(std::iter::once_with(|| bundled(english())))
+}
+
+fn plain_message(catalog: &'static Catalog, key: &str) -> Option<&'static str> {
+    plain_catalogs(catalog).find_map(|catalog| catalog.plain.get(key).map(String::as_str))
+}
+
 fn plain(catalog: &'static Catalog, key: &'static str) -> &'static str {
-    catalog
-        .plain
-        .get(key)
-        .or_else(|| regional_parent(catalog).and_then(|parent| parent.plain.get(key)))
-        .or_else(|| bundled(english()).plain.get(key))
-        .map_or(key, String::as_str)
+    plain_message(catalog, key).unwrap_or(key)
 }
 
 /// Resolve a message in an explicit locale, useful for deterministic tests.
@@ -661,6 +668,7 @@ mod tests {
             code: "fixture",
             bundle,
             plain: HashMap::new(),
+            plain_keys: OnceLock::new(),
         }
     }
 
