@@ -1389,6 +1389,17 @@ mod tests {
         crate::ui::widgets::place_floater(&ctx, ONE, one.min, one.size());
         frames(&ctx);
         assert_eq!(rect(&ctx, ONE).min, one.min);
+        // left larger than its default, past where its default place would
+        // fit it: one press brings it back whole, not a step closer
+        let large = Rect::from_min_size(Pos2::new(120.0, 100.0), Vec2::new(1100.0, 560.0));
+        crate::ui::widgets::place_floater(&ctx, ONE, large.min, large.size());
+        frames(&ctx);
+        assert_eq!(rect(&ctx, ONE).size(), large.size());
+        crate::ui::widgets::reset_window(&ctx, ONE);
+        frames(&ctx);
+        assert_eq!(rect(&ctx, ONE), first, "one press is enough");
+        crate::ui::widgets::place_floater(&ctx, ONE, one.min, one.size());
+        frames(&ctx);
         // and "Reset windows…" afterwards still reaches every window
         crate::ui::widgets::reset_windows(&ctx);
         frames(&ctx);
