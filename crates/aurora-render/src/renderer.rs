@@ -11066,8 +11066,9 @@ impl Backend {
         }
         // DLSS frame generation paces the window under Fifo: set before the
         // window image is acquired (Linux's; Windows' Streamline paces its
-        // own presents)
-        if output.is_none() && snapshot.is_none() {
+        // own presents). Not on a lost device: the frame is retired below,
+        // and neither the surface, the presenter nor Streamline is touched
+        if !self.lost.get() && output.is_none() && snapshot.is_none() {
             // Linux: sl-ngx's presenter takes the window, or gives it back;
             // its frame's token and Reflex's sleep, before the input
             #[cfg(all(feature = "dlss", target_os = "linux"))]
