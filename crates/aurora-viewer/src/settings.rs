@@ -1429,6 +1429,12 @@ pub struct Settings {
     pub profile_rights: bool,
     /// Firestorm's Pay window (floater_pay.xml) instead of `ui/pay.rs`.
     pub classic_pay_window: bool,
+    /// The Aurora Pay window pays with its contactless terminal: the click
+    /// held on a card until its four lights are on, or its Pay button that
+    /// holds it in our place (`ui/pay/terminal.rs`); off, the Pay button
+    /// pays at the click. Aurora's own, on by default (the human's choice,
+    /// 2026-11-28); the Legacy look never shows it.
+    pub pay_contactless: bool,
     /// The Legacy Viewer's money tracker (floater_fs_money_tracker.xml)
     /// instead of the Aurora look of `ui/money_tracker/aurora.rs`.
     pub legacy_money_tracker: bool,
@@ -2845,6 +2851,7 @@ impl Default for Settings {
             classic_profiles: false,
             profile_rights: true,
             classic_pay_window: false,
+            pay_contactless: true,
             legacy_money_tracker: false,
             classic_bars: false,
             place_bar_stretch: true,

@@ -3302,9 +3302,13 @@ Transaction windows, with the same variable:
 - `pay-layout`, `pay-hidden`, `pay-large`: four four-digit amounts, free
   field and hidden buttons, maximum amount.
 - `pay-vendor`, `pay-vendor-short` (#1869): a vendor with one L$ 180 price
-  and no free amount, like CasperVend. The price button pays at once (no
+  and no free amount, like CasperVend. With Contactless payment off
+  (Preferences › Aurora › Pay window), the price button pays at once (no
   Pay button below it); `-short` starts with L$ 100: the button stays
   enabled and opens Buy L$ for the missing L$ 80, the window staying open.
+  With Contactless payment on (the default), the price is chosen already
+  and the terminal's card, or the Pay button, pays it at the end of its
+  hold; short of L$, the same hold opens Buy L$.
 - `buy-touch-menu` (#1869): the for-sale cube keeps the Touch click action
   and Buy is chosen from its menu; add `-confirm` to press Buy at frame 320
   (the log shows `demo purchase confirmed: … prim=971, price=10`).
@@ -7520,8 +7524,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   L$ 500, the confirmation asked above the threshold (Preferences ›
   Payments). `sent`: the end of a payment, with its message. `group`: the
   Northern Wolves group as the payee (its insignia on the card), without a
-  message field. An object's payment
-  is `AURORA_DEMO_ACTIONS=pay`.
+  message field. With Preferences › Aurora › Pay window › Contactless
+  payment (on by default) the Aurora look shows its terminal in every mode:
+  hold the click on the card until the four lights are on, or press Pay,
+  which holds it; let go sooner and nothing is paid. `hold`: the terminal
+  drawn most of the way through a hold (the card on the reader, three
+  lights on), for a capture. `button`: the Pay button alone for this run,
+  as with the setting off (the shared settings are not changed). An
+  object's payment is `AURORA_DEMO_ACTIONS=pay`.
 - **`AURORA_DEMO_MONEY_TRACKER=<mode>`**: opens Me › Money tracker on twelve
   made-up transactions of the last 75 minutes (tips through an object,
   gifts, a sale and a purchase, an upload fee, a group's joining fee).

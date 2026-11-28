@@ -11,7 +11,7 @@ mod pages;
 /// The rows of the Phototools window, borrowed from the pages.
 mod phototools;
 /// Aurora's own marked in its gradient, outside Preferences too.
-pub(crate) use pages::aurora::aurora_word;
+pub(crate) use pages::aurora::{aurora_color, aurora_word};
 pub use phototools::{PhotoLayer, PhotoState, Section as PhotoSection};
 mod saved_graphics;
 mod scale;

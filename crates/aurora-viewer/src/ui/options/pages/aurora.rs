@@ -341,6 +341,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-aurora-pay-classic"),
                 &field!(classic_pay_window),
             );
+            let classic_pay = cx.s.classic_pay_window;
+            cx.subs(classic_pay, |cx| {
+                cx.toggle(
+                    tr!("ui-options-aurora-pay-contactless"),
+                    tr!("ui-options-aurora-pay-contactless-help"),
+                    &field!(pay_contactless),
+                );
+            });
             look(
                 cx,
                 tr!("money-tracker-title"),

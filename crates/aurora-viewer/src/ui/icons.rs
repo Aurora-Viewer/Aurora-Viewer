@@ -241,6 +241,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "walk",
     "wand",
     "wave-sine",
+    "wifi",
     "wifi-off",
     "wind",
     "world-search",
@@ -1007,6 +1008,12 @@ impl Icons {
         for (name, bytes) in BRAND_SVGS {
             if let Some(ci) = rasterize_svg(bytes, BRAND_RASTER_PX).map(center_on_content) {
                 map.insert((*name).to_owned(), ctx.load_texture(*name, ci, opts));
+            }
+            // the same silhouette for where it is drawn large (the card of
+            // the Pay window): `<name>-large`
+            if let Some(ci) = rasterize_svg(bytes, LARGE_RASTER_PX).map(center_on_content) {
+                let large = format!("{name}-large");
+                map.insert(large.clone(), ctx.load_texture(large, ci, opts));
             }
         }
         for (name, bytes) in PNGS {
