@@ -33,13 +33,14 @@ use egui::{RichText, Vec2};
 pub const WINDOW: &str = "ao_mini";
 /// One icon button of the strip.
 const BUTTON: Vec2 = Vec2::new(30.0, 30.0);
-/// What plays now: its width and height.
+/// What plays now: its width and height, the toolbar dock's buttons'.
 const FIELD: Vec2 = Vec2::new(176.0, 34.0);
 /// The grip at its left end.
 const GRIP: f32 = 12.0;
-/// The room between two of its parts, and its margins.
+/// The room between two of its parts, and its margins: 4 above and under,
+/// as the dock's, for its height (42).
 const GAP: f32 = 3.0;
-const MARGIN: f32 = 5.0;
+const MARGIN: f32 = 4.0;
 /// The strip's width, from its parts; its height follows its line.
 const WIDTH: f32 = 2.0 * MARGIN + GRIP + FIELD.x + 8.0 * BUTTON.x + 11.0 * GAP + 6.0;
 
@@ -73,7 +74,7 @@ pub fn show(
         WINDOW,
         aurora_i18n::tr!("ao-mini-title"),
         egui::pos2(260.0, 420.0),
-        Vec2::new(WIDTH, 44.0),
+        Vec2::new(WIDTH, FIELD.y + 2.0 * MARGIN),
     )
     .headless()
     .bar_glass()

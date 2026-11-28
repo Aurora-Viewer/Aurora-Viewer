@@ -1137,19 +1137,37 @@ impl<'a> Floater<'a> {
         if !self.silent {
             super::sound_cues::floater_shown(ctx, egui::Id::unique(self.id));
         }
-        let opacity = super::surface_opacity::window(ctx, self.id, self.chat);
+        // (one dressed as a bar fades as the bars do, not as a window)
+        let opacity = if self.bar_glass {
+            super::surface_opacity::bars()
+        } else {
+            super::surface_opacity::window(ctx, self.id, self.chat)
+        };
         let shadow = ctx.global_style().visuals.window_shadow;
-        // (the toolbars' tint for one laid over the world like a bar)
-        let glass_palette = if self.bar_glass { Palette { panel: p.bar, ..*p } } else { *p };
+        // (the toolbar islands' glass for one laid over the world like a bar)
+        let glass_palette = if self.bar_glass {
+            Palette {
+                panel: p.bar,
+                panel_alpha: workspace::island_alpha(p),
+                ..*p
+            }
+        } else {
+            *p
+        };
         let tint = glass_palette.panel;
         let fill = super::surface_opacity::frame_fill(
             &glass_palette,
-            Color32::from_rgba_unmultiplied(tint.r(), tint.g(), tint.b(), p.panel_alpha),
+            Color32::from_rgba_unmultiplied(tint.r(), tint.g(), tint.b(), glass_palette.panel_alpha),
             opacity,
         );
+        let border = if self.bar_glass {
+            workspace::island_border(p)
+        } else {
+            border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6)))
+        };
         let frame = egui::Frame::new()
             .fill(fill)
-            .stroke(border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6))))
+            .stroke(border)
             .corner_radius(ctx.global_style().visuals.window_corner_radius)
             .shadow(egui::Shadow {
                 color: shadow.color.gamma_multiply(opacity),
