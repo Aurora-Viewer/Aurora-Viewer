@@ -5059,6 +5059,7 @@ impl World {
                 if too_big && read_scope.is_some_and(|scope| scope.strong_count() == 0) {
                     // The old capability's 403 tells us nothing about the size
                     // of this folder. Read it with the agent's current capability.
+                    log::debug!(target: "inventory_region_handoff", "inventory folder refusal from a superseded capability: {} folders", folders.len());
                     for id in folders {
                         self.inventory.retry(id);
                     }

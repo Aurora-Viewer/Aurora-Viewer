@@ -3651,7 +3651,8 @@ impl Session<'_> {
         tokio::spawn(async move {
             // BGFolderHttpHandler::processFailure: a batch refused with 403 is
             // too large and split; only a folder refused alone is over the
-            // limit (InventoryLimitReachedAIS).
+            // limit (InventoryLimitReachedAIS). A superseded capability's
+            // refusal is handed back for retry on the current region.
             let mut batches: Vec<Vec<uuid::Uuid>> = folders.chunks(16).rev().map(<[uuid::Uuid]>::to_vec).collect();
             while let Some(chunk) = batches.pop() {
                 let body = crate::inventory::fetch_request_body(&chunk, owner);
@@ -3660,7 +3661,7 @@ impl Session<'_> {
                         let contents = crate::inventory::parse_fetch_response(&v);
                         let _ = events.send(NetEvent::InventoryContents(contents));
                     }
-                    Err(caps::CapsError::Status(403)) if chunk.len() > 1 => {
+                    Err(caps::CapsError::Status(403)) if chunk.len() > 1 && scope.strong_count() > 0 => {
                         let (first, second) = chunk.split_at(chunk.len() / 2);
                         batches.push(second.to_vec());
                         batches.push(first.to_vec());
@@ -7578,6 +7579,69 @@ mod script_dialog_tests {
             mfa_hash: None,
             raw: Llsd::Undef,
         })
+    }
+
+    #[tokio::test]
+    async fn a_legacy_inventory_batch_refused_after_crossing_is_not_split_on_the_old_capability() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let old_addr = server.local_addr().unwrap();
+        let mut old_sim = Sim::new(old_addr, 10);
+        old_sim.caps = Arc::new([("FetchInventoryDescendents2".into(), format!("http://{old_addr}/inventory"))].into());
+        let neighbour = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let new_addr = neighbour.local_addr().unwrap();
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let sims = [(old_addr, old_sim), (new_addr, Sim::new(new_addr, 20))].into();
+        let mut session = test_session(&sh, sock, sims, old_addr);
+        let folders = vec![Uuid::from_u128(3), Uuid::from_u128(4)];
+        session.fetch_inventory(folders.clone(), Uuid::from_u128(1), false);
+
+        let (stream, _) = tokio::time::timeout(Duration::from_secs(5), server.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut stream = BufReader::new(stream);
+        let mut request_line = String::new();
+        tokio::time::timeout(Duration::from_secs(5), stream.read_line(&mut request_line))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(request_line.starts_with("POST /inventory "));
+        session.set_main(new_addr, String::new());
+        stream
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        crate::test_http::finish(stream.into_inner());
+
+        let failed = tokio::task::spawn_blocking(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while let Ok((_, event)) = received.recv_deadline(deadline) {
+                if let NetEvent::InventoryFetchFailed {
+                    folders,
+                    too_big,
+                    status,
+                    read_scope,
+                } = event
+                {
+                    return Some((folders, too_big, status, read_scope));
+                }
+            }
+            None
+        });
+        tokio::select! {
+            next = server.accept() => panic!("the expired capability received another request: {}", next.is_ok()),
+            result = failed => {
+                let (failed_folders, too_big, status, scope) = result.unwrap().expect("failure event for the original batch");
+                assert_eq!(failed_folders, folders);
+                assert!(too_big);
+                assert_eq!(status, Some(403));
+                assert_eq!(scope.expect("source capability lifetime").strong_count(), 0);
+            }
+        }
     }
 
     pub(in crate::session) fn test_session<'a>(
