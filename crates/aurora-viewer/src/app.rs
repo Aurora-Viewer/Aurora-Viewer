@@ -1944,6 +1944,7 @@ impl App {
         apply_chat_text_scale(&egui_ctx, &settings);
         crate::crash::update(&skin.theme, &settings);
         let palette = skin.theme.palette();
+        let cursors = crate::cursors::Cursors::with_preferences(&palette, &settings.pointer);
         egui_ctx.set_zoom_factor(ui_scale(&settings));
         // last view of the previous session for the loading screen
         let mut backdrop = ui::backdrop::Backdrop::default();
@@ -2131,7 +2132,7 @@ impl App {
             couple_demo_since: None,
             hud_drag: None,
             interactions: Default::default(),
-            cursors: crate::cursors::Cursors::with_palette(&palette),
+            cursors,
             cursor_shown: Default::default(),
             build_demo: Default::default(),
             rt_walk_demo: Default::default(),
@@ -14254,6 +14255,9 @@ impl App {
             // Windows substitutes arrows for the system Grabbing cursor.
             full.platform_output.cursor_image = self.cursors.hud_drag();
         }
+        if full.platform_output.cursor_icon == egui::CursorIcon::Default && full.platform_output.cursor_image.is_none() {
+            full.platform_output.cursor_image = self.cursors.pointer();
+        }
         if self.demo
             && self.frame_count == 650
             && (std::env::var_os("AURORA_DEMO_ACTIONS").is_some() || std::env::var_os("AURORA_DEMO_PLATE_HOVER").is_some())
@@ -14348,6 +14352,7 @@ impl App {
                 self.palette = self.skin.theme.palette();
                 self.cursors.set_palette(&self.palette);
             }
+            self.cursors.set_preferences(&self.palette, &self.settings.pointer);
             ui::surface_opacity::set(wanted_opacity(&self.settings));
             self.skin.theme.apply(&self.egui_ctx, text_scale(&self.settings));
             apply_chat_text_scale(&self.egui_ctx, &self.settings);
