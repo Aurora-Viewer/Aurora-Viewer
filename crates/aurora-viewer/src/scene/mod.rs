@@ -384,6 +384,9 @@ pub struct FaceDraw {
     pub rez_glow: bool,
     /// Part of a system avatar body: its pass follows the avatar pool.
     pub system: Option<SystemPart>,
+    /// Face of a rigged mesh: its layer rank follows its pass
+    /// (`rigged_layer_rank`). None: any other face.
+    pub layer: Option<RiggedLayer>,
     pub first_person_hidden: bool,
 }
 
@@ -1503,17 +1506,67 @@ fn tex_anim_record(
 /// showing bands of the body through a layer, bands that moved with every
 /// rebuild (the transparency overlay's Ctrl+Alt+T rebuilds them all).
 ///
-/// The Legacy Viewer draws a layer whole and in a lasting order, sorted by
-/// skin, material and texture (CompareBatchBreakerRigged,
-/// indra/newview/llvovolume.cpp). Here the skin (a face showing a bake)
-/// stays at rank 0 and every other face of an object takes one rank of 1 to
-/// `LAYER_RANK_MAX`, chosen from its id: a layer covers the skin it lies on,
-/// and two layers that lie on each other keep the same winner everywhere.
-fn rigged_layer_rank(skin_face: bool, object: &Uuid) -> u32 {
-    if skin_face {
-        return 0;
+/// The Legacy Viewer draws the opaque faces first, then the masked ones,
+/// then the blended ones (the pool order of indra/newview/lldrawpool.h), each
+/// at the depth of what is already there (LLGLDepthTest's GL_LEQUAL,
+/// indra/llrender/llglstates.h; the rigged blended faces in
+/// LLDrawPoolAlpha::forwardRender(true), indra/newview/lldrawpoolalpha.cpp):
+/// a masked face lying on an opaque one shows over it, a blended face over
+/// both, whether it shows a bake or not. Inside a pass it draws a layer
+/// whole and in a lasting order, sorted by skin, material and texture
+/// (CompareBatchBreakerRigged, indra/newview/llvovolume.cpp).
+///
+/// The rank follows the passes: 0 the skin (a face showing a bake) drawn
+/// opaque or masked, 1..=2 the opaque layers, 3..=4 the masked ones, 5 the
+/// skin drawn blended, 6..=7 the blended layers. An aux or universal channel
+/// of an add-on (#3461), blended over the add-on's own opaque skin, comes
+/// over it; so does a masked or blended pattern over an opaque coat (#3654).
+/// Inside a pass, the object's id picks the rank (`RiggedLayer::tie`): two
+/// layers that lie on each other keep the same winner everywhere.
+///
+/// One difference is kept: a masked skin stays under an opaque layer lying
+/// on it (#3054), where the Legacy Viewer's later masked pass would show the
+/// skin through the layer.
+fn rigged_layer_rank(layer: RiggedLayer, pass: Pass) -> u32 {
+    let tie = u32::from(layer.tie);
+    match pass {
+        Pass::Blend if layer.skin => 5,
+        Pass::Blend => 6 + tie,
+        _ if layer.skin => 0,
+        Pass::Mask | Pass::MaskTwoSided => 3 + tie,
+        Pass::Opaque | Pass::OpaqueTwoSided | Pass::Hidden => 1 + tie,
     }
-    1 + (object.as_u128() % u128::from(flags::LAYER_RANK_MAX)) as u32
+}
+
+/// What the rank of a rigged face is made of (`rigged_layer_rank`), kept on
+/// the face: its pass is only known once its texture's alpha is
+/// (`finish_faces`, `reclassify_slots`), and changes when it arrives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RiggedLayer {
+    /// The face shows a bake.
+    pub skin: bool,
+    /// 0 or 1, from the object's id: which of the two ranks of its pass.
+    pub tie: u8,
+}
+
+impl RiggedLayer {
+    pub fn new(skin: bool, object: &Uuid) -> Self {
+        Self {
+            skin,
+            tie: (object.as_u128() % 2) as u8,
+        }
+    }
+}
+
+/// Layer rank to write on a face's record once its pass is known: a rigged
+/// face's (`rigged_layer_rank`), or a blended face's of an object that is
+/// neither rigged nor a HUD (`stacked_layer_rank`); `None` leaves the record
+/// as it is (a HUD, a rigged object's face without a layer).
+fn face_layer_rank(f: &FaceDraw, object_auto_mask: bool) -> Option<u32> {
+    match f.layer {
+        Some(layer) => Some(rigged_layer_rank(layer, f.pass)),
+        None => object_auto_mask.then(|| stacked_layer_rank(f.pass, f.te_index)),
+    }
 }
 
 /// Layer rank of a face of an object that is neither rigged nor a HUD
@@ -3666,14 +3719,15 @@ impl Scene {
                     let mode = f.record_flags();
                     let mode_changed = before != mode;
                     let (record, face) = (f.record, cull_face(f, idx, fi == 0));
-                    // (`object_auto_mask`: neither rigged nor a HUD, the
-                    // objects whose blended faces take a rank of their own)
-                    if (mode_changed || object_auto_mask)
+                    // (a rank follows the pass: a rigged face's, and a
+                    // blended face's of an object neither rigged nor a HUD)
+                    let rank = face_layer_rank(f, object_auto_mask);
+                    if (mode_changed || rank.is_some())
                         && let Some(mut r) = renderer.records.get(record).copied()
                     {
                         r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
-                        if object_auto_mask {
-                            r.set_layer_rank(stacked_layer_rank(pass, f.te_index));
+                        if let Some(rank) = rank {
+                            r.set_layer_rank(rank);
                         }
                         renderer.records.set(record, r);
                     }
@@ -3719,17 +3773,13 @@ impl Scene {
             f.pass = pass;
             f.glow_pool = pool;
             let mode = f.record_flags();
-            // (`object_auto_mask`: neither rigged nor a HUD)
-            let rank = if object_auto_mask {
-                stacked_layer_rank(pass, f.te_index)
-            } else {
-                0
-            };
-            if (mode != 0 || rank != 0)
+            // (a new record has rank 0: only another one is written)
+            let rank = face_layer_rank(f, object_auto_mask).filter(|&rank| rank != 0);
+            if (mode != 0 || rank.is_some())
                 && let Some(mut r) = renderer.records.get(f.record).copied()
             {
                 r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
-                if object_auto_mask {
+                if let Some(rank) = rank {
                     r.set_layer_rank(rank);
                 }
                 renderer.records.set(f.record, r);
@@ -4640,9 +4690,6 @@ impl Scene {
                     && matches!(pbr_alpha, None | Some(1))
                     && matches!(legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND)),
             );
-            if rigged {
-                rec.set_layer_rank(rigged_layer_rank(skin_face, &o.full_id));
-            }
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
@@ -4670,6 +4717,8 @@ impl Scene {
                 glow_pool: false,
                 rez_glow: false,
                 system: None,
+                // (its rank is written once its pass is known, finish_faces)
+                layer: rigged.then(|| RiggedLayer::new(skin_face, &o.full_id)),
                 first_person_hidden: false,
             });
         }
@@ -5081,6 +5130,7 @@ impl Scene {
                     glow_pool: false,
                     rez_glow: false,
                     system: Some(SystemPart::of(part.name)),
+                    layer: None,
                     first_person_hidden: matches!(part.name, "head" | "hair" | "eyelashes" | "eye_left" | "eye_right"),
                 });
             }
@@ -7051,16 +7101,106 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
 mod layer_rank_tests {
     use super::*;
 
+    const IDS: [Uuid; 5] = [Uuid::nil(), Uuid::from_u128(1), Uuid::from_u128(6), Uuid::from_u128(7), Uuid::max()];
+    const PASSES: [Pass; 6] = [
+        Pass::Opaque,
+        Pass::OpaqueTwoSided,
+        Pass::Mask,
+        Pass::MaskTwoSided,
+        Pass::Blend,
+        Pass::Hidden,
+    ];
+
+    fn rank(skin: bool, id: &Uuid, pass: Pass) -> u32 {
+        rigged_layer_rank(RiggedLayer::new(skin, id), pass)
+    }
+
     #[test]
-    fn the_skin_stays_under_every_worn_layer() {
-        let ids = [Uuid::nil(), Uuid::from_u128(1), Uuid::from_u128(6), Uuid::from_u128(7), Uuid::max()];
-        for id in ids {
-            assert_eq!(rigged_layer_rank(true, &id), 0);
-            let rank = rigged_layer_rank(false, &id);
-            assert!((1..=flags::LAYER_RANK_MAX).contains(&rank), "{id}: {rank}");
-            // the same object keeps its rank on every rebuild
-            assert_eq!(rigged_layer_rank(false, &id), rank);
+    fn every_rank_fits_and_stays_with_its_object() {
+        for id in IDS {
+            for pass in PASSES {
+                for skin in [false, true] {
+                    let r = rank(skin, &id, pass);
+                    assert!(r <= flags::LAYER_RANK_MAX, "{id} {pass:?} skin {skin}: {r}");
+                    // the same object keeps its rank on every rebuild
+                    assert_eq!(rank(skin, &id, pass), r);
+                }
+            }
         }
+    }
+
+    #[test]
+    fn the_skin_stays_under_every_worn_layer_of_its_pass_or_above() {
+        // #3054: an opaque or masked skin under every layer; a blended skin
+        // still under the blended layers
+        for skin_id in IDS {
+            for skin_pass in PASSES {
+                for id in IDS {
+                    for pass in PASSES {
+                        let over = pass == Pass::Blend || skin_pass != Pass::Blend;
+                        if over {
+                            assert!(
+                                rank(false, &id, pass) > rank(true, &skin_id, skin_pass),
+                                "{pass:?} layer {id} over {skin_pass:?} skin {skin_id}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_masked_or_blended_layer_covers_an_opaque_one() {
+        // the Legacy Viewer's passes: opaque, then masked, then blended (#3654)
+        for under in IDS {
+            for over in IDS {
+                for opaque in [Pass::Opaque, Pass::OpaqueTwoSided] {
+                    for later in [Pass::Mask, Pass::MaskTwoSided, Pass::Blend] {
+                        assert!(
+                            rank(false, &over, later) > rank(false, &under, opaque),
+                            "{later:?} {over} / {under}"
+                        );
+                    }
+                }
+                for mask in [Pass::Mask, Pass::MaskTwoSided] {
+                    assert!(rank(false, &over, Pass::Blend) > rank(false, &under, mask), "{over} / {under}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_blended_bake_covers_the_opaque_and_masked_faces_it_lies_on() {
+        // #3461: an add-on's own opaque skin (face 0) and its AUX3 channel
+        // (face 1, blended), two faces of one object lying on each other
+        let aux3 = avatar::BAKES[10].2;
+        let skin = avatar::bake_slot_for(&aux3).is_some();
+        assert!(skin);
+        for id in IDS {
+            for under in [Pass::Opaque, Pass::OpaqueTwoSided, Pass::Mask, Pass::MaskTwoSided] {
+                assert!(rank(skin, &id, Pass::Blend) > rank(false, &id, under), "{id} over {under:?}");
+                // and the body's skin drawn opaque or masked, as before
+                assert!(rank(skin, &id, Pass::Blend) > rank(true, &id, under));
+            }
+        }
+    }
+
+    #[test]
+    fn a_rigged_face_takes_the_rank_of_the_pass_it_gets() {
+        // a bake whose alpha arrives after the face was built (reclassify_slots)
+        let id = Uuid::from_u128(7);
+        let mut face = super::tests::test_face(Pass::Hidden, false);
+        face.layer = Some(RiggedLayer::new(true, &id));
+        assert_eq!(face_layer_rank(&face, false), Some(0));
+        face.pass = Pass::Blend;
+        assert_eq!(face_layer_rank(&face, false), Some(5));
+        // a HUD's face keeps its record's rank; an object's blended face its
+        // number's (stacked_layer_rank)
+        face.layer = None;
+        face.te_index = 3;
+        assert_eq!(face_layer_rank(&face, false), None);
+        assert_eq!(face_layer_rank(&face, true), Some(3));
     }
 
     #[test]
@@ -8376,6 +8516,7 @@ mod tests {
             glow_pool: false,
             rez_glow: false,
             system: None,
+            layer: None,
             first_person_hidden: false,
         }
     }
