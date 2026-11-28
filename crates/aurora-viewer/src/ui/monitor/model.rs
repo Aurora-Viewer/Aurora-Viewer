@@ -489,9 +489,8 @@ pub fn attribute(inp: &Inputs) -> Attribution {
     // network: UDP, then HTTP by kind (kb/s)
     let mut net_weights = vec![(RowId::WorldIn, inp.udp_kbps[0]), (RowId::WorldOut, inp.udp_kbps[1])];
     if let Some(p) = inp.probes {
-        let secs = f64::from(p.secs.max(1e-3));
         for (kind, period) in aurora_net::probe::HTTP_KINDS.iter().zip(&p.http.kinds) {
-            net_weights.push((http_row(*kind), period.bytes as f64 * 8.0 / 1000.0 / secs));
+            net_weights.push((http_row(*kind), period.received_kbps(p.secs)));
         }
     }
     for &(row, kbps) in &net_weights {

@@ -194,7 +194,7 @@ impl App {
         let net = self.net.stats.snapshot();
         let link = &self.net_profile.last;
         let net_info = NetInfo {
-            in_kbps: self.perf.net_rate.2 + self.perf.http_rate_kbps,
+            in_kbps: self.perf.net_rate.2,
             out_kbps: self.perf.net_rate.3,
             ping_ms: link.ping_ms,
             loss: crate::net_profile::loss_percent(link),
@@ -205,18 +205,19 @@ impl App {
             unacked: link.unacked,
             input_delay_ms: self.net_profile.totals.input_delay_ms,
             loop_ms: link.loop_busy_ms,
-            http_active: net.http_in_flight,
-            http_queued: net.http_queued,
+            assets_queued: net.http_queued,
             corrections: (
                 u64::from(self.net_profile.totals.corrections.count),
                 self.net_profile.totals.corrections.largest,
             ),
             event_wait_ms: link.event_wait_ms,
-            downloaded: net.http_bytes,
-            http_failed: net.http_failed,
+            assets_downloaded: net.http_bytes,
+            assets_failed: net.http_failed,
             throttle_asked: self.net.stats.throttle_asked_kbps.load(std::sync::atomic::Ordering::Relaxed),
             throttle_setting: bandwidth_kbps(&self.settings) as u32,
-        };
+            ..NetInfo::default()
+        }
+        .with_http(probes.as_ref());
         let inputs = model::Inputs {
             cpu: cpu.as_ref(),
             frame: frame.as_ref(),

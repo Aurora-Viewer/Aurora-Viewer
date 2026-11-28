@@ -140,7 +140,6 @@ pub struct PerfData {
     pub net_prev: Option<NetStatsSnapshot>,
     pub net_rate: (f32, f32, f32, f32), // pkts in/s, pkts out/s, kbps in, kbps out
     last_net: Instant,
-    pub http_rate_kbps: f32,
     // per-frame CPU timings (ms)
     pub events_ms: f32,
     pub update_ms: f32,
@@ -177,7 +176,6 @@ impl Default for PerfData {
             net_prev: None,
             net_rate: (0.0, 0.0, 0.0, 0.0),
             last_net: Instant::now(),
-            http_rate_kbps: 0.0,
             events_ms: 0.0,
             update_ms: 0.0,
             ui_ms: 0.0,
@@ -258,13 +256,13 @@ impl PerfData {
                 net.bytes_in.saturating_sub(p.bytes_in) as f32 * 8.0 / 1000.0 / nel,
                 net.bytes_out.saturating_sub(p.bytes_out) as f32 * 8.0 / 1000.0 / nel,
             );
-            self.http_rate_kbps = net.http_bytes.saturating_sub(p.http_bytes) as f32 * 8.0 / 1000.0 / nel;
+            let asset_kbps = net.http_bytes.saturating_sub(p.http_bytes) as f32 * 8.0 / 1000.0 / nel;
             self.net_prev = Some(net);
             self.last_net = Instant::now();
             if self.net_hist.len() >= NET_HISTORY {
                 self.net_hist.pop_front();
             }
-            self.net_hist.push_back((self.net_rate.2 + self.http_rate_kbps, self.net_rate.3));
+            self.net_hist.push_back((self.net_rate.2 + asset_kbps, self.net_rate.3));
         }
         if let Some(&(i, o)) = self.net_hist.back() {
             smooth(&mut self.net_live, &[i, o], k);

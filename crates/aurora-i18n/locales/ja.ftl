@@ -5345,6 +5345,7 @@ ui-bars-graphics-presets = グラフィックプリセット
 ui-bars-camera-presets = カメラプリセット
 ui-bars-open-graphics-preferences = グラフィック設定…
 ui-bars-performance-window = パフォーマンス…
+ui-bars-tip-network-scope = 損失はシミュレーターのＵＤＰ通信で計測します。グラフにはシミュレーターのＵＤＰ通信とアセットのダウンロードを表示します。
 ui-bars-network-window = ネットワークグラフ…
 ui-bars-camera-controls = カメラ操作…
 ui-bars-show-in-island = アイランド内に表示
@@ -10134,6 +10135,10 @@ monitor-palettes-sent = 書き込まれたスケルトンパレット
 monitor-cull-sent = 書き込まれたカリングテーブル
 monitor-journal = 描画スレッドのジャーナル
 monitor-per-frame = １フレームあたり{ $value }
+monitor-network-circuits = ＵＤＰ回線 { $circuits } 本
+monitor-network-scope = 受信はシミュレーターのＵＤＰ通信と、リクエスト完了時に集計した計測対象のＨＴＴＰ応答本文です。送信はシミュレーターのＵＤＰ通信です。
+monitor-asset-queue = アセットのダウンロード待ち { $count } 件
+monitor-asset-downloads = アセットのダウンロード
 monitor-network-sub = { $circuits ->
     [one] １本のＵＤＰ回線
    *[other] { $circuits }本のＵＤＰ回線
