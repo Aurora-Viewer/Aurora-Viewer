@@ -135,6 +135,16 @@ const PICK_RAYS_MOVING: f32 = 8.0;
 // reuse.
 const NEIGHBOURS: u32 = 2u;
 const NEIGHBOUR_REACH: f32 = 60.0;
+// A pixel whose history averages fewer frames than this (one that just lost
+// it: the view moved, or a jitter of the projection put another leaf there)
+// shows its few rays nearly as they are; their light is held to
+// `FRESH_GAIN` times what last frame's pixels around it had (`around`).
+const FRESH_FRAMES: f32 = 4.0;
+const FRESH_GAIN: f32 = 3.0;
+// How many frames history borrowed from the leaves around may count for
+// (`kept`): with only `FRESH_FRAMES` the edges of leaves and twigs kept too
+// little and still sparkled. Clamped all the while (`cs_gi_reuse`).
+const LOOSE_FRAMES: f32 = 16.0;
 
 // The screen pixels a side of a traced pixel (`params.grid`).
 fn grid_step() -> i32 {
@@ -381,7 +391,12 @@ fn seen_before(p: vec3<f32>, dir: vec3<f32>) -> Seen {
         || dot(unpack_normal(was.xy), n) < 0.5) {
         return out;
     }
-    out.light = textureLoad(scene_tex, vec2<i32>(before), 0).rgb;
+    // The colour of the pixel the guide describes, not of `before`: on a
+    // leaf or a twig against the sky the two differ under a jittered
+    // projection, and `before` showed the sky behind (the clouds' light
+    // crawled over the leaves).
+    let shown_at = min(q * grid_step(), vec2<i32>(params.scene.xy) - vec2<i32>(1));
+    out.light = textureLoad(scene_tex, shown_at, 0).rgb;
     out.normal = select(n, -n, dot(n, dir) > 0.0);
     out.seen = true;
     return out;
@@ -403,6 +418,8 @@ struct Kept {
     color: vec3<f32>,
     count: f32,
     moment: f32,
+    // the history came from the leaves around (`kept`'s last resort)
+    loose: bool,
 };
 
 // Whether last frame's half resolution pixel `q` held the surface `back`
@@ -422,7 +439,7 @@ fn held(q: vec2<i32>, back: Back, n: vec3<f32>, g: ptr<function, vec4<f32>>) -> 
 // the view moves: the neighbours' of the same face serve then, where
 // starting again leaves one ray's noise.
 fn kept(back: Back, n: vec3<f32>) -> Kept {
-    var k = Kept(vec3<f32>(0.0), 0.0, 0.0);
+    var k = Kept(vec3<f32>(0.0), 0.0, 0.0, false);
     if (params.mode.w < 0.5 || back.at.x < 0.0) {
         return k;
     }
@@ -459,12 +476,96 @@ fn kept(back: Back, n: vec3<f32>) -> Kept {
             }
         }
     }
+    // None of the same face either: in foliage, where a jitter of the
+    // projection or a turn of the view puts each pixel on another leaf, the
+    // leaves around at about the same distance, whatever they face, for
+    // `LOOSE_FRAMES` at most. Starting again there left one ray's light on
+    // each, and the leaves sparkled.
+    var loose = false;
+    if (weight < 1e-3) {
+        weight = 0.0;
+        let near = vec2<i32>(round(c));
+        // a 3 x 3 first, then a 5 x 5 (a twig's tip, the sky all around it)
+        for (var reach = 1; reach <= 2 && weight < 0.5; reach++) {
+            for (var y = -reach; y <= reach; y++) {
+                for (var x = -reach; x <= reach; x++) {
+                    let q = near + vec2<i32>(x, y);
+                    if (any(q < vec2<i32>(0)) || any(q >= vec2<i32>(params.half.xy))) {
+                        continue;
+                    }
+                    let was = textureLoad(prev_guide, q, 0);
+                    if (was.z <= 0.0 || abs(was.z - back.expected) >= 2.0 * back.tolerance) {
+                        continue;
+                    }
+                    k.color += textureLoad(prev_fed, q, 0).rgb;
+                    k.count += textureLoad(prev_color, q, 0).a;
+                    k.moment += was.w;
+                    weight += 1.0;
+                }
+            }
+        }
+        loose = true;
+    }
     if (weight > 0.0) {
         k.color /= weight;
         k.count /= weight;
         k.moment /= weight;
     }
+    if (loose) {
+        k.count = min(k.count, LOOSE_FRAMES);
+    }
+    k.loose = loose && weight > 0.0;
     return k;
+}
+
+// The light of last frame's half resolution pixels around where the
+// surface at `back` was whose history averaged `FRESH_FRAMES` or more, any
+// face but the sky's, at about its distance (as `kept`'s leaves around: a
+// twig before a shadowed wall was held to the wall's light, and a lit face
+// a turn of the view uncovered behind a dark one to the dark one's), their
+// luminance's mean without the brightest, so
+// that one speck among them does not raise it; negative with fewer than
+// three of them. Fresh ones are left out: held to their own level, a
+// foliage that stays fresh would darken frame after frame. The 3 x 3 first,
+// then the 5 x 5: a twig or a leaf's edge against the sky has too few of its
+// own in the first, and went unclamped.
+fn around(back: Back) -> f32 {
+    let level = around_within(back, 1);
+    if (level >= 0.0) {
+        return level;
+    }
+    return around_within(back, 2);
+}
+
+fn around_within(back: Back, reach: i32) -> f32 {
+    if (params.mode.w < 0.5 || back.at.x < 0.0) {
+        return -1.0;
+    }
+    let near = vec2<i32>(round((back.at - vec2<f32>(0.5)) * params.grid.y));
+    var sum = 0.0;
+    var most = 0.0;
+    var seen = 0.0;
+    for (var y = -reach; y <= reach; y++) {
+        for (var x = -reach; x <= reach; x++) {
+            let q = near + vec2<i32>(x, y);
+            if (any(q < vec2<i32>(0)) || any(q >= vec2<i32>(params.half.xy))) {
+                continue;
+            }
+            let z = textureLoad(prev_guide, q, 0).z;
+            if (z <= 0.0 || abs(z - back.expected) >= 2.0 * back.tolerance
+                || textureLoad(prev_color, q, 0).a < FRESH_FRAMES) {
+                continue;
+            }
+            let l = luma(textureLoad(prev_fed, q, 0).rgb);
+            sum += l;
+            most = max(most, l);
+            seen += 1.0;
+        }
+    }
+    if (seen < 3.0) {
+        return -1.0;
+    }
+    return (sum - most) / (seen - 1.0);
 }
 
 // A pixel's pick (ReSTIR GI's reservoir): the hit kept, the light it
@@ -863,14 +964,30 @@ fn cs_gi_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         let weight = min(sum * drawn / (among * p), WEIGHT_MAX);
         sample = capped(pick.light * (facing / PI * weight));
     }
+    let back = back_of(pixel, world, dist);
+    let past = kept(back, n);
+    // A pixel with little or no history: its few rays, held to the light
+    // around it, so that one which met a bright face does not light the
+    // whole leaf for a frame. Dense foliage loses its history at every frame
+    // under a jittered projection (TAA, FSR, DLSS), each pixel on another
+    // leaf or the sky between them, and sparkled; a turn of the view did it
+    // everywhere. Not where the light changed: that light is new.
+    if ((past.count < FRESH_FRAMES || past.loose)
+        && params.mode.w > 0.5
+        && params.half.w >= FRESH_FRAMES
+        && !light_changed(world)) {
+        let level = around(back);
+        let l = luma(sample);
+        if (level >= 0.0 && l > level * FRESH_GAIN) {
+            sample *= level * FRESH_GAIN / l;
+        }
+    }
     var moment = luma(sample) * luma(sample);
 
     // last frame's at the same surface
     var color = sample;
     let rays = select(1.0, f32(RESET_RAYS), params.mode.w < 0.5);
     var count = min(rays, params.half.w);
-    let back = back_of(pixel, world, dist);
-    let past = kept(back, n);
     if (past.count > 0.0) {
         var most = select(params.half.w, HISTORY_MOVING, back.moving);
         most = 1.0 / lamps_fresh(world, 1.0 / most);
