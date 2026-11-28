@@ -3776,6 +3776,7 @@ impl App {
         // login screen selects next time
         self.settings.last_login = Some(self.settings.login_key());
         self.settings.save();
+        log::info!("inventory timing: login submitted");
         self.net.send(NetCommand::Login(Box::new(req)));
     }
 
@@ -7613,13 +7614,7 @@ impl App {
             // motion starts from)
             self.receive_event(ev, self.director_render_stamp(sent));
             if folder_reply {
-                let items = self.world.inventory.take_accepted_snapshot_items();
-                if !items.is_empty() {
-                    self.net.send(NetCommand::InventoryItemsKnown {
-                        items,
-                        owner: self.world.agent_id,
-                    });
-                }
+                self.acknowledge_inventory_snapshots();
             }
             let now = Instant::now();
             self.net_profile.event_applied(sent, now);
@@ -7630,6 +7625,19 @@ impl App {
             if now.duration_since(t_ev) > self.interest_list.event_budget(usual, lag, covered, now) {
                 break;
             }
+        }
+        if self.world.apply_inventory_reply_slice() {
+            self.acknowledge_inventory_snapshots();
+        }
+    }
+
+    fn acknowledge_inventory_snapshots(&mut self) {
+        let items = self.world.inventory.take_accepted_snapshot_items();
+        if !items.is_empty() {
+            self.net.send(NetCommand::InventoryItemsKnown {
+                items,
+                owner: self.world.agent_id,
+            });
         }
     }
 
@@ -11727,6 +11735,13 @@ impl App {
             }
         }
 
+        // The initial walk can start as soon as the cache and capabilities
+        // are ready, even if the half-second maintenance poll just ran.
+        if self.in_world() {
+            for command in self.world.start_inventory_background() {
+                self.send(command);
+            }
+        }
         self.frame_profile.lap(Lap::Social);
         // Coalesce OS pointer moves before taking the renderer for this frame.
         if self.left_down && self.texture_pipette() && !self.egui_ctx.is_pointer_over_egui() {

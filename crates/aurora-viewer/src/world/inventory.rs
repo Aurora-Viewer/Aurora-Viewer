@@ -243,12 +243,14 @@ impl Inventory {
     }
 
     fn sort_children(&mut self, id: Uuid) {
-        let Some(f) = self.folders.get(&id) else {
+        let Some(f) = self.folders.get_mut(&id) else {
             return;
         };
-        let mut kids = f.children.clone();
+        let mut kids = std::mem::take(&mut f.children);
+        let mut items = std::mem::take(&mut f.items);
         let mut seen = HashSet::new();
-        kids.retain(|child| self.folders.get(child).is_some_and(|f| f.info.parent == id) && seen.insert(*child));
+        let dedup_kids = kids.len() > 1;
+        kids.retain(|child| self.folders.get(child).is_some_and(|f| f.info.parent == id) && (!dedup_kids || seen.insert(*child)));
         // system folders first, then by name; one lowercase name per entry
         // (a background reply can list thousands of folders at once)
         kids.sort_by_cached_key(|id| {
@@ -256,11 +258,11 @@ impl Inventory {
             let sys = f.is_some_and(|f| f.info.type_default >= 0 && f.info.type_default != 8);
             (!sys, f.map(|f| crate::natural_order::key(&f.info.name)).unwrap_or_default())
         });
-        let mut items = f.items.clone();
         seen.clear();
         // FetchInventoryDescendents2 may include linked originals from other
         // folders. LLInventoryModel::updateItem indexes each by its parent.
-        items.retain(|item| self.items.get(item).is_some_and(|it| it.parent == id) && seen.insert(*item));
+        let dedup_items = items.len() > 1;
+        items.retain(|item| self.items.get(item).is_some_and(|it| it.parent == id) && (!dedup_items || seen.insert(*item)));
         items.sort_by_cached_key(|i| self.items.get(i).map(|it| crate::natural_order::key(&it.name)).unwrap_or_default());
         if let Some(f) = self.folders.get_mut(&id) {
             f.children = kids;
@@ -386,11 +388,18 @@ impl Inventory {
     }
 
     pub(super) fn apply_snapshots(&mut self, contents: Vec<FolderContents>, acknowledge: bool) -> Vec<Uuid> {
+        let timing = aurora_net::probe::enabled().then(|| {
+            (
+                std::time::Instant::now(),
+                contents.len(),
+                contents.iter().map(|snapshot| snapshot.items.len()).sum::<usize>(),
+            )
+        });
         if acknowledge {
             self.accepted_snapshot_items.clear();
         }
         self.generation += 1;
-        let mut refreshed: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
+        let mut refreshed = HashMap::new();
         let mut stale = Vec::new();
         for mut c in contents {
             // Inventory versions advance as copies arrive (Firestorm's
@@ -444,7 +453,7 @@ impl Inventory {
                 (*parent == c.folder_id && self.items.get(item).is_some_and(|it| it.parent == *parent)).then_some(*item)
             }));
             if c.version >= 0 {
-                refreshed.insert(c.folder_id, item_ids.iter().copied().collect());
+                refreshed.insert(c.folder_id, item_ids.clone());
             }
             if let Some(f) = self.folders.get_mut(&c.folder_id) {
                 f.children = child_ids;
@@ -459,15 +468,20 @@ impl Inventory {
             self.repair_item_parents(&mut c.items, parents::ItemSource::Snapshot);
             if acknowledge && !library {
                 for item in &c.items {
+                    let id = item.id;
+                    let claimed = self.items_reading.remove(&(id, false)).is_some();
                     // A request for an item already in the model may be an
                     // explicit refresh. Folder versions don't order those reads.
-                    if !self.items.contains_key(&item.id) {
-                        self.accepted_snapshot_items.push(item.id);
+                    // Avoid sending the rest of a cold walk back to the reader:
+                    // it has no queued read or retry state for those records.
+                    if (claimed || self.item_failures.contains_key(&id) || self.give_up_rounds.contains_key(&id))
+                        && !self.items.contains_key(&id)
+                    {
+                        self.accepted_snapshot_items.push(id);
                     }
-                    self.items_reading.remove(&(item.id, false));
                 }
             }
-            self.add_items_inner(c.items);
+            self.add_items_inner(c.items, Some(c.folder_id));
             self.sort_children(c.folder_id);
         }
         if !refreshed.is_empty() {
@@ -480,7 +494,13 @@ impl Inventory {
             // The links come from the parent index, not a scan of every
             // record: ~6 ms per readback with 220,000 items (#1963).
             for (folder, listed) in &refreshed {
-                for id in self.items.links_in(*folder) {
+                let links = self.items.links_in(*folder);
+                if links.is_empty() {
+                    continue;
+                }
+                // Folders without links need no membership lookup after the batch.
+                let listed: HashSet<_> = listed.iter().copied().collect();
+                for id in links {
                     if !listed.contains(&id) {
                         self.items.remove(&id);
                     }
@@ -501,6 +521,15 @@ impl Inventory {
             }
             self.request(*id);
         }
+        if let Some((started, folders, items)) = timing
+            && started.elapsed().as_millis() >= 8
+        {
+            log::info!(
+                "inventory snapshot apply: folders={folders} items={items} stale={} elapsed_ms={:.2}",
+                stale.len(),
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         stale
     }
 
@@ -513,22 +542,24 @@ impl Inventory {
     /// (#1580). Lists stay ordered like `sort_children`'s.
     pub fn add_items(&mut self, mut items: Vec<InvItem>) {
         self.repair_item_parents(&mut items, parents::ItemSource::Fetch);
-        self.add_items_inner(items);
+        self.add_items_inner(items, None);
     }
 
     /// A metadata read recovering a newly script-attached original retains
     /// LLInventoryModel::updateItem's creation rules across HTTP delays.
     pub fn add_attachment_items(&mut self, mut items: Vec<InvItem>) {
         self.repair_item_parents(&mut items, parents::ItemSource::Attachment);
-        self.add_items_inner(items);
+        self.add_items_inner(items, None);
     }
 
     pub fn add_orphan_items(&mut self, mut items: Vec<InvItem>) {
         self.repair_item_parents(&mut items, parents::ItemSource::Orphans);
-        self.add_items_inner(items);
+        self.add_items_inner(items, None);
     }
 
-    fn add_items_inner(&mut self, items: Vec<InvItem>) {
+    /// A complete snapshot has installed its own listing. Only incremental
+    /// records and originals under a different parent need a membership check.
+    fn add_items_inner(&mut self, items: Vec<InvItem>, listed_in: Option<Uuid>) {
         self.generation += 1;
         for mut it in items {
             self.item_failures.remove(&it.id);
@@ -543,13 +574,15 @@ impl Inventory {
                 self.pending_parent_repairs.remove(&it.id);
             }
             if let Some(old) = self.items.get(&it.id)
+                && Some(old.parent) != listed_in
                 && (old.parent != it.parent || old.name != it.name)
                 && let Some(folder) = self.folders.get_mut(&old.parent)
             {
                 folder.items.retain(|id| *id != it.id);
             }
             let items = &self.items;
-            if let Some(f) = self.folders.get_mut(&it.parent)
+            if Some(it.parent) != listed_in
+                && let Some(f) = self.folders.get_mut(&it.parent)
                 && (f.state == FetchState::Fetched || self.repaired_parents.get(&it.id) == Some(&it.parent))
                 && !f.items.contains(&it.id)
             {
@@ -646,7 +679,7 @@ impl Inventory {
                 folder.info.version = folder.info.version.saturating_add(1);
             }
         }
-        self.add_items_inner(items);
+        self.add_items_inner(items, None);
         for id in resort {
             self.sort_children(id);
         }

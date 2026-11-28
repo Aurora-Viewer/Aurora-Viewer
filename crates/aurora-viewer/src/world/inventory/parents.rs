@@ -176,7 +176,7 @@ impl Inventory {
                 let old_parent = item.parent;
                 self.repair_item_parents(std::slice::from_mut(&mut item), source);
                 progressed |= item.parent != old_parent;
-                self.add_items_inner(vec![item]);
+                self.add_items_inner(vec![item], None);
             }
         }
         self.parent_retry_generation = if progressed { before } else { self.generation };

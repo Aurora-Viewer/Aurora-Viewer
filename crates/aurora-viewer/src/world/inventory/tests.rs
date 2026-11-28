@@ -106,18 +106,22 @@ fn only_an_accepted_snapshot_can_acknowledge_a_previously_unknown_item() {
     let root = inv.root;
     let known = id(987_654);
     let unknown = id(987_655);
+    let never_requested = id(987_656);
+    let failed = id(987_657);
     inv.add_items(vec![InvItem {
         id: known,
         parent: root,
         ..Default::default()
     }]);
+    inv.claim_item_reads(&mut vec![unknown], false, std::time::Instant::now());
+    inv.items_failed(&[failed]);
     let version = inv.folders[&root].info.version;
     let snapshot = |version| FolderContents {
         folder_id: root,
         owner_id: Uuid::nil(),
         version,
         folders: vec![],
-        items: [known, unknown]
+        items: [known, unknown, never_requested, failed]
             .into_iter()
             .map(|id| InvItem {
                 id,
@@ -144,8 +148,8 @@ fn only_an_accepted_snapshot_can_acknowledge_a_previously_unknown_item() {
     assert_eq!(refetches(&inv), 1, "no second refetch");
     assert_eq!(
         inv.take_accepted_snapshot_items(),
-        vec![unknown],
-        "an accepted snapshot cannot cancel an explicit refresh"
+        vec![unknown, failed],
+        "acknowledge outstanding reads and cooldowns without canceling refreshes or forwarding unrelated items"
     );
 }
 
@@ -687,6 +691,30 @@ fn moved_and_renamed_items_take_their_sorted_place() {
     expected.sort();
     assert_eq!(named(&inv), expected);
     assert_eq!(inv.folders[&to].items.len(), before.len() + 3);
+}
+
+#[test]
+fn snapshot_sorts_renamed_members_and_keeps_origins_in_their_own_folders() {
+    let mut inv = fixture();
+    let listed = id(8000);
+    let another = id(8001);
+    let mut renamed = inv.items[&id(8100)].clone();
+    renamed.name = "Zebra".into();
+    let mut sibling = inv.items[&id(8101)].clone();
+    sibling.name = "Apple".into();
+    let mut original = renamed.clone();
+    original.id = id(99999);
+    original.parent = another;
+    inv.apply(vec![FolderContents {
+        folder_id: listed,
+        owner_id: inv.owner,
+        version: inv.folders[&listed].info.version + 1,
+        folders: Vec::new(),
+        items: vec![renamed, original, sibling],
+    }]);
+    assert_eq!(inv.folders[&listed].items, [id(8101), id(8100)]);
+    assert!(inv.folders[&another].items.contains(&id(99999)));
+    assert_eq!(inv.items[&id(99999)].parent, another);
 }
 
 #[test]

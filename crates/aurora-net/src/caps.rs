@@ -329,6 +329,10 @@ pub async fn get_llsd_as(http: &reqwest::Client, url: &str, kind: HttpKind) -> R
     send_llsd(http.get(url), kind).await
 }
 
+pub(crate) async fn get_inventory_item_llsd(http: &reqwest::Client, url: &str) -> Result<Llsd, CapsError> {
+    send_llsd_tracked(http.get(url), probe::HttpRequest::start_inventory(probe::InventoryRead::Item)).await
+}
+
 /// POST, or PUT (RenderMaterials writes, LLMaterialMgr::processPutQueue), of LLSD XML.
 pub async fn request_llsd(http: &reqwest::Client, url: &str, body: &Llsd, put: bool) -> Result<Llsd, CapsError> {
     let req = if put { http.put(url) } else { http.post(url) };
@@ -338,7 +342,10 @@ pub async fn request_llsd(http: &reqwest::Client, url: &str, body: &Llsd, put: b
 /// Send a capability request that answers in LLSD XML, timed by the HTTP
 /// probe under `kind` (AURORA_PROFILE).
 async fn send_llsd(req: reqwest::RequestBuilder, kind: HttpKind) -> Result<Llsd, CapsError> {
-    let timed = probe::HttpRequest::start(kind);
+    send_llsd_tracked(req, probe::HttpRequest::start(kind)).await
+}
+
+async fn send_llsd_tracked(req: reqwest::RequestBuilder, timed: Option<probe::HttpRequest>) -> Result<Llsd, CapsError> {
     let finish = |timed: Option<probe::HttpRequest>, status: u16, bytes: usize, ok: bool| {
         if let Some(t) = timed {
             t.finish(status, bytes, ok);

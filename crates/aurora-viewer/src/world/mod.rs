@@ -1940,6 +1940,21 @@ impl World {
         commands
     }
 
+    pub fn start_inventory_background(&mut self) -> Vec<aurora_net::NetCommand> {
+        if self.inventory_background.started() {
+            return Vec::new();
+        }
+        self.pump_inventory_background()
+    }
+
+    pub fn apply_inventory_reply_slice(&mut self) -> bool {
+        if !self.inventory_background.apply_reply_slice(&mut self.inventory) {
+            return false;
+        }
+        self.announce_inventory_limit();
+        true
+    }
+
     /// The background inventory walk's state (Dev Toolbox N4).
     pub fn inventory_loading_report(&self) -> String {
         self.inventory_background.report(&self.inventory, std::time::Instant::now())
