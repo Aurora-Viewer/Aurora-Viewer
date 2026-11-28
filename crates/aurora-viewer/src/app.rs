@@ -71,7 +71,7 @@ mod hover_pick;
 mod legacy_lists;
 mod texture_picker;
 mod typing_pointer;
-use folders::chat_log_root;
+use folders::bind_chat_log_folder;
 mod admin_status;
 mod avatar_studio;
 mod contents_drop_demo;
@@ -3582,13 +3582,9 @@ impl App {
         } else {
             crate::world::chat_log::grid_name(&s.grid, &s.custom_login_uri, self.demo)
         });
-        // the chosen folder (InstantMessageLogPath); once logged in it only
-        // changes with its files (`relocate`)
-        if log.identity().is_none() {
-            log.set_folder(chat_log_root(&s.chat_log_location));
-        }
-        // no file moves: a no-op once applied
-        log.set_legacy_layout(s.log_legacy_layout);
+        // the chosen folder (InstantMessageLogPath) and the yes to sharing
+        // a Legacy Viewer's
+        bind_chat_log_folder(log, s);
     }
 
     // ------------------------------------------------------------------ login
@@ -3822,13 +3818,22 @@ impl App {
         self.photo_reel_end();
         if !self.demo {
             self.settings.release_hover_account();
+            // a folder change still being placed ends with the session, and
+            // one the transcript thread dropped is not taken later: the
+            // account keeps the folder its files are in
+            folders::chat_log_logout(&mut self.world.chat_log, &mut self.settings, &mut self.folders);
         }
+        // (the demo's too: the folder to go back to is its session's)
+        self.folders.chat_log_previous = None;
         // a parcel's saved preset goes with the session
         self.panels.time_of_day = self.settings.time_of_day;
         self.hover_height_ui = Default::default();
         // the marks go with the session's World; their window too
         self.avatar_mark_ui = None;
         self.avatar_mark_last = None;
+        self.options_ui.clear_chat_log_status();
+        self.options_ui.chat_log_switch_offer = None;
+        self.options_ui.chat_log_share_offer = None;
         self.follow_ui = Default::default();
         self.portal_ui = Default::default();
         self.object_export = Default::default();
@@ -7565,6 +7570,18 @@ impl App {
     fn pump_network_events(&mut self, t_ev: Instant) {
         let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
         while let Ok((sent, ev)) = self.net.events.try_recv() {
+            // Bind this account's transcript folder before `world.apply_received`
+            // opens `chat_log` or runs auto-import: the account on this grid,
+            // the grid of its folders (`sync_chat_log` gives the same one to
+            // `chat_log`), as the Legacy Viewer's per-account settings are
+            // per grid (LLDir::setLindenUserDir in llstartup.cpp).
+            if !self.demo
+                && let NetEvent::LoggedIn(l) = &ev
+            {
+                let grid = crate::world::chat_log::grid_name(&self.settings.grid, &self.settings.custom_login_uri, false);
+                self.settings.select_chat_log_account(&grid, l.agent_id);
+                self.sync_chat_log();
+            }
             let folder_reply = matches!(
                 &ev,
                 NetEvent::InventoryContents(_) | NetEvent::InventoryTreeFetched { result: Ok(_), .. }
@@ -7672,6 +7689,7 @@ impl App {
         crate::ui::scripts::backup::flush(Duration::from_secs(2));
         // the conversation log as it is now (LLConversationLog::cache), then
         // the last lines of the conversations reach their files
+        self.world.chat_log.settle(Duration::from_secs(2));
         self.world.chat_log.save_conversations(true);
         self.world.chat_log.flush(Duration::from_secs(2));
         // the recent emojis of a message sent just before
@@ -18579,24 +18597,13 @@ impl App {
         let mut open = self.panels.settings;
         self.options_ui.cache_usage = self.disk_cache.usage();
         self.options_ui.cache_clearing = self.disk_cache.is_clearing();
-        self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
         self.options_ui.legacy_lists_ready = self.in_world() && self.world.login.is_some();
-        self.options_ui.conversation_log_entries = self.world.chat_log.conversations.list.len();
-        self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
-        self.options_ui.chat_log_shared = self.world.chat_log.shared();
+        // before a folder picked is taken: a change that failed puts the
+        // settings back to the folder in use first
+        self.poll_chat_log_change();
         self.poll_folder_pick();
+        self.sync_chat_log_options_ui();
         self.poll_settings_backup();
-        if let Some(done) = self.world.chat_log.take_relocated() {
-            self.options_ui.chat_log_status = match done {
-                Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-moved", count = count),
-                Err(e) => {
-                    log::warn!("conversation transcripts: moving failed ({e})");
-                    self.settings.chat_log_location = self.folders.chat_log_previous.take().unwrap_or_default();
-                    self.folders.settings_changed = true;
-                    aurora_i18n::tr!("ui-options-chat-logs-move-failed").to_owned()
-                }
-            };
-        }
         // the transcripts' erasing, or the Chat Service's delete (its
         // failure also shows ChatServiceHistoryDeleteFailed)
         let deleted = self.world.chat_service.take_deleted().map(|ok| {
@@ -18607,23 +18614,29 @@ impl App {
             }
         });
         if let Some(done) = self.world.chat_log.take_erased().or(deleted) {
-            self.options_ui.chat_log_status = match done {
+            match done {
                 Ok(count) if self.settings.log_import_at_login => {
                     // what was erased must not come back at the next login
                     self.settings.log_import_at_login = false;
                     self.folders.settings_changed = true;
-                    format!(
-                        "{} {}",
-                        aurora_i18n::tr!("ui-options-chat-logs-erased", count = count),
-                        aurora_i18n::tr!("ui-options-chat-logs-import-login-off")
-                    )
+                    self.options_ui.set_chat_log_status(
+                        format!(
+                            "{} {}",
+                            aurora_i18n::tr!("ui-options-chat-logs-erased", count = count),
+                            aurora_i18n::tr!("ui-options-chat-logs-import-login-off")
+                        ),
+                        false,
+                    );
                 }
-                Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-erased", count = count).to_owned(),
+                Ok(count) => self
+                    .options_ui
+                    .set_chat_log_status(aurora_i18n::tr!("ui-options-chat-logs-erased", count = count), false),
                 Err(e) => {
                     log::warn!("conversation transcripts: erasing failed ({e})");
-                    aurora_i18n::tr!("ui-options-chat-logs-erase-failed").to_owned()
+                    self.options_ui
+                        .set_chat_log_status(aurora_i18n::tr!("ui-options-chat-logs-erase-failed"), true);
                 }
-            };
+            }
         }
         self.options_ui.maturity = self.world.login.is_some().then(|| self.world.agent_access());
         // the account settings the grid keeps, asked at each opening
@@ -18796,19 +18809,34 @@ impl App {
             self.legacy_lists_start(index, parts);
         }
         if res.erase_chat_logs {
-            self.options_ui.chat_log_status = if self.world.chat_log.busy() {
-                aurora_i18n::tr!("ui-options-chat-logs-busy").to_owned()
+            if self.world.chat_log.busy() {
+                self.options_ui
+                    .set_chat_log_status(aurora_i18n::tr!("ui-options-chat-logs-busy"), true);
             } else {
-                String::new()
-            };
-            // logged in: the Chat Service's delete, which sweeps the
-            // transcripts too (deleteTranscriptsAsync, LL viewer 26.5)
-            if !self.world.request_history_delete() {
-                self.world.chat_log.erase();
+                self.options_ui.clear_chat_log_status();
+                // logged in: the Chat Service's delete, which sweeps the
+                // transcripts too (deleteTranscriptsAsync, LL viewer 26.5)
+                if !self.world.request_history_delete() {
+                    self.world.chat_log.erase();
+                }
             }
         }
         if let Some((folder, choice)) = res.folder {
             self.choose_folder(folder, choice);
+            if matches!(folder, ui::options::Folder::ChatLogs) && matches!(choice, ui::options::FolderChoice::Default) {
+                self.sync_chat_log_options_ui();
+                ctx.request_repaint();
+            }
+        }
+        if res.accept_chat_log_offer {
+            self.accept_chat_log_switch();
+            self.sync_chat_log_options_ui();
+            ctx.request_repaint();
+        }
+        if let Some(offer) = res.share_chat_log {
+            self.share_chat_log(offer);
+            self.sync_chat_log_options_ui();
+            ctx.request_repaint();
         }
         if res.back_up {
             self.back_up_settings(ctx);
@@ -21012,7 +21040,10 @@ impl App {
                 if let Some(id) = self.history_ui.stitched_waiting()
                     && let Some(rows) = self.world.chat_service.take_preview(id)
                 {
-                    self.history_ui.set_stitched(crate::world::World::service_entries(&rows));
+                    self.history_ui.set_stitched(
+                        crate::world::World::service_entries(&rows),
+                        self.world.chat_log.dir().map(std::path::Path::to_path_buf),
+                    );
                 }
                 if let Some(ui::chat::history::HistoryAction::OpenFolder(dir)) = self.history_ui.show(
                     &ctx,
@@ -24368,6 +24399,9 @@ impl ApplicationHandler for App {
             // the demo account's own folder (demo_chatlog.rs)
             if let Some(mode) = crate::demo::chatlog::mode() {
                 use crate::demo::chatlog::{self, Mode};
+                // the demo account's folder, placed on the transcript thread
+                // since the login: the scenarios below write in it
+                self.world.chat_log.settle(std::time::Duration::from_secs(5));
                 self.panels.chat = true;
                 self.panels.perf = false;
                 self.panels.people = false;
@@ -24409,38 +24443,43 @@ impl ApplicationHandler for App {
                             self.world.apply(chatlog::skewed_live_message(me));
                         }
                     }
-                    Mode::Shared { on } => {
-                        // the synthetic Legacy Viewer folder, chosen for this
+                    Mode::Shared { on, log } => {
+                        // the synthetic Legacy Viewer folder, picked for this
                         // run only: never saved in the demo's settings, which
-                        // every worktree shares. The option itself is saved
-                        // like any setting; without a chosen folder it does
-                        // nothing.
+                        // every worktree shares. Picked, it asks whether to
+                        // share it (Preferences › Chat › History); `on`
+                        // answers Share at once.
                         let account = self.world.login.as_ref().map(|l| crate::legacy_profile::Account {
                             first: l.first_name.clone(),
                             last: l.last_name.clone(),
                             grid: "demo".into(),
                         });
-                        let place = self
-                            .world
-                            .chat_log
-                            .dir()
-                            .map(chatlog::legacy_root)
-                            .zip(account.and_then(|a| a.chat_folder()));
+                        let place = self.world.chat_log.dir().map(chatlog::legacy_root).and_then(|root| {
+                            let folder = account.as_ref()?.chat_folder(&root)?;
+                            Some((root, folder))
+                        });
                         if let Some((root, folder)) = place {
-                            if let Err(e) = chatlog::seed_shared(&root, &folder, &self.world.own_name()) {
+                            if let Err(e) = chatlog::seed_shared(&root, &folder, me, &self.world.own_name()) {
                                 log::warn!("demo Legacy Viewer transcripts not written: {e}");
                             }
                             if on {
-                                self.settings.log_legacy_layout = true;
-                                self.world.chat_log.set_legacy_layout(true);
+                                self.world.chat_log.change_folder(Some(root), true);
+                                // the new message below goes to the shared
+                                // folder: its placement first
+                                self.world.chat_log.settle(std::time::Duration::from_secs(5));
+                            } else {
+                                self.world.chat_log.check_folder(root);
                             }
-                            self.world.chat_log.relocate(Some(root));
                         }
-                        // the history read from the Legacy Viewer's file,
-                        // then a new message added to it
+                        // the history read from the Legacy Viewer's file once
+                        // shared, then a new message added to it
                         self.world.apply(chatlog::new_message(me));
-                        self.panels.settings = true;
-                        self.options_ui.open(ui::options::Page::Chat, 3);
+                        self.panels.settings = !log;
+                        if log {
+                            ui::widgets::open_floater(&self.egui_ctx, ui::conversation_log::WINDOW, &mut self.panels.conversation_log);
+                        } else {
+                            self.options_ui.open(ui::options::Page::Chat, 3);
+                        }
                     }
                     Mode::Import(stage) => {
                         use chatlog::ImportStage;
@@ -24476,8 +24515,8 @@ impl ApplicationHandler for App {
                 }
                 if let Mode::History { .. } = mode {
                     self.panels.chat = false;
-                    let (title, file) = self.world.transcript_of(Some(chatlog::PEER));
-                    self.open_history(Some(chatlog::PEER), title, file);
+                    let (title, source) = self.world.transcript_of(Some(chatlog::PEER));
+                    self.open_history(Some(chatlog::PEER), title, source);
                 }
                 self.chat_ui.selected = Some(if mode == Mode::Restore {
                     crate::demo::DEMO_GROUP2

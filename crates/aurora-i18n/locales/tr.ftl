@@ -10896,8 +10896,6 @@ ui-options-chat-logs-dated-help = Her sohbet için ayda bir dosya (name-2026-10)
 ui-options-chat-logs-note = Bu dosyalar düz metindir; bu bilgisayarı kullanabilen herkes okuyabilir. Bu makinede, her hesap ve her grid için ayrı kalırlar ve hiçbir hata raporuna eklenmezler.
 ui-options-chat-logs-open = Klasörü Aç
 ui-options-chat-logs-folder-help = Bu hesabın dosyaları yeni klasöre taşınır.
-ui-options-chat-logs-legacy-layout = Legacy Viewer'ın klasörünü paylaş
-ui-options-chat-logs-legacy-layout-help = Bu hesabın dosyalarını seçilen klasörün altına (first_last) Legacy Viewer'ın kendi düzeninde yazar; böylece iki görüntüleyici aynı geçmişi okur ve ona ekler. Yukarıda Legacy Viewer'ın sohbet günlüğü klasörünü seçin. Aurora oraya yalnızca satır ekler: hiçbir şey taşınmaz, içeri aktarılmaz veya silinmez ve bu kapatıldığında Aurora'nın kendi dosyaları geri gelir. İki görüntüleyicide de “Tarihli dosyalar” ayarını aynı tutun. Yalnızca Second Life. Varsayılan olarak kapalı.
 ui-options-chat-logs-moved = { $count ->
     [one] { $count } dosya taşındı.
    *[other] { $count } dosya taşındı.

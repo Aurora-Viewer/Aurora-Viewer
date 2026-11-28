@@ -11330,16 +11330,23 @@ ui-options-open-on-offline = オフラインメッセージが届いたら会話
 ui-options-open-on-offline-help = 不在中に送られた個人メッセージや招待がログイン時に届いたら、会話ウィンドウを開きます。
 ui-options-chat-logs-dated = 日付付きのファイル
 ui-options-chat-logs-dated-help = １つのファイルが大きくなり続ける代わりに、会話ごとに月１つ（name-2026-10）、近くのチャットは日１つ（chat-2026-10-12）のファイルにします。
+ui-options-chat-logs-dated-shared = 共有中は、日付の有無にかかわらず、レガシービューアが読むファイルにAuroraが追記します。「日付付きのファイル」はAurora自身のフォルダにのみ適用されます。
 ui-options-chat-logs-note = これらのファイルはプレーンテキストで、このコンピュータを使える人なら誰でも読めます。アカウントとグリッドごとに分けてこのマシンに保存され、バグレポートに添付されることはありません。
 ui-options-chat-logs-open = フォルダを開く
 ui-options-chat-logs-folder-help = このアカウントのファイルは新しいフォルダに移動されます。
-ui-options-chat-logs-legacy-layout = Legacy Viewerのフォルダを共有
-ui-options-chat-logs-legacy-layout-help = 選んだフォルダに、Legacy Viewerと同じ形式（first_last）でこのアカウントのファイルを書き込み、両方のビューアで同じ履歴を読んで追加できるようにします。上でLegacy Viewerのチャットログのフォルダを選んでください。Auroraは行を追加するだけで、移動・インポート・消去は行いません。オフにするとAuroraのファイルに戻ります。「日付付きのファイル」の設定は両方のビューアで同じにしてください。Second Lifeのみです。既定ではオフです。
+ui-options-chat-logs-legacy-sharing = { $folder }をレガシービューアと共有中
+ui-options-chat-logs-legacy-append-only = First Last.txtとfirst_last.txtの両方の形式に対応しています。Auroraは既存のファイルに新しい行を追加するだけで、書き換えたり名前を変えたりすることはありません。
+ui-options-chat-logs-legacy-found = { $folder }に既存のチャット履歴（{ $count }個のファイル）が見つかりました。レガシービューアと共有しますか？
+ui-options-chat-logs-legacy-folder-found = レガシービューアのチャット履歴フォルダ（{ $folder }）が見つかりました。レガシービューアと共有しますか？
+ui-options-chat-logs-other-account = このフォルダは別のアカウント（{ $folder }）のものです。現在のフォルダを維持します。
+ui-options-chat-logs-main-grid-folder = このフォルダ（{ $folder }）にはメイングリッドの履歴があり、Second Life Beta（Aditi）の履歴ではありません。現在のフォルダを維持します。
+ui-options-chat-logs-switch-to = { $folder }に切り替える
 ui-options-chat-logs-moved = { $count ->
     [one] { $count }個のファイルを移動しました。
    *[other] { $count }個のファイルを移動しました。
     }
 ui-options-chat-logs-move-failed = ファイルを移動できません：以前のフォルダが維持されます。
+ui-options-chat-logs-change-failed = フォルダを変更できません：以前のフォルダが維持されます。
 ui-options-chat-logs-erase = このアカウントの履歴を消去…
 ui-options-chat-logs-erase-title = このアカウントの履歴を消去しますか？
 ui-options-chat-logs-erase-text = このグリッドでのこのアカウントのすべての会話ファイル（インスタントメッセージ、グループ、会話、近くのチャット）がディスクから削除されます。この操作は元に戻せません。他のアカウントには影響しません。グリッドが保存している個人の会話のコピーは削除されません。Aurora はこの削除より前のメッセージを表示しなくなります。

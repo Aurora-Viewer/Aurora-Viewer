@@ -348,6 +348,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// On the beta grid, the account's folders named with the beta grid's
+    /// labels (LLDir::setLindenUserDir with LLGridManager::getGridLabel, the
+    /// same suffix as its chat log folder), never its main-grid folder nor
+    /// another grid's.
+    #[test]
+    fn find_on_the_beta_grid_reads_its_beta_folders_only() {
+        let root = folder("find-beta");
+        for name in [
+            "mira_resident",
+            "mira_resident.second_life_beta",
+            "mira_resident.aditi",
+            "mira_resident.osgrid",
+            "mira_resident.my_beta_grid",
+        ] {
+            std::fs::create_dir_all(root.join(name)).expect("account");
+            write_lists(&root.join(name));
+        }
+        let account = Account {
+            first: "Mira".into(),
+            last: "Resident".into(),
+            grid: "aditi".into(),
+        };
+        let found: Vec<PathBuf> = find(std::slice::from_ref(&root), &account).into_iter().map(|f| f.dir).collect();
+        assert_eq!(
+            found,
+            [root.join("mira_resident.aditi"), root.join("mira_resident.second_life_beta")]
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_contact_file_with_nicknames_alone_counts() {
         let dir = folder("nicknames");

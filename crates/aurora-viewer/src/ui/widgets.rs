@@ -68,8 +68,9 @@ pub use tracks::{
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
-    FORM_LABEL_W, FORM_SLIDER_W, Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark,
-    form_row, glyph, navigation, navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
+    FORM_LABEL_W, FORM_SLIDER_W, Modal, ModalGround, NoticeKind, caret_room, collapsing, collapsing_forced, disclosure_caret,
+    experimental_mark, form_row, glyph, navigation, navigation_beside, navigation_wrapped, notice, paint_glyph, section_header, sort_caret,
+    stat, surface,
 };
 pub(crate) use workspace::{
     INVENTORY_LABEL_PADDING, finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
