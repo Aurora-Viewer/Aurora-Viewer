@@ -42,6 +42,7 @@ pub struct Scene {
     pub style: crate::settings::ChatStyle,
     pub on: bool,
     pub show: Option<Uuid>,
+    pub paging: bool,
 }
 
 pub fn scene() -> Option<Scene> {
@@ -61,12 +62,14 @@ fn parse(v: &str) -> Option<Scene> {
         style,
         on: false,
         show: None,
+        paging: false,
     };
     for flag in flags {
         match flag {
             "on" => scene.on = true,
             "group" => scene.show = Some(DEMO_GROUP1),
             "nova" => scene.show = Some(DEMO_FRIEND),
+            "paging" => scene.paging = true,
             _ => {}
         }
     }
@@ -263,6 +266,29 @@ pub fn own_lines(world: &mut World, frame: u64) {
     );
 }
 
+/// Numbered, scrollable transcripts for testing Page Up and Page Down.
+pub fn paging_lines(world: &mut World) {
+    let start = SystemTime::now() - Duration::from_secs(3600);
+    for n in 1..=40 {
+        let time = start + Duration::from_secs(n * 30);
+        let text = aurora_i18n::tr!("demo-scroll-earlier", n = n as i64);
+        let message = line(time, "Tess Touch", DEMO_NOVA, ChatKind::Im, Origin::Live, &text);
+        for session in [DEMO_FRIEND, DEMO_GROUP1, CONFERENCE] {
+            world.conversation_line(session, message.clone());
+        }
+        let _ = world.apply(NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Tess Touch".into(),
+            source_id: DEMO_NOVA,
+            owner_id: Uuid::nil(),
+            source_type: aurora_net::ChatSourceType::Agent,
+            chat_type: aurora_net::ChatType::Normal,
+            position: world.agent.position,
+            message: text,
+            region: Some(super::HANDLE),
+        }));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,7 +301,8 @@ mod tests {
             Some(Scene {
                 style: ChatStyle::Legacy,
                 on: true,
-                show: None
+                show: None,
+                paging: false,
             })
         );
         assert_eq!(
@@ -283,12 +310,14 @@ mod tests {
             Some(Scene {
                 style: ChatStyle::Aurora,
                 on: false,
-                show: None
+                show: None,
+                paging: false,
             })
         );
         assert_eq!(parse("legacy:group:on").map(|s| (s.on, s.show)), Some((true, Some(DEMO_GROUP1))));
         assert_eq!(parse("aurora:nova").and_then(|s| s.show), Some(DEMO_FRIEND));
         assert_eq!(parse("compact").map(|s| s.style), Some(ChatStyle::Compact));
+        assert!(parse("compact:paging").is_some_and(|s| s.paging));
         assert_eq!(parse("bubbles:on").map(|s| (s.style, s.on)), Some((ChatStyle::Bubbles, true)));
     }
 

@@ -453,7 +453,8 @@ are planned or in progress: they are not in the viewer yet.
   line, and pasted paragraphs keep their shape; the chat's keys can be
   changed in Preferences › Controls › Shortcuts. Arabic and Hebrew read right
   to left, in name tags, bubbles, floating text and conversations. A long
-  IM goes out as several messages instead of being cut off.
+  IM goes out as several messages instead of being cut off. Page Up and Page
+  Down scroll the conversation while its messages or message field have focus.
 - **Messages that matter, in front of you**: a message an estate manager
   sends to the region shows as a card in the middle of the screen, like a
   friendship offer, and a group notice shows its group, its insignia and
