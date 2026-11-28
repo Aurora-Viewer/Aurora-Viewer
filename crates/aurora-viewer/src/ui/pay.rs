@@ -841,12 +841,14 @@ impl PayUi {
         // the server's answer it closes without saying so.
         let receipt = !state.dialog.as_ref().is_some_and(|d| d.target.action == Action::Pay);
         if receipt {
-            if !contactless || state.paid.is_none() {
+            // (a payment the terminal did not make itself, like the demo's
+            // scripted one, leaves nothing to show: the window is closed)
+            let Some(shown) = self.object_receipt.as_mut().filter(|_| contactless && state.paid.is_some()) else {
+                state.paid = None;
                 self.object_receipt = None;
                 return None;
-            }
+            };
             let now = ctx.input(|i| i.time);
-            let shown = self.object_receipt.get_or_insert_with(Receipt::default);
             let since = *shown.since.get_or_insert(now);
             if shown.answered && shown.accepted.is_none() {
                 shown.accepted = Some(now);
@@ -1507,6 +1509,21 @@ mod tests {
                 }
                 assert!(!receipt.get(), "the window closed by itself");
                 assert_eq!(commands.borrow().len(), 1);
+                // a payment the terminal did not make (the demo's scripted
+                // one) shows nothing: its window is closed at once
+                state.open(target);
+                state.on_properties(&[aurora_net::build::ObjectProps {
+                    object_id: target.root,
+                    name: "Vendor".into(),
+                    ..Default::default()
+                }]);
+                state.on_prices(target.object, -1, vec![180, -1, -1, -1]);
+                assert!(state.confirm(&world, Some(180)).is_some());
+                assert!(state.paid.is_some());
+                frames.run(Vec::new(), |ui| {
+                    assert!(pay.show_object(ui.ctx(), &p, &mut state, &world, rules(true)).is_none());
+                });
+                assert!(state.paid.is_none());
             }
         }
     }
