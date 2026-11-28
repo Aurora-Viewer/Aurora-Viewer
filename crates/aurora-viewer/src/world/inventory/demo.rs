@@ -251,6 +251,32 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
         owner_mask: actions::MOVE | actions::TRANSFER,
         ..Default::default()
     }]);
+    // AURORA_DEMO_INVENTORY=ime|aurora-ime (scripts/test-ime-linux.py): two
+    // rows that only a whole composed "ママ" tells apart, and a Latin one for
+    // the input method's off state. The script types these names, so they
+    // are not translated.
+    if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "ime" | "aurora-ime")) {
+        let root = inv.root;
+        inv.add_items(
+            [(9701, "マスク"), (9702, "ママ服"), (9703, "Zipper bag")]
+                .into_iter()
+                .map(|(id, name)| InvItem {
+                    id: Uuid::from_u128(id),
+                    parent: root,
+                    name: name.into(),
+                    asset_type: 6,
+                    inv_type: 6,
+                    asset_id: Uuid::from_u128(9000 + id),
+                    creator: agent,
+                    owner: agent,
+                    created_at: now,
+                    base_mask: 0x7fffffff,
+                    owner_mask: 0x7fffffff,
+                    ..Default::default()
+                })
+                .collect(),
+        );
+    }
     if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "link-icons" | "aurora-link-icons")) {
         for (kind, &name) in super::super::appearance::wearables().iter().enumerate() {
             inv.add_items(vec![InvItem {

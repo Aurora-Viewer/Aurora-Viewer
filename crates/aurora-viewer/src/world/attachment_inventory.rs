@@ -18,7 +18,9 @@ const FETCH_ATTEMPTS: u8 = 3;
 
 #[derive(Default)]
 pub struct AttachmentInventory {
-    fetched: HashMap<Uuid, (Instant, u8)>,
+    /// Each worn item's last read, its attempts, and the inventory's
+    /// give-up round (`Inventory::give_up_rounds`) they count in.
+    fetched: HashMap<Uuid, (Instant, u8, u32)>,
     registered: HashSet<Uuid>,
     detached: HashSet<Uuid>,
     pending: Option<(Uuid, Vec<Uuid>)>,
@@ -98,6 +100,11 @@ impl World {
         let mut seen = HashSet::new();
         for item in items {
             let temporary = self.rlva_temporary_attachment(item).is_some();
+            // removeItemsFromAvatar skips the viewer's bridge on every path,
+            // a COF that is still loading included (`remove_links`)
+            if !temporary && super::bridge::own_bridge(&self.inventory, item) {
+                continue;
+            }
             if (temporary || allow_recovery && (incomplete || !self.inventory.items.contains_key(&item)))
                 && let Some(command) = self.attachment_detach_command(item)
             {
@@ -156,12 +163,28 @@ impl World {
         }
         let mut missing = Vec::new();
         for id in &worn {
-            if self.inventory.items.contains_key(id) {
+            // (nor while its read is on its way: a slow answer on a huge
+            // inventory never uses up the attempts)
+            // (nor a given-up original: `send_from` would drop its read, and
+            // an attempt never sent must not be spent)
+            if self.inventory.items.contains_key(id)
+                || self.inventory.item_reading(*id, true, now)
+                || self.inventory.broken(id)
+                || self.inventory.read_exhausted(id)
+            {
                 continue;
             }
-            let attempt = self.attachment_inventory.fetched.entry(*id).or_insert((now, 0));
+            let round = self.inventory.give_up_rounds.get(id).copied().unwrap_or(0);
+            let attempt = self.attachment_inventory.fetched.entry(*id).or_insert((now, 0, round));
+            // (attempts spent, and the inventory's give-up pause for it has
+            // ended since (`Inventory::expire_given_up` counts a round): it
+            // is read again like a new one. Reads that never got any answer
+            // start no round, so they stop at FETCH_ATTEMPTS)
+            if attempt.1 >= FETCH_ATTEMPTS && round > attempt.2 {
+                *attempt = (now, 0, round);
+            }
             if attempt.1 < FETCH_ATTEMPTS && (attempt.1 == 0 || now.saturating_duration_since(attempt.0) >= RETRY_GAP) {
-                *attempt = (now, attempt.1 + 1);
+                *attempt = (now, attempt.1 + 1, attempt.2);
                 missing.push(*id);
             }
         }
@@ -482,6 +505,49 @@ mod tests {
         );
     }
 
+    /// Reads that never get any answer (lost replies) stop after their
+    /// attempts: no give-up round ends, so they never start again.
+    #[test]
+    fn unanswered_attachment_reads_stop_after_their_attempts() {
+        let (mut world, _, item) = fixture();
+        let now = Instant::now();
+        let mut sent = 0;
+        for step in 0..100u32 {
+            // (each read's claim long expired: nothing holds the next back)
+            let at = now + crate::world::inventory::ITEM_READ_DEADLINE * (step + 1);
+            sent += world
+                .update_attachment_inventory(at, true)
+                .iter()
+                .filter(|c| matches!(c, NetCommand::FetchAttachmentItems { items } if items == &[item.id]))
+                .count();
+        }
+        assert_eq!(sent, usize::from(FETCH_ATTEMPTS));
+    }
+
+    /// A given-up original spends no attempt on reads that would never be
+    /// sent, and is read again once its pause ends.
+    #[test]
+    fn a_given_up_attachment_is_read_again_after_its_pause() {
+        let (mut world, _, item) = fixture();
+        let now = Instant::now();
+        for attempt in 0..u32::from(FETCH_ATTEMPTS) {
+            world.update_attachment_inventory(now + RETRY_GAP * attempt, true);
+            world.apply(NetEvent::InventoryItemsFailed {
+                items: vec![item.id],
+                attachment: true,
+                coalesced: false,
+            });
+        }
+        assert!(world.inventory.read_exhausted(&item.id));
+        assert!(!world.inventory.broken(&item.id));
+        assert!(world.update_attachment_inventory(now + RETRY_GAP * 10, true).is_empty());
+        let at = world.inventory.gave_up_at.get_mut(&item.id).expect("given up");
+        *at -= crate::world::inventory::ITEM_GIVE_UP;
+        world.inventory.expire_given_up(Instant::now());
+        assert!(matches!(&world.update_attachment_inventory(now + RETRY_GAP * 11, true)[..],
+            [NetCommand::FetchAttachmentItems { items }] if items == &[item.id]));
+    }
+
     #[test]
     fn attachment_inventory_retries_a_delayed_item_without_requesting_each_tick() {
         let (mut world, _, item) = fixture();
@@ -489,7 +555,11 @@ mod tests {
         for attempt in 0..u32::from(FETCH_ATTEMPTS) {
             assert!(matches!(&world.update_attachment_inventory(now + RETRY_GAP * attempt, true)[..],
                 [NetCommand::FetchAttachmentItems { items }] if items == &[item.id]));
-            world.apply(NetEvent::InventoryItemsFailed { items: vec![item.id] });
+            world.apply(NetEvent::InventoryItemsFailed {
+                items: vec![item.id],
+                attachment: true,
+                coalesced: false,
+            });
             assert!(
                 world
                     .update_attachment_inventory(now + RETRY_GAP * attempt + Duration::from_millis(500), true)
@@ -927,7 +997,11 @@ mod tests {
         let now = Instant::now();
         for attempt in 0..u32::from(FETCH_ATTEMPTS) {
             world.update_attachment_inventory(now + RETRY_GAP * attempt, false);
-            world.apply(NetEvent::InventoryItemsFailed { items: vec![item.id] });
+            world.apply(NetEvent::InventoryItemsFailed {
+                items: vec![item.id],
+                attachment: true,
+                coalesced: false,
+            });
         }
         assert!(
             appearance::plan(
@@ -949,6 +1023,29 @@ mod tests {
         });
         assert!(world.worn_attachment(&item.id).is_none());
         assert!(!world.inventory.items.contains_key(&item.id), "never fabricate an inventory record");
+    }
+
+    /// #4865, review: the direct detach of a COF still loading skips the
+    /// bridge, as removeItemsFromAvatar does on every path.
+    #[test]
+    fn attachment_recovery_leaves_the_bridge_worn() {
+        let (mut world, object, _missing) = fixture();
+        let bridge = Uuid::from_u128(717);
+        let agent = world.agent_id;
+        appearance::seed_bridge(&mut world.inventory, agent, bridge);
+        let mut worn = object.clone();
+        worn.full_id = Uuid::from_u128(90_040);
+        worn.local_id += 1;
+        worn.name_values = format!("AttachItemID STRING RW SV {bridge}");
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![worn],
+        });
+        let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(bridge), true);
+        assert!(commands.is_empty() && remaining.is_none(), "{commands:?} {remaining:?}");
+        let earrings = Uuid::from_u128(718);
+        let (_, remaining) = world.recover_attachment_removal(appearance::Action::RemoveItems(vec![bridge, earrings]), true);
+        assert!(matches!(remaining, Some(appearance::Action::RemoveItems(items)) if items == [earrings]));
     }
 
     #[test]
@@ -1153,7 +1250,10 @@ mod tests {
         let objects = item.parent;
         let lost = with_lost_folder(&mut world, &item);
         item.parent = Uuid::nil();
-        world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+        world.apply(NetEvent::AttachmentInventoryItems {
+            items: vec![item.clone()],
+            coalesced: false,
+        });
         assert_eq!(world.inventory.items[&item.id].parent, objects);
         assert!(world.inventory.folders[&objects].items.contains(&item.id));
         assert!(!world.inventory.folders[&lost].items.contains(&item.id));
@@ -1181,7 +1281,10 @@ mod tests {
         let old = item.parent;
         let lost = with_lost_folder(&mut world, &item);
         item.parent = Uuid::nil();
-        world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+        world.apply(NetEvent::AttachmentInventoryItems {
+            items: vec![item.clone()],
+            coalesced: false,
+        });
         assert_eq!(world.inventory.items[&item.id].parent, old);
         assert!(world.inventory.folders[&lost].items.is_empty());
         let locked = Uuid::from_u128(90_083);
@@ -1255,7 +1358,10 @@ mod tests {
                 folders: Vec::new(),
                 items: vec![item.clone()],
             };
-            let readback = NetEvent::AttachmentInventoryItems(vec![item.clone()]);
+            let readback = NetEvent::AttachmentInventoryItems {
+                items: vec![item.clone()],
+                coalesced: false,
+            };
             for event in if notification_first {
                 [notification, readback]
             } else {
@@ -1306,7 +1412,10 @@ mod tests {
             }
             assert!(world.worn_attachment(&item.id).is_none());
             item.parent = Uuid::nil();
-            world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+            world.apply(NetEvent::AttachmentInventoryItems {
+                items: vec![item.clone()],
+                coalesced: false,
+            });
             assert_eq!(world.inventory.items[&item.id].parent, objects);
             assert!(!world.inventory.folders[&lost].items.contains(&item.id));
             assert!(

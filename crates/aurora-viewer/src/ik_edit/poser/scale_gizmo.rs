@@ -182,7 +182,7 @@ impl Editor {
         let pose = Arc::make_mut(&mut session.pose);
         pose.scales[bone] = scale;
         pose.locks.remove(&bone);
-        together::follow(rig, &before, pose, bone, &followers, together::Change::Scale);
+        together::follow(rig, &before, pose, bone, &followers, together::Change::Scale, false);
         if self.symmetry {
             for changed in std::iter::once(bone).chain(followers.iter().copied()) {
                 if let Some(other) = self.mirrors.counterpart(changed)

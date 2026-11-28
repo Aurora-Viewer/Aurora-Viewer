@@ -444,7 +444,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     }
     rows::person_menu(&resp, p, world, NameScope::Roster, &st.sel, id);
     let tip = (cut && resp.hover_pos().is_some_and(|at| at.x <= end.names_right)).then(|| name.to_owned());
-    rows::contact_tip(resp, tip.as_deref());
+    rows::contact_tip(resp, tip.as_deref(), || None);
 }
 
 /// How wide a member's two lines are when nothing is cut: the name with

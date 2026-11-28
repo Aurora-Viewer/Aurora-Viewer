@@ -331,12 +331,14 @@ pub(crate) fn write_packed_u8(regions: &[Region<'_>], mct: Mct, w: usize, h: usi
 }
 
 /// The regions finished into planes of int32, one a component: `dsts[c]`
-/// starts at the regions' first sample in component `c`'s plane, its rows
-/// `dst_stride` samples apart.
-pub(crate) fn write_planes(regions: &[Region<'_>], mct: Mct, w: usize, h: usize, dsts: &mut [&mut [i32]], dst_stride: usize) {
+/// starts at the regions' first sample in component `c`'s plane, with that
+/// plane's row stride (each plane's own: a sub-sampled component's plane is
+/// narrower than the others, even where its tile region is the same).
+pub(crate) fn write_planes(regions: &[Region<'_>], mct: Mct, w: usize, h: usize, dsts: &mut [(&mut [i32], usize)]) {
     finish_regions(regions, mct, w, h, |j, at, buf, n| {
-        for (dst, b) in dsts.iter_mut().zip(buf) {
-            dst[j * dst_stride + at..j * dst_stride + at + n].copy_from_slice(&b[..n]);
+        for ((dst, stride), b) in dsts.iter_mut().zip(buf) {
+            let from = j * *stride + at;
+            dst[from..from + n].copy_from_slice(&b[..n]);
         }
     });
 }
@@ -547,5 +549,23 @@ mod tests {
         write_packed_u8(&regions, Mct::None, 3, 2, &mut out, 12);
         assert_eq!(&out[..8], &[0, 10, 20, 30, 1, 11, 21, 31]);
         assert_eq!(&out[20..], &[5, 15, 25, 35]);
+    }
+
+    #[test]
+    fn writes_each_plane_with_its_own_stride() {
+        // a 2 x 2 region into a plane 3 samples wide and one 2 wide (a
+        // sub-sampled component): each row lands at its own plane's stride
+        let planes: Vec<Vec<i32>> = (0..2).map(|c| (0..4).map(|i| c * 10 + i - 128).collect()).collect();
+        let f = Finish {
+            shift: 128,
+            lo: 0,
+            hi: 255,
+            reversible: true,
+        };
+        let regions: Vec<Region<'_>> = planes.iter().map(|p| Region { src: p, stride: 2, f }).collect();
+        let (mut wide, mut narrow) = (vec![-1i32; 3 * 2], vec![-1i32; 2 * 2]);
+        write_planes(&regions, Mct::None, 2, 2, &mut [(&mut wide[..], 3), (&mut narrow[..], 2)]);
+        assert_eq!(wide, [0, 1, -1, 2, 3, -1]);
+        assert_eq!(narrow, [10, 11, 12, 13]);
     }
 }

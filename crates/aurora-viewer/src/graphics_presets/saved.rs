@@ -46,6 +46,7 @@ quality_fields! {
     tonemapper: u8,
     tonemap_mix: f32,
     dof: crate::dof::Settings,
+    motion_blur: crate::motion_blur::Settings,
     occlusion_culling: bool,
     // FSR's mode and sharpening, with the anti-aliasing of `quality`: the
     // levels never choose FSR, a saved profile can

@@ -15,7 +15,10 @@
 use super::environment::{colour_names, compass_point};
 use super::widgets;
 use crate::theme::Palette;
-use crate::weather::{AuroraColours, DEEP_SNOW_REACH, PUDDLE_DISTANCE, Precipitation, SNOW_DISTANCE, WeatherQuality, WeatherSettings};
+use crate::weather::fog::{FOG_ANISOTROPY, FOG_HEIGHT};
+use crate::weather::{
+    AuroraColours, DEEP_SNOW_REACH, FogTier, PUDDLE_DISTANCE, Precipitation, SNOW_DISTANCE, WeatherQuality, WeatherSettings,
+};
 use egui::{Align, Layout, RichText, Sense, Stroke, Vec2};
 
 /// The window's size when it first opens: two columns of cards, all of
@@ -102,6 +105,7 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) -> WeatherA
 enum Card {
     Precipitation,
     Ground,
+    Fog,
     Wind,
     Thunder,
     NorthernLights,
@@ -114,16 +118,16 @@ fn column_count(width: f32, gap: f32, column_min: f32) -> usize {
 }
 
 /// The cards of each of `n` columns, left to right: what falls and what it
-/// leaves together, then the wind and thunder, then the northern lights;
-/// narrowed, the right columns go under the left ones.
+/// leaves together, then the fog, then the wind and thunder, then the
+/// northern lights; narrowed, the right columns go under the left ones.
 fn layout(n: usize) -> &'static [&'static [Card]] {
     use Card::*;
     match n {
-        0 | 1 => &[&[Precipitation, Ground, Wind, Thunder, NorthernLights]],
-        2 => &[&[Precipitation, Ground], &[Wind, Thunder, NorthernLights]],
-        3 => &[&[Precipitation, Ground], &[Wind, Thunder], &[NorthernLights]],
-        4 => &[&[Precipitation], &[Ground], &[Wind, Thunder], &[NorthernLights]],
-        _ => &[&[Precipitation], &[Ground], &[Wind], &[Thunder], &[NorthernLights]],
+        0 | 1 => &[&[Precipitation, Ground, Fog, Wind, Thunder, NorthernLights]],
+        2 => &[&[Precipitation, Ground, Fog], &[Wind, Thunder, NorthernLights]],
+        3 => &[&[Precipitation, Ground], &[Fog, Wind], &[Thunder, NorthernLights]],
+        4 => &[&[Precipitation], &[Ground, Fog], &[Wind, Thunder], &[NorthernLights]],
+        _ => &[&[Precipitation], &[Ground], &[Fog], &[Wind, Thunder], &[NorthernLights]],
     }
 }
 
@@ -174,6 +178,7 @@ fn show_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, card: Card
         Card::Ground => {
             ui.add_enabled_ui(w.precipitation_on, |ui| ground_card(ui, p, w));
         }
+        Card::Fog => fog_card(ui, p, w),
         Card::Wind => wind_card(ui, p, w),
         Card::Thunder => thunder_card(ui, p, w),
         Card::NorthernLights => northern_lights_card(ui, p, w),
@@ -342,6 +347,9 @@ fn chips(ui: &mut egui::Ui, p: &Palette, w: &WeatherSettings) {
         }
         if w.snowing() && falling && w.snow_settles {
             chip(ui, p, "mountain-filled", p.ink, aurora_i18n::tr!("ui-weather-chip-snow-lying"));
+        }
+        if w.fog_on {
+            chip(ui, p, "mist", p.ink, fog_word(w.fog_density));
         }
         if w.aurora {
             chip(
@@ -945,6 +953,141 @@ fn thunder_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     });
 }
 
+/// The word for how thick the fog is, 0 (a mist) to 1.
+fn fog_word(v: f32) -> &'static str {
+    if v < 0.2 {
+        aurora_i18n::tr!("ui-weather-fog-mist")
+    } else if v < 0.5 {
+        aurora_i18n::tr!("ui-weather-fog-light")
+    } else if v < 0.8 {
+        aurora_i18n::tr!("ui-weather-fog-thick")
+    } else {
+        aurora_i18n::tr!("ui-weather-fog-dense")
+    }
+}
+
+/// "Fog": how it is drawn, how thick and how high, how the wind carries
+/// it, its glow around the lights, and its colour (weather/fog.rs).
+fn fog_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    let mut on = w.fog_on;
+    let head = Head {
+        on: &mut on,
+        tip: aurora_i18n::tr!("ui-weather-fog-on-tip"),
+    };
+    card(ui, p, "mist", aurora_i18n::tr!("ui-weather-fog"), Some(head), |ui, on| {
+        w.fog_on = on;
+        ui.add_enabled_ui(on, |ui| fog_rows(ui, p, w));
+    });
+}
+
+/// The "Fog" card's rows, under its switch.
+fn fog_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    ui.horizontal(|ui| {
+        let gap = ui.spacing().item_spacing.x;
+        let options = [
+            (aurora_i18n::tr!("ui-weather-fog-look-height"), true),
+            (aurora_i18n::tr!("ui-weather-fog-look-volume"), true),
+            (aurora_i18n::tr!("ui-weather-fog-look-lights"), true),
+        ];
+        let width = ui.available_width() - widgets::segmented_size(ui, &options).x - gap;
+        label(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-weather-fog-look"),
+            aurora_i18n::tr!("ui-weather-fog-look-tip"),
+            width,
+        );
+        let mut i = FogTier::ALL.iter().position(|t| *t == w.fog_tier).unwrap_or(2);
+        if widgets::segmented(ui, p, &mut i, &options) {
+            w.fog_tier = FogTier::ALL[i.min(2)];
+        }
+    });
+    slider_row(
+        ui,
+        p,
+        (
+            aurora_i18n::tr!("ui-weather-fog-density"),
+            aurora_i18n::tr!("ui-weather-fog-density-tip"),
+        ),
+        fog_word(w.fog_density),
+        Some((aurora_i18n::tr!("ui-weather-fog-mist"), aurora_i18n::tr!("ui-weather-fog-dense"))),
+        egui::Slider::new(&mut w.fog_density, 0.0..=1.0),
+    );
+    let height = format!("{:.0} m", w.fog_height);
+    slider_row(
+        ui,
+        p,
+        (
+            aurora_i18n::tr!("ui-weather-fog-height"),
+            aurora_i18n::tr!("ui-weather-fog-height-tip"),
+        ),
+        &height,
+        Some((aurora_i18n::tr!("ui-weather-fog-low"), aurora_i18n::tr!("ui-weather-fog-high"))),
+        egui::Slider::new(&mut w.fog_height, FOG_HEIGHT).logarithmic(true),
+    );
+    ui.columns(2, |cols| {
+        let [left, right] = cols else { return };
+        let drift = format!("{:.0} %", w.fog_drift * 100.0);
+        slider_row(
+            left,
+            p,
+            (
+                aurora_i18n::tr!("ui-weather-fog-drift"),
+                aurora_i18n::tr!("ui-weather-fog-drift-tip"),
+            ),
+            &drift,
+            Some((
+                aurora_i18n::tr!("ui-weather-fog-still"),
+                aurora_i18n::tr!("ui-weather-fog-windblown"),
+            )),
+            egui::Slider::new(&mut w.fog_drift, 0.0..=1.0),
+        );
+        let glow = format!("{:.0} %", w.fog_anisotropy / FOG_ANISOTROPY.end() * 100.0);
+        slider_row(
+            right,
+            p,
+            (aurora_i18n::tr!("ui-weather-fog-glow"), aurora_i18n::tr!("ui-weather-fog-glow-tip")),
+            &glow,
+            Some((
+                aurora_i18n::tr!("ui-weather-fog-glow-soft"),
+                aurora_i18n::tr!("ui-weather-fog-glow-tight"),
+            )),
+            egui::Slider::new(&mut w.fog_anisotropy, FOG_ANISOTROPY),
+        );
+    });
+    switch_row(
+        ui,
+        p,
+        "cloud",
+        aurora_i18n::tr!("ui-weather-fog-from-sky"),
+        aurora_i18n::tr!("ui-weather-fog-from-sky-tip"),
+        &mut w.fog_from_sky,
+    );
+    ui.horizontal(|ui| {
+        widgets::glyph(ui, "palette", p.muted, 15.0);
+        let gap = ui.spacing().item_spacing.x;
+        let width = ui.available_width() - widgets::SWITCH_SIZE.x - ui.spacing().interact_size.x - 2.0 * gap;
+        label(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-weather-fog-follow-sky"),
+            aurora_i18n::tr!("ui-weather-fog-follow-sky-tip"),
+            width,
+        );
+        let to_byte = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let mut rgba = [to_byte(w.fog_colour[0]), to_byte(w.fog_colour[1]), to_byte(w.fog_colour[2]), 255];
+        ui.add_enabled_ui(!w.fog_follow_sky, |ui| {
+            if widgets::color_button(ui, p, "weather fog colour", &mut rgba, false)
+                .on_hover_text(aurora_i18n::tr!("ui-weather-fog-colour-tip"))
+                .changed()
+            {
+                w.fog_colour = [rgba[0], rgba[1], rgba[2]].map(|c| f32::from(c) / 255.0);
+            }
+        });
+        widgets::switch(ui, p, &mut w.fog_follow_sky).on_hover_text(aurora_i18n::tr!("ui-weather-fog-follow-sky-tip"));
+    });
+}
+
 /// The aurora's colour at its foot (green in all three).
 fn aurora_foot() -> egui::Color32 {
     egui::Color32::from_rgb(0x34, 0xD3, 0x7A) // theme-guard: content — the aurora's own green
@@ -1312,7 +1455,14 @@ mod tests {
             assert_eq!(layout(n).len(), n);
             assert_eq!(
                 cards,
-                [Card::Precipitation, Card::Ground, Card::Wind, Card::Thunder, Card::NorthernLights],
+                [
+                    Card::Precipitation,
+                    Card::Ground,
+                    Card::Fog,
+                    Card::Wind,
+                    Card::Thunder,
+                    Card::NorthernLights
+                ],
                 "{n}"
             );
         }

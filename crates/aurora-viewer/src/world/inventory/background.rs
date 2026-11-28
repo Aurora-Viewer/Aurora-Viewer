@@ -16,8 +16,8 @@
 //! parent, at most [`LEGACY_IN_FLIGHT`] reads at once.
 
 use super::{FetchState, Inventory};
-use aurora_net::NetCommand;
 use aurora_net::inventory::ais::{FetchError, FetchFailure, MAX_FOLDER_DEPTH};
+use aurora_net::{NetCommand, inventory::FolderContents};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 use uuid::Uuid;
@@ -30,6 +30,30 @@ const BATCH: usize = 20;
 const LEGACY_BATCH: usize = 10;
 /// bulkFetch's max_concurrent_fetches.
 const LEGACY_IN_FLIGHT: usize = 12;
+/// How long a read may stay unanswered before its slot is freed and it is
+/// tried again like a throttled one: beyond the HTTP layer's own worst case
+/// (ais.rs `get`: six tries of 60 s to send and 60 s to read the body, and
+/// up to five waits of a `Retry-After` capped at 60 s, about 1,020 s; a
+/// subtree read has its own, [`TREE_DEADLINE`]). A reply that never comes
+/// (a task lost, a connection dropped without an error) never holds one of
+/// the pool's slots for the rest of the session.
+const READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1200);
+/// A subtree read's deadline: one 180 s try (ais.rs `TREE_TIMEOUT`, no
+/// second one) and a throttle's waits; past it the read is split.
+const TREE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(240);
+/// An idle walk with folders left unread looks at them again this often:
+/// what a lost reply or a dropped retry left is asked for in the walk's own
+/// batches, at its own pace.
+const WATCHDOG: std::time::Duration = std::time::Duration::from_secs(30);
+/// Folders the walk gave up on (failed after their retries) are asked for
+/// again this often (the first round this long after the walk first found
+/// them failed), a few times a session, never in a loop.
+const FAILED_AGAIN: std::time::Duration = std::time::Duration::from_secs(600);
+const FAILED_ROUNDS: u32 = 6;
+/// How many times the watchdog asks again for the unread folders under one
+/// read parent: a folder the server never returns in its parent's read is
+/// not asked every 30 s for the session.
+const UNREAD_ROUNDS: u32 = 6;
 /// LLFolderType::FT_MARKETPLACE_LISTINGS, loaded by its own window.
 const MARKETPLACE_LISTINGS: i32 = 53;
 /// Queue entries looked at per frame (bulkFetch stops after 6 ms).
@@ -62,6 +86,8 @@ struct Request {
     children: Vec<Uuid>,
     depth: i32,
     attempt: u32,
+    /// When it was sent ([`READ_DEADLINE`]).
+    sent: Instant,
 }
 
 /// A read waiting for its next attempt after a transient failure.
@@ -86,6 +112,9 @@ pub struct BackgroundFetch {
     started: bool,
     orphans_requested: bool,
     orphans_pending: Option<u64>,
+    /// When the orphans request went: one never answered is given up after
+    /// [`READ_DEADLINE`], never holding a slot for the session.
+    orphans_sent: Option<Instant>,
     orphans_failed: bool,
     /// Since when the current walk sends requests, and how many (logged
     /// when it ends).
@@ -105,6 +134,30 @@ pub struct BackgroundFetch {
     too_big_announced: bool,
     /// The HTTP status of the refusal that found the first over-limit folder.
     too_big_status: Option<u16>,
+    /// The clock of the current pump: when its reads are sent.
+    clock: Option<Instant>,
+    /// When the idle walk last looked for folders left unread.
+    swept: Option<Instant>,
+    /// When the failed folders were last asked again, and how many times.
+    failed_round: Option<Instant>,
+    failed_rounds: u32,
+    /// For the loading report (Dev Toolbox N4): the last reply, and how
+    /// often the deadline and the watchdog fired.
+    last_reply: Option<Instant>,
+    expired_total: usize,
+    watchdog_total: usize,
+    /// Folders seen fetching with no read of this walk, and since when.
+    orphaned: HashMap<Uuid, Instant>,
+    /// How many times the watchdog asked again for each read parent's
+    /// unread folders ([`UNREAD_ROUNDS`]).
+    unread_asks: HashMap<Uuid, u32>,
+    /// The inventory's generation when the last sweep found nothing left to
+    /// ask for: the idle walk does not walk the tree again until it changes.
+    swept_clean: Option<u64>,
+    /// Folders a timed-out subtree read is reading in parts: their parent's
+    /// queued batch leaves them to their own reads (never batched again,
+    /// deep, before those ran).
+    split: HashSet<Uuid>,
 }
 
 impl BackgroundFetch {
@@ -177,6 +230,34 @@ impl BackgroundFetch {
     /// waiting for the real backoff).
     pub fn pump_at(&mut self, inv: &mut Inventory, agent: Uuid, now: Instant) -> Vec<NetCommand> {
         let mut out = Vec::new();
+        self.clock = Some(now);
+        // (a busy walk changes folders: the next idle sweep looks again; a
+        // user's read changes the generation itself (`Inventory::request`),
+        // so it is timed like any other)
+        if !self.is_idle() {
+            self.swept_clean = None;
+        }
+        // a read unanswered past its deadline frees its slot and is tried
+        // again like a throttled one
+        let expired: Vec<u64> = self
+            .in_flight
+            .iter()
+            .filter(|(_, r)| now.saturating_duration_since(r.sent) >= if r.depth > 0 { TREE_DEADLINE } else { READ_DEADLINE })
+            .map(|(request, _)| *request)
+            .collect();
+        if !expired.is_empty() {
+            log::warn!(
+                "inventory background fetch: {} reads unanswered past their deadline ({} s a subtree, {} s a folder), asked again",
+                expired.len(),
+                TREE_DEADLINE.as_secs(),
+                READ_DEADLINE.as_secs()
+            );
+            self.expired_total += expired.len();
+            for request in expired {
+                // (no answer in time: a subtree is read in parts)
+                self.on_reply_at(inv, request, &[], Err(FetchError::timeout()), now);
+            }
+        }
         // llstartup::STATE_INVENTORY_SEND calls findLostItems once per
         // session, including when the regular folders came from cache.
         if self.started && !self.orphans_requested {
@@ -184,6 +265,7 @@ impl BackgroundFetch {
             self.next_request += 1;
             self.orphans_requested = true;
             self.orphans_pending = Some(request);
+            self.orphans_sent = Some(now);
             self.orphans_failed = false;
             out.push(NetCommand::FetchInventoryOrphans { request });
         }
@@ -192,10 +274,45 @@ impl BackgroundFetch {
         // already known to the model.
         let mut retries = std::mem::take(&mut self.retries);
         let mut waiting = Vec::new();
-        for retry in retries.drain(..) {
-            if retry.due > now || self.in_flight.len() + usize::from(self.orphans_pending.is_some()) >= max {
+        for mut retry in retries.drain(..) {
+            let targets = if retry.children.is_empty() {
+                vec![retry.folder]
+            } else {
+                retry.children.clone()
+            };
+            let mut unresolved = Vec::new();
+            let mut externally_active = false;
+            for id in targets {
+                match inv.folders.get(&id).map(|folder| folder.state) {
+                    Some(FetchState::Fetched) => {
+                        inv.retrying_folders.remove(&id);
+                        self.queue.push_back((id, Kind::Recursive));
+                    }
+                    None => {
+                        inv.retrying_folders.remove(&id);
+                    }
+                    _ if inv.too_big.contains(&id) => {
+                        inv.retrying_folders.remove(&id);
+                        self.queue.push_back((id, Kind::ContentRecursive));
+                    }
+                    state => {
+                        externally_active |= state == Some(FetchState::Fetching);
+                        unresolved.push(id);
+                    }
+                }
+            }
+            if unresolved.is_empty() {
+                continue;
+            }
+            if !retry.children.is_empty() {
+                retry.children = unresolved.clone();
+            }
+            if externally_active || retry.due > now || self.in_flight.len() + usize::from(self.orphans_pending.is_some()) >= max {
                 waiting.push(retry);
             } else {
+                for id in unresolved {
+                    inv.retrying_folders.remove(&id);
+                }
                 self.send(
                     inv,
                     agent,
@@ -209,6 +326,16 @@ impl BackgroundFetch {
             }
         }
         self.retries = waiting;
+        if self.orphans_pending.is_some()
+            && self
+                .orphans_sent
+                .is_some_and(|at| now.saturating_duration_since(at) >= READ_DEADLINE)
+        {
+            log::warn!("inventory background fetch: the lost items request was never answered, given up");
+            self.orphans_pending = None;
+            self.orphans_failed = true;
+        }
+        self.watch(inv, now);
         let mut steps = 0;
         while self.in_flight.len() + usize::from(self.orphans_pending.is_some()) < max && steps < STEPS_PER_FRAME {
             let Some((id, kind)) = self.queue.pop_front() else {
@@ -219,6 +346,34 @@ impl BackgroundFetch {
         }
         for library in [false, true] {
             self.send_legacy(inv, agent, library, &mut out);
+        }
+        // (a folder no longer fetching keeps no old clock)
+        self.orphaned
+            .retain(|id, _| inv.folders.get(id).is_some_and(|f| f.state == FetchState::Fetching));
+        // A folder the user's own read holds (`waiting`) whose answer never
+        // comes is read again after the deadline: it never keeps the walk
+        // busy for the session.
+        // (the user's queue as a set, built only when something waits: a
+        // lookup per waiting folder stays linear on a huge inventory)
+        let user_queued: HashSet<Uuid> = if self.waiting.is_empty() {
+            HashSet::new()
+        } else {
+            inv.queue.iter().map(|(q, _)| *q).collect()
+        };
+        for (id, _) in &self.waiting {
+            if inv.folders.get(id).is_some_and(|f| f.state == FetchState::Fetching) && !user_queued.contains(id) {
+                let since = *self.orphaned.entry(*id).or_insert(now);
+                if now.saturating_duration_since(since) >= READ_DEADLINE {
+                    log::warn!(
+                        "inventory background fetch: {id} asked by the user {} s ago never arrived, asked again",
+                        READ_DEADLINE.as_secs()
+                    );
+                    if let Some(f) = inv.folders.get_mut(id) {
+                        f.state = FetchState::Unknown;
+                    }
+                    self.orphaned.remove(id);
+                }
+            }
         }
         self.queue.extend(self.waiting.drain(..));
         if self.is_idle()
@@ -236,6 +391,206 @@ impl BackgroundFetch {
         out
     }
 
+    /// The stall watchdog: an idle walk that left folders unread (a reply
+    /// lost, a retry dropped) asks for them again in its own batches, each
+    /// unread folder's parent read for its unfetched folders; the folders it
+    /// gave up on are asked again a few times a session. Never a folder over
+    /// the server's limit, nor Marketplace Listings.
+    fn watch(&mut self, inv: &mut Inventory, now: Instant) {
+        if !self.started
+            || !self.is_idle()
+            || self.swept.is_some_and(|at| now.saturating_duration_since(at) < WATCHDOG)
+            || self.swept_clean == Some(inv.generation)
+        {
+            return;
+        }
+        self.swept = Some(now);
+        self.swept_clean = None;
+        // (sets: the walk over a 30,000-folder inventory stays linear)
+        let mut parents: HashSet<Uuid> = HashSet::new();
+        let user_queued: HashSet<Uuid> = inv.queue.iter().map(|(q, _)| *q).collect();
+        let mut failed: Vec<Uuid> = Vec::new();
+        let mut lost: Vec<Uuid> = Vec::new();
+        // (a folder still on its way, the user's read included: the sweep
+        // is not clean until it has arrived or been timed out)
+        let mut reading = false;
+        let mut stack = vec![inv.root, inv.lib_root];
+        let mut seen = HashSet::new();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(f) = inv.folders.get(&id) else { continue };
+            if f.info.type_default == MARKETPLACE_LISTINGS || inv.too_big.contains(&id) || inv.retrying_folders.contains(&id) {
+                continue;
+            }
+            match f.state {
+                FetchState::Fetched => stack.extend(f.children.iter().copied()),
+                FetchState::Unknown => {
+                    parents.insert(f.info.parent);
+                }
+                FetchState::Failed => failed.push(id),
+                // (a read neither this walk holds nor the user's own queue:
+                // its answer may be lost; once past the deadline it is read
+                // again)
+                FetchState::Fetching if !self.pending.contains(&id) && !user_queued.contains(&id) => {
+                    reading = true;
+                    let since = *self.orphaned.entry(id).or_insert(now);
+                    if now.saturating_duration_since(since) >= READ_DEADLINE {
+                        lost.push(id);
+                    }
+                }
+                FetchState::Fetching => reading = true,
+            }
+        }
+        self.orphaned
+            .retain(|id, _| inv.folders.get(id).is_some_and(|f| f.state == FetchState::Fetching));
+        if !lost.is_empty() {
+            log::warn!(
+                "inventory background fetch: {} folders asked {} s ago never arrived, asked again",
+                lost.len(),
+                READ_DEADLINE.as_secs()
+            );
+            for id in &lost {
+                self.orphaned.remove(id);
+                if let Some(f) = inv.folders.get_mut(id) {
+                    f.state = FetchState::Unknown;
+                }
+            }
+            self.watchdog_total += 1;
+            self.queue.extend(lost.into_iter().map(|id| (id, Kind::FolderAndContent)));
+        }
+        // (the first walk ends on its own; a folder the user's own read
+        // fails stays for the failed rounds)
+        parents.retain(|p| inv.folders.get(p).is_some_and(|f| f.state == FetchState::Fetched));
+        // (each parent a few times a session: what its read never returns
+        // is left, never asked every 30 s)
+        let mut parents: Vec<Uuid> = parents
+            .into_iter()
+            .filter(|p| {
+                let asks = self.unread_asks.entry(*p).or_insert(0);
+                *asks += 1;
+                *asks <= UNREAD_ROUNDS
+            })
+            .collect();
+        parents.sort_unstable();
+        if !parents.is_empty() {
+            self.watchdog_total += 1;
+            log::warn!(
+                "inventory background fetch: idle with unread folders under {} folders, asked again",
+                parents.len()
+            );
+            self.queue.extend(parents.into_iter().map(|p| (p, Kind::ContentRecursive)));
+        }
+        // (the first round FAILED_AGAIN after the walk first left folders
+        // failed, not at once)
+        let failed_due = if failed.is_empty() {
+            self.failed_round = None;
+            false
+        } else {
+            let since = *self.failed_round.get_or_insert(now);
+            self.failed_rounds < FAILED_ROUNDS && now.saturating_duration_since(since) >= FAILED_AGAIN
+        };
+        // (nothing left this sweep or later: no round to come, no read
+        // waiting for its deadline or on its way, nothing asked again)
+        if (failed.is_empty() || self.failed_rounds >= FAILED_ROUNDS) && !reading && self.orphaned.is_empty() && self.queue.is_empty() {
+            self.swept_clean = Some(inv.generation);
+        }
+        if failed_due {
+            self.failed_round = Some(now);
+            self.failed_rounds += 1;
+            self.watchdog_total += 1;
+            log::warn!(
+                "inventory background fetch: {} folders that failed asked again (round {} of {FAILED_ROUNDS})",
+                failed.len(),
+                self.failed_rounds
+            );
+            self.queue.extend(failed.into_iter().map(|id| (id, Kind::Recursive)));
+        }
+    }
+
+    /// The loader's state in a few lines (Dev Toolbox N4): what a tester
+    /// pastes when the inventory stops loading, no log needed.
+    pub fn report(&self, inv: &Inventory, now: Instant) -> String {
+        let mut counts = [0usize; 4];
+        let mut known = 0;
+        for f in inv.folders.values().filter(|f| !f.library) {
+            known += 1;
+            // (a folder over the server's limit is counted on its own line,
+            // never as reading or unread: the walk does not read it again)
+            if inv.too_big.contains(&f.info.id) {
+                continue;
+            }
+            counts[match f.state {
+                FetchState::Fetched => 0,
+                FetchState::Fetching => 1,
+                FetchState::Failed => 2,
+                FetchState::Unknown => 3,
+            }] += 1;
+        }
+        let ago = |at: Option<Instant>| {
+            at.map_or_else(
+                || "never".to_owned(),
+                |at| format!("{} s ago", now.saturating_duration_since(at).as_secs()),
+            )
+        };
+        let oldest = self
+            .in_flight
+            .values()
+            .map(|r| now.saturating_duration_since(r.sent).as_secs())
+            .max();
+        let next_retry = self.retries.iter().map(|r| r.due.saturating_duration_since(now).as_secs()).min();
+        // (findLostItems: sent once a session, as on the Legacy Viewer; one
+        // given up is sent again only at the next main region's
+        // capabilities, `resume`)
+        let lost_items = if !self.orphans_requested {
+            "not asked yet".to_owned()
+        } else if self.orphans_pending.is_some() {
+            format!("asked, waiting ({})", ago(self.orphans_sent))
+        } else if self.orphans_failed {
+            "failed or unanswered, asked again at the next region change".to_owned()
+        } else {
+            "answered".to_owned()
+        };
+        format!(
+            "Inventory loading\n\
+             folders: {} known, {} read, {} reading, {} failed, {} not read yet, {} over the server's limit\n\
+             items: {} known, {} links' originals unreadable, {} confirmed gone\n\
+             lost items: {lost_items}\n\
+             walk: {}, {} reads in flight (oldest {}), {} queued, {} waiting for a retry (next in {}), {} more asked by the user\n\
+             last answer: {}; unanswered reads freed: {}; watchdog restarts: {}; failed rounds: {} of {FAILED_ROUNDS}\n\
+             AIS: inventory {}, library {}",
+            known,
+            counts[0],
+            counts[1],
+            counts[2],
+            counts[3],
+            inv.too_big.len(),
+            inv.items.len(),
+            inv.unreadable_items(),
+            inv.missing_items.len(),
+            if !self.started {
+                "not started"
+            } else if self.is_idle() {
+                "idle"
+            } else {
+                "busy"
+            },
+            self.in_flight.len(),
+            oldest.map_or_else(|| "none".to_owned(), |s| format!("{s} s")),
+            self.queue.len(),
+            self.retries.len(),
+            next_retry.map_or_else(|| "none".to_owned(), |s| format!("{s} s")),
+            self.waiting.len(),
+            ago(self.last_reply),
+            self.expired_total,
+            self.watchdog_total,
+            self.failed_rounds,
+            if self.legacy[0] { "no (legacy reads)" } else { "yes" },
+            if self.legacy[1] { "no (legacy reads)" } else { "yes" },
+        )
+    }
+
     pub fn on_orphans_reply(&mut self, request: u64, success: bool) -> bool {
         if self.orphans_pending != Some(request) {
             return false;
@@ -246,6 +601,14 @@ impl BackgroundFetch {
     }
 
     fn step(&mut self, inv: &mut Inventory, agent: Uuid, id: Uuid, kind: Kind, out: &mut Vec<NetCommand>) {
+        // Consume the split marker with its queue entry, even when another
+        // retry owns the folder. That retry still excludes it from batches.
+        if kind == Kind::FolderAndContent {
+            self.split.remove(&id);
+        }
+        if inv.retrying_folders.contains(&id) {
+            return;
+        }
         let Some(folder) = inv.folders.get(&id) else {
             return;
         };
@@ -266,43 +629,50 @@ impl BackgroundFetch {
                 FetchState::Fetching if self.pending.contains(&id) => {}
                 // asked for by the user: walked once it has arrived
                 FetchState::Fetching => self.waiting.push((id, kind)),
-                // the folder alone is already there (the login's own read of
-                // the root, or the cache): its folders by batches, as after
-                // that read in onAISFolderCalback, not one read each
-                FetchState::Fetched if kind == Kind::FolderAndContent => self.queue.push_front((id, Kind::ContentRecursive)),
-                // already fetched: check what is inside
-                FetchState::Fetched => {
-                    let children = folder.children.clone();
-                    self.queue.extend(children.into_iter().map(|child| (child, Kind::Recursive)));
-                }
+                // already fetched (the login's own read of the root, the
+                // cache, a read cut by its depth): what is inside is looked
+                // at in this same step, as bulkFetchViaAis's "Already
+                // fetched" branch does, its unread folders by batches as
+                // after a read in onAISFolderCalback, not one read each
+                FetchState::Fetched => self.scan(inv, agent, id, out),
             },
-            Kind::ContentRecursive => {
-                let mut batch = Vec::new();
-                let mut later = Vec::new();
-                let mut done = true;
-                for child in &folder.children {
-                    let Some(c) = inv.folders.get(child) else {
-                        continue;
-                    };
-                    match c.state {
-                        _ if c.info.type_default == MARKETPLACE_LISTINGS => {}
-                        FetchState::Unknown | FetchState::Failed if batch.len() < BATCH => batch.push(*child),
-                        FetchState::Unknown | FetchState::Failed => done = false,
-                        FetchState::Fetching if self.pending.contains(child) => {}
-                        // a folder the user opened meanwhile is walked once
-                        // it has arrived, like a fetched one
-                        FetchState::Fetching | FetchState::Fetched => later.push(*child),
-                    }
-                }
-                if !batch.is_empty() {
-                    self.send(inv, agent, kind, id, batch, MAX_FOLDER_DEPTH, out, 0);
-                }
-                if done {
-                    self.queue.extend(later.into_iter().map(|child| (child, Kind::Recursive)));
-                } else {
-                    self.queue.push_back((id, Kind::ContentRecursive));
-                }
+            Kind::ContentRecursive => self.scan(inv, agent, id, out),
+        }
+    }
+
+    /// A read folder's content: its unread folders in batches of
+    /// [`BATCH`], its read ones queued to be walked in turn. A folder with
+    /// more unread folders than a batch is queued again for the next one.
+    fn scan(&mut self, inv: &mut Inventory, agent: Uuid, id: Uuid, out: &mut Vec<NetCommand>) {
+        let Some(folder) = inv.folders.get(&id) else {
+            return;
+        };
+        let mut batch = Vec::new();
+        let mut later = Vec::new();
+        let mut done = true;
+        for child in &folder.children {
+            let Some(c) = inv.folders.get(child) else {
+                continue;
+            };
+            match c.state {
+                _ if c.info.type_default == MARKETPLACE_LISTINGS => {}
+                // (read in parts after a timeout, on its own)
+                _ if self.split.contains(child) || inv.retrying_folders.contains(child) => {}
+                FetchState::Unknown | FetchState::Failed if batch.len() < BATCH => batch.push(*child),
+                FetchState::Unknown | FetchState::Failed => done = false,
+                FetchState::Fetching if self.pending.contains(child) => {}
+                // a folder the user opened meanwhile is walked once
+                // it has arrived, like a fetched one
+                FetchState::Fetching | FetchState::Fetched => later.push(*child),
             }
+        }
+        if !batch.is_empty() {
+            self.send(inv, agent, Kind::ContentRecursive, id, batch, MAX_FOLDER_DEPTH, out, 0);
+        }
+        if done {
+            self.queue.extend(later.into_iter().map(|child| (child, Kind::Recursive)));
+        } else {
+            self.queue.push_back((id, Kind::ContentRecursive));
         }
     }
 
@@ -394,16 +764,24 @@ impl BackgroundFetch {
                 children,
                 depth,
                 attempt,
+                sent: self.clock.unwrap_or_else(Instant::now),
             },
         );
         self.busy.get_or_insert_with(|| (Instant::now(), 0)).1 += 1;
     }
 
-    /// onAISFolderCalback / onAISContentCalback, once the reply's snapshots
-    /// are applied. `stale` are the folders `Inventory::apply` queued again;
-    /// `outcome` is why the read failed, when it did.
-    pub fn on_reply(&mut self, inv: &mut Inventory, request: u64, stale: &[Uuid], outcome: Result<(), FetchError>) {
-        self.on_reply_at(inv, request, stale, outcome, Instant::now())
+    /// Apply results only while this request still owns the read. A reply
+    /// that missed the deadline cannot complete or acknowledge its replacement.
+    pub fn on_reply(&mut self, inv: &mut Inventory, request: u64, result: Result<Vec<FolderContents>, FetchError>) -> bool {
+        if !self.in_flight.contains_key(&request) {
+            return false;
+        }
+        let (stale, outcome) = match result {
+            Ok(contents) => (inv.apply_snapshots(contents, true), Ok(())),
+            Err(error) => (Vec::new(), Err(error)),
+        };
+        self.on_reply_at(inv, request, &stale, outcome, Instant::now());
+        true
     }
 
     /// [`on_reply`] with the clock given (the tests drive the retries).
@@ -414,16 +792,53 @@ impl BackgroundFetch {
             children,
             depth,
             attempt,
+            ..
         }) = self.in_flight.remove(&request)
         else {
             return;
         };
+        self.last_reply = Some(now);
         let single = children.is_empty();
         let targets = if single { vec![folder] } else { children.clone() };
         if let Err(error) = outcome {
             // A throttled or briefly unavailable server: ask again later
             // instead of ending the walk with this folder missing. The HTTP
             // layer already retried a few times (ais.rs).
+            // (a read that timed out, no status, over a subtree is never
+            // repeated as is: it is read in smaller parts at once, as
+            // LLInventoryModelBackgroundFetch::onAISFolderCalback falls back
+            // on a failed recursive read; only a refusal, 429 or 5xx, or a
+            // folder alone waits for its retry)
+            // (a gateway's timeout, 502 or 504, is a timeout too)
+            // (a 503 is an overload: it waits for its retry like a 429)
+            // (a transport error, a connection refused or reset after the
+            // HTTP layer's tries, is no timeout: it keeps the backoff, so an
+            // outage never turns each batch into twenty reads at once)
+            let timed_out = error.kind == FetchFailure::Transient
+                && depth > 0
+                && (error.timed_out || error.status.is_some_and(|status| matches!(status, 502 | 504)));
+            if timed_out {
+                log::warn!(
+                    "background inventory read of {folder} timed out ({} folders, depth {depth}): read in parts",
+                    targets.len()
+                );
+                for id in &targets {
+                    self.pending.remove(id);
+                    if let Some(f) = inv.folders.get_mut(id)
+                        && f.state == FetchState::Fetching
+                    {
+                        f.state = FetchState::Unknown;
+                    }
+                }
+                // (the folder alone, then its folders, each read the same way;
+                // ahead of the queue, and left out of the parent's batches
+                // still queued, which would send the same folders deep again)
+                self.split.extend(targets.iter().copied());
+                for id in targets.iter().rev() {
+                    self.queue.push_front((*id, Kind::FolderAndContent));
+                }
+                return;
+            }
             if error.kind == FetchFailure::Transient && attempt < BACKGROUND_RETRIES {
                 for id in &targets {
                     self.pending.remove(id);
@@ -431,6 +846,7 @@ impl BackgroundFetch {
                         && f.state == FetchState::Fetching
                     {
                         f.state = FetchState::Unknown;
+                        inv.retrying_folders.insert(*id);
                     }
                 }
                 let delay = BACKGROUND_BACKOFF[attempt.min(BACKGROUND_BACKOFF.len() as u32 - 1) as usize];
@@ -479,11 +895,9 @@ impl BackgroundFetch {
             }
             match (kind, fetched) {
                 // got the folder and its content: verify the content, in
-                // case the depth limit or a failure left some of it
-                (Kind::Recursive | Kind::ContentRecursive, true) => {
-                    let children = inv.folders.get(&id).map(|f| f.children.clone()).unwrap_or_default();
-                    self.queue.extend(children.into_iter().map(|child| (child, Kind::Recursive)));
-                }
+                // case the depth limit or a failure left some of it (its
+                // unread folders by batches, never one read each)
+                (Kind::Recursive | Kind::ContentRecursive, true) => self.queue.push_back((id, Kind::ContentRecursive)),
                 // a full recursive read failed: the folder and its content
                 // separately
                 (Kind::Recursive, false) => self.queue.push_back((id, Kind::FolderAndContent)),

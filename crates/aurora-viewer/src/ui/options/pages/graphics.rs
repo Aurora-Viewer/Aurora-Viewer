@@ -84,6 +84,20 @@ fn environment(cx: &mut Cx) {
             tr!("ui-options-colored-sky-ambient-help"),
             &field!(colored_sky_ambient),
         );
+        // an Aurora difference: the sun's and the moon's shafts
+        // (aurora-render sun_shafts.rs)
+        cx.experimental()
+            .toggle(tr!("ui-options-sun-rays"), tr!("ui-options-sun-rays-help"), &field!(sun_rays));
+        let no_rays = !cx.s.sun_rays;
+        cx.subs(no_rays, |cx| {
+            cx.slider(
+                tr!("ui-options-sun-rays-strength"),
+                tr!("ui-options-sun-rays-strength-help"),
+                &field!(sun_rays_strength),
+                crate::settings::SUN_RAYS_STRENGTH,
+                "",
+            );
+        });
         // an Aurora difference: the world drawn on a round planet
         cx.experimental().toggle(
             tr!("ui-options-planet-curvature"),
@@ -1026,6 +1040,23 @@ fn reflections_and_water(cx: &mut Cx) {
             tr!("ui-options-shiny-surfaces-expensive-disabled-by-default"),
             &field!(ssr),
         );
+        // (Aurora's own: the Legacy Viewer keeps its deferred normals in 16
+        // bits whatever is drawn, LLPipeline::addDeferredAttachments; here
+        // Automatic keeps them so for the traced reflections, which show
+        // the steps of 8, and the user decides otherwise)
+        cx.subs(!cx.s.ssr, |cx| {
+            use crate::settings::{NORMAL_PRECISION_AUTO, NORMAL_PRECISION_HIGH, NORMAL_PRECISION_STANDARD};
+            cx.keywords("normals G-buffer 8-bit 16-bit banding").choice(
+                tr!("ui-options-normal-precision"),
+                tr!("ui-options-normal-precision-help"),
+                &field!(normal_precision),
+                &[
+                    (NORMAL_PRECISION_AUTO, tr!("ui-options-normal-precision-automatic"), false),
+                    (NORMAL_PRECISION_STANDARD, tr!("ui-options-normal-precision-standard"), false),
+                    (NORMAL_PRECISION_HIGH, tr!("ui-options-normal-precision-high"), false),
+                ],
+            );
+        });
         cx.stepped(
             tr!("common-reflection-probes"),
             tr!("ui-options-what-shiny-surfaces-reflect-as-in-firestorm"),
@@ -1252,6 +1283,44 @@ fn image(cx: &mut Cx) {
     });
     world_look(cx);
     depth_of_field(cx);
+    motion_blur(cx);
+}
+
+/// Motion blur (`crate::motion_blur`): Aurora's own, off by default (the
+/// Legacy Viewer draws none).
+fn motion_blur(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-motion-blur"), |cx| {
+        cx.keywords("motion blur shutter cinematic").toggle(
+            tr!("ui-options-motion-blur-enable"),
+            tr!("ui-options-motion-blur-enable-help"),
+            &field!(motion_blur.enabled),
+        );
+        let off = !cx.s.motion_blur.enabled;
+        cx.subs(off, |cx| {
+            cx.row(
+                tr!("ui-options-motion-blur-strength"),
+                tr!("ui-options-motion-blur-strength-help"),
+                &field!(motion_blur.strength),
+                |ui, s| {
+                    let mut pct = s.motion_blur.strength * 100.0;
+                    let changed = ui
+                        .add(
+                            egui::Slider::new(&mut pct, 0.0..=100.0)
+                                .suffix(" %")
+                                .fixed_decimals(0)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .trailing_fill(true),
+                        )
+                        .changed();
+                    if changed {
+                        s.motion_blur.strength = (pct / 100.0).clamp(0.0, 1.0);
+                    }
+                    changed
+                },
+            );
+        });
+    });
 }
 
 /// The world's own filters (`snapshot::looks::WorldLook`): switched on here,

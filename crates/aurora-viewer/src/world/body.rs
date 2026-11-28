@@ -43,9 +43,6 @@ const PELVIS_LAG_MOUSELOOK: f32 = 0.15;
 const TURN_RATE_DELTA: f32 = 0.0019;
 const SHORTEST_LAG: f32 = 0.0001;
 const MOUSELOOK_PELVIS_FOLLOW_FACTOR: f32 = 0.5;
-/// AvatarRotateThresholdSlow / Fast (degrees).
-const ROTATE_THRESHOLD_SLOW: f32 = 60.0;
-const ROTATE_THRESHOLD_FAST: f32 = 2.0;
 
 fn clamp_rescale(x: f32, in0: f32, in1: f32, out0: f32, out1: f32) -> f32 {
     let t = ((x - in0) / (in1 - in0)).clamp(0.0, 1.0);
@@ -72,6 +69,9 @@ pub struct Input {
     /// How much faster the body turns while walking or standing, 0 to 100 %
     /// (FSAvatarTurnSpeed, in Debug Settings); every avatar drawn.
     pub turn_speed: f32,
+    /// AvatarRotateThresholdSlow / Fast, in degrees.
+    pub rotate_threshold_slow: f32,
+    pub rotate_threshold_fast: f32,
 }
 
 /// The walking and standing lag of the turn (s): PELVIS_LAG_WALKING,
@@ -147,7 +147,7 @@ impl Body {
             }
         }
         let pelvis = self.rotation * Vec3::X;
-        let mut threshold = clamp_rescale(speed, 0.1, 1.0, ROTATE_THRESHOLD_SLOW, ROTATE_THRESHOLD_FAST);
+        let mut threshold = clamp_rescale(speed, 0.1, 1.0, i.rotate_threshold_slow, i.rotate_threshold_fast);
         if i.mouselook_at.is_some() {
             threshold *= MOUSELOOK_PELVIS_FOLLOW_FACTOR;
         }
@@ -214,6 +214,8 @@ mod tests {
             flying: false,
             step_back: false,
             turn_speed: 0.0,
+            rotate_threshold_slow: 60.0,
+            rotate_threshold_fast: 2.0,
         };
         let mut b = Body::new(Vec3::X);
         // standing: a 30° camera turn does not move the body
@@ -240,6 +242,8 @@ mod tests {
             flying: false,
             step_back: false,
             turn_speed: 0.0,
+            rotate_threshold_slow: 60.0,
+            rotate_threshold_fast: 2.0,
         };
         for _ in 0..240 {
             b.update(&back, 1.0 / 60.0);
@@ -275,6 +279,66 @@ mod tests {
     }
 
     #[test]
+    fn configurable_slow_rotation_threshold_preserves_defaults_and_allows_precise_turns() {
+        let mut body = Body::new(Vec3::X);
+        let mut input = Input {
+            prim_dir: Quat::from_rotation_z(30.0_f32.to_radians()) * Vec3::X,
+            velocity: Vec3::ZERO,
+            in_air: false,
+            mouselook_at: None,
+            flying: false,
+            step_back: false,
+            turn_speed: 0.0,
+            rotate_threshold_slow: 60.0,
+            rotate_threshold_fast: 2.0,
+        };
+
+        for _ in 0..120 {
+            assert_eq!(body.update(&input, 1.0 / 60.0), 0);
+        }
+        assert!(yaw(body.rotation).abs() < 0.5);
+
+        input.rotate_threshold_slow = 4.0;
+        let mut turned = false;
+        for _ in 0..120 {
+            turned |= body.update(&input, 1.0 / 60.0) != 0;
+        }
+
+        assert!(turned, "the custom threshold should initiate a turn");
+        assert!(yaw(body.rotation) > 20.0, "{}", yaw(body.rotation));
+    }
+
+    #[test]
+    fn configurable_fast_rotation_threshold_changes_moving_avatar_turns() {
+        let mut body = Body::new(Vec3::X);
+        let mut input = Input {
+            prim_dir: Vec3::X,
+            velocity: Vec3::Y * 2.0,
+            in_air: false,
+            mouselook_at: None,
+            flying: false,
+            step_back: false,
+            turn_speed: 0.0,
+            rotate_threshold_slow: 60.0,
+            rotate_threshold_fast: 150.0,
+        };
+
+        for _ in 0..120 {
+            assert_eq!(body.update(&input, 1.0 / 60.0), 0);
+        }
+        assert!(yaw(body.rotation).abs() < 0.5);
+
+        input.rotate_threshold_fast = 20.0;
+        let mut turned = false;
+        for _ in 0..120 {
+            turned |= body.update(&input, 1.0 / 60.0) != 0;
+        }
+
+        assert!(turned);
+        assert!(yaw(body.rotation) > 70.0, "{}", yaw(body.rotation));
+    }
+
+    #[test]
     fn turn_speed_shortens_the_walking_lag_like_the_legacy_viewer() {
         assert_eq!(walking_lag(0.0), PELVIS_LAG_WALKING);
         assert!((walking_lag(100.0) - 0.21).abs() < 1e-6);
@@ -294,6 +358,8 @@ mod tests {
                 flying: false,
                 step_back: false,
                 turn_speed: speed,
+                rotate_threshold_slow: 60.0,
+                rotate_threshold_fast: 2.0,
             };
             b.update(&face, 0.05);
             yaw(b.rotation)

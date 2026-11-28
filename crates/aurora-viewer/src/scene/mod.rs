@@ -24,6 +24,7 @@ pub mod drawn;
 pub mod face_pattern;
 pub mod fetch_priority;
 pub(crate) mod flexible;
+mod fog_ground;
 mod foot_scope;
 mod foot_support;
 pub mod geometry_need;
@@ -1059,6 +1060,8 @@ pub struct Scene {
     /// Rain prototype: the terrain's heights around the camera
     /// (`rain_ground.rs`).
     rain_ground: rain_ground::RainGroundCache,
+    /// Aurora Weather's fog: the ground it pools on (`fog_ground.rs`).
+    fog_ground: fog_ground::FogGroundCache,
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
@@ -1090,6 +1093,9 @@ pub struct Scene {
     /// When each skeleton was last posed (an impostor keeps its pose
     /// between pictures).
     posed_at: FastMap<Uuid, Instant>,
+    /// Skeletons another view shows moving (Inspect's 3D): posed every frame,
+    /// however far they are.
+    pub watched: HashSet<Uuid>,
     /// The skeletons posed in this frame, by object index.
     posed_now: FastSet<usize>,
     /// AURORA_SYNC_CHECK: impostor pictures taken, and those taken with a
@@ -1556,6 +1562,22 @@ fn shift_display_pose(local: Mat4, out: &mut [[[f32; 4]; 4]]) {
 }
 
 impl Scene {
+    /// At exit, as `ObjectStore::leak_at_exit`: lets go of what a long
+    /// session gathers without freeing it block by block on the main thread
+    /// (during the session these go to the trash thread, #3081). The
+    /// geometries (`GpuGeom`: arena offsets, bounds and the picking copies of
+    /// every resident mesh) and the per-object draw lists are plain memory,
+    /// and the mesh and texture streamers' byte caches too. What holds a GPU
+    /// staging chunk is left to drop normally (the geometries waiting for
+    /// their copy, the uploads, the staging pool): forgetting one would keep
+    /// the device alive while the process ends.
+    pub(crate) fn leak_at_exit(&mut self) {
+        std::mem::forget(std::mem::take(&mut self.geoms));
+        std::mem::forget(std::mem::take(&mut self.gpu));
+        self.meshes.leak_at_exit();
+        self.textures.leak_at_exit();
+    }
+
     /// LLViewHighlightTransparent / LLPipeline::rebuildDrawInfo: invisible
     /// faces need temporary records while the transparency overlay is on.
     /// See indra/newview/llviewermenu.cpp and pipeline.cpp (LGPL 2.1).
@@ -1831,6 +1853,7 @@ impl Scene {
             spot_shadows: Default::default(),
             point_shadows: Default::default(),
             rain_ground: Default::default(),
+            fog_ground: Default::default(),
             mirror_objects: Default::default(),
             shelter_holds: Default::default(),
             selection_wire: Default::default(),
@@ -1852,6 +1875,7 @@ impl Scene {
             impostors: Default::default(),
             far_avatars: Default::default(),
             posed_at: Default::default(),
+            watched: HashSet::new(),
             posed_now: Default::default(),
             picture_check: (0, 0, None),
             loading: Default::default(),
@@ -6178,7 +6202,7 @@ impl Scene {
                 .unwrap_or(true);
             // Our animation stops drive simulator state even when the camera
             // is looking elsewhere (in particular the pre-jump -> jump).
-            if !near && owner != world.agent_id {
+            if !near && owner != world.agent_id && !self.watched.contains(&owner) {
                 continue;
             }
             // where it looks (LLHUDEffectLookAt::update / calcTargetPosition)
@@ -6303,6 +6327,7 @@ impl Scene {
                 && motions.poser.is_none()
                 && !self.portals.planes.contains_key(&idx)
                 && owner != world.agent_id
+                && !self.watched.contains(&owner)
                 && world.avatar_poses.contains_key(&owner)
                 && let Some(a) = self.far_avatars.get(&idx)
                 && let Some(&at) = self.posed_at.get(&owner)
@@ -6795,7 +6820,9 @@ impl Scene {
             self.physics.remove(&owner);
             return None;
         };
-        let update = self.body_physics.updates(owner == world.agent_id, position.distance(eye));
+        let update = self
+            .body_physics
+            .updates(owner == world.agent_id || self.watched.contains(&owner), position.distance(eye));
         let mut state = self.physics.remove(&owner).unwrap_or_else(|| body_physics::BodyPhysics::new(now));
         if !update {
             state.hold();
@@ -7050,6 +7077,31 @@ mod layer_rank_tests {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    /// At exit the geometries are let go, not freed on the main thread (the
+    /// count would fall back to the test's own copy).
+    #[test]
+    fn the_scene_lets_go_of_its_geometries_at_exit() {
+        let mut scene = Scene::new(std::env::temp_dir(), Arc::new(AvatarLibrary::load()));
+        let geom = Arc::new(GpuGeom {
+            faces: vec![None],
+            min: Vec3::ZERO,
+            max: Vec3::ONE,
+            joint_bounds: Vec::new(),
+            pick_faces: Vec::new(),
+        });
+        scene.geom_insert(
+            GeomKey::Mesh {
+                id: Uuid::from_u128(0x2894),
+                lod: 0,
+            },
+            GeomState::Ready(geom.clone()),
+        );
+        assert_eq!(Arc::strong_count(&geom), 2);
+        scene.leak_at_exit();
+        drop(scene);
+        assert_eq!(Arc::strong_count(&geom), 2, "left behind, not freed");
+    }
 
     #[test]
     fn hud_damping_distance_does_not_use_the_world_camera() {
@@ -7517,6 +7569,49 @@ mod tests {
             Scene::object_geom_key(&Object::from_update(1, update), 3),
             Some(GeomKey::Mesh { id: map, lod: 3 })
         );
+    }
+
+    /// Inspect's 3D of someone far away: an impostor keeps its pose between two
+    /// pictures, or past the draw distance, unless it is watched.
+    #[test]
+    fn a_watched_impostor_is_posed_every_frame() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        world.agent_id = Uuid::from_u128(0xA6);
+        world.apply(NetEvent::MainRegionChanged { handle: 1 });
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::action_avatar(false)],
+        });
+        let far = crate::demo::DEMO_AGENT;
+        let idx = world.objects.index_of_uuid(&far).expect("avatar");
+        let mut scene = Scene::new(std::path::PathBuf::new(), lib);
+        scene.palette_base(far);
+        let start = Instant::now();
+        let mut posed = |scene: &mut Scene, ms: u64| {
+            scene.far_avatars.insert(
+                idx,
+                impostors::Far {
+                    idx,
+                    center: Vec3::ZERO,
+                    distance: 50.0,
+                    in_view: false,
+                    silhouette: false,
+                },
+            );
+            scene.update_poses(&mut world, Vec3::ZERO, start + std::time::Duration::from_millis(ms));
+            scene.stats.posed
+        };
+        assert_eq!(posed(&mut scene, 0), 1);
+        assert_eq!(posed(&mut scene, 16), 0, "it keeps its pose");
+        scene.watched.insert(far);
+        assert_eq!([posed(&mut scene, 32), posed(&mut scene, 48)], [1, 1]);
+        // out of the draw distance too
+        scene.gpu.resize_with(idx + 1, Default::default);
+        scene.gpu[idx].center = Vec3::splat(10_000.0);
+        assert_eq!(posed(&mut scene, 64), 1);
+        scene.watched.clear();
+        assert_eq!(posed(&mut scene, 80), 0);
     }
 
     #[test]
