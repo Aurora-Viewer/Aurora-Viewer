@@ -51,6 +51,21 @@ const MIN_ZOOM_FRACTION: f32 = 0.25;
 const MAX_ZOOM_FRACTION: f32 = 8.0;
 const CAMERA_ZOOM_HALF_LIFE: f32 = 0.07;
 const FOV_ZOOM_HALF_LIFE: f32 = 0.07;
+/// The distance a camera tool's zoom drag asks is reached through two
+/// smoothing stages of this half life each, on the distance's logarithm
+/// (Aurora): applied at once, as LLToolCamera does, each frame took the
+/// mouse's uneven motion as it came, 1 % a pixel, and the zoom jumped; one
+/// stage still left its speed uneven (the human's reports of 2026-11-24).
+/// The orbit of the same drag stays direct.
+const DRAG_ZOOM_HALF_LIFE: f32 = 0.035;
+
+/// A camera drag's zoom on its way to the distance asked
+/// (`DRAG_ZOOM_HALF_LIFE`), as logarithms of the focus distance.
+#[derive(Debug, Clone, Copy)]
+struct DragZoom {
+    goal: f32,
+    mid: f32,
+}
 const CAMERA_LAG_HALF_LIFE: f32 = 0.25;
 const MIN_CAMERA_LAG: f32 = 0.5;
 const MAX_CAMERA_LAG: f32 = 5.0;
@@ -385,6 +400,9 @@ pub struct Camera {
     seat: Option<Seat>,
     fov_zoom: f32,
     current_fov_zoom: f32,
+    /// A camera drag's zoom still on its way (`follow_drag_zoom`): it ends
+    /// its glide once the button is released.
+    drag_zoom: Option<DragZoom>,
     /// The right button held in mouselook (`mouselook_zoom.rs`).
     ml_zoom: mouselook_zoom::MouselookZoom,
     gamepad_ml_zoom: mouselook_zoom::GamepadZoom,
@@ -534,6 +552,7 @@ impl Default for Camera {
             seat: None,
             fov_zoom: 0.0,
             current_fov_zoom: 0.0,
+            drag_zoom: None,
             ml_zoom: Default::default(),
             gamepad_ml_zoom: Default::default(),
             virtual_position: Vec3::ZERO,
@@ -716,6 +735,8 @@ impl Camera {
 
     /// LLAgentCamera::startCameraAnimation.
     fn start_animation(&mut self, s: &CameraSettings) {
+        // a new view: a drag's zoom stops its glide
+        self.drag_zoom = None;
         self.anim = Some(Animation {
             start_camera: self.position,
             start_focus: self.target,
@@ -795,8 +816,13 @@ impl Camera {
         // mouselook ends the free camera (the flycam's toggle the other way)
         self.free = None;
         self.clear_flycam();
-        // the view keeps its direction: the avatar turns to it
-        agent.yaw += self.orbit_yaw;
+        // the view keeps its direction: the avatar turns to it, unless a
+        // script holds left and right (#3450): LLAgentCamera::changeCameraTo-
+        // Mouselook never turns the avatar, so the body keeps its heading and
+        // the view comes back along it
+        if !agent.rotate_grabbed {
+            agent.yaw += self.orbit_yaw;
+        }
         self.orbit_yaw = 0.0;
         agent.pitch = -self.pitch;
         self.pitch = 0.0;
@@ -1643,10 +1669,11 @@ impl Camera {
 
     // ------------------------------------------------------------------ input
 
-    /// LLAgentCamera::cameraOrbitAround.
+    /// LLAgentCamera::cameraOrbitAround. Around the avatar it is
+    /// LLAgent::yaw, which a script's hold on yaw blocks (rotateGrabbed).
     fn orbit_around(&mut self, radians: f32, agent: &mut AgentState) {
         if self.focus_on_avatar && !self.mouselook() {
-            agent.yaw += radians;
+            agent.yaw_by(radians);
         } else {
             self.focus_offset_target = Quat::from_rotation_z(radians) * self.focus_offset_target;
             self.zoom_in(1.0);
@@ -1816,6 +1843,8 @@ impl Camera {
     }
 
     fn orbit_in_with_mouselook(&mut self, meters: f32, agent: &mut AgentState, s: &CameraSettings, allow_mouselook: bool) {
+        // the wheel or the keys take over from a drag's gliding zoom
+        self.drag_zoom = None;
         if self.focus_on_avatar && self.third_person() {
             let initial = self.initial_distance(s);
             let Some(distance) = self.held_zoom(self.zoom_distance() - meters) else {
@@ -1972,6 +2001,8 @@ impl Camera {
     /// A camera drag starts: Alt+click, or the left button held on our
     /// avatar (`steering`, LLToolCamera::mMouseSteering).
     pub fn begin_drag(&mut self, steering: bool) {
+        // a new drag starts from where the last one's glide is
+        self.drag_zoom = None;
         self.tool = Some(Tool {
             steering,
             ..Default::default()
@@ -1979,7 +2010,51 @@ impl Camera {
     }
 
     pub fn end_drag(&mut self) {
+        // (its zoom ends its glide: `follow_drag_zoom`)
         self.tool = None;
+    }
+
+    /// The zoom of a camera drag: the distance it asks (LLAgentCamera::
+    /// cameraZoomIn's limits), followed by `follow_drag_zoom`.
+    fn drag_zoom(&mut self, fraction: f32) {
+        let held = self.focus_offset_target;
+        let from = self.drag_zoom.map(|z| z.goal.exp()).filter(|d| d.is_finite() && *d > 0.0);
+        if let Some(distance) = from {
+            self.focus_offset_target = held.normalize_or(Vec3::X) * distance;
+        }
+        self.zoom_in(fraction);
+        let goal = self.focus_offset_target.length().ln();
+        self.focus_offset_target = held;
+        let mid = self.drag_zoom.map_or_else(|| held.length().ln(), |z| z.mid);
+        self.drag_zoom = Some(DragZoom { goal, mid });
+    }
+
+    /// One frame of a drag's zoom toward the distance it asked: two
+    /// smoothing stages, so that its speed changes smoothly too.
+    fn follow_drag_zoom(&mut self, dt: f32) {
+        let Some(zoom) = self.drag_zoom else {
+            return;
+        };
+        let now = self.focus_offset_target.length().ln();
+        if !zoom.goal.is_finite() || !zoom.mid.is_finite() || !now.is_finite() {
+            // nothing to follow: the distance stays where it is
+            self.drag_zoom = None;
+            return;
+        }
+        let k = interpolant(DRAG_ZOOM_HALF_LIFE, dt);
+        let mid = zoom.mid + (zoom.goal - zoom.mid) * k;
+        let mut next = now + (mid - now) * k;
+        let reached = (zoom.goal - next).abs() < 1e-4 && (zoom.goal - mid).abs() < 1e-4;
+        if reached {
+            next = zoom.goal;
+            self.drag_zoom = None;
+        } else {
+            self.drag_zoom = Some(DragZoom { goal: zoom.goal, mid });
+        }
+        let distance = next.exp();
+        if distance.is_finite() && distance > 0.0 {
+            self.focus_offset_target = self.focus_offset_target.normalize_or(Vec3::X) * distance;
+        }
     }
 
     /// Mouse motion during a camera drag (LLToolCamera::handleHover), in
@@ -2027,7 +2102,7 @@ impl Camera {
                     // the agent in avatar follow. Keep that steering turn
                     // when ClickOnAvatarKeepsCamera retains a detached focus.
                     if steering && !self.focus_on_avatar {
-                        agent.yaw -= dx * k;
+                        agent.yaw_by(-dx * k);
                     }
                     self.orbit_around(-dx * k, agent);
                 }
@@ -2035,7 +2110,7 @@ impl Camera {
                     if steering {
                         self.orbit_over(dy * k);
                     } else {
-                        self.zoom_in(0.99f32.powf(-dy));
+                        self.drag_zoom(0.99f32.powf(-dy));
                     }
                 }
             }
@@ -2544,6 +2619,7 @@ impl Camera {
             f.now,
             self.gamepad_follow_avatar || (s.track_focus_object && f.edit_tracking != Some(false)),
         );
+        self.follow_drag_zoom(dt);
         let offset_changed = self.focus_offset != self.focus_offset_target;
         // CAMERA_FOCUS_HALF_LIFE is 0: the offset follows at once
         self.focus_offset = self.focus_offset_target;
@@ -5926,6 +6002,73 @@ mod tests {
         }
     }
 
+    /// The camera tool's zoom drag follows the mouse's uneven motion
+    /// smoothly (the human's reports of 2026-11-24): every frame moves the
+    /// camera about as far as the one before, and once released it glides
+    /// to where the same motion applied at once would have put it.
+    #[test]
+    fn a_zoom_drag_is_smooth_and_ends_where_the_mouse_asked() {
+        let s = CameraSettings::default();
+        let mut f = frame(1.0 / 60.0);
+        f.build_mode = true;
+        for (high, low) in [(12.0, 0.0), (-12.0, 0.0), (8.0, 2.0)] {
+            let (mut cam, mut w) = alt_focused(10.0, &s);
+            for _ in 0..60 {
+                cam.update(&mut w, &s, &f);
+            }
+            let start = cam.focus_offset_target.length();
+            // the motion as it comes: much in a frame, little in the next
+            let mut steps = Vec::new();
+            let mut total = 0.0;
+            for i in 0..40 {
+                let dy = if i % 2 == 0 { high } else { low };
+                total += dy;
+                let before = cam.position.distance(cam.target).ln();
+                cam.drag(ToolMode::Zoom, 0.0, dy, 1280.0, &mut w.agent);
+                cam.update(&mut w, &s, &f);
+                steps.push((cam.position.distance(cam.target).ln() - before).abs());
+            }
+            // past its first frames, while it gathers speed, every frame
+            // moves, its pace within a tenth of the one before
+            for pair in steps[12..].windows(2) {
+                assert!(pair[0] > 0.0 && pair[1] > 0.0, "{high}/{low}: steps {steps:?}");
+                assert!(pair[1] < pair[0] * 1.1 && pair[0] < pair[1] * 1.1, "{high}/{low}: steps {steps:?}");
+            }
+            cam.end_drag();
+            for _ in 0..60 {
+                cam.update(&mut w, &s, &f);
+            }
+            let asked = start * 0.99f32.powf(-total);
+            let got = cam.focus_offset_target.length();
+            assert!((got - asked).abs() < asked * 1e-3, "{high}/{low}: {got} for {asked}");
+        }
+    }
+
+    /// A drag's zoom whose goal is not a number is dropped: the distance
+    /// stays as it was.
+    #[test]
+    fn a_drag_zoom_that_is_not_a_number_is_dropped() {
+        let s = CameraSettings::default();
+        let f = frame(1.0 / 60.0);
+        let (mut cam, mut w) = alt_focused(10.0, &s);
+        for _ in 0..60 {
+            cam.update(&mut w, &s, &f);
+        }
+        for zoom in [
+            DragZoom { goal: f32::NAN, mid: 1.0 },
+            DragZoom {
+                goal: 1.0,
+                mid: f32::INFINITY,
+            },
+        ] {
+            let before = cam.focus_offset_target;
+            cam.drag_zoom = Some(zoom);
+            cam.update(&mut w, &s, &f);
+            assert!(cam.drag_zoom.is_none());
+            assert!(cam.focus_offset_target.is_finite() && cam.focus_offset_target.abs_diff_eq(before, 1e-5));
+        }
+    }
+
     /// The lag once reached 50 m: the camera jumped to its goal, fell behind
     /// again and jumped again, during one drag.
     #[test]
@@ -7808,7 +7951,7 @@ mod tests {
                     cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
                     settle(&mut cam, &mut w, &s);
                 }
-                w.update_bodies(Instant::now(), 1.0 / 60.0, cam.forward(), false, false, 0.0);
+                w.update_bodies(Instant::now(), 1.0 / 60.0, cam.forward(), false, false, 0.0, 60.0, 2.0);
                 let heading = w.agent.yaw;
                 let body = w.bodies[&w.agent_id].rotation;
                 let focus = (cam.focus_point(), cam.focus_object_id());
@@ -7828,7 +7971,7 @@ mod tests {
                         ..frame(1.0 / 60.0)
                     };
                     cam.update(&mut w, &s, &input);
-                    let turn = w.update_bodies(input.now, input.dt, cam.forward(), false, false, 0.0);
+                    let turn = w.update_bodies(input.now, input.dt, cam.forward(), false, false, 0.0, 60.0, 2.0);
                     turning |= turn == if dx < 0.0 { 1 } else { -1 };
                 }
                 assert!(turning, "the drawn body must request the matching turn animation");
@@ -7838,6 +7981,55 @@ mod tests {
                 cam.drag(ToolMode::Zoom, dx, 0.0, 1280.0, &mut w.agent);
                 assert!((w.agent.yaw - expected).abs() < 1e-5, "release ends steering");
             }
+        }
+    }
+
+    /// LLToolPie mouse steering and LLAgentCamera::cameraOrbitAround around
+    /// the avatar turn it with LLAgent::yaw, which rotateGrabbed blocks: a
+    /// vehicle that took left/right keeps its heading (#3450).
+    #[test]
+    fn a_grabbed_yaw_stops_mouse_steering_and_orbiting_around_the_avatar() {
+        for follow in [true, false] {
+            let (mut w, mut cam, s, _) = focused_object();
+            w.agent.yaw = 0.0;
+            if follow {
+                cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+                settle(&mut cam, &mut w, &s);
+            }
+            w.agent.rotate_grabbed = true;
+            cam.begin_drag(true);
+            cam.drag(ToolMode::Zoom, 256.0, 0.0, 1280.0, &mut w.agent);
+            assert_eq!(w.agent.yaw, 0.0, "steering, follow={follow}");
+            cam.end_drag();
+        }
+        let (mut w, mut cam, s, _) = focused_object();
+        cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        w.agent.yaw = 0.0;
+        w.agent.rotate_grabbed = true;
+        cam.orbit_around(0.5, &mut w.agent);
+        assert_eq!(w.agent.yaw, 0.0, "orbit around the avatar");
+        w.agent.rotate_grabbed = false;
+        cam.orbit_around(0.5, &mut w.agent);
+        assert!((w.agent.yaw - 0.5).abs() < 1e-6, "released: it turns again");
+    }
+
+    /// Mouselook entered after orbiting the camera around the avatar: the
+    /// body takes the orbit, unless a script holds left and right (#3450).
+    #[test]
+    fn a_grabbed_yaw_keeps_the_heading_on_mouselook_entry() {
+        for grabbed in [true, false] {
+            let (mut w, mut cam, s, _) = focused_object();
+            cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+            settle(&mut cam, &mut w, &s);
+            w.agent.yaw = 0.0;
+            w.agent.rotate_grabbed = grabbed;
+            cam.orbit_yaw = 0.7;
+            cam.toggle_mouselook(&mut w.agent, &s);
+            assert!(cam.mouselook());
+            let expected = if grabbed { 0.0 } else { 0.7 };
+            assert!((w.agent.yaw - expected).abs() < 1e-6, "grabbed={grabbed}: yaw {}", w.agent.yaw);
+            assert_eq!(cam.orbit_yaw, 0.0);
         }
     }
 
@@ -8152,7 +8344,7 @@ mod tests {
             }
             let held_end = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
             assert!(held_end.distance(held_start) > 2.0);
-            tool.mouse_up(&mut w, &settings, None);
+            tool.mouse_up(&mut w, &settings, None, (1590.0, start.1), Mods::default());
             assert_eq!(tool.manip.camera_pan(&settings, &tool.cam, (1590.0, start.1), f.dt), Vec3::ZERO);
             let stopped = camera.position;
             for _ in 0..30 {

@@ -23,6 +23,7 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         blocked: false,
         beyond_range: false,
         speaker: Default::default(),
+        private_history: false,
     }
 }
 
@@ -542,6 +543,42 @@ fn the_keyboard_goes_round_the_conversations_and_closes_them() {
         h.frame(key(egui::Key::W, egui::Modifiers::COMMAND));
         assert!(!h.open, "{style:?}");
         assert!(!h.actions.iter().any(|a| matches!(a, ConvAction::Close(_))), "{style:?}");
+    }
+}
+
+/// Ctrl+W with the emoji or GIF picker open: the next conversation shows
+/// with the pickers closed from the pass of the key on, not one pass with
+/// the other conversation's picker (#4867), in both styles of the list.
+#[test]
+fn closing_a_conversation_with_ctrl_w_closes_its_picker() {
+    for style in [ChatStyle::Legacy, ChatStyle::Aurora] {
+        for gif in [false, true] {
+            let mut h = Harness::new(style);
+            h.st.gifs.demo = true;
+            h.settle();
+            let order = if style.workspace() {
+                super::super::sidebar::tab_order(&h.world, &h.st)
+            } else {
+                super::super::keys::legacy_order(&h.world, &h.st)
+            };
+            let last = order[2];
+            h.st.select_tab(last);
+            h.st.conv_focus_request = true;
+            h.settle();
+            if gif {
+                h.st.gif_open = true;
+            } else {
+                h.st.emoji_open = true;
+            }
+            h.settle();
+            assert!(h.st.emoji_open || h.st.gif_open, "{style:?} gif {gif}: open");
+            h.frame(key(egui::Key::W, egui::Modifiers::COMMAND));
+            assert_ne!(h.st.selected, last, "{style:?} gif {gif}: the next one shown");
+            assert!(
+                !h.st.emoji_open && !h.st.gif_open,
+                "{style:?} gif {gif}: closed on the pass of the key"
+            );
+        }
     }
 }
 
@@ -3413,6 +3450,51 @@ fn an_outgoing_call_does_not_take_the_keyboard_when_it_opens_the_window() {
         assert!(
             h.frames.ctx.memory(|m| m.has_focus(egui::Id::unique(("conv_input", Some(BOB))))),
             "{style:?}: a user request takes the keyboard"
+        );
+    }
+}
+
+/// An emoji chosen in the picker takes the caret after it: what is typed
+/// next follows the emoji, in Aurora's box as in the Legacy style's field.
+/// It went to the end of the draft with the caret left where it was, so the
+/// next characters came before it.
+#[test]
+fn an_emoji_of_the_picker_takes_the_caret_after_it() {
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        h.st.selected = Some(JANE);
+        h.st.conv_focus_request = true;
+        h.settle();
+        h.frame(vec![egui::Event::Text("hello".into())]);
+        h.settle();
+        assert_eq!(h.st.draft_mut(Some(JANE)).as_str(), "hello", "{style:?}: typed in the field");
+        h.st.emoji_open = true;
+        h.settle();
+        let picker = h
+            .frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique(("emoji_picker", Some(JANE)))))
+            .unwrap_or_else(|| panic!("{style:?}: the picker is shown"));
+        // down the picker's first column, to the first emoji met (the
+        // search and the categories write nothing)
+        let mut y = picker.top() + 10.0;
+        while h.st.draft_mut(Some(JANE)).as_str() == "hello" && y < picker.bottom() {
+            h.click(egui::pos2(picker.left() + 21.0, y));
+            y += 12.0;
+        }
+        let picked = h.st.draft_mut(Some(JANE)).clone();
+        assert!(
+            picked.starts_with("hello") && picked.len() > "hello".len(),
+            "{style:?}: an emoji of the picker is written: {picked:?} in {picker:?}"
+        );
+        assert!(!h.st.emoji_open, "{style:?}: the pick closes the picker");
+        h.settle();
+        h.frame(vec![egui::Event::Text("!".into())]);
+        h.settle();
+        assert_eq!(
+            h.st.draft_mut(Some(JANE)).as_str(),
+            format!("{picked}!"),
+            "{style:?}: what is typed next follows the emoji"
         );
     }
 }

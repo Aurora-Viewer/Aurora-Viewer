@@ -112,6 +112,27 @@ pub(super) fn ray_may_hit(g: &super::ObjGpu, ray: (Vec3, Vec3)) -> bool {
     to.length_squared() - along * along <= r * r
 }
 
+/// How far along a click's ray from `eye` the GPU draws `g` with the draw
+/// distance `far`: everywhere when its culling sphere comes within it
+/// (cull.wgsl, `d - r > eye.w`, the same sphere), nowhere when it does not.
+/// `eye` is the camera the lists were culled from, not the click's ray's
+/// origin, which lies on the near plane. Without bounds yet, up to the draw
+/// distance.
+pub(super) fn drawn_reach(g: &super::ObjGpu, eye: Vec3, far: f32) -> Option<f32> {
+    let (center, radius) = g.sphere();
+    if radius <= 0.0 {
+        Some(far)
+    } else {
+        (center.distance(eye) - radius <= far).then_some(f32::INFINITY)
+    }
+}
+
+/// How far behind the depth read under the cursor a surface the click's ray
+/// meets is still taken, and how far from that depth a surface met on the
+/// way to it is still the one drawn there (`Scene::drawn_at`): the depth
+/// and the CPU's geometry disagree by centimetres.
+const DEPTH_NEAR: f32 = 0.06;
+
 /// A mesh without a skin worn by an avatar. It is placed by its attachment
 /// point like a worn prim, but the GPU draws its faces at a newer pose: the
 /// CPU only answers for the faces the GPU does not draw, those at alpha 0
@@ -407,7 +428,7 @@ impl Scene {
         select_probes: bool,
         far: f32,
     ) -> (Option<Vec3>, Option<usize>) {
-        self.selection_pick_mode(world, ray, depth, build, select_probes, far, FacePick::Surface)
+        self.selection_pick_mode(world, ray, depth, build, select_probes, far, FacePick::Surface, false)
     }
 
     pub fn left_selection_pick(
@@ -419,10 +440,18 @@ impl Scene {
         select_probes: bool,
         far: f32,
     ) -> (Option<Vec3>, Option<usize>) {
-        self.selection_pick_mode(world, ray, depth, build, select_probes, far, FacePick::Left)
+        self.selection_pick_mode(world, ray, depth, build, select_probes, far, FacePick::Left, false)
     }
 
-    #[allow(clippy::too_many_arguments)] // Selection inputs plus the button's alpha policy.
+    /// The photo camera's probe: the first object face within `far` m along
+    /// `ray`, as Build's search finds it, what is not drawn included (a wall
+    /// left out of the picture still stops the camera).
+    pub fn photo_probe(&self, world: &World, ray: (Vec3, Vec3), far: f32) -> Option<Vec3> {
+        self.selection_pick_mode(world, Some(ray), None, true, false, far, FacePick::Surface, true)
+            .0
+    }
+
+    #[allow(clippy::too_many_arguments)] // Selection inputs, the button's alpha policy and the probe's.
     fn selection_pick_mode(
         &self,
         world: &World,
@@ -432,6 +461,7 @@ impl Scene {
         select_probes: bool,
         far: f32,
         mode: FacePick,
+        meets_hidden: bool,
     ) -> (Option<Vec3>, Option<usize>) {
         let now = Instant::now();
         let mut candidates = Vec::new();
@@ -444,11 +474,31 @@ impl Scene {
             depth
         };
         if let Some(ray) = ray {
-            let limit = point.map_or(far, |p| (p - ray.0).dot(ray.1) + 0.06).min(far);
+            // Up to the surface drawn under the cursor, wherever it is: the
+            // GPU draws an object whose bounds reach into the draw distance
+            // (cull.wgsl), so a large one shows surfaces beyond it, and a
+            // click there selected nothing (#4869). With no depth (the sky,
+            // the photo camera's probe), the draw distance bounds the ray as
+            // before; with a depth, the depth does (`drawn_at`). A hit
+            // farther than `DEPTH_NEAR` behind the depth is taken only when
+            // it is the surface drawn there (`drawn_at`), at the depth's
+            // point (read its surface on `surface_ray`). What is not drawn is
+            // not clicked, with a depth or only the sky behind it: a hidden
+            // rendering type, or what the photo or RLVa leaves out, as
+            // `pick_objects` skips them. The photo camera's probe still meets
+            // them (`photo_probe`): a wall left out of the picture stops it
+            // as before. The Legacy Viewer casts
+            // a CPU ray: LLPickInfo::fetchResults (llviewerwindow.cpp) 512 m
+            // whatever the draw distance, over what LLOctreeIntersect::check
+            // (llspatialpartition.cpp) finds drawn (its rendering type on,
+            // visible). It needs no depth check: its ray meets no surface the
+            // GPU posed elsewhere.
+            let eye = self.last_cull.map_or(ray.0, |view| view.eye);
             let hits = ray_hits(&candidates, |&idx| {
                 let g = self.gpu.get(idx)?;
                 let o = world.objects.get(idx)?;
                 if g.hud
+                    || (!meets_hidden && (g.hidden || g.unseen || g.rlva_hidden))
                     || g.is_avatar
                     || g.rigged
                     || (g.owner_avatar.is_some() && o.visual_volume().is_mesh() && !worn_unrigged_mesh(o, g))
@@ -458,12 +508,41 @@ impl Scene {
                 {
                     return None;
                 }
+                let reach = match point {
+                    Some(_) => drawn_reach(g, eye, far)?,
+                    None => far,
+                };
                 let hit = self.face_hit_mode(world, idx, ray, now, true, mode)?;
-                (hit.t.is_finite() && hit.t <= limit).then_some((hit.t, idx))
+                if !hit.t.is_finite() || hit.t > reach {
+                    return None;
+                }
+                let Some(p) = point else {
+                    return Some((hit.t, idx, ray.0 + ray.1 * hit.t));
+                };
+                // Drawn at the depth, ranked at the nearer of where the
+                // texel's ray (the one the depth was drawn on) and the
+                // click's meet it, so that what lies behind it on both comes
+                // after it: on the click's alone, a surface a few centimetres
+                // behind the one drawn there (a wall behind a poster) could
+                // come before it, both seen at an angle; on the texel's alone,
+                // a prim just behind it that the texel's ray misses could.
+                let depth_t = (p - ray.0).dot(ray.1);
+                let drawn = if hit.t >= depth_t - DEPTH_NEAR {
+                    self.drawn_at(world, idx, ray.0, p, now, mode)
+                } else {
+                    None
+                };
+                if hit.t > depth_t + DEPTH_NEAR {
+                    // (the ray may have gone on beside the part drawn
+                    // there, through a gap of the same object)
+                    Some((depth_t + drawn?, idx, p))
+                } else {
+                    Some((drawn.map_or(hit.t, |past| hit.t.min(depth_t + past)), idx, ray.0 + ray.1 * hit.t))
+                }
             });
-            let hit = nearest_hit(hits, |h| *h);
-            if let Some((t, idx)) = hit {
-                return (Some(ray.0 + ray.1 * t), Some(idx));
+            let hit = nearest_hit(hits, |h| (h.0, h.1));
+            if let Some((_, idx, at)) = hit {
+                return (Some(at), Some(idx));
             }
             // No surface on the ray: the point is the land's (or an
             // avatar's), never an object whose box merely contains it. A
@@ -925,6 +1004,30 @@ impl Scene {
 
     fn geometry_hit(&self, world: &World, idx: usize, ray: (Vec3, Vec3), now: Instant) -> Option<pick::FaceHit> {
         self.face_hit_mode(world, idx, ray, now, true, FacePick::Geometry)
+    }
+
+    /// Whether `idx` is the surface drawn at `depth`, a point read from the
+    /// depth under the cursor: met within `DEPTH_NEAR` of it on the way from
+    /// `origin`, and then how far past the depth (negative: in front). The
+    /// depth is that of a render texel, up to a texel beside the click's
+    /// ray: on a face seen at an angle far away, that puts it well short of
+    /// or behind where the ray meets the same face, with any anti-aliasing
+    /// (demo, FSR: 9 to 28 cm 70 to 120 m away; SMAA, the issue's settings:
+    /// 7 to 34 cm 105 to 228 m away, #4869), and on a surface drawn in front
+    /// (the terrain, an avatar, a wall) it is that surface's, which the face
+    /// behind does not meet there. Only a hit in that stretch counts: a face
+    /// of the same object farther in front writes no depth there (an
+    /// invisible, blended or cut-out face), or the depth would be its own.
+    /// An object whose bounding sphere does not reach the stretch is passed
+    /// before its faces are cast.
+    fn drawn_at(&self, world: &World, idx: usize, origin: Vec3, depth: Vec3, now: Instant, mode: FacePick) -> Option<f32> {
+        let (center, radius) = self.gpu.get(idx)?.sphere();
+        if radius > 0.0 && center.distance_squared(depth) > (radius * 1.05 + 0.05 + DEPTH_NEAR).powi(2) {
+            return None;
+        }
+        let dir = (depth - origin).try_normalize()?;
+        let hit = self.face_hit_mode(world, idx, (depth - dir * DEPTH_NEAR, dir), now, true, mode)?;
+        (hit.t <= 2.0 * DEPTH_NEAR).then_some(hit.t - DEPTH_NEAR)
     }
 
     /// `face_hit` against the full-detail geometry held for foot placement
@@ -1432,6 +1535,41 @@ impl Scene {
         }
     }
 
+    /// The ray on which to read the surface of an object a selection pick
+    /// on `ray` took at `point`: `ray` itself when the point lies on it;
+    /// else the ray to the point from just before it, as `drawn_at` cast
+    /// it. A far face is taken at the depth drawn under the cursor, beside
+    /// the ray (#4869), where the ray may meet another face of the object
+    /// behind: the face, its coordinates and the position a touch or a grab
+    /// sends are then the drawn one's.
+    pub fn surface_ray(ray: (Vec3, Vec3), point: Vec3) -> (Vec3, Vec3) {
+        let off = point - ray.0;
+        if (off - ray.1 * off.dot(ray.1)).length() <= 1e-3 {
+            return ray;
+        }
+        off.try_normalize().map_or(ray, |dir| (point - dir * DEPTH_NEAR, dir))
+    }
+
+    /// The point by which an object a selection pick on `ray` took at
+    /// `point` bounds the faces the GPU drew behind it on that ray
+    /// (`Scene::designated`): the farther along it of `point` and where the
+    /// ray meets the object. A far face taken at the depth beside the ray
+    /// (#4869) can lie nearer along it than the object does on the ray,
+    /// where an attachment drawn in front of the object would be cut off.
+    /// `left`: the search was the left button's (`left_selection_pick`),
+    /// whose faces let a fully transparent texel through.
+    pub fn found_bound(&self, world: &World, idx: usize, ray: (Vec3, Vec3), point: Vec3, left: bool) -> Vec3 {
+        let mode = if left { FacePick::Left } else { FacePick::Surface };
+        let Some(hit) = self.face_hit_mode(world, idx, ray, Instant::now(), true, mode) else {
+            return point;
+        };
+        if hit.t > (point - ray.0).dot(ray.1) {
+            ray.0 + ray.1 * hit.t
+        } else {
+            point
+        }
+    }
+
     pub fn touch_surface(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<TouchSurface> {
         self.touch_surface_mode(world, idx, ray, FacePick::Surface)
     }
@@ -1675,7 +1813,14 @@ impl Scene {
             if world.ground_height(p).is_some_and(|z| p.z <= z) {
                 return Some(p);
             }
-            t += 1.0;
+            // from 2^24 m on a step of 1 m can leave `t` unchanged (f32;
+            // from 2^25 m it always does), and `from` is as far as the drawn
+            // face under the cursor: the window froze there (#5021)
+            let next = t + 1.0;
+            if next <= t {
+                break;
+            }
+            t = next;
         }
         found.then_some(ray.0 + ray.1 * nearest)
     }
@@ -1809,6 +1954,16 @@ impl Scene {
         })
     }
 
+    /// Only a press near an ignored volume needs to see behind occluders.
+    pub fn may_pick_ignored(&self, ray: (Vec3, Vec3)) -> bool {
+        self.ignored_draws.iter().any(|&idx| {
+            let object = &self.gpu[idx];
+            // A deforming or anchored volume can move beyond its static
+            // bounds. A bent planet is outside the straight-ray test too.
+            self.planet_radius.is_some() || object.anchor.is_some() || self.flexibles.contains_key(&idx) || ray_may_hit(object, ray)
+        })
+    }
+
     pub fn action_point(&self, world: &World, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, build: bool, far: f32) -> Option<Vec3> {
         if build {
             return depth;
@@ -1844,7 +1999,26 @@ impl Scene {
         } else {
             depth
         };
-        let point = self.transparent_action_point_mode(world, ray, point, true, far, among, FacePick::Left);
+        self.left_action_surfaces(world, ray, point, far, among)
+    }
+
+    /// The pick pass already went through ignored volumes, including opaque
+    /// ones. Keep the usual priority of scripted and transparent surfaces.
+    pub fn drawn_action_point(&self, world: &World, ray: (Vec3, Vec3), depth: Option<Vec3>, far: f32) -> Option<Vec3> {
+        let mut candidates = Vec::new();
+        self.pick.point_candidates(ray, depth, &mut candidates);
+        self.left_action_surfaces(world, ray, depth, far, Some(&candidates))
+    }
+
+    fn left_action_surfaces(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        depth: Option<Vec3>,
+        far: f32,
+        among: Option<&[usize]>,
+    ) -> Option<Vec3> {
+        let point = self.transparent_action_point_mode(world, ray, depth, true, far, among, FacePick::Left);
         // Unlike HUDs and worn clickers, world Blend faces let alpha-zero
         // texels through (#1574). Hover keeps its existing geometric policy.
         let blend = self.blend_hit_mode(world, ray, point, far, among, FacePick::LeftBlend);
@@ -2739,6 +2913,403 @@ pub(crate) mod tests {
         assert_eq!(scene.selection_pick(&world, Some(side), None, false, false, 100.0).1, Some(front));
     }
 
+    #[test]
+    fn a_surface_drawn_beyond_the_draw_distance_is_selected() {
+        // #4869: the GPU draws an object whose bounds reach into the draw
+        // distance, so a large one shows a surface beyond it. A click on
+        // that surface selected nothing in Build and opened the land's menu.
+        let (world, mut scene, front, back) = indexed_scene_with_two_objects();
+        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+            scene.gpu[idx].center = Vec3::new(x, 0.0, 50.0);
+            scene.gpu[idx].radius = 0.75f32.sqrt();
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let behind = Vec3::new(6.5, 0.0, 50.0);
+        // The front cube's bounds start at 2.13 m: drawn at 2.4 m, its face at 2.5 m.
+        assert_eq!(
+            scene.left_selection_pick(&world, Some(ray), Some(front_point), true, false, 2.4),
+            (Some(front_point), Some(front))
+        );
+        assert_eq!(
+            scene.selection_pick(&world, Some(ray), Some(front_point), false, false, 2.4),
+            (Some(front_point), Some(front))
+        );
+        // At 2 m the front cube is not drawn, a larger one behind it is:
+        // the click goes through the first to the second.
+        scene.gpu[back].radius = 5.5;
+        scene.pick.set(back, super::super::hover::PickEntry::of(&scene.gpu[back]));
+        assert_eq!(
+            scene.left_selection_pick(&world, Some(ray), Some(behind), true, false, 2.0),
+            (Some(behind), Some(back))
+        );
+        assert_eq!(
+            scene.selection_pick(&world, Some(ray), Some(behind), false, false, 2.0),
+            (Some(behind), Some(back))
+        );
+        // The sky: the draw distance still bounds the ray.
+        assert_eq!(scene.left_selection_pick(&world, Some(ray), None, true, false, 2.4), (None, None));
+        assert_eq!(
+            scene.left_selection_pick(&world, Some(ray), None, true, false, 3.0),
+            (Some(front_point), Some(front))
+        );
+    }
+
+    #[test]
+    fn a_far_surface_is_selected_where_its_depth_is_drawn() {
+        // #4869: the depth under the cursor is that of a render texel up to
+        // a texel beside the ray; on faces seen at an angle 70 to 120 m away
+        // it read up to 28 cm short of where the ray meets the face, and the
+        // click fell through to the land. A surface drawn in front of the
+        // face, even one seen almost edge-on, still hides it.
+        let (mut world, mut scene, front, back) = indexed_scene_with_two_objects();
+        world.objects.get_mut(back).unwrap().position = Vec3::new(7.0, 20.0, 50.0);
+        // the cube's -X side and its +Y side, which meet at an edge
+        let key = scene.gpu[front].geom.expect("geometry");
+        let GeomState::Ready(geometry) = &mut scene.geoms.get_mut(&key).expect("geometry").state else {
+            panic!("ready geometry");
+        };
+        let vertices = vec![
+            [-0.5, -0.5, -0.5],
+            [-0.5, 0.5, -0.5],
+            [-0.5, 0.5, 0.5],
+            [-0.5, -0.5, 0.5],
+            [-0.5, 0.5, -0.5],
+            [0.5, 0.5, -0.5],
+            [0.5, 0.5, 0.5],
+            [-0.5, 0.5, 0.5],
+        ];
+        let indices = vec![0, 2, 1, 0, 3, 2, 4, 6, 5, 4, 7, 6];
+        Arc::get_mut(geometry).expect("unshared test geometry").pick_faces[0] = Some(PickFace::new(vertices, vec![[0.0; 2]; 8], indices));
+        #[derive(Debug, Clone, Copy)]
+        enum Depth {
+            /// On the -X side, this far short of the ray's hit along it.
+            Face(f32),
+            /// On the ray, this far in front of the face (the terrain, a wall).
+            Ray(f32),
+            /// Beside the ray on a plane this far in front of the face's (a
+            /// prim buried just under flat ground).
+            Plane(f32),
+            /// On the +Y side, 10 cm from the edge, the ray meeting the -X
+            /// side 30 cm from it.
+            Edge,
+        }
+        for row in [
+            // 100 m away, seen at 45°: a texel 28 cm short is the face's; a
+            // point off the face, or a surface in front on the ray, is not.
+            (45.0, 100.0, Depth::Face(0.28), 256.0, true),
+            (45.0, 100.0, Depth::Face(3.0), 256.0, false),
+            (45.0, 100.0, Depth::Ray(0.28), 256.0, false),
+            // a texel on the side beyond the edge is the same object's
+            (45.0, 100.0, Depth::Edge, 256.0, true),
+            // Without bounds yet, the draw distance still bounds it: the
+            // face is 99.65 m away.
+            (45.0, 100.0, Depth::Face(0.28), 99.6, false),
+            // Seen almost edge-on: the face where it is drawn, not behind
+            // half a metre of terrain or 2 cm under it.
+            (84.0, 100.0, Depth::Face(0.28), 256.0, true),
+            (84.0, 100.0, Depth::Ray(0.5), 256.0, false),
+            (84.0, 100.0, Depth::Plane(0.02), 256.0, false),
+            // 5 m away: the same, and 6 cm behind the depth is still taken.
+            (45.0, 5.0, Depth::Face(0.28), 256.0, true),
+            (45.0, 5.0, Depth::Ray(0.28), 256.0, false),
+            (45.0, 5.0, Depth::Ray(0.05), 256.0, true),
+        ]
+        .into_iter()
+        // and again with the cube's bounds kept, which `drawn_at` tests
+        // before casting its faces (without bounds, the draw distance row
+        // has no counterpart: the sphere would reach it)
+        .flat_map(|row| [(row, false), (row, true)])
+        .filter(|&((.., far, _), bounded)| !(bounded && far < 100.0))
+        {
+            let ((deg, x, depth, far, selected), bounded) = row;
+            scene.gpu[front].center = Vec3::new(x, 0.0, 50.0);
+            scene.gpu[front].radius = if bounded { 0.75f32.sqrt() } else { 0.0 };
+            scene.pick.set(front, super::super::hover::PickEntry::of(&scene.gpu[front]));
+            let o = world.objects.get_mut(front).unwrap();
+            o.position = Vec3::new(x, 0.0, 50.0);
+            o.rotation = Quat::from_rotation_z(f32::to_radians(deg));
+            let (c, s) = (f32::to_radians(deg).cos(), f32::to_radians(deg).sin());
+            // the middle of the -X side, along it toward the edge, its normal
+            let at = Vec3::new(x - 0.5 * c, -0.5 * s, 50.0);
+            let along = Vec3::new(-s, c, 0.0);
+            let corner = Vec3::new(x - 0.5 * (c + s), 0.5 * (c - s), 50.0);
+            let (start, point) = match depth {
+                Depth::Face(short) => (at, at + along * (short / s)),
+                Depth::Ray(short) => (at, at - Vec3::X * short),
+                Depth::Plane(gap) => (at, at - Vec3::X * (gap / c) + along * 0.05),
+                Depth::Edge => (corner - along * 0.3, corner + Vec3::new(c, s, 0.0) * 0.1),
+            };
+            let ray = (Vec3::new(0.0, start.y, 50.0), Vec3::X);
+            let want = selected.then_some(front);
+            let (left, menu) = (
+                scene.left_selection_pick(&world, Some(ray), Some(point), true, false, far),
+                scene.selection_pick(&world, Some(ray), Some(point), false, false, far),
+            );
+            assert_eq!(
+                (left.1, menu.1),
+                (want, want),
+                "{deg}°, {x} m, {depth:?}, far {far}, bounds {bounded}"
+            );
+            // taken where it is drawn: the point is the depth's, not the
+            // ray's hit behind it
+            if selected && matches!(depth, Depth::Face(_) | Depth::Edge) {
+                assert_eq!((left.0, menu.0), (Some(point), Some(point)), "{deg}°, {x} m, {depth:?}");
+                // and its surface (a touch, a grab) is read there, not where
+                // the click's ray meets the object behind it
+                let offset = world.region_offset(world.objects.get(front).unwrap().key.region).unwrap();
+                let read = Scene::surface_ray(ray, point);
+                for surface in [
+                    scene.left_touch_surface(&world, front, read),
+                    scene.touch_surface(&world, front, read),
+                ] {
+                    let at = surface.expect("surface").position + offset;
+                    assert!(at.distance(point) < 1e-3, "{deg}°, {x} m, {depth:?}: {at} for {point}");
+                }
+                let behind = scene.left_touch_surface(&world, front, ray).expect("surface").position + offset;
+                assert!(behind.distance(point) > 0.1, "{deg}°, {x} m, {depth:?}");
+            }
+        }
+        // a point on the ray reads its surface on the ray itself
+        let ray = (Vec3::new(0.0, 0.3, 50.0), Vec3::new(1.0, 0.1, 0.0).normalize());
+        assert_eq!(Scene::surface_ray(ray, ray.0 + ray.1 * 150.0), ray);
+    }
+
+    #[test]
+    fn a_surface_just_behind_the_one_drawn_at_the_depth_does_not_come_before_it() {
+        // A poster drawn 10 m away, turned: the click's ray, 10 cm beside the
+        // texel's, meets it a few centimetres behind the depth. A wall
+        // behind it, which that ray meets more than 6 cm behind the depth:
+        // drawn there only if nothing is in front, and then it is taken.
+        let (mut world, mut scene, poster, wall) = indexed_scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let point = Vec3::new(10.0, 0.1, 50.0);
+        let pick = |world: &World, scene: &Scene| {
+            (
+                scene.left_selection_pick(world, Some(ray), Some(point), true, false, 256.0).1,
+                scene.selection_pick(world, Some(ray), Some(point), false, false, 256.0).1,
+            )
+        };
+        // (the poster's slope, the wall's distance behind the depth on the
+        // texel's ray and its slope): the click's ray meets each `slope` ×
+        // 10 cm behind where the texel's ray does
+        for (poster_slope, wall_behind, wall_slope) in [
+            // the click's ray meets the poster 2 cm behind the depth, the
+            // wall 15 cm behind it
+            (0.2f32, 0.05, 1.0f32),
+            // the poster 5 cm behind the depth, the wall 7 cm: but on the
+            // texel's ray the wall is 2 cm behind it, nearer than the poster
+            // is on the click's
+            (0.5, 0.02, 0.5),
+        ] {
+            // each quad (the -X side of a unit cube) through `at`, turned
+            // by atan(slope)
+            for (idx, at, slope) in [(poster, point, poster_slope), (wall, point + Vec3::X * wall_behind, wall_slope)] {
+                let turn = slope.atan();
+                let o = world.objects.get_mut(idx).unwrap();
+                o.rotation = Quat::from_rotation_z(turn);
+                o.position = at + Vec3::new(turn.cos(), turn.sin(), 0.0) * 0.5;
+            }
+            let case = format!("{poster_slope}, {wall_behind}, {wall_slope}");
+            assert_eq!(pick(&world, &scene), (Some(poster), Some(poster)), "{case}");
+            scene.gpu[poster].hidden = true;
+            assert_eq!(pick(&world, &scene), (Some(wall), Some(wall)), "{case}");
+            scene.gpu[poster].hidden = false;
+        }
+    }
+
+    #[test]
+    fn a_prim_just_behind_the_surface_drawn_at_the_depth_that_its_texel_misses_is_not_taken() {
+        // A wall drawn 10 m away, turned toward the camera: the click's ray,
+        // 10 cm beside the texel's, meets it 5 cm in front of the depth. A
+        // 2 cm prim 2 cm behind the wall on the click's ray, which the
+        // texel's ray passes beside: hidden behind the wall, it is taken only
+        // once the wall is not drawn.
+        let (mut world, mut scene, prim, wall) = indexed_scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let point = Vec3::new(10.0, 0.1, 50.0);
+        let turn = (-0.5f32).atan();
+        let o = world.objects.get_mut(wall).unwrap();
+        o.rotation = Quat::from_rotation_z(turn);
+        o.position = point + Vec3::new(turn.cos(), turn.sin(), 0.0) * 0.5;
+        let o = world.objects.get_mut(prim).unwrap();
+        o.scale = Vec3::splat(0.02);
+        o.position = Vec3::new(9.98, 0.0, 50.0);
+        let pick = |scene: &Scene| {
+            (
+                scene.left_selection_pick(&world, Some(ray), Some(point), true, false, 256.0).1,
+                scene.selection_pick(&world, Some(ray), Some(point), false, false, 256.0).1,
+            )
+        };
+        assert_eq!(pick(&scene), (Some(wall), Some(wall)));
+        scene.gpu[wall].hidden = true;
+        assert_eq!(pick(&scene), (Some(prim), Some(prim)));
+    }
+
+    #[test]
+    fn a_far_face_taken_beside_the_ray_bounds_what_is_drawn_where_the_ray_meets_it() {
+        // A face turned 45° 100 m away, taken at a texel 28 cm nearer along
+        // the click's ray than where that ray meets it: what is drawn in
+        // front of the face on the click's ray (an attachment) is not cut
+        // off at the texel (`Scene::designated`).
+        let (mut world, scene, front, _) = indexed_scene_with_two_objects();
+        let (x, deg) = (100.0, 45.0f32);
+        let o = world.objects.get_mut(front).unwrap();
+        o.position = Vec3::new(x, 0.0, 50.0);
+        o.rotation = Quat::from_rotation_z(deg.to_radians());
+        let (c, s) = (deg.to_radians().cos(), deg.to_radians().sin());
+        let at = Vec3::new(x - 0.5 * c, -0.5 * s, 50.0);
+        let point = at + Vec3::new(-s, c, 0.0) * (0.28 / s);
+        let ray = (Vec3::new(0.0, at.y, 50.0), Vec3::X);
+        let near = |a: Vec3, b: Vec3| a.distance(b) < 1e-3;
+        assert!(
+            near(scene.found_bound(&world, front, ray, point, false), at),
+            "where the ray meets it"
+        );
+        assert!(near(scene.found_bound(&world, front, ray, at, false), at), "a point on the ray");
+        let past = at + Vec3::X * 0.5;
+        assert_eq!(
+            scene.found_bound(&world, front, ray, past, false),
+            past,
+            "never nearer than the point"
+        );
+        let beside = (Vec3::new(0.0, 20.0, 50.0), Vec3::X);
+        assert_eq!(
+            scene.found_bound(&world, front, beside, point, false),
+            point,
+            "a ray that misses it"
+        );
+    }
+
+    #[test]
+    fn a_far_surface_drawn_behind_a_see_through_face_of_its_own_is_selected() {
+        // A face of the same object between the camera and the depth writes
+        // no depth there (an invisible, blended or cut-out face): the depth
+        // is the surface behind it, which is still the one drawn.
+        let (mut world, mut scene, front, back) = indexed_scene_with_two_objects();
+        world.objects.get_mut(back).unwrap().position = Vec3::new(7.0, 20.0, 50.0);
+        let (x, deg) = (100.0, 45.0f32);
+        let (pos, rot) = (Vec3::new(x, 0.0, 50.0), Quat::from_rotation_z(deg.to_radians()));
+        let o = world.objects.get_mut(front).unwrap();
+        o.position = pos;
+        o.rotation = rot;
+        let (c, s) = (deg.to_radians().cos(), deg.to_radians().sin());
+        // the middle of the -X side, and a texel 28 cm short of the ray's hit
+        let at = Vec3::new(x - 0.5 * c, -0.5 * s, 50.0);
+        let point = at + Vec3::new(-s, c, 0.0) * (0.28 / s);
+        let ray = (Vec3::new(0.0, at.y, 50.0), Vec3::X);
+        // a quad facing the camera half a metre in front of the depth, across
+        // the texel's ray from the eye to the depth, beside the click's ray
+        let qx = point.x - 0.5;
+        let texel_y = ray.0.y + (point.y - ray.0.y) * qx / point.x;
+        let (y0, y1) = ((ray.0.y + texel_y) / 2.0, texel_y + 0.2);
+        let local = |w: Vec3| (rot.inverse() * (w - pos)).to_array();
+        let quad = [
+            local(Vec3::new(qx, y0, 49.5)),
+            local(Vec3::new(qx, y1, 49.5)),
+            local(Vec3::new(qx, y1, 50.5)),
+            local(Vec3::new(qx, y0, 50.5)),
+        ];
+        let key = scene.gpu[front].geom.expect("geometry");
+        let GeomState::Ready(geometry) = &mut scene.geoms.get_mut(&key).expect("geometry").state else {
+            panic!("ready geometry");
+        };
+        let side = Arc::get_mut(geometry).expect("unshared test geometry").pick_faces[0]
+            .as_ref()
+            .expect("side");
+        let first = u16::try_from(side.positions.len()).expect("few vertices");
+        let positions: Vec<[f32; 3]> = side.positions.iter().copied().chain(quad).collect();
+        let indices: Vec<u16> = side.indices.iter().copied().chain([0, 2, 1, 0, 3, 2].map(|i| first + i)).collect();
+        let uvs = vec![[0.0; 2]; positions.len()];
+        Arc::get_mut(geometry).expect("unshared test geometry").pick_faces[0] = Some(PickFace::new(positions, uvs, indices));
+        assert_eq!(
+            scene.left_selection_pick(&world, Some(ray), Some(point), true, false, 256.0),
+            (Some(point), Some(front))
+        );
+        assert_eq!(
+            scene.selection_pick(&world, Some(ray), Some(point), false, false, 256.0),
+            (Some(point), Some(front))
+        );
+    }
+
+    #[test]
+    fn a_click_skips_what_is_not_drawn_and_measures_the_draw_distance_from_the_eye() {
+        let (world, mut scene, front, back) = indexed_scene_with_two_objects();
+        for (idx, x, radius) in [(front, 3.0, 0.75f32.sqrt()), (back, 7.0, 5.5)] {
+            scene.gpu[idx].center = Vec3::new(x, 0.0, 50.0);
+            scene.gpu[idx].radius = radius;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let behind = Vec3::new(6.5, 0.0, 50.0);
+        let pick = |scene: &Scene, far: f32| {
+            (
+                scene.left_selection_pick(&world, Some(ray), Some(behind), true, false, far).1,
+                scene.selection_pick(&world, Some(ray), Some(behind), false, false, far).1,
+            )
+        };
+        // A hidden rendering type, or what the photo or RLVa leaves out, is
+        // not drawn: the click goes to what is drawn behind it, within the
+        // draw distance or beyond it.
+        assert_eq!(pick(&scene, 256.0), (Some(front), Some(front)));
+        let hides: [fn(&mut ObjGpu, bool); 3] = [|g, on| g.hidden = on, |g, on| g.unseen = on, |g, on| g.rlva_hidden = on];
+        for (n, hide) in hides.iter().enumerate() {
+            hide(&mut scene.gpu[front], true);
+            for far in [2.4, 256.0] {
+                assert_eq!(pick(&scene, far), (Some(back), Some(back)), "flag {n}, far {far}");
+            }
+            // with only the sky behind (no depth) as well, as the Legacy
+            // Viewer's ray skips it with or without a surface behind
+            assert_eq!(
+                (
+                    scene.left_selection_pick(&world, Some(ray), None, true, false, 256.0).1,
+                    scene.selection_pick(&world, Some(ray), None, false, false, 256.0).1,
+                ),
+                (Some(back), Some(back)),
+                "flag {n}, no depth"
+            );
+            // the photo camera's probe still meets it, at the front cube
+            let probe = scene.photo_probe(&world, ray, 256.0);
+            assert!(probe.is_some_and(|p| p.x < 3.0), "flag {n}, probe {probe:?}");
+            hide(&mut scene.gpu[front], false);
+        }
+        // The front cube's bounds start at 2.134 m from the ray's origin on
+        // the near plane, 2.234 m from the eye 10 cm behind it: cull.wgsl
+        // measures from the eye, and does not draw it at 2.2 m.
+        assert_eq!(pick(&scene, 2.2), (Some(front), Some(front)));
+        scene.last_cull = Some(super::super::CullView::new(Mat4::IDENTITY, Vec3::new(-0.1, 0.0, 50.0), 1080.0, 1.0));
+        assert_eq!(pick(&scene, 2.2), (Some(back), Some(back)));
+    }
+
+    #[test]
+    fn a_click_takes_the_draw_distance_as_the_gpu_does_and_a_probe_its_length() {
+        let (world, mut scene, front, back) = indexed_scene_with_two_objects();
+        for (idx, x, radius) in [(front, 3.0, 0.75f32.sqrt()), (back, 7.0, 5.5)] {
+            scene.gpu[idx].center = Vec3::new(x, 0.0, 50.0);
+            scene.gpu[idx].radius = radius;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        // The front cube's bounds start at 2.134 m: at 2.1 m the GPU does
+        // not draw it (cull.wgsl), and a click goes to the cube behind.
+        let behind = Vec3::new(6.5, 0.0, 50.0);
+        assert_eq!(
+            scene.selection_pick(&world, Some(ray), Some(behind), false, false, 2.1),
+            (Some(behind), Some(back))
+        );
+        // The photo camera's collision probe (no depth) meets the front
+        // cube within its length, even with its kept bounds left behind
+        // where it was: the probe is bounded by its length alone.
+        scene.gpu[front].center = Vec3::new(5.0, 0.0, 50.0);
+        scene.pick.set(front, super::super::hover::PickEntry::of(&scene.gpu[front]));
+        assert_eq!(
+            scene.selection_pick(&world, Some(ray), None, true, false, 2.6),
+            (Some(Vec3::new(2.5, 0.0, 50.0)), Some(front))
+        );
+        assert_eq!(scene.selection_pick(&world, Some(ray), None, true, false, 2.4), (None, None));
+    }
+
     /// `scene_with_two_objects` with both objects in the pick index, as
     /// the sync puts them (no bounds yet: candidates of every search),
     /// for the searches of a click (`action_point`, `interaction_at_ray`).
@@ -2748,6 +3319,47 @@ pub(crate) mod tests {
             scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
         }
         (world, scene, front, back)
+    }
+
+    /// Runs `walk` on what `setup` builds, on a thread of its own, and fails
+    /// when the walk has not returned within 10 s (it takes milliseconds):
+    /// a walk that no longer ends (#5021) fails by name instead of holding
+    /// the test run until it is killed. The clock starts once `setup` is
+    /// done. A walk that ends is waited for until its thread has dropped what
+    /// `setup` built, and a panic there fails the test; a spinning thread is
+    /// left behind, and the test process ends it.
+    #[track_caller]
+    pub(crate) fn walk_ends<S, T: Send + 'static>(
+        setup: impl FnOnce() -> S + Send + 'static,
+        walk: impl FnOnce(&mut S) -> T + Send + 'static,
+    ) -> T {
+        use std::sync::mpsc::{RecvTimeoutError, channel};
+        const LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
+        let (ready, set_up) = channel();
+        let (done, ended) = channel();
+        let thread = std::thread::spawn(move || {
+            let mut state = setup();
+            let _ = ready.send(());
+            let _ = done.send(walk(&mut state));
+        });
+        // a panic in `setup` or `walk` drops its sender: report it as is
+        let rethrow = |thread: std::thread::JoinHandle<()>| -> ! {
+            match thread.join() {
+                Err(panic) => std::panic::resume_unwind(panic),
+                Ok(()) => unreachable!("the thread sent its result"),
+            }
+        };
+        if set_up.recv().is_err() {
+            rethrow(thread);
+        }
+        match ended.recv_timeout(LIMIT) {
+            Ok(out) => match thread.join() {
+                Ok(()) => out,
+                Err(panic) => std::panic::resume_unwind(panic),
+            },
+            Err(RecvTimeoutError::Timeout) => panic!("the walk did not end within {LIMIT:?}"),
+            Err(RecvTimeoutError::Disconnected) => rethrow(thread),
+        }
     }
 
     pub(crate) fn scene_with_two_objects() -> (World, Scene, usize, usize) {
@@ -2815,6 +3427,7 @@ pub(crate) mod tests {
             glow_pool: false,
             rez_glow: false,
             system: None,
+            layer: None,
             first_person_hidden: false,
         };
         for idx in [front, back] {
@@ -4833,5 +5446,18 @@ pub(crate) mod tests {
             Some(front),
             "hidden faces included"
         );
+    }
+
+    #[test]
+    fn ground_march_behind_a_far_avatar_face_ends() {
+        // #5021: at these depths `t + 1.0 == t` in f32, while the avatar
+        // branch's limit (drawn.rs, `(at + 0.1).next_up()`) stays above `t`
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        for at in [16_777_216.0_f32, 1.0e9, f32::MAX / 2.0] {
+            let found = walk_ends(scene_with_two_objects, move |(world, scene, _, _)| {
+                scene.point_behind_rigged(world, ray, at, (at + 0.1).next_up(), None, None)
+            });
+            assert_eq!(found, None, "face at {at} m");
+        }
     }
 }

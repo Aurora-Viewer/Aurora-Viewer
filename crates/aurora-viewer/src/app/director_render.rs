@@ -148,7 +148,7 @@ impl App {
     /// carries, drawn offscreen at the film's size and read back later.
     pub(super) fn director_render_photo_frame(&mut self, renderer: &mut Renderer) -> Option<PhotoFrame> {
         let job = self.director.films.job.as_mut()?;
-        let Some(Step::Film { n, .. }) = job.step else {
+        let Some(Step::Film { n, shutter, .. }) = job.step else {
             return None;
         };
         if renderer.snapshot_request.is_some() || renderer.film_request.is_some() {
@@ -163,6 +163,7 @@ impl App {
             tag,
             size: Some(job.size),
             huds: job.huds,
+            shutter,
         });
         self.snapshots.capturing = Some(SnapshotSpec {
             width,
@@ -234,17 +235,32 @@ impl App {
         // the HUDs as the playback shows them
         let huds = !(self.director.d.hide_huds && !self.world.rlva_has_locked_hud());
         let base = (Instant::now(), self.start.elapsed().as_secs_f32());
+        // the Director's motion blur: a true shutter, its sub-frames over
+        // the time it stays open
+        let shutter = self
+            .director
+            .d
+            .motion_blur
+            .map(|angle| crate::motion_blur::render_shutter(angle, fps));
         log::info!(
-            "director: rendering {} frames of {}x{} at {fps} a second to {}",
+            "director: rendering {} frames of {}x{} at {fps} a second to {}{}",
             schedule.count(),
             size.0,
             size.1,
-            out.display()
+            out.display(),
+            match shutter {
+                Some((open, count)) => format!(", shutter open {:.1} ms in {count} sub-frames", open * 1000.0),
+                None => String::new(),
+            }
         );
         self.director.d.stop();
         self.director.d.scrub(0.0);
         self.director.film = None;
-        self.director.films.job = Some(RenderJob::new(writer, size, schedule, base, out, huds));
+        let job = RenderJob::new(writer, size, schedule, base, out, huds);
+        self.director.films.job = Some(match shutter {
+            Some((open, count)) => job.with_shutter(open, count),
+            None => job,
+        });
     }
 
     /// End the render: its writer finishes what it has (the frames written
@@ -291,7 +307,12 @@ impl App {
         let films = &mut self.director.films;
         let tag = films.next_tag & !RENDER_TAG;
         films.next_tag = films.next_tag.wrapping_add(1);
-        renderer.film_request = Some(FilmRequest { tag, size: None, huds });
+        renderer.film_request = Some(FilmRequest {
+            tag,
+            size: None,
+            huds,
+            shutter: None,
+        });
         films.live_asked = Some((tag, Instant::now()));
         self.director.record_pending = true;
     }

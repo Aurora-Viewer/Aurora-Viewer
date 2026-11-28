@@ -24,6 +24,7 @@ pub mod drawn;
 pub mod face_pattern;
 pub mod fetch_priority;
 pub(crate) mod flexible;
+mod fog_ground;
 mod foot_scope;
 mod foot_support;
 pub mod geometry_need;
@@ -383,6 +384,9 @@ pub struct FaceDraw {
     pub rez_glow: bool,
     /// Part of a system avatar body: its pass follows the avatar pool.
     pub system: Option<SystemPart>,
+    /// Face of a rigged mesh: its layer rank follows its pass
+    /// (`rigged_layer_rank`). None: any other face.
+    pub layer: Option<RiggedLayer>,
     pub first_person_hidden: bool,
 }
 
@@ -965,6 +969,10 @@ pub struct Scene {
     /// and what it wears go to `part_faces`, the part kept on its skinned
     /// faces by the frame's `part_joints`.
     pub poser_part: Option<usize>,
+    /// LiveMesh's Fit lab clipping map: the avatars it is drawn on (object
+    /// indices) and the garments' objects; their faces go to `fit_garment`
+    /// and the other skinned faces of those avatars to `fit_body`.
+    pub fit_clip: Option<(HashSet<usize>, HashSet<usize>)>,
     /// Whether the last lists drew any of that avatar's skinned faces (its
     /// body or a rigged mesh): without, the poser keeps the bone outline.
     pub poser_part_skinned: bool,
@@ -1011,6 +1019,8 @@ pub struct Scene {
     /// Bounds of the objects for the hover search, and its kept answer
     /// (hover.rs).
     pub(crate) pick: hover::PickIndex,
+    /// Drawn world volumes with the Ignore Object click action.
+    ignored_draws: FastSet<usize>,
     pub hover: hover::HoverCache,
     /// Our own HUD objects with a geometry, in index order, as
     /// `build_huds` found them for the HUD view of the frame: what a HUD
@@ -1052,6 +1062,8 @@ pub struct Scene {
     /// Rain prototype: the terrain's heights around the camera
     /// (`rain_ground.rs`).
     rain_ground: rain_ground::RainGroundCache,
+    /// Aurora Weather's fog: the ground it pools on (`fog_ground.rs`).
+    fog_ground: fog_ground::FogGroundCache,
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
@@ -1083,6 +1095,9 @@ pub struct Scene {
     /// When each skeleton was last posed (an impostor keeps its pose
     /// between pictures).
     posed_at: FastMap<Uuid, Instant>,
+    /// Skeletons another view shows moving (Inspect's 3D): posed every frame,
+    /// however far they are.
+    pub watched: HashSet<Uuid>,
     /// The skeletons posed in this frame, by object index.
     posed_now: FastSet<usize>,
     /// AURORA_SYNC_CHECK: impostor pictures taken, and those taken with a
@@ -1491,17 +1506,67 @@ fn tex_anim_record(
 /// showing bands of the body through a layer, bands that moved with every
 /// rebuild (the transparency overlay's Ctrl+Alt+T rebuilds them all).
 ///
-/// The Legacy Viewer draws a layer whole and in a lasting order, sorted by
-/// skin, material and texture (CompareBatchBreakerRigged,
-/// indra/newview/llvovolume.cpp). Here the skin (a face showing a bake)
-/// stays at rank 0 and every other face of an object takes one rank of 1 to
-/// `LAYER_RANK_MAX`, chosen from its id: a layer covers the skin it lies on,
-/// and two layers that lie on each other keep the same winner everywhere.
-fn rigged_layer_rank(skin_face: bool, object: &Uuid) -> u32 {
-    if skin_face {
-        return 0;
+/// The Legacy Viewer draws the opaque faces first, then the masked ones,
+/// then the blended ones (the pool order of indra/newview/lldrawpool.h), each
+/// at the depth of what is already there (LLGLDepthTest's GL_LEQUAL,
+/// indra/llrender/llglstates.h; the rigged blended faces in
+/// LLDrawPoolAlpha::forwardRender(true), indra/newview/lldrawpoolalpha.cpp):
+/// a masked face lying on an opaque one shows over it, a blended face over
+/// both, whether it shows a bake or not. Inside a pass it draws a layer
+/// whole and in a lasting order, sorted by skin, material and texture
+/// (CompareBatchBreakerRigged, indra/newview/llvovolume.cpp).
+///
+/// The rank follows the passes: 0 the skin (a face showing a bake) drawn
+/// opaque or masked, 1..=2 the opaque layers, 3..=4 the masked ones, 5 the
+/// skin drawn blended, 6..=7 the blended layers. An aux or universal channel
+/// of an add-on (#3461), blended over the add-on's own opaque skin, comes
+/// over it; so does a masked or blended pattern over an opaque coat (#3654).
+/// Inside a pass, the object's id picks the rank (`RiggedLayer::tie`): two
+/// layers that lie on each other keep the same winner everywhere.
+///
+/// One difference is kept: a masked skin stays under an opaque layer lying
+/// on it (#3054), where the Legacy Viewer's later masked pass would show the
+/// skin through the layer.
+fn rigged_layer_rank(layer: RiggedLayer, pass: Pass) -> u32 {
+    let tie = u32::from(layer.tie);
+    match pass {
+        Pass::Blend if layer.skin => 5,
+        Pass::Blend => 6 + tie,
+        _ if layer.skin => 0,
+        Pass::Mask | Pass::MaskTwoSided => 3 + tie,
+        Pass::Opaque | Pass::OpaqueTwoSided | Pass::Hidden => 1 + tie,
     }
-    1 + (object.as_u128() % u128::from(flags::LAYER_RANK_MAX)) as u32
+}
+
+/// What the rank of a rigged face is made of (`rigged_layer_rank`), kept on
+/// the face: its pass is only known once its texture's alpha is
+/// (`finish_faces`, `reclassify_slots`), and changes when it arrives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RiggedLayer {
+    /// The face shows a bake.
+    pub skin: bool,
+    /// 0 or 1, from the object's id: which of the two ranks of its pass.
+    pub tie: u8,
+}
+
+impl RiggedLayer {
+    pub fn new(skin: bool, object: &Uuid) -> Self {
+        Self {
+            skin,
+            tie: (object.as_u128() % 2) as u8,
+        }
+    }
+}
+
+/// Layer rank to write on a face's record once its pass is known: a rigged
+/// face's (`rigged_layer_rank`), or a blended face's of an object that is
+/// neither rigged nor a HUD (`stacked_layer_rank`); `None` leaves the record
+/// as it is (a HUD, a rigged object's face without a layer).
+fn face_layer_rank(f: &FaceDraw, object_auto_mask: bool) -> Option<u32> {
+    match f.layer {
+        Some(layer) => Some(rigged_layer_rank(layer, f.pass)),
+        None => object_auto_mask.then(|| stacked_layer_rank(f.pass, f.te_index)),
+    }
 }
 
 /// Layer rank of a face of an object that is neither rigged nor a HUD
@@ -1549,6 +1614,22 @@ fn shift_display_pose(local: Mat4, out: &mut [[[f32; 4]; 4]]) {
 }
 
 impl Scene {
+    /// At exit, as `ObjectStore::leak_at_exit`: lets go of what a long
+    /// session gathers without freeing it block by block on the main thread
+    /// (during the session these go to the trash thread, #3081). The
+    /// geometries (`GpuGeom`: arena offsets, bounds and the picking copies of
+    /// every resident mesh) and the per-object draw lists are plain memory,
+    /// and the mesh and texture streamers' byte caches too. What holds a GPU
+    /// staging chunk is left to drop normally (the geometries waiting for
+    /// their copy, the uploads, the staging pool): forgetting one would keep
+    /// the device alive while the process ends.
+    pub(crate) fn leak_at_exit(&mut self) {
+        std::mem::forget(std::mem::take(&mut self.geoms));
+        std::mem::forget(std::mem::take(&mut self.gpu));
+        self.meshes.leak_at_exit();
+        self.textures.leak_at_exit();
+    }
+
     /// LLViewHighlightTransparent / LLPipeline::rebuildDrawInfo: invisible
     /// faces need temporary records while the transparency overlay is on.
     /// See indra/newview/llviewermenu.cpp and pipeline.cpp (LGPL 2.1).
@@ -1784,6 +1865,7 @@ impl Scene {
             held_at: None,
             photo_marks: Default::default(),
             poser_part: None,
+            fit_clip: None,
             poser_part_skinned: false,
             give_marks: Default::default(),
             rlva_silhouettes: Default::default(),
@@ -1806,6 +1888,7 @@ impl Scene {
             sync_budget: std::time::Duration::from_millis(1),
             geom_trash: Default::default(),
             pick: Default::default(),
+            ignored_draws: Default::default(),
             hover: Default::default(),
             hud_own: Vec::new(),
             exact_tests: Default::default(),
@@ -1821,6 +1904,7 @@ impl Scene {
             light_scratch: Default::default(),
             spot_shadows: Default::default(),
             rain_ground: Default::default(),
+            fog_ground: Default::default(),
             mirror_objects: Default::default(),
             shelter_holds: Default::default(),
             selection_wire: Default::default(),
@@ -1842,6 +1926,7 @@ impl Scene {
             impostors: Default::default(),
             far_avatars: Default::default(),
             posed_at: Default::default(),
+            watched: HashSet::new(),
             posed_now: Default::default(),
             picture_check: (0, 0, None),
             loading: Default::default(),
@@ -2373,8 +2458,31 @@ impl Scene {
 
     // ------------------------------------------------------------ objects
 
+    /// Changing a click action leaves geometry, textures and draw lists intact.
+    fn update_click_records(&mut self, records: &mut aurora_render::arena::RecordStore, idx: usize, action: u8) {
+        let g = &self.gpu[idx];
+        if g.hud || g.is_avatar || g.faces.is_empty() {
+            return;
+        }
+        let ignored = action == crate::interaction::code::IGNORE;
+        let changed = if ignored {
+            self.ignored_draws.insert(idx)
+        } else {
+            self.ignored_draws.remove(&idx)
+        };
+        if changed {
+            for face in &g.faces {
+                if let Some(mut rec) = records.get(face.record).copied() {
+                    rec.set_ignore_object_pick(ignored);
+                    records.set(face.record, rec);
+                }
+            }
+        }
+    }
+
     /// Free the draw records of an object's faces.
     fn drop_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+        self.ignored_draws.remove(&idx);
         for f in g.faces.drain(..) {
             renderer.records.free(f.record);
             self.slot_users.remove(&(f.base_slot, idx as u32));
@@ -2949,8 +3057,11 @@ impl Scene {
         let iso = &world.photo_isolation;
         let types = self.hidden_types;
         // (hidden, unseen); a HUD is no rendering type: it stays
+        let preview = world.ao_preview().is_some();
         let left_out = |idx: usize, hud: bool| {
-            if !hud && types.hides_object(world, idx) {
+            // the AO preview's skeleton (world/ao_preview.rs): posed for the
+            // preview's stage, drawn nowhere
+            if (!hud && types.hides_object(world, idx)) || (preview && world.on_ao_preview(idx)) {
                 return (true, false);
             }
             match isolate::object_view(world, idx) {
@@ -2980,7 +3091,7 @@ impl Scene {
                     renderer.cull.objects.set(idx, g.cull_object(idx));
                 }
             }
-        } else if iso.hides() || types.any_object() || world.avatar_studio {
+        } else if iso.hides() || types.any_object() || world.avatar_studio || preview {
             for &idx in synced {
                 if let Some(g) = self.gpu.get_mut(idx) {
                     (g.hidden, g.unseen) = left_out(idx, g.hud);
@@ -3224,6 +3335,11 @@ impl Scene {
             }
             let rigged = self.gpu.get(idx).is_some_and(|g| g.moves_with_skeleton());
             self.sets.touched(&world.objects, agent, idx, rigged);
+            if let Some(object) = world.objects.get_mut_untracked(idx)
+                && std::mem::take(&mut object.render.click_pick_dirty)
+            {
+                self.update_click_records(&mut renderer.records, idx, object.click_action);
+            }
             // (its click action or flags may have changed)
             self.pick.changed(idx);
         }
@@ -3603,14 +3719,15 @@ impl Scene {
                     let mode = f.record_flags();
                     let mode_changed = before != mode;
                     let (record, face) = (f.record, cull_face(f, idx, fi == 0));
-                    // (`object_auto_mask`: neither rigged nor a HUD, the
-                    // objects whose blended faces take a rank of their own)
-                    if (mode_changed || object_auto_mask)
+                    // (a rank follows the pass: a rigged face's, and a
+                    // blended face's of an object neither rigged nor a HUD)
+                    let rank = face_layer_rank(f, object_auto_mask);
+                    if (mode_changed || rank.is_some())
                         && let Some(mut r) = renderer.records.get(record).copied()
                     {
                         r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
-                        if object_auto_mask {
-                            r.set_layer_rank(stacked_layer_rank(pass, f.te_index));
+                        if let Some(rank) = rank {
+                            r.set_layer_rank(rank);
                         }
                         renderer.records.set(record, r);
                     }
@@ -3656,17 +3773,13 @@ impl Scene {
             f.pass = pass;
             f.glow_pool = pool;
             let mode = f.record_flags();
-            // (`object_auto_mask`: neither rigged nor a HUD)
-            let rank = if object_auto_mask {
-                stacked_layer_rank(pass, f.te_index)
-            } else {
-                0
-            };
-            if (mode != 0 || rank != 0)
+            // (a new record has rank 0: only another one is written)
+            let rank = face_layer_rank(f, object_auto_mask).filter(|&rank| rank != 0);
+            if (mode != 0 || rank.is_some())
                 && let Some(mut r) = renderer.records.get(f.record).copied()
             {
                 r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
-                if object_auto_mask {
+                if let Some(rank) = rank {
                     r.set_layer_rank(rank);
                 }
                 renderer.records.set(f.record, r);
@@ -4276,6 +4389,7 @@ impl Scene {
         let old_tex: Vec<Uuid> = std::mem::take(&mut g.tex_ids);
         g.material_ids.clear();
         let wearer = Self::wearer_avatar(world, idx);
+        let ignored = !g.hud && o.click_action == crate::interaction::code::IGNORE;
         let bake_wearer = Self::bake_wearer(world, idx, g.hud);
         let rigged_owner = match g.geom {
             Some(GeomKey::Mesh { id, .. }) => match self.meshes.meta(&id).and_then(|m| m.skin).filter(|s| !s.joint_names.is_empty()) {
@@ -4560,6 +4674,7 @@ impl Scene {
                 }
             }
             rec.set_hud_zoom(hud_zoom);
+            rec.set_ignore_object_pick(ignored);
             if !g.hud {
                 rec.flags[3] |= flags::OBJECT_MASK_PICK;
             }
@@ -4575,9 +4690,6 @@ impl Scene {
                     && matches!(pbr_alpha, None | Some(1))
                     && matches!(legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND)),
             );
-            if rigged {
-                rec.set_layer_rank(rigged_layer_rank(skin_face, &o.full_id));
-            }
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
@@ -4605,6 +4717,8 @@ impl Scene {
                 glow_pool: false,
                 rez_glow: false,
                 system: None,
+                // (its rank is written once its pass is known, finish_faces)
+                layer: rigged.then(|| RiggedLayer::new(skin_face, &o.full_id)),
                 first_person_hidden: false,
             });
         }
@@ -4618,6 +4732,9 @@ impl Scene {
         // just bound so the first classify already skips auto-Mask.
         let object_auto_mask = rigged_owner.is_none() && !g.hud;
         self.finish_faces(renderer, idx, &mut g, object_auto_mask);
+        if ignored && !g.faces.is_empty() {
+            self.ignored_draws.insert(idx);
+        }
         self.gpu[idx] = g;
     }
 
@@ -5013,6 +5130,7 @@ impl Scene {
                     glow_pool: false,
                     rez_glow: false,
                     system: Some(SystemPart::of(part.name)),
+                    layer: None,
                     first_person_hidden: matches!(part.name, "head" | "hair" | "eyelashes" | "eye_left" | "eye_right"),
                 });
             }
@@ -5322,7 +5440,13 @@ impl Scene {
             let selection = &self.selection_wire;
             let captured = |g: &ObjGpu, i: usize| !plan.capture.is_empty() && g.avatar(i).is_some_and(|a| plan.capture.contains_key(&a));
             // the poser's hovered part: its avatar and what it wears
-            let posed = |g: &ObjGpu, i: usize| self.poser_part.is_some() && g.avatar(i) == self.poser_part;
+            let posed = |g: &ObjGpu, i: usize| {
+                (self.poser_part.is_some() && g.avatar(i) == self.poser_part)
+                    || self
+                        .fit_clip
+                        .as_ref()
+                        .is_some_and(|(avatars, _)| g.avatar(i).is_some_and(|a| avatars.contains(&a)))
+            };
             if by_index {
                 // (the pictured avatars and what they wear: read in the
                 // objects, on the frames a picture is taken)
@@ -5390,6 +5514,7 @@ impl Scene {
         let pattern_faces = &self.pattern_faces;
         let photo_marks = &self.photo_marks;
         let poser_part = self.poser_part;
+        let fit_clip = self.fit_clip.as_ref();
         let give_marks = &self.give_marks.1;
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
@@ -5420,6 +5545,8 @@ impl Scene {
             select_faces: Vec<DrawCmd>,
             select_pattern: Vec<DrawCmd>,
             part_faces: Vec<DrawCmd>,
+            fit_garment: Vec<DrawCmd>,
+            fit_body: Vec<DrawCmd>,
             part_skinned: usize,
             debug_blue: Vec<DrawCmd>,
             debug_green: Vec<DrawCmd>,
@@ -5449,6 +5576,8 @@ impl Scene {
             select_faces: Vec::new(),
             select_pattern: Vec::new(),
             part_faces: Vec::new(),
+            fit_garment: Vec::new(),
+            fit_body: Vec::new(),
             part_skinned: 0,
             debug_blue: Vec::new(),
             debug_green: Vec::new(),
@@ -5635,6 +5764,18 @@ impl Scene {
                         l.part_faces.push(cmd);
                         l.part_skinned += usize::from(g.rigged || g.is_avatar);
                     }
+                    // the Fit lab's map: the garment, and the bodies that
+                    // wear it (the system body and the rigged meshes worn)
+                    if let Some((avatars, garments)) = fit_clip
+                        && pass != Pass::Hidden
+                        && avatar.is_some_and(|a| avatars.contains(&a))
+                    {
+                        if garments.contains(&idx) {
+                            l.fit_garment.push(cmd);
+                        } else if g.rigged || g.is_avatar {
+                            l.fit_body.push(cmd);
+                        }
+                    }
                 }
                 if pass == Pass::Hidden {
                     // LLVolumeGeometryManager excludes attachments and rigged
@@ -5769,6 +5910,8 @@ impl Scene {
             a.select_faces.append(&mut b.select_faces);
             a.select_pattern.append(&mut b.select_pattern);
             a.part_faces.append(&mut b.part_faces);
+            a.fit_garment.append(&mut b.fit_garment);
+            a.fit_body.append(&mut b.fit_body);
             a.part_skinned += b.part_skinned;
             a.casters.append(&mut b.casters);
             a.shelter.append(&mut b.shelter);
@@ -5851,6 +5994,8 @@ impl Scene {
         self.lists.select_faces = result.select_faces;
         self.lists.select_pattern = result.select_pattern;
         self.lists.part_faces = result.part_faces;
+        self.lists.fit_garment = result.fit_garment;
+        self.lists.fit_body = result.fit_body;
         self.poser_part_skinned = result.part_skinned > 0;
         self.lists.glow_alpha = result.glow_alpha;
         for (slot, cmd, blend) in result.impostor {
@@ -6108,7 +6253,7 @@ impl Scene {
                 .unwrap_or(true);
             // Our animation stops drive simulator state even when the camera
             // is looking elsewhere (in particular the pre-jump -> jump).
-            if !near && owner != world.agent_id {
+            if !near && owner != world.agent_id && !self.watched.contains(&owner) {
                 continue;
             }
             // where it looks (LLHUDEffectLookAt::update / calcTargetPosition)
@@ -6186,7 +6331,8 @@ impl Scene {
             motions.aurora_feet = self.ground_avatar_feet;
             motions.look_over_animations = photo_look;
             motions.look_glance = if photo_look { world.look_at.photo.glance } else { 0.0 };
-            motions.preview_bend = if owner == world.agent_id {
+            // (LiveMesh's bend shows on the Fit lab's mannequins too)
+            motions.preview_bend = if owner == world.agent_id || world.is_mannequin(&owner) {
                 self.preview_bend
             } else {
                 anim::PreviewBend::default()
@@ -6232,6 +6378,7 @@ impl Scene {
                 && motions.poser.is_none()
                 && !self.portals.planes.contains_key(&idx)
                 && owner != world.agent_id
+                && !self.watched.contains(&owner)
                 && world.avatar_poses.contains_key(&owner)
                 && let Some(a) = self.far_avatars.get(&idx)
                 && let Some(&at) = self.posed_at.get(&owner)
@@ -6724,7 +6871,9 @@ impl Scene {
             self.physics.remove(&owner);
             return None;
         };
-        let update = self.body_physics.updates(owner == world.agent_id, position.distance(eye));
+        let update = self
+            .body_physics
+            .updates(owner == world.agent_id || self.watched.contains(&owner), position.distance(eye));
         let mut state = self.physics.remove(&owner).unwrap_or_else(|| body_physics::BodyPhysics::new(now));
         if !update {
             state.hold();
@@ -6742,6 +6891,17 @@ impl Scene {
     pub fn resync_animations(&mut self, now: Instant) {
         use rayon::prelude::*;
         self.motions.par_iter_mut().for_each(|(_, motions)| motions.resync_animations(now));
+    }
+
+    /// Give `to` the joint positions `from` holds (`anim::Controller::
+    /// hold_positions`): the AO window's preview copy takes our deformers.
+    pub fn share_held_positions(&mut self, from: &Uuid, to: &Uuid) {
+        let Some((held, pelvis)) = self.motions.get(from).map(|c| c.held_positions()) else {
+            return;
+        };
+        if let Some(copy) = self.motions.get_mut(to) {
+            copy.hold_positions((&held, pelvis));
+        }
     }
 
     /// "Reset skeleton" of an avatar or an animated object
@@ -6941,16 +7101,106 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
 mod layer_rank_tests {
     use super::*;
 
+    const IDS: [Uuid; 5] = [Uuid::nil(), Uuid::from_u128(1), Uuid::from_u128(6), Uuid::from_u128(7), Uuid::max()];
+    const PASSES: [Pass; 6] = [
+        Pass::Opaque,
+        Pass::OpaqueTwoSided,
+        Pass::Mask,
+        Pass::MaskTwoSided,
+        Pass::Blend,
+        Pass::Hidden,
+    ];
+
+    fn rank(skin: bool, id: &Uuid, pass: Pass) -> u32 {
+        rigged_layer_rank(RiggedLayer::new(skin, id), pass)
+    }
+
     #[test]
-    fn the_skin_stays_under_every_worn_layer() {
-        let ids = [Uuid::nil(), Uuid::from_u128(1), Uuid::from_u128(6), Uuid::from_u128(7), Uuid::max()];
-        for id in ids {
-            assert_eq!(rigged_layer_rank(true, &id), 0);
-            let rank = rigged_layer_rank(false, &id);
-            assert!((1..=flags::LAYER_RANK_MAX).contains(&rank), "{id}: {rank}");
-            // the same object keeps its rank on every rebuild
-            assert_eq!(rigged_layer_rank(false, &id), rank);
+    fn every_rank_fits_and_stays_with_its_object() {
+        for id in IDS {
+            for pass in PASSES {
+                for skin in [false, true] {
+                    let r = rank(skin, &id, pass);
+                    assert!(r <= flags::LAYER_RANK_MAX, "{id} {pass:?} skin {skin}: {r}");
+                    // the same object keeps its rank on every rebuild
+                    assert_eq!(rank(skin, &id, pass), r);
+                }
+            }
         }
+    }
+
+    #[test]
+    fn the_skin_stays_under_every_worn_layer_of_its_pass_or_above() {
+        // #3054: an opaque or masked skin under every layer; a blended skin
+        // still under the blended layers
+        for skin_id in IDS {
+            for skin_pass in PASSES {
+                for id in IDS {
+                    for pass in PASSES {
+                        let over = pass == Pass::Blend || skin_pass != Pass::Blend;
+                        if over {
+                            assert!(
+                                rank(false, &id, pass) > rank(true, &skin_id, skin_pass),
+                                "{pass:?} layer {id} over {skin_pass:?} skin {skin_id}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_masked_or_blended_layer_covers_an_opaque_one() {
+        // the Legacy Viewer's passes: opaque, then masked, then blended (#3654)
+        for under in IDS {
+            for over in IDS {
+                for opaque in [Pass::Opaque, Pass::OpaqueTwoSided] {
+                    for later in [Pass::Mask, Pass::MaskTwoSided, Pass::Blend] {
+                        assert!(
+                            rank(false, &over, later) > rank(false, &under, opaque),
+                            "{later:?} {over} / {under}"
+                        );
+                    }
+                }
+                for mask in [Pass::Mask, Pass::MaskTwoSided] {
+                    assert!(rank(false, &over, Pass::Blend) > rank(false, &under, mask), "{over} / {under}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_blended_bake_covers_the_opaque_and_masked_faces_it_lies_on() {
+        // #3461: an add-on's own opaque skin (face 0) and its AUX3 channel
+        // (face 1, blended), two faces of one object lying on each other
+        let aux3 = avatar::BAKES[10].2;
+        let skin = avatar::bake_slot_for(&aux3).is_some();
+        assert!(skin);
+        for id in IDS {
+            for under in [Pass::Opaque, Pass::OpaqueTwoSided, Pass::Mask, Pass::MaskTwoSided] {
+                assert!(rank(skin, &id, Pass::Blend) > rank(false, &id, under), "{id} over {under:?}");
+                // and the body's skin drawn opaque or masked, as before
+                assert!(rank(skin, &id, Pass::Blend) > rank(true, &id, under));
+            }
+        }
+    }
+
+    #[test]
+    fn a_rigged_face_takes_the_rank_of_the_pass_it_gets() {
+        // a bake whose alpha arrives after the face was built (reclassify_slots)
+        let id = Uuid::from_u128(7);
+        let mut face = super::tests::test_face(Pass::Hidden, false);
+        face.layer = Some(RiggedLayer::new(true, &id));
+        assert_eq!(face_layer_rank(&face, false), Some(0));
+        face.pass = Pass::Blend;
+        assert_eq!(face_layer_rank(&face, false), Some(5));
+        // a HUD's face keeps its record's rank; an object's blended face its
+        // number's (stacked_layer_rank)
+        face.layer = None;
+        face.te_index = 3;
+        assert_eq!(face_layer_rank(&face, false), None);
+        assert_eq!(face_layer_rank(&face, true), Some(3));
     }
 
     #[test]
@@ -6979,6 +7229,31 @@ mod layer_rank_tests {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    /// At exit the geometries are let go, not freed on the main thread (the
+    /// count would fall back to the test's own copy).
+    #[test]
+    fn the_scene_lets_go_of_its_geometries_at_exit() {
+        let mut scene = Scene::new(std::env::temp_dir(), Arc::new(AvatarLibrary::load()));
+        let geom = Arc::new(GpuGeom {
+            faces: vec![None],
+            min: Vec3::ZERO,
+            max: Vec3::ONE,
+            joint_bounds: Vec::new(),
+            pick_faces: Vec::new(),
+        });
+        scene.geom_insert(
+            GeomKey::Mesh {
+                id: Uuid::from_u128(0x2894),
+                lod: 0,
+            },
+            GeomState::Ready(geom.clone()),
+        );
+        assert_eq!(Arc::strong_count(&geom), 2);
+        scene.leak_at_exit();
+        drop(scene);
+        assert_eq!(Arc::strong_count(&geom), 2, "left behind, not freed");
+    }
 
     #[test]
     fn hud_damping_distance_does_not_use_the_world_camera() {
@@ -7446,6 +7721,49 @@ mod tests {
             Scene::object_geom_key(&Object::from_update(1, update), 3),
             Some(GeomKey::Mesh { id: map, lod: 3 })
         );
+    }
+
+    /// Inspect's 3D of someone far away: an impostor keeps its pose between two
+    /// pictures, or past the draw distance, unless it is watched.
+    #[test]
+    fn a_watched_impostor_is_posed_every_frame() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        world.agent_id = Uuid::from_u128(0xA6);
+        world.apply(NetEvent::MainRegionChanged { handle: 1 });
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::action_avatar(false)],
+        });
+        let far = crate::demo::DEMO_AGENT;
+        let idx = world.objects.index_of_uuid(&far).expect("avatar");
+        let mut scene = Scene::new(std::path::PathBuf::new(), lib);
+        scene.palette_base(far);
+        let start = Instant::now();
+        let mut posed = |scene: &mut Scene, ms: u64| {
+            scene.far_avatars.insert(
+                idx,
+                impostors::Far {
+                    idx,
+                    center: Vec3::ZERO,
+                    distance: 50.0,
+                    in_view: false,
+                    silhouette: false,
+                },
+            );
+            scene.update_poses(&mut world, Vec3::ZERO, start + std::time::Duration::from_millis(ms));
+            scene.stats.posed
+        };
+        assert_eq!(posed(&mut scene, 0), 1);
+        assert_eq!(posed(&mut scene, 16), 0, "it keeps its pose");
+        scene.watched.insert(far);
+        assert_eq!([posed(&mut scene, 32), posed(&mut scene, 48)], [1, 1]);
+        // out of the draw distance too
+        scene.gpu.resize_with(idx + 1, Default::default);
+        scene.gpu[idx].center = Vec3::splat(10_000.0);
+        assert_eq!(posed(&mut scene, 64), 1);
+        scene.watched.clear();
+        assert_eq!(posed(&mut scene, 80), 0);
     }
 
     #[test]
@@ -8198,6 +8516,7 @@ mod tests {
             glow_pool: false,
             rez_glow: false,
             system: None,
+            layer: None,
             first_person_hidden: false,
         }
     }

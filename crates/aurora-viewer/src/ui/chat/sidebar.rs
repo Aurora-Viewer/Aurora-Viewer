@@ -281,6 +281,8 @@ pub(super) fn show(
     pics: &HashMap<Uuid, egui::TextureHandle>,
     // textures by id (the groups' insignias)
     images: &HashMap<Uuid, egui::TextureHandle>,
+    // the previews' colour emoji (the last message under an entry's name)
+    emoji: &mut crate::ui::emoji::Emoji,
     world: &World,
     st: &mut ChatUi,
     actions: &mut Vec<ConvAction>,
@@ -381,7 +383,7 @@ pub(super) fn show(
                     popped: false,
                     offset: egui::Vec2::ZERO,
                 };
-                let picked = entry(ui, p, &e, rail, entry_id(Pinned::Contacts));
+                let picked = entry(ui, p, emoji, &e, rail, entry_id(Pinned::Contacts));
                 two.note(picked.resp.rect);
                 if picked.resp.clicked() {
                     contacts_clicked = true;
@@ -407,13 +409,13 @@ pub(super) fn show(
                     popped: false,
                     offset: egui::Vec2::ZERO,
                 };
-                let picked = entry(ui, p, &e, rail, entry_id(Pinned::Local));
+                let picked = entry(ui, p, emoji, &e, rail, entry_id(Pinned::Local));
                 two.note(picked.resp.rect);
                 super::conv_menu::demo_mark(ui.ctx(), world, st, None, picked.resp.rect);
                 super::conv_menu::attach(&picked.resp, p, world, actions, None);
                 st.reorder.local_row(&picked.resp);
                 if st.reorder.dragging(None) {
-                    ghost(ui.ctx(), p, st, e, rail, Pinned::Local);
+                    ghost(ui.ctx(), p, emoji, st, e, rail, Pinned::Local);
                 }
                 if picked.resp.clicked() {
                     st.select_tab(None);
@@ -491,7 +493,7 @@ pub(super) fn show(
                     };
                     let eid = entry_id(Pinned::Conversation(id));
                     let picked = st.reorder.draw(ui, p, id, e.offset, Some(p.bar), |ui| {
-                        let picked = entry(ui, p, &e, rail, eid);
+                        let picked = entry(ui, p, emoji, &e, rail, eid);
                         let place = picked.resp.rect;
                         (picked, place)
                     });
@@ -504,7 +506,7 @@ pub(super) fn show(
                     super::conv_menu::attach(&picked.resp, p, world, actions, Some(id));
                     st.reorder.row(world, id, &picked.resp);
                     if st.reorder.dragging(Some(id)) {
-                        ghost(ui.ctx(), p, st, e, rail, Pinned::Conversation(id));
+                        ghost(ui.ctx(), p, emoji, st, e, rail, Pinned::Conversation(id));
                     }
                     if picked.close {
                         actions.push(ConvAction::Close(id));
@@ -548,7 +550,7 @@ pub(super) fn show(
                             popped: false,
                             offset: egui::Vec2::ZERO,
                         };
-                        let picked = entry(ui, p, &e, rail, egui::Id::unique(("conversation_start", id)));
+                        let picked = entry(ui, p, emoji, &e, rail, egui::Id::unique(("conversation_start", id)));
                         two.note(picked.resp.rect);
                         if picked.resp.clicked() {
                             st.side_filter.clear();
@@ -571,7 +573,7 @@ pub(super) fn show(
                     popped: false,
                     offset: egui::Vec2::ZERO,
                 };
-                let picked = entry(ui, p, &e, rail, egui::Id::unique("conversation_find"));
+                let picked = entry(ui, p, emoji, &e, rail, egui::Id::unique("conversation_find"));
                 two.note(picked.resp.rect);
                 if picked.resp.clicked() {
                     st.start_picker(super::Start::Im);
@@ -886,7 +888,7 @@ fn plain_head(ui: &mut egui::Ui, p: &Palette, title: &str) {
 /// The entry being dragged, under the pointer, as the conversation shown:
 /// its picture alone in the rail, and the mark of a window of its own
 /// while a drop pops it out there (`reorder::Ghost`).
-fn ghost(ctx: &egui::Context, p: &Palette, st: &ChatUi, e: Entry, rail: bool, pinned: Pinned) {
+fn ghost(ctx: &egui::Context, p: &Palette, emoji: &mut crate::ui::emoji::Emoji, st: &ChatUi, e: Entry, rail: bool, pinned: Pinned) {
     let Some(g) = st.reorder.ghost(ctx) else { return };
     let e = Entry {
         current: true,
@@ -902,13 +904,13 @@ fn ghost(ctx: &egui::Context, p: &Palette, st: &ChatUi, e: Entry, rail: bool, pi
         // the column's colour under it, which the entry's own face washes
         let face = egui::Rect::from_min_size(ui.cursor().min, g.size);
         ui.painter().rect_filled(face, ui.visuals().window_corner_radius, p.bar);
-        entry(ui, p, &e, rail, entry_id(pinned).with("ghost"));
+        entry(ui, p, emoji, &e, rail, entry_id(pinned).with("ghost"));
     });
 }
 
 /// One entry of the column (or of the rail: its picture alone, the name
 /// in its tooltip).
-fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) -> Picked {
+fn entry(ui: &mut egui::Ui, p: &Palette, emoji: &mut crate::ui::emoji::Emoji, e: &Entry, rail: bool, id: egui::Id) -> Picked {
     let width = ui.available_width();
     let gap = crate::ui::widgets::two_lines_gap(ui, &egui::FontId::proportional(13.0), &egui::FontId::proportional(11.0), LINE_GAP);
     let (place, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H + gap - LINE_GAP), egui::Sense::hover());
@@ -1035,13 +1037,13 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
             super::thread::paint_icon(ui.painter(), icon, r, color);
             sx += 14.0;
         }
-        crate::ui::widgets::paint_elided(
+        emoji.elided_row(
             ui,
             sub,
-            egui::pos2(sx, sub_y),
-            right - sx,
             egui::FontId::proportional(11.0),
             p.muted_dim,
+            egui::pos2(sx, sub_y),
+            right - sx,
         );
     }
     let resp = if cut { resp.on_hover_text(tip_name()) } else { resp };

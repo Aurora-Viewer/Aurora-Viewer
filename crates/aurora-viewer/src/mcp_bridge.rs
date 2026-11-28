@@ -672,12 +672,14 @@ impl App {
                     }),
                 );
             }
-            NetEvent::TeleportFailed { reason } => {
+            NetEvent::TeleportFailed { reason, code, region } => {
                 self.mcp_bridge.push_event(
                     "teleport",
                     "TeleportFailed",
                     json!({
                         "reason": reason,
+                        "code": code,
+                        "region": region,
                     }),
                 );
             }

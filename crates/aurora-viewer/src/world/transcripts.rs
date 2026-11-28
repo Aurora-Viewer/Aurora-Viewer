@@ -20,7 +20,7 @@
 //!   after it.
 
 use super::chat_log::conversations::{self, Conversation, Kind};
-use super::chat_log::{Entry, Loaded, format, import, names};
+use super::chat_log::{self, Entry, Loaded, format, import, names};
 use super::names::NameScope;
 use super::{ChatKind, ChatLine, MAX_CHAT, Origin, World};
 use aurora_net::{ChatType, HistoryLine};
@@ -182,11 +182,11 @@ impl World {
     /// of our groups without one. The file is the one its history is read
     /// from; None when the account keeps no transcripts or the name the
     /// file is made of is unknown.
-    pub fn transcript_of(&self, conversation: Option<Uuid>) -> (String, Option<std::path::PathBuf>) {
+    pub fn transcript_of(&self, conversation: Option<Uuid>) -> (String, Option<chat_log::HistorySource>) {
         let Some(id) = conversation else {
             return (
                 aurora_i18n::tr!("common-nearby-chat").to_owned(),
-                self.chat_log.history_file_of(names::NEARBY),
+                self.chat_log.history_source(names::NEARBY),
             );
         };
         let title = match self.groups.group(&id) {
@@ -205,7 +205,7 @@ impl World {
                 .then(|| self.transcript_stem(&id))
                 .flatten()
         });
-        (title, stem.and_then(|s| self.chat_log.history_file_of(&s)))
+        (title, stem.and_then(|s| self.chat_log.history_source_peer(Some(id), &s)))
     }
 
     /// Name the conversation's file if it can be, ask for its history
@@ -239,7 +239,7 @@ impl World {
             };
         }
         for (time, from, text) in std::mem::take(&mut log.pending) {
-            self.chat_log.append(&stem, time, &from, &text);
+            self.chat_log.append_peer(Some(session), &stem, time, &from, &text);
         }
     }
 
@@ -290,7 +290,7 @@ impl World {
             let (from, text) = self.transcript_text(NameScope::Roster, &line);
             let s = self.session_lines(session);
             match s.log.stem.clone() {
-                Some(stem) => self.chat_log.append(&stem, line.time, &from, &text),
+                Some(stem) => self.chat_log.append_peer(Some(session), &stem, line.time, &from, &text),
                 None if s.log.pending.len() < MAX_PENDING => s.log.pending.push((line.time, from, text)),
                 None => {}
             }
@@ -316,7 +316,7 @@ impl World {
             return;
         };
         let (from, text) = self.transcript_text(NameScope::Roster, line);
-        self.chat_log.append(&stem, line.time, &from, &text);
+        self.chat_log.append_peer(Some(other), &stem, line.time, &from, &text);
     }
 
     /// A card in a conversation (a teleport invitation): kept in memory and
@@ -374,12 +374,7 @@ impl World {
             return None;
         }
         let info = self.groups.sessions.get(&key);
-        let stem = self
-            .social
-            .ims
-            .iter()
-            .find(|s| s.other == key)
-            .and_then(|s| s.log.stem().map(str::to_owned));
+        let stem = self.open_transcript_stem(&key);
         let group = self.groups.group(&key);
         let (kind, name, participant, session, history_file) = if group.is_some() || info.is_some_and(|i| i.group) {
             let name = group.map(|g| g.name.clone()).or(info.map(|i| i.name.clone())).unwrap_or_default();
@@ -402,7 +397,10 @@ impl World {
                 .or_else(|| self.social.names.get(&key).cloned())
                 .unwrap_or_default();
             let session = conversations::private_session(self.agent_id, key);
-            (Kind::Private, name, key, session, stem.or_else(|| self.transcript_stem(&key)))
+            let file = stem
+                .or_else(|| self.transcript_stem(&key))
+                .map(|s| self.chat_log.conversation_history_file(session, &s));
+            (Kind::Private, name, key, session, file)
         };
         Some(Conversation {
             time: conversations::now(),
@@ -430,6 +428,15 @@ impl World {
             self.chat_log.conversations.unnamed.insert(key);
         }
         self.chat_log.conversations.log(c);
+    }
+
+    /// The transcript stem of an open conversation, once named.
+    fn open_transcript_stem(&self, key: &Uuid) -> Option<String> {
+        self.social
+            .ims
+            .iter()
+            .find(|s| s.other == *key)
+            .and_then(|s| s.log.stem().map(str::to_owned))
     }
 
     /// Every frame: the conversation log follows the conversations: one
@@ -484,29 +491,52 @@ impl World {
         c.name.clone()
     }
 
-    /// Title and transcript of a conversation log's entry, for the History
-    /// window: the file of the resident or group as it is named now, else
-    /// the one the entry was logged with (a conference's, an import's).
-    pub fn logged_transcript(&self, c: &Conversation) -> (String, Option<std::path::PathBuf>) {
-        let file = match c.kind {
+    /// Title and transcript source of a conversation log's entry, for the
+    /// History window: the resident or group's current conversation source,
+    /// else resolved from the logged `history_file` (or peer name for 1:1 IMs).
+    pub fn logged_transcript_source(&self, c: &Conversation) -> (String, Option<chat_log::HistorySource>) {
+        let source = match c.kind {
             // a group's session is the group (its participant in the
             // Legacy Viewer's file may be whoever wrote first)
             Kind::Group => self.transcript_of(Some(c.session)).1,
             Kind::Private => self.transcript_of(Some(c.participant)).1,
             _ => None,
         };
-        let file = file.or_else(|| {
-            (!c.history_file.trim().is_empty())
-                .then(|| self.chat_log.history_file_of(&c.history_file))
-                .flatten()
+        let source = source.or_else(|| {
+            if c.kind == Kind::Private {
+                let stem = if !c.history_file.trim().is_empty() {
+                    c.history_file.as_str()
+                } else {
+                    c.name.as_str()
+                };
+                (!stem.trim().is_empty())
+                    .then(|| {
+                        self.chat_log
+                            .history_source_peer((!c.participant.is_nil()).then_some(c.participant), stem)
+                    })
+                    .flatten()
+            } else {
+                (!c.history_file.trim().is_empty())
+                    .then(|| self.chat_log.history_source(&c.history_file))
+                    .flatten()
+            }
         });
-        (self.conversation_display_name(c), file)
+        (self.conversation_display_name(c), source)
+    }
+
+    /// Look for the best existing `.txt` file of a conversation log's
+    /// entry, to open the transcript in an external application: on the
+    /// transcript thread, the answer through `ChatLog::take_located`. False
+    /// when there is nothing to look in.
+    pub fn locate_logged_transcript(&mut self, c: &Conversation) -> bool {
+        let (_, source) = self.logged_transcript_source(c);
+        source.is_some_and(|s| self.chat_log.locate(s))
     }
 
     /// Every frame: histories asked for, histories read.
     pub fn poll_transcripts(&mut self) {
-        self.poll_chat_service();
         self.poll_conversation_log();
+        self.poll_chat_service();
         if self.chat_log.identity().is_none() {
             return;
         }
@@ -609,7 +639,13 @@ impl World {
     /// of the one before. `keep_all`: one line per entry, the empty ones
     /// too (the History window counts them). `peer`: the other resident of
     /// a private conversation, the sender of its lines whose name is not
-    /// cached (a group's or the nearby chat's stay unknown then).
+    /// cached, for their picture and their profile (a group's or the nearby
+    /// chat's stay unknown then); its lines are `ChatLine::private_history`,
+    /// whose names are looked up when they are drawn, a line's only when
+    /// the name it was written with is its sender's
+    /// (`ui::chat::cached_line_sender`): one we wrote under an earlier
+    /// account name falls to `peer` here and keeps that name. Every line
+    /// keeps the name the file gives in `from`.
     pub fn history_lines(&self, entries: Vec<Entry>, nearby: bool, keep_all: bool, peer: Option<Uuid>) -> Vec<ChatLine> {
         let own = self.own_log_names();
         let names = &self.social.avatar_names;
@@ -648,15 +684,25 @@ impl World {
                     blocked: false,
                     beyond_range: false,
                     speaker: Default::default(),
+                    private_history: peer.is_some(),
                 }
             })
             .collect()
     }
 
+    /// The other resident of a conversation when it is a private one: a
+    /// private conversation is keyed by the other resident; a group's or a
+    /// conference's is not one, by its session or by our membership (as
+    /// `transcript_stem` names its file), nor the nearby chat (nil). Its
+    /// history lines resolve their names when drawn (`history_lines`).
+    pub fn private_peer(&self, conversation: Uuid) -> Option<Uuid> {
+        let id = conversation;
+        (!id.is_nil() && !self.is_group_session(&id) && self.groups.group(&id).is_none()).then_some(id)
+    }
+
     fn apply_history(&mut self, loaded: Loaded) {
         let nearby = loaded.conversation.is_nil();
-        // a private conversation is keyed by the other resident
-        let peer = (!nearby && !self.is_group_session(&loaded.conversation)).then_some(loaded.conversation);
+        let peer = self.private_peer(loaded.conversation);
         let lines = self.history_lines(loaded.entries, nearby, false, peer);
         if nearby {
             self.nearby_history = HistoryState::Done;
@@ -768,6 +814,7 @@ impl World {
                     blocked: false,
                     beyond_range: false,
                     speaker: Default::default(),
+                    private_history: false,
                 }
             })
             .collect();
@@ -786,7 +833,7 @@ impl World {
         let s = self.session_lines(session);
         if let Some(stem) = s.log.stem.clone() {
             for (from, text) in written {
-                self.chat_log.append(&stem, SystemTime::now(), &from, &text);
+                self.chat_log.append_peer(Some(session), &stem, SystemTime::now(), &from, &text);
             }
         }
         let s = self.session_lines(session);
@@ -824,6 +871,32 @@ mod tests {
         w.agent_id = agent;
         w.chat_log.login(agent);
         w
+    }
+
+    #[test]
+    fn the_frames_take_the_login_s_folder_whatever_is_logged() {
+        let root = temp();
+        let me = Uuid::from_u128(0x5E1F);
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        w.chat_log = chat_log::ChatLog::in_folder(root.clone());
+        w.chat_log.set_grid("agni".into());
+        w.chat_log.cfg.log_im = false;
+        w.chat_log.cfg.show_history = false;
+        w.chat_log.cfg.log_conversations = false;
+        w.agent_id = me;
+        // the folder is worked out on the transcript thread: none yet, and
+        // nothing waits for anything on this frame
+        w.chat_log.login_named(me, Some(("Jane", "Doe")));
+        assert!(w.chat_log.dir().is_none() && w.chat_log.busy());
+        let start = std::time::Instant::now();
+        while w.chat_log.dir().is_none() {
+            assert!(start.elapsed() < WAIT, "the frames never took the folder");
+            w.poll_transcripts();
+            std::thread::yield_now();
+        }
+        assert!(w.chat_log.dir().unwrap().starts_with(&root));
+        assert!(!w.chat_log.busy());
+        clean(&w, &root);
     }
 
     #[test]
@@ -892,6 +965,23 @@ mod tests {
 
     /// The end of a test: its folder goes once the writer has nothing left
     /// to write in it (a line still on its way made the removal fail).
+    /// The title of an entry and the file `locate_logged_transcript` finds
+    /// for it on the transcript thread.
+    fn located(w: &mut World, c: &Conversation) -> (String, Option<std::path::PathBuf>) {
+        let title = w.conversation_display_name(c);
+        if !w.locate_logged_transcript(c) {
+            return (title, None);
+        }
+        let start = std::time::Instant::now();
+        loop {
+            if let Some(found) = w.chat_log.take_located() {
+                return (title, found);
+            }
+            assert!(start.elapsed() < WAIT, "the transcript was never looked for");
+            std::thread::yield_now();
+        }
+    }
+
     fn clean(w: &World, root: &std::path::Path) {
         assert!(w.chat_log.flush(WAIT));
         std::fs::remove_dir_all(root).unwrap();
@@ -937,6 +1027,9 @@ mod tests {
         // other resident of the conversation), ours names nobody, as live
         let sources: Vec<Uuid> = s.lines.iter().take(2).map(|l| l.source).collect();
         assert_eq!(sources, [jane, Uuid::nil()]);
+        // a private conversation's history, its names looked up when drawn
+        let private: Vec<bool> = s.lines.iter().map(|l| l.private_history).collect();
+        assert_eq!(private, [true, true, false]);
         assert_eq!(s.unread, 1);
         assert_eq!(file_texts(&w, "Jane Doe").len(), 3);
         clean(&w, &root);
@@ -1020,6 +1113,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         });
         // ours, as the simulator echoes it, keeps its volume and its verb
         // (#1323)
@@ -1137,6 +1231,8 @@ mod tests {
                 ("later", Origin::ServerLog),
             ]
         );
+        // a group's history keeps the names it was written with
+        assert!(w.social.ims[0].lines.iter().all(|l| !l.private_history));
         // opened by us: the server's lines are now in the file too
         assert!(w.chat_log.flush(WAIT));
         assert_eq!(file_texts(&w, &stem).len(), 4);
@@ -1474,15 +1570,26 @@ mod tests {
         let shown: Vec<(&str, Origin)> = w.social.ims[0].lines.iter().map(|l| (l.text.as_str(), l.origin)).collect();
         assert_eq!(shown, [("yesterday", Origin::Log)]);
         assert_eq!(w.social.ims[0].unread, 0);
-        // the transcript the History window opens for it, and for the
-        // nearby chat (none was written)
-        let (title, file) = w.transcript_of(Some(jane));
+        // the transcript source the History window opens for it, and for the
+        // nearby chat / a resident never talked to (resolved asynchronously)
+        let (title, source) = w.transcript_of(Some(jane));
         assert_eq!(title, "Jane Doe");
-        assert_eq!(file, w.chat_log.file_of("Jane Doe"));
-        assert_eq!(w.transcript_of(None).1, None);
-        // a resident never talked to has none
+        let jane_t = chat_log::transcript::Transcript::open_source(source.unwrap()).unwrap();
+        assert!(matches!(
+            jane_t.replies.recv_timeout(WAIT).unwrap(),
+            chat_log::transcript::Reply::Indexed(Some(idx)) if idx.messages == 1
+        ));
+        let nearby_t = chat_log::transcript::Transcript::open_source(w.transcript_of(None).1.unwrap()).unwrap();
+        assert!(matches!(
+            nearby_t.replies.recv_timeout(WAIT).unwrap(),
+            chat_log::transcript::Reply::Indexed(None)
+        ));
         w.social.names.insert(Uuid::from_u128(3), "Bob Roe".into());
-        assert_eq!(w.transcript_of(Some(Uuid::from_u128(3))).1, None);
+        let bob_t = chat_log::transcript::Transcript::open_source(w.transcript_of(Some(Uuid::from_u128(3))).1.unwrap()).unwrap();
+        assert!(matches!(
+            bob_t.replies.recv_timeout(WAIT).unwrap(),
+            chat_log::transcript::Reply::Indexed(None)
+        ));
         clean(&w, &root);
     }
 
@@ -1573,16 +1680,70 @@ mod tests {
                 entry(chat_log::format::SYSTEM_FROM, "a notice"),
             ]
         };
-        // a group or the nearby chat: the cached name only
-        let sources: Vec<Uuid> = w.history_lines(entries(), false, false, None).iter().map(|l| l.source).collect();
+        // a group or the nearby chat: the cached name only, and every line
+        // keeps the file's names (Bob's cached one included)
+        let lines = w.history_lines(entries(), false, false, None);
+        let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
         assert_eq!(sources, [bob, Uuid::nil(), Uuid::nil()]);
-        // a private conversation: its other resident when the name is unknown
-        let sources: Vec<Uuid> = w
-            .history_lines(entries(), false, false, Some(jane))
-            .iter()
-            .map(|l| l.source)
-            .collect();
+        assert!(lines.iter().all(|l| !l.private_history));
+        // a private conversation: its other resident when the name is
+        // unknown, and its names looked up when drawn
+        let lines = w.history_lines(entries(), false, false, Some(jane));
+        let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
         assert_eq!(sources, [bob, jane, Uuid::nil()]);
+        assert!(lines.iter().all(|l| l.private_history));
+        clean(&w, &root);
+    }
+
+    /// A private conversation's line whose name is not recognised takes the
+    /// other resident for its picture and its profile, never for its name:
+    /// one we wrote under an earlier account name keeps it, whether the
+    /// other resident's name was cached when the history loaded or later.
+    #[test]
+    fn a_private_history_line_under_another_name_keeps_it() {
+        let root = temp();
+        let (me, near) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut w = world(&root, me);
+        let entry = |from: &str| Entry {
+            stamp: String::new(),
+            time: None,
+            from: from.into(),
+            text: "hello".into(),
+        };
+        // theirs, then one of ours from before an account rename
+        let entries = || vec![entry("Near Tester"), entry("Myold Name")];
+        let senders =
+            |w: &World, lines: &[ChatLine]| -> Vec<String> { lines.iter().map(|l| crate::ui::chat::sender_name(w, "Me", l)).collect() };
+        let nova = aurora_net::AvatarNameData {
+            id: near,
+            username: "near.tester".into(),
+            display_name: "Nova".into(),
+            legacy_first: "Near".into(),
+            legacy_last: "Tester".into(),
+            ..Default::default()
+        };
+        // their name not cached yet when the history loads: both lines fall
+        // to them, and show the file's names
+        let late = w.history_lines(entries(), false, false, Some(near));
+        let sources: Vec<Uuid> = late.iter().map(|l| l.source).collect();
+        assert_eq!(sources, [near, near]);
+        assert_eq!(senders(&w, &late), ["Near Tester", "Myold Name"]);
+        // their name arrives: their line resolves, ours keeps its name
+        w.social.avatar_names.on_display_names(std::slice::from_ref(&nova), &[], Some(3600));
+        assert_eq!(senders(&w, &late), ["Nova", "Myold Name"]);
+        // cached when it loads: the same
+        let lines = w.history_lines(entries(), false, false, Some(near));
+        let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
+        assert_eq!(sources, [near, near]);
+        assert_eq!(senders(&w, &lines), ["Nova", "Myold Name"]);
+        // their name written in another form is still theirs, and follows
+        // the name options as the live lines do
+        let forms = || vec![entry("Nova (near.tester)"), entry("near tester")];
+        let lines = w.history_lines(forms(), false, false, Some(near));
+        assert_eq!(senders(&w, &lines), ["Nova", "Nova"]);
+        w.social.avatar_names.options.use_display_names = false;
+        assert_eq!(senders(&w, &lines), ["Near Tester", "Near Tester"]);
+        assert_eq!(senders(&w, &late), ["Near Tester", "Myold Name"]);
         clean(&w, &root);
     }
 
@@ -1764,6 +1925,121 @@ mod tests {
         assert_eq!(w.conversation_display_name(&private), "Jane Doe");
         assert_eq!(w.conversation_display_name(&chat), "Some Group");
         assert_eq!(w.conversation_display_name(&own), "Me Resident");
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn shared_conversation_log_opens_both_legacy_and_username_transcripts_before_name_cache() {
+        let root = temp();
+        let legacy_root = root.join("firestorm");
+        let legacy_dir = legacy_root.join("jane_doe");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        // Write Legacy-named file first and two Username-named files after so `open.scheme` is deterministically Username.
+        std::fs::write(
+            legacy_dir.join("Alice Resident.txt"),
+            "[2026/10/12 10:05]  Alice Resident: hi from alice\r\n",
+        )
+        .unwrap();
+        std::fs::write(legacy_dir.join("bob_smith.txt"), "[2026/10/12 10:00]  Bob Smith: hi from bob\r\n").unwrap();
+        std::fs::write(
+            legacy_dir.join("dave_jones.txt"),
+            "[2026/10/12 10:02]  Dave Jones: hi from dave\r\n",
+        )
+        .unwrap();
+
+        let me = Uuid::from_u128(0x5E1F);
+        let bob = Uuid::from_u128(0xB0B);
+        let alice = Uuid::from_u128(0xA11C);
+        let carol = Uuid::from_u128(0xCA40);
+
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        w.chat_log = chat_log::ChatLog::in_folder(legacy_root);
+        // nothing of the session may be saved, here or there
+        w.chat_log.set_default_folder(root.join("aurora"));
+        w.chat_log.set_grid("agni".into());
+        w.chat_log.set_sharing(true);
+        w.agent_id = me;
+        w.chat_log.login_named(me, Some(("Jane", "Doe")));
+        assert!(w.chat_log.settle(WAIT));
+        assert!(w.chat_log.shared());
+
+        // Neither peer is in `social.names` yet, and `conversation.log` may store either casing.
+        let bob_entry = Conversation {
+            time: 100,
+            kind: Kind::Private,
+            name: "Bob Smith".into(),
+            history_file: "Bob Smith".into(),
+            session: conversations::private_session(me, bob),
+            participant: bob,
+            offline: false,
+        };
+        let alice_entry = Conversation {
+            time: 101,
+            kind: Kind::Private,
+            name: "Alice Resident".into(),
+            history_file: "alice_resident".into(),
+            session: conversations::private_session(me, alice),
+            participant: alice,
+            offline: false,
+        };
+
+        let (bob_title, bob_src) = w.logged_transcript_source(&bob_entry);
+        assert_eq!(bob_title, "Bob Smith");
+        assert!(matches!(
+            bob_src,
+            Some(chat_log::HistorySource::Conversation {
+                peer: Some(p),
+                shared: true,
+                ..
+            }) if p == bob
+        ));
+        assert_eq!(
+            located(&mut w, &bob_entry),
+            ("Bob Smith".into(), Some(legacy_dir.join("bob_smith.txt")))
+        );
+        assert_eq!(
+            located(&mut w, &alice_entry),
+            ("Alice Resident".into(), Some(legacy_dir.join("Alice Resident.txt")))
+        );
+
+        // New 1:1 IMs written while shared in Username scheme record the Username history_file
+        // (dropping `Resident` to `carol`, and snake-casing two-word names to `dan_meyer`).
+        w.on_im(im(carol, "Carol Resident", "new message"));
+        let dan = Uuid::from_u128(0xDA41);
+        w.on_im(im(dan, "Dan Meyer", "hello dan"));
+        settle(&mut w);
+        let carol_entry = w
+            .chat_log
+            .conversations
+            .list
+            .iter()
+            .find(|c| c.participant == carol)
+            .expect("carol logged")
+            .clone();
+        assert_eq!(carol_entry.history_file, "carol");
+        assert_eq!(
+            located(&mut w, &carol_entry),
+            ("Carol Resident".into(), Some(legacy_dir.join("carol.txt")))
+        );
+        let dan_entry = w
+            .chat_log
+            .conversations
+            .list
+            .iter()
+            .find(|c| c.participant == dan)
+            .expect("dan logged")
+            .clone();
+        assert_eq!(dan_entry.history_file, "dan_meyer");
+        assert_eq!(
+            located(&mut w, &dan_entry),
+            ("Dan Meyer".into(), Some(legacy_dir.join("dan_meyer.txt")))
+        );
+        // the Legacy Viewer's folder gets no conversation log, and the
+        // session's entries are not saved elsewhere either
+        w.chat_log.logout();
+        assert!(w.chat_log.flush(WAIT));
+        assert!(!legacy_dir.join(conversations::FILE).exists());
+        assert!(!root.join("aurora").exists());
         clean(&w, &root);
     }
 }

@@ -51,6 +51,9 @@ pub mod about;
 pub mod alpha_mask_ab;
 #[path = "demo_alpha_sort.rs"]
 pub mod alpha_sort;
+/// Two inventory animations at once (AURORA_DEMO_INVENTORY=animation-play-two).
+#[path = "demo_animation_layers.rs"]
+pub mod animation_layers;
 /// AURORA_DEMO_ARRIVAL: an arrival in a busy region, every asset downloaded.
 #[path = "demo_arrival.rs"]
 pub mod arrival;
@@ -142,6 +145,13 @@ pub mod env;
 pub mod experience;
 #[path = "demo_floating_text.rs"]
 pub mod floating_text;
+/// AURORA_DEMO_FOG: Aurora Weather's fog under a fixed sky, with props.
+#[path = "demo_fog.rs"]
+pub mod fog;
+/// A trail of footprints in the snow, then Footprints turned off
+/// (AURORA_DEMO_FOOTPRINTS_OFF, #4019).
+#[path = "demo_footprints.rs"]
+pub mod footprints;
 /// A prop derezzed and particles started while the photo mode holds the
 /// world still (AURORA_DEMO_FREEZE_WORLD).
 #[path = "demo_freeze_world.rs"]
@@ -181,6 +191,9 @@ pub mod hud;
 /// the window title (AURORA_DEMO_IM_ANNOUNCE).
 #[path = "demo_im_announce.rs"]
 pub mod im_announce;
+/// Violet Wolf's outfit for Inspect (AURORA_DEMO_INSPECT).
+#[path = "demo_inspect.rs"]
+pub mod inspect;
 /// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
 #[path = "demo_keywords.rs"]
 pub mod keywords;
@@ -194,8 +207,15 @@ pub mod land;
 /// (AURORA_DEMO_LEGACY_BUMP).
 #[path = "demo_legacy_bump.rs"]
 pub mod legacy_bump;
+/// A Legacy Viewer's lists to import (AURORA_DEMO_LEGACY_LISTS).
+#[path = "demo_legacy_lists.rs"]
+pub mod legacy_lists;
 #[path = "demo_link.rs"]
 pub mod link;
+/// A market for Area Search and Inspect (`market` of AURORA_DEMO_AREA_SEARCH
+/// and AURORA_DEMO_INSPECT).
+#[path = "demo_market.rs"]
+pub mod market;
 /// A Mask of cutoff 255 over an alpha just under opaque (AURORA_DEMO_MASK_255).
 #[path = "demo_mask_255.rs"]
 pub mod mask_255;
@@ -572,6 +592,11 @@ pub fn wolf_attachments(kept: bool) -> Vec<ObjectUpdate> {
             "",
         );
         o.parent_id = 9001;
+        // not ours: a simulator reports no ownership or modify right on
+        // another avatar's attachment (the viewer locks it on its own too)
+        o.update_flags &= !(crate::ui::context::flags::OBJECT_YOU_OWNER
+            | crate::ui::context::flags::OBJECT_MODIFY
+            | crate::ui::context::flags::OBJECT_MOVE);
         o.state = ((point & 0x0F) << 4) | ((point & 0xF0) >> 4);
         o
     })
@@ -1002,7 +1027,14 @@ fn demo_raw() -> Llsd {
         (aurora_i18n::tr!("common-trash"), 14),
         (aurora_i18n::tr!("common-my-outfits"), 48),
         ("Materials", 57),
-        (aurora_i18n::tr!("common-favorites"), 23),
+        (
+            if matches!(aurora_i18n::language(), "en-GB" | "en-AU") {
+                aurora_i18n::text_in("en", "common-favorites")
+            } else {
+                aurora_i18n::tr!("common-favorites")
+            },
+            23,
+        ),
     ]
     .iter()
     .enumerate()
@@ -1488,13 +1520,15 @@ pub fn bubbles_events() -> Vec<NetEvent> {
     ev
 }
 
-/// `AURORA_DEMO_CHAT_LINES=1|legacy|volumes`: nearby chat said at the arrival, to
-/// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
-/// one resident, an emote, an object's line, a long line with a link, a
-/// shout. `legacy` shows them as the Legacy Viewer's lines for the session
-/// (nothing is saved). An optional `:0` through `:50` overrides the maximum
-/// wrapped text lines for this demo. Some(true) for `legacy`. `stagger` and
-/// `legacy:stagger` say them one at a time (`chat_lines_due`).
+/// `AURORA_DEMO_CHAT_LINES=1|legacy|volumes|emoji`: nearby chat said at the
+/// arrival, to see the lines above the chat bar (`ui/chat/console.rs`): two
+/// lines of one resident, an emote, an object's line, a long line with a
+/// link, a shout. `legacy` shows them as the Legacy Viewer's lines for the
+/// session (nothing is saved). `emoji` shows a line and its sender's name
+/// with colour emoji, the same in both styles. An optional `:0` through `:50`
+/// overrides the maximum wrapped text lines for this demo. Some(true) for
+/// `legacy`. `stagger` and `legacy:stagger` say them one at a time
+/// (`chat_lines_due`).
 pub fn chat_lines_scenario() -> Option<bool> {
     let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
     match mode.split(':').next()? {
@@ -1508,6 +1542,12 @@ pub fn chat_lines_scenario() -> Option<bool> {
 /// at a time instead of at the arrival.
 fn chat_lines_stagger() -> bool {
     std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.ends_with("stagger"))
+}
+
+/// `AURORA_DEMO_CHAT_LINES=emoji|legacy:emoji`: the line of the scenario
+/// holds colour emoji, in its text and in its sender's name (#5097).
+fn chat_lines_emoji() -> bool {
+    std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.split(':').any(|part| part == "emoji"))
 }
 
 /// `AURORA_DEMO_CHAT_LINES=stagger`: the scenario's next line now due, once:
@@ -1592,6 +1632,10 @@ fn chat_lines_said() -> Vec<NetEvent> {
             ]
         })
         .collect();
+    }
+    if chat_lines_emoji() {
+        let name = format!("{nova} 🫶");
+        return vec![say(DEMO_NOVA, &name, "Colour emoji: 🫶 ❤️ 😀 👍", false, normal)];
     }
     vec![
         say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-1"), false, normal),
@@ -1691,6 +1735,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         blocked: false,
         beyond_range: false,
         speaker: Default::default(),
+        private_history: false,
     };
     match view {
         Bubbles::Friend | Bubbles::Legacy => {
@@ -1931,6 +1976,7 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1955,6 +2001,7 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -2119,6 +2166,7 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         blocked: false,
         beyond_range: false,
         speaker: Default::default(),
+        private_history: false,
     };
     let names = |id: Uuid| world_name(id);
     let group = [
@@ -2460,6 +2508,42 @@ pub fn lure_scene() -> Option<LureScene> {
         "exceeded-continue" => Some(LureScene::ExceededContinue),
         "blocked" => Some(LureScene::Blocked),
         _ => None,
+    }
+}
+
+/// `AURORA_DEMO_TELEPORT_FAILED=<reason>[,hypergrid]`: every teleport is
+/// refused with that reason (a code of teleport_strings.xml or a simulator's
+/// text), as a region's TeleportFailed; `,hypergrid` puts the agent on
+/// another OpenSim grid for the explanation line. `empty` sends an empty
+/// reason, as OpenSim's EntityTransferModule does.
+pub fn teleport_failure() -> Option<(String, bool)> {
+    let value = std::env::var("AURORA_DEMO_TELEPORT_FAILED").ok()?;
+    teleport_failure_value(&value)
+}
+
+fn teleport_failure_value(value: &str) -> Option<(String, bool)> {
+    let value = value.trim();
+    let (reason, hypergrid) = match value.rsplit_once(',') {
+        Some((reason, "hypergrid")) => (reason.trim(), true),
+        _ => (value, false),
+    };
+    match reason {
+        "" => None,
+        "empty" => Some((String::new(), hypergrid)),
+        _ => Some((reason.to_owned(), hypergrid)),
+    }
+}
+
+#[cfg(test)]
+mod teleport_failure_tests {
+    #[test]
+    fn the_demo_teleport_failure_reads_its_reason_and_hypergrid() {
+        use super::teleport_failure_value as read;
+        assert_eq!(read("no_host"), Some(("no_host".into(), false)));
+        assert_eq!(read("Unauthorized,hypergrid"), Some(("Unauthorized".into(), true)));
+        assert_eq!(read("empty"), Some((String::new(), false)));
+        assert_eq!(read("empty,hypergrid"), Some((String::new(), true)));
+        assert_eq!(read("  "), None);
     }
 }
 
@@ -3435,9 +3519,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // a lure accepted offline: the teleport starts, then has nowhere to go
         aurora_net::NetCommand::AcceptLure { .. } => vec![
             NetEvent::TeleportStarted { flags: 0 },
-            NetEvent::TeleportFailed {
-                reason: aurora_i18n::tr!("demo-no-teleport-offline").into(),
-            },
+            NetEvent::viewer_teleport_failed(aurora_i18n::tr!("demo-no-teleport-offline")),
         ],
         aurora_net::NetCommand::AgentAnimation { anim, start: false }
             if *anim == SEAT_ANIM
@@ -3693,6 +3775,13 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                     // AURORA_DEMO_CONV_MODERATE: a second group where we
                     // manage bans, for "Ban from all my groups"
                     powers: g(DEMO_GROUP2, "", false).powers
+                        // AURORA_DEMO_GROUP_PROFILE=…:second: our abilities
+                        // of the first group, to write a notice in both
+                        | if group::second_group() == Some(DEMO_GROUP2) {
+                            group::my_powers()
+                        } else {
+                            0
+                        }
                         | if crate::ui::chat::moderation::demo_mode().is_some() {
                             aurora_net::groups::powers::GROUP_BAN_ACCESS
                         } else {
@@ -3707,11 +3796,26 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             ];
             // AURORA_DEMO_GROUPS=many: exercise the Conversations group
             // picker with more entries than fit in its submenu.
-            if std::env::var("AURORA_DEMO_GROUPS").is_ok_and(|mode| mode == "many") {
-                groups.extend((0..64).map(|i| {
-                    let id = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_1000 + i);
+            match std::env::var("AURORA_DEMO_GROUPS").as_deref() {
+                Ok("many") => groups.extend((0..64).map(|i| {
+                    let id = Uuid::from_u128(group::MANY_GROUPS + i);
                     g(id, &format!("Demo group {:02}", i + 1), true)
-                }));
+                })),
+                // AURORA_DEMO_GROUPS=150: the grid's most, two in three
+                // with our abilities of the first group, to copy a notice
+                // to many groups
+                Ok("150") => {
+                    let room = group::MAX_GROUPS.saturating_sub(groups.len()) as u128;
+                    groups.extend((0..room).map(|i| {
+                        let id = Uuid::from_u128(group::MANY_GROUPS + i);
+                        let mut m = g(id, &format!("Demo group {:03}", i + 1), true);
+                        if group::many_group_sends(id) {
+                            m.powers |= group::my_powers();
+                        }
+                        m
+                    }));
+                }
+                _ => {}
             }
             if !group::adjust_groups(&mut groups) {
                 return vec![NetEvent::Groups(groups)];
@@ -5286,6 +5390,10 @@ pub fn events() -> Vec<NetEvent> {
     // ordinary point light (fixed ids). The first lights the wall through
     // its image; the ground stays dark outside the frustums. `point`: the
     // projectors without their texture, as plain point lights, to compare.
+    // AURORA_DEMO_FOG: the fog scenario's props (demo_fog.rs)
+    for o in fog::objects() {
+        add(o);
+    }
     if let Ok(mode) = std::env::var("AURORA_DEMO_PROJECTOR") {
         let floor = height(cx, cy) + 0.35;
         let wall = [0.82, 0.82, 0.82, 1.0];
@@ -6868,8 +6976,14 @@ pub fn events() -> Vec<NetEvent> {
     // (AURORA_DEMO_AVATAR_CACHE sends them later, demo_avatar_cache.rs)
     if !avatar_cache::enabled() {
         avatars.extend(wolf_attachments(false));
+        if inspect::enabled() {
+            avatars.extend(inspect::outfit());
+        }
     }
     let start = Vec3::new(132.0, 126.0, height(140.0, 130.0) + 0.35 + 0.84);
+    if market::enabled() {
+        avatars.extend(market::objects(start, &height));
+    }
     // AURORA_DEMO_POS="x,y" moves the start position (captures)
     let start = match std::env::var("AURORA_DEMO_POS")
         .ok()
@@ -9147,7 +9261,7 @@ pub fn sun_override() -> Option<Vec3> {
     static SUN: std::sync::OnceLock<Option<Vec3>> = std::sync::OnceLock::new();
     *SUN.get_or_init(|| match std::env::var("AURORA_DEMO_SUN").ok() {
         Some(v) => parse_sun(&v),
-        None => soft_shadows::sun(),
+        None => fog::sun().or_else(soft_shadows::sun),
     })
 }
 
@@ -9356,6 +9470,10 @@ pub fn projector_bench_done() -> bool {
 
 /// Fixed framing of the #1494 offline fixture, or a repeatable camera sweep.
 pub fn projector_camera(frame: u64) -> Option<(Vec3, Vec3)> {
+    // (AURORA_DEMO_FOG's camera, placed the same way)
+    if let Some(view) = fog::camera_at(frame) {
+        return Some(view);
+    }
     let mode = std::env::var("AURORA_DEMO_PROJECTOR").ok()?;
     if !mode.starts_with("cluster") {
         return None;

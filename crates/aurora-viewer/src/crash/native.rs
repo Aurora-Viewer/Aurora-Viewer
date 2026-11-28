@@ -95,7 +95,11 @@ mod platform {
         let mut code = 1;
         // SAFETY: valid process handle and output pointer.
         anyhow::ensure!(unsafe { GetExitCodeProcess(process.0, &mut code) } != 0, "cannot query viewer exit");
-        if super::super::should_report(dir, code) {
+        if super::super::should_report(dir, code)
+            && !super::super::ended_by_update(dir, code, || {
+                aurora_updater::install::ended_by_update(super::super::UPDATE_ROLLBACK_WAIT)
+            })
+        {
             super::super::preserve(dir, code)?;
             super::super::show_once(dir)?;
         } else {

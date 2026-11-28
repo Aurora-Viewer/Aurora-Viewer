@@ -221,6 +221,8 @@ pub mod flags {
     /// alpha, as LLVOVolume::lineSegmentIntersect ignores texture alpha
     /// there, also where `EMISSIVE_MASK` is dropped for a transparent face.
     pub const PICK_IGNORES_ALPHA: u32 = 1 << 28;
+    /// Bit 27 of flags[3]. World clicks skip this volume outside Build.
+    pub const IGNORE_OBJECT_PICK: u32 = 1 << 27;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -412,6 +414,10 @@ impl DrawRecord {
     /// flags[3]'s texture-animation mode and dimensions.
     pub fn set_world_blend_pick(&mut self, enabled: bool) {
         self.flags[3] = (self.flags[3] & !flags::WORLD_BLEND_PICK) | if enabled { flags::WORLD_BLEND_PICK } else { 0 };
+    }
+
+    pub fn set_ignore_object_pick(&mut self, ignored: bool) {
+        self.flags[3] = (self.flags[3] & !flags::IGNORE_OBJECT_PICK) | if ignored { flags::IGNORE_OBJECT_PICK } else { 0 };
     }
 
     /// Layer rank (0..=`flags::LAYER_RANK_MAX`) of a face that may lie
@@ -668,6 +674,8 @@ pub struct DrawLists {
     pub water_ground: crate::WaterGround,
     /// Rain prototype: the terrain's heights around the camera.
     pub rain_ground: crate::RainGround,
+    /// Aurora Weather's fog: the ground it pools on.
+    pub fog_ground: FogGround,
     /// Sorted back to front, the first `blend_depth` apart (below).
     pub blend: Vec<DrawCmd>,
     /// The blended faces under the water while the camera is above it, back
@@ -768,6 +776,10 @@ pub struct DrawLists {
     /// The poser subject's skinned faces, while a part is hovered: the part
     /// is kept on them by its joints (`FrameParams::part_joints`).
     pub part_faces: Vec<DrawCmd>,
+    /// LiveMesh's Fit lab (fit_clip.rs): the garment's faces, and the
+    /// faces of the bodies that wear it, on the avatars it is checked on.
+    pub fit_garment: Vec<DrawCmd>,
+    pub fit_body: Vec<DrawCmd>,
     /// Impostor pictures to take this frame (at most `IMPOSTOR_CAPTURES`).
     pub impostor_captures: Vec<ImpostorCapture>,
     /// Impostor cards to draw.
@@ -843,6 +855,8 @@ impl DrawLists {
         self.select_pattern.clear();
         self.hud_select_pattern.clear();
         self.part_faces.clear();
+        self.fit_garment.clear();
+        self.fit_body.clear();
     }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
     /// the lists of a frame packet, filled again every frame.
@@ -888,6 +902,7 @@ impl DrawLists {
         self.water_contacts.clone_from(&src.water_contacts);
         self.water_ground.clone_from(&src.water_ground);
         self.rain_ground.clone_from(&src.rain_ground);
+        self.fog_ground.clone_from(&src.fog_ground);
         self.glow.clone_from(&src.glow);
         self.glow_alpha.clone_from(&src.glow_alpha);
         self.debug_red.clone_from(&src.debug_red);
@@ -902,6 +917,8 @@ impl DrawLists {
         self.select_pattern.clone_from(&src.select_pattern);
         self.hud_select_pattern.clone_from(&src.hud_select_pattern);
         self.part_faces.clone_from(&src.part_faces);
+        self.fit_garment.clone_from(&src.fit_garment);
+        self.fit_body.clone_from(&src.fit_body);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
         self.gpu = src.gpu;
@@ -946,6 +963,7 @@ impl DrawLists {
         self.water_contacts.clear();
         self.water_ground = Default::default();
         self.rain_ground = Default::default();
+        self.fog_ground = Default::default();
         self.glow.clear();
         self.blend_glow.clear();
         self.blend_double_sided.clear();
@@ -963,6 +981,8 @@ impl DrawLists {
         self.select_pattern.clear();
         self.hud_select_pattern.clear();
         self.part_faces.clear();
+        self.fit_garment.clear();
+        self.fit_body.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
         self.gpu = None;
@@ -1215,6 +1235,39 @@ pub enum AoMethod {
     Gtao { quality: u8 },
 }
 
+/// How finely the G-buffer keeps the normals the reflections read
+/// (Preferences › Graphics › Reflections; renderer.rs `gbuf_format`). The
+/// Legacy Viewer keeps its deferred normals in 16 bits whatever is drawn
+/// (LLPipeline::addDeferredAttachments, indra/newview/pipeline.cpp); Aurora
+/// keeps them so where it shows, and lets the user decide.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum NormalPrecision {
+    /// High while the reflections are traced, Standard otherwise: a traced
+    /// ray shows the steps of 8 bits as terraces on a smooth face, where
+    /// the screen-space reflections' own march hides them (measured: little
+    /// to see between the two).
+    #[default]
+    Auto,
+    /// 8 bits per channel.
+    Standard,
+    /// 16 bits per channel: 4 bytes more per pixel and per sample.
+    High,
+}
+
+impl NormalPrecision {
+    /// Whether the G-buffer keeps 16 bits per channel. `ssr`: the
+    /// reflections are on (a G-buffer the rain alone asks for wets the
+    /// ground and mirrors nothing: 8 bits); `traced`: they are traced on
+    /// this device.
+    pub fn high(self, ssr: bool, traced: bool) -> bool {
+        ssr && match self {
+            NormalPrecision::Auto => traced,
+            NormalPrecision::Standard => false,
+            NormalPrecision::High => true,
+        }
+    }
+}
+
 /// What is ray-traced (rt_shadows.rs), on a device opened with ray
 /// queries ([`RayTracingSupport`]): Preferences › Graphics › Ray tracing,
 /// experimental and off by default.
@@ -1404,6 +1457,8 @@ pub struct RenderSettings {
     pub mirror_scale: f32,
     /// Screen-space reflections on glossy surfaces.
     pub ssr: bool,
+    /// The precision of the normals they read.
+    pub normal_precision: NormalPrecision,
     pub ray_tracing: RayTracing,
     /// The traced shadows' softness and lamps.
     pub rt_tuning: RtTuning,
@@ -1460,6 +1515,7 @@ impl Default for RenderSettings {
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,
+            normal_precision: NormalPrecision::default(),
             ray_tracing: RayTracing::default(),
             rt_tuning: RtTuning::default(),
             rain_surfaces: false,
@@ -1759,6 +1815,64 @@ impl Default for RainLook {
     }
 }
 
+/// How Aurora Weather's fog is drawn (fog.rs): its cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FogTier {
+    /// Height fog worked out on each surface, no volume: nearly free.
+    Height,
+    /// The froxel volume, lit by the sun (its shadows: god rays) and the sky.
+    Volumetric,
+    /// The volume lit by the local lights too (neon through fog).
+    #[default]
+    VolumetricLights,
+}
+
+/// Aurora Weather's fog for a frame (fog.rs). `FrameParams::fog` None: no
+/// fog, nothing allocated nor run, the image of before.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FogLook {
+    pub tier: FogTier,
+    /// The weather's quality (0 low, 1 medium, 2 high): the volume's
+    /// resolution and reach.
+    pub quality: u32,
+    /// How thick, 0..1 (the slider; fog.rs `base_extinction`).
+    pub density: f32,
+    /// The region's sky haze scales it: a hazy sky, a thicker fog.
+    pub from_sky: bool,
+    /// How fast it thins with height above the ground it pools on (m: the
+    /// height over which it falls to a third).
+    pub height: f32,
+    /// Its own colour (linear RGB, the light it scatters); None: white, the
+    /// sky's light alone colours it as it does the haze.
+    pub color: Option<[f32; 3]>,
+    /// The scattering's lean toward the light (Henyey-Greenstein g, 0
+    /// even to 0.9 a tight glow around each light).
+    pub anisotropy: f32,
+    /// How far the wind has carried it (m, world x and y).
+    pub drift: [f32; 2],
+    /// Seconds of the UTC day: the noise's slow change, the same for every
+    /// viewer at the same moment.
+    pub clock: f32,
+    /// The south-west corner of the camera's region on the grid (m): the
+    /// noise is anchored to the grid, the same wisps at the same place.
+    pub region_origin: [f64; 2],
+}
+
+/// Aurora Weather's fog: the ground it pools on, in a square around the
+/// camera (`FOG_GROUND_SIZE` cells a side, row by row from `origin`). Per
+/// cell: x the terrain (or the water above it), y that ground smoothed over
+/// tens of metres, the level the fog fills up to. Empty: none (the camera's
+/// ground level everywhere).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FogGround {
+    pub origin: [f32; 2],
+    pub extent: f32,
+    pub heights: std::sync::Arc<[[f32; 2]]>,
+}
+
+/// Cells a side of [`FogGround`].
+pub const FOG_GROUND_SIZE: u32 = 256;
+
 /// A photo drawn in tiles reads GTAO's depth of the whole photo beyond
 /// each tile: a tile drawn alone has no scene past its guard band, and near
 /// the camera GTAO's radius (0.73 m) spans thousands of pixels, so its
@@ -1804,6 +1918,9 @@ pub struct FrameParams {
     /// as a selection's halo with a light tint inside.
     pub part_joints: [u32; 8],
     pub part_color: [f32; 4],
+    /// LiveMesh's Fit lab clipping map on `fit_body` (fit_clip.rs): off
+    /// when None.
+    pub fit_clip: Option<crate::FitClipParams>,
     /// Palette-joint part classes (0 occluder, 1 body, 2 face, 3/4 hands,
     /// 5 wings, 6 tail), eight four-bit classes per word. The shader sums
     /// each part's weights and interpolates them before picking a part.
@@ -1865,6 +1982,9 @@ pub struct FrameParams {
     /// Aurora's bloom (bloom.rs): the share of the light over the
     /// threshold spread around the bright parts, 0 = off.
     pub bloom: f32,
+    /// Aurora's sun and moon shafts (sun_shafts.rs): their strength, 0 =
+    /// off (`AURORA_SUN_RAYS` overrides it).
+    pub sun_rays: f32,
     pub water_height: f32,
     pub shadows: bool,
     /// Distance covered by the shadow cascades.
@@ -1901,6 +2021,8 @@ pub struct FrameParams {
     pub debug: DebugRender,
     /// Depth of field (RenderDepthOfField); None: off, at no cost.
     pub dof: Option<DepthOfField>,
+    /// Motion blur (motion_blur.rs, Aurora's own); None: off, at no cost.
+    pub motion_blur: Option<MotionBlur>,
     /// A cut-out photo (cutout.rs): no sky, terrain or water, no glow, and
     /// what is drawn keeps its coverage, in the snapshot's alpha or over a
     /// checkerboard on the live view.
@@ -1942,6 +2064,8 @@ pub struct FrameParams {
     /// Volumetric clouds in the place of the Legacy Viewer's flat layer
     /// (clouds.rs); None: the Legacy layer, with nothing else running.
     pub clouds: Option<CloudsFrame>,
+    /// Aurora Weather's fog (fog.rs); None: none, at no cost.
+    pub fog: Option<FogLook>,
     /// Planet curvature (curvature.rs, Aurora's own): the planet's radius
     /// in metres; None: the flat regions, as the Legacy Viewer draws them.
     pub curvature: Option<f32>,
@@ -1995,6 +2119,20 @@ pub struct DepthOfField {
     /// Focus peaking (the photo viewfinder's manual focus): the sharp
     /// edges painted this linear colour.
     pub peaking: Option<[f32; 3]>,
+}
+
+/// The motion blur of a frame, worked out by the viewer (motion_blur.rs).
+/// Aurora's own: the Legacy Viewer draws none.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotionBlur {
+    /// How much of each pixel's motion since the last frame the blur
+    /// spreads: the shutter's open time over the frame's time (0.5: a
+    /// 180° shutter).
+    pub scale: f32,
+    /// The longest streak, as a share of the image's height.
+    pub max_share: f32,
+    /// Samples of the gather along the motion.
+    pub samples: u32,
 }
 
 /// Views shown instead of the image, and checks painted over it
@@ -2113,7 +2251,8 @@ pub struct RenderStats {
     pub present_mode: Option<wgpu::PresentMode>,
     /// The settings the frame was drawn with: the MSAA samples and SSR of
     /// the previous ones while the pipelines for new ones compile (#1746).
-    /// None until the backend has answered a frame.
+    /// None until the backend has answered a frame, and while pipelines
+    /// compile (a set for another G-buffer format leaves them as asked).
     pub settings: Option<RenderSettings>,
     /// Aurora Weather: snow lies on the ground (local or the region's), as
     /// the footprints' map and the snow cover read it.
@@ -2200,8 +2339,9 @@ pub struct RenderStats {
     pub gpu_effects: Option<[f32; 4]>,
     /// GPU time of [`GpuElement::Weather`] in parts (ms): the shelter map,
     /// the wetness and footprints memories, the wet ground (with the snow
-    /// lying), the drops and flakes with the distant layers.
-    pub gpu_weather: Option<[f32; 4]>,
+    /// lying), the drops and flakes with the distant layers, the fog's
+    /// volume.
+    pub gpu_weather: Option<[f32; 5]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those
@@ -2296,7 +2436,8 @@ pub enum GpuElement {
     /// Blended faces and particles.
     Transparent,
     /// Aurora Weather: the shelter map, the memories, the wet ground and
-    /// the snow lying, the drops and flakes (`RenderStats::gpu_weather`).
+    /// the snow lying, the drops and flakes, the fog's volume
+    /// (`RenderStats::gpu_weather`).
     Weather,
     /// Glow, TAA, tone mapping, SMAA.
     Post,
@@ -2332,6 +2473,22 @@ impl GpuElement {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_normals_keep_16_bits_for_the_reflections_that_show_it() {
+        use super::NormalPrecision::{Auto, High, Standard};
+        assert_eq!(super::NormalPrecision::default(), Auto);
+        // Automatic: with the traced reflections only
+        assert!(Auto.high(true, true));
+        assert!(!Auto.high(true, false));
+        // the user's choice holds either way
+        assert!(High.high(true, false) && High.high(true, true));
+        assert!(!Standard.high(true, true) && !Standard.high(true, false));
+        // without the reflections (the G-buffer of the rain alone), 8 bits
+        for precision in [Auto, Standard, High] {
+            assert!(!precision.high(false, true) && !precision.high(false, false), "{precision:?}");
+        }
+    }
+
     /// High is the default (the image before the qualities); each quality
     /// is cheaper than the one above.
     #[test]
@@ -2856,6 +3013,9 @@ mod tests {
             | (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT)
             | 0x00ff_ffff;
         assert_eq!(flags::PICK_IGNORES_ALPHA & others, 0);
+        assert_eq!(flags::IGNORE_OBJECT_PICK & (others | flags::PICK_IGNORES_ALPHA), 0);
+        let common = include_str!("shaders/common.wgsl");
+        assert!(common.contains(&format!("const FLAG_IGNORE_OBJECT_PICK: u32 = {}u;", flags::IGNORE_OBJECT_PICK)));
     }
 
     /// The visible-surface pick reads the bit with the same value, in the

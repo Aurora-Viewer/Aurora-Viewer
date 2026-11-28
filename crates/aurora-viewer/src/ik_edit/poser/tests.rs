@@ -494,6 +494,237 @@ fn poser_moving_wrists_fingers_and_ankles_preserves_the_complete_shaped_hierarch
 }
 
 #[test]
+fn poser_shoulder_chains_stop_before_the_spine_and_joint_only_moves_no_other_joint() {
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let base = editor.poser.sessions[&world.agent_id].base.clone();
+    let mut chain_pose = (*base).clone();
+    for name in ["mShoulderLeft", "mShoulderRight"] {
+        let shoulder = rig.names[name];
+        let collar = rig.parent[shoulder].unwrap();
+        let before = chain_pose.clone();
+        let world_pose = chain_pose.matrices(rig, Mat4::IDENTITY);
+        let target = world_pose[shoulder].w_axis.truncate() + Vec3::new(0.05, 0.03, -0.02);
+        assert!(chain_pose.move_joint(rig, shoulder, target, false));
+        for ancestor in ["mChest", "mTorso", "mSpine1", "mSpine2", "mSpine3", "mSpine4"] {
+            if let Some(&bone) = rig.names.get(ancestor) {
+                assert_eq!(chain_pose.rotations[bone], before.rotations[bone], "{ancestor} rotated for {name}");
+            }
+        }
+        assert_ne!(
+            chain_pose.rotations[collar], before.rotations[collar],
+            "the collar should bend for {name}"
+        );
+    }
+
+    let shoulder = rig.names["mShoulderLeft"];
+    let before = (*base).clone();
+    let matrices = before.matrices(rig, Mat4::IDENTITY);
+    let target = matrices[shoulder].w_axis.truncate() + Vec3::new(0.08, -0.04, 0.02);
+    let mut direct = before.clone();
+    assert!(direct.move_joint(rig, shoulder, target, true));
+    assert_eq!(direct.rotations, before.rotations);
+    for bone in 0..rig.len() {
+        if bone != shoulder {
+            assert_eq!(
+                direct.positions[bone], before.positions[bone],
+                "{} position changed",
+                rig.canonical_names[bone]
+            );
+        }
+    }
+    assert_ne!(direct.positions[shoulder], before.positions[shoulder]);
+
+    editor.symmetry = true;
+    editor.poser.move_joint_only = true;
+    let frame = editor.editor_frame(&world).unwrap();
+    editor.select(shoulder, rig, &frame);
+    editor.position = frame.model.inverse().transform_point3(frame.joints[shoulder].w_axis.truncate()) + Vec3::new(0.1, 0.0, 0.0);
+    assert!(editor.commit_poser_manipulation(rig, &frame, false));
+    let pose = &editor.poser.sessions[&world.agent_id].pose;
+    let right = rig.names["mShoulderRight"];
+    assert_ne!(pose.positions[shoulder], base.positions[shoulder]);
+    assert_ne!(pose.positions[right], base.positions[right], "mirror mode moves the opposite joint");
+    assert_eq!(pose.rotations, base.rotations);
+}
+
+/// Both shoulders selected, the switch on: Mirror must not replace the
+/// follower's own move with the reflection of the leader.
+#[test]
+fn poser_joint_only_does_not_mirror_over_a_selected_follower() {
+    let run = |symmetry: bool| {
+        let (world, mut editor) = fixture();
+        let rig = &world.avatar_lib.rig;
+        let frame = editor.editor_frame(&world).unwrap();
+        let left = rig.names["mShoulderLeft"];
+        let right = rig.names["mShoulderRight"];
+        editor.symmetry = symmetry;
+        editor.poser.move_joint_only = true;
+        editor.select(left, rig, &frame);
+        editor.click_pose_bone(right, rig, &frame, true);
+        assert_eq!(editor.followers(), vec![right]);
+        let base = editor.poser.sessions[&world.agent_id].base.clone();
+        // A Y component: the mirror reflection flips Y, so it cannot match
+        // the follower's own offset.
+        editor.position = frame.model.inverse().transform_point3(frame.joints[left].w_axis.truncate()) + Vec3::new(0.05, 0.04, -0.02);
+        assert!(editor.commit_poser_manipulation(rig, &frame, false));
+        let pose = &editor.poser.sessions[&world.agent_id].pose;
+        assert_eq!(pose.rotations[rig.parent[left].unwrap()], base.rotations[rig.parent[left].unwrap()]);
+        assert_eq!(
+            pose.rotations[rig.parent[right].unwrap()],
+            base.rotations[rig.parent[right].unwrap()]
+        );
+        (
+            pose.positions[left] - base.positions[left],
+            pose.positions[right] - base.positions[right],
+        )
+    };
+    let (off_left, off_right) = run(false);
+    let (on_left, on_right) = run(true);
+    let reflected = crate::ik_edit::rig_controls::reflect(on_left);
+    assert!(on_left.distance(off_left) < 1e-4, "leader {on_left} vs {off_left}");
+    assert!(
+        on_right.distance(off_right) < 1e-4,
+        "follower was replaced: {on_right} vs {off_right}"
+    );
+    assert!(
+        on_right.distance(reflected) > 1e-3,
+        "mirror wrote the reflection {reflected} over the follower {on_right}"
+    );
+}
+
+/// A joint whose parent is a spine joint moves directly even with the switch
+/// off: Mirror must still reflect its move onto the opposite joint.
+#[test]
+fn poser_mirror_reflects_a_joint_that_moves_directly_with_the_switch_off() {
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let base = editor.poser.sessions[&world.agent_id].base.clone();
+    let (left, right) = (rig.names["mCollarLeft"], rig.names["mCollarRight"]);
+    editor.symmetry = true;
+    editor.poser.move_joint_only = false;
+    editor.select(left, rig, &frame);
+    editor.position = frame.model.inverse().transform_point3(frame.joints[left].w_axis.truncate()) + Vec3::new(0.02, 0.03, 0.04);
+    assert!(editor.commit_poser_manipulation(rig, &frame, false));
+    let pose = &editor.poser.sessions[&world.agent_id].pose;
+    let moved = pose.positions[left] - base.positions[left];
+    assert!(moved.length() > 1e-3, "the collar should move directly");
+    let mirrored = pose.positions[right] - base.positions[right];
+    let expected = crate::ik_edit::rig_controls::reflect(moved);
+    assert!(mirrored.distance(expected) < 1e-5, "{mirrored} instead of {expected}");
+    assert_eq!(pose.rotations, base.rotations, "a direct move turns no joint");
+}
+
+/// Shoulder and elbow selected together, the switch on: every joint the drag
+/// moved is reflected (whichever leads), and a selected opposite joint keeps
+/// its own move.
+#[test]
+fn poser_mirror_reflects_every_follower_moved_with_the_switch_on() {
+    let run = |symmetry: bool, lead: &str, others: &[&str]| {
+        let (world, mut editor) = fixture();
+        let rig = &world.avatar_lib.rig;
+        let frame = editor.editor_frame(&world).unwrap();
+        let lead = rig.names[lead];
+        editor.symmetry = symmetry;
+        editor.poser.move_joint_only = true;
+        editor.select(lead, rig, &frame);
+        for name in others {
+            editor.click_pose_bone(rig.names[*name], rig, &frame, true);
+        }
+        let base = editor.poser.sessions[&world.agent_id].base.clone();
+        editor.position = frame.model.inverse().transform_point3(frame.joints[lead].w_axis.truncate()) + Vec3::new(0.05, 0.04, -0.02);
+        assert!(editor.commit_poser_manipulation(rig, &frame, false));
+        let pose = editor.poser.sessions[&world.agent_id].pose.clone();
+        let delta = |name: &str| pose.positions[rig.names[name]] - base.positions[rig.names[name]];
+        ["mShoulderLeft", "mElbowLeft", "mShoulderRight", "mElbowRight"].map(delta)
+    };
+    let reflect = crate::ik_edit::rig_controls::reflect;
+    for (lead, others) in [("mShoulderLeft", ["mElbowLeft"]), ("mElbowLeft", ["mShoulderLeft"])] {
+        let [shoulder, elbow, shoulder_r, elbow_r] = run(true, lead, &others);
+        assert!(shoulder.length() > 1e-3 || elbow.length() > 1e-3, "{lead} should move");
+        assert!(
+            shoulder_r.distance(reflect(shoulder)) < 1e-5,
+            "{lead}: right shoulder {shoulder_r} vs {}",
+            reflect(shoulder)
+        );
+        assert!(
+            elbow_r.distance(reflect(elbow)) < 1e-5,
+            "{lead}: right elbow {elbow_r} vs {}",
+            reflect(elbow)
+        );
+    }
+    // the right elbow selected too: it keeps its own move, not the reflection
+    let others = ["mShoulderLeft", "mElbowRight"];
+    let [_, off_elbow, _, off_elbow_r] = run(false, "mElbowLeft", &others);
+    let [_, on_elbow, shoulder, on_elbow_r] = run(true, "mElbowLeft", &others);
+    assert!(on_elbow.distance(off_elbow) < 1e-5);
+    assert!(on_elbow_r.distance(off_elbow_r) < 1e-5, "{on_elbow_r} vs {off_elbow_r}");
+    assert!(
+        on_elbow_r.distance(reflect(on_elbow)) > 1e-3,
+        "mirror wrote over the selected right elbow"
+    );
+    // its unselected parent still mirrors the left shoulder
+    assert!(shoulder.length() > 1e-3);
+}
+
+/// A direct position move keeps the joint's stored rotation bit for bit, so
+/// the rotation mirror does not take it for a turn.
+#[test]
+fn a_direct_position_move_keeps_the_stored_rotation() {
+    let (world, editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let mut pose = (*editor.poser.sessions[&world.agent_id].base).clone();
+    let (chest, collar) = (rig.names["mChest"], rig.names["mCollarLeft"]);
+    pose.rotations[chest] = (pose.rotations[chest] * Quat::from_euler(EulerRot::ZYX, 0.31, -0.23, 0.17)).normalize();
+    pose.rotations[collar] = (pose.rotations[collar] * Quat::from_euler(EulerRot::ZYX, -0.41, 0.27, 0.13)).normalize();
+    let placed = pose.matrices(rig, Mat4::IDENTITY);
+    for only in [false, true] {
+        let mut moved = pose.clone();
+        assert!(moved.move_joint(rig, collar, placed[collar].w_axis.truncate() + Vec3::new(0.03, -0.02, 0.05), only));
+        assert_ne!(moved.positions[collar], pose.positions[collar]);
+        assert_eq!(moved.rotations, pose.rotations, "only = {only}");
+    }
+}
+
+#[test]
+fn a_head_position_drag_bends_the_neck_and_the_neck_itself_moves_directly() {
+    let (world, editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let base = editor.poser.sessions[&world.agent_id].base.clone();
+    let head = rig.names["mHead"];
+    let neck = rig.names["mNeck"];
+    let chest = rig.names["mChest"];
+    let mut pose = (*base).clone();
+    let before = pose.clone();
+    let placed = pose.matrices(rig, Mat4::IDENTITY);
+    assert!(pose.move_joint(rig, head, placed[head].w_axis.truncate() + Vec3::new(0.04, 0.02, 0.03), false));
+    assert_ne!(pose.rotations[neck], before.rotations[neck], "a head drag should bend the neck");
+    assert_eq!(
+        pose.rotations[chest], before.rotations[chest],
+        "a head drag should stop at the neck"
+    );
+    let mut pose = before.clone();
+    assert!(pose.move_joint(rig, neck, placed[neck].w_axis.truncate() + Vec3::new(0.03, -0.02, 0.02), false));
+    assert_ne!(pose.positions[neck], before.positions[neck], "the neck itself moves directly");
+    assert_eq!(pose.rotations[neck], before.rotations[neck]);
+    assert_eq!(pose.rotations[chest], before.rotations[chest]);
+}
+
+#[test]
+fn poser_joint_only_setting_defaults_off_and_persists() {
+    let default = Config::default();
+    assert!(!default.move_joint_only);
+    let mut enabled = default;
+    enabled.move_joint_only = true;
+    let encoded = serde_json::to_vec(&enabled).unwrap();
+    let decoded: Config = serde_json::from_slice(&encoded).unwrap();
+    assert!(decoded.move_joint_only);
+    let old: Config = serde_json::from_str("{}").unwrap();
+    assert!(!old.move_joint_only, "older saved preferences default the new option off");
+}
+
+#[test]
 fn poser_rotating_the_pelvis_moves_the_body_as_one_attached_hierarchy() {
     let (world, mut editor) = fixture();
     let rig = &world.avatar_lib.rig;
@@ -569,7 +800,7 @@ fn poser_world_pins_and_imported_translations_cannot_detach_children() {
     let wrist = rig.names["mWristLeft"];
     let before = pose.matrices(rig, Mat4::IDENTITY);
     let target = before[wrist].w_axis.truncate() + Vec3::new(0.1, -0.15, -0.2);
-    assert!(pose.move_joint(rig, wrist, target));
+    assert!(pose.move_joint(rig, wrist, target, false));
     let pinned = pose.matrices(rig, Mat4::IDENTITY)[wrist];
     pose.locks.insert(wrist, pinned);
     for model in [Mat4::IDENTITY, Mat4::from_translation(Vec3::splat(10.0))] {

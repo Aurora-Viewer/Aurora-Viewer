@@ -17,6 +17,7 @@ pub mod balance_gains;
 pub mod bars;
 pub mod bidi;
 pub mod blacklist;
+pub mod board;
 pub mod bumps;
 pub mod sound_explorer;
 pub mod voice_controls;
@@ -109,6 +110,7 @@ pub mod notification_center;
 pub mod notifications;
 pub(crate) mod numeric_drag;
 pub mod object_actions;
+pub mod object_stage;
 pub mod omnifilter;
 pub mod options;
 pub mod owned_land;
@@ -231,6 +233,11 @@ pub struct Panels {
     pub about_land: bool,
     /// "Region / Estate" (World menu, Alt+R).
     pub region_estate: bool,
+    /// The layouts of About Land and Region / Estate (kept in the
+    /// settings), for their floater ids: a toggle expands the window
+    /// drawn, which has an id per layout.
+    pub about_land_classic: bool,
+    pub region_estate_classic: bool,
     /// "Places" (favorites, landmarks, teleport history, place profiles).
     pub places: bool,
     /// "Search" (Firestorm's legacy search floater, Ctrl+F).
@@ -345,6 +352,8 @@ impl Panels {
             contacts: settings.contacts.torn_off,
             about_land: false,
             region_estate: false,
+            about_land_classic: settings.classic_about_land,
+            region_estate_classic: settings.classic_region_estate,
             places: false,
             search: false,
             area_search: false,

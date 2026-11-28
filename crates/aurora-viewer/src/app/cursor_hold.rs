@@ -17,6 +17,17 @@
 //! Legacy Viewer does not warp a decoupled cursor there either
 //! (LLViewerWindow::moveCursorToCenter, isWrapMouse is !mCursorDecoupled,
 //! indra/llwindow/llwindowmacosx.h).
+//!
+//! Wayland only moves the cursor while it is locked, as a hint the
+//! compositor applies when the lock ends, once a surface commit carried it
+//! (winit refuses a move of an unlocked cursor). So every give-back that
+//! moves the cursor (Alt+click, the camera drags, leaving mouselook) moves
+//! it before the lock is released, and the release waits two frames, which
+//! normally present the hint: released first, the cursor stayed where it was
+//! pressed instead of coming back at the centre after an Alt+click. The
+//! cursor stays hidden until the release, and egui's icon with it
+//! ([`CursorHold::hidden`]): egui shows the cursor again whenever its icon
+//! changes, which flashed it at the press position for a frame or two.
 
 use super::App;
 use winit::event::{ElementState, WindowEvent};
@@ -77,6 +88,9 @@ pub(super) struct CursorHold {
     /// (LLWindowMacOSX::adjustCursorDecouple sets mCursorIgnoreNextDelta,
     /// indra/llwindow/llwindowmacosx.cpp).
     skip_motion: bool,
+    /// Wayland: the frame of a give-back whose cursor move is still a hint;
+    /// the lock is released, and the cursor shown, two frames later.
+    unlock_after: Option<u64>,
 }
 
 impl CursorHold {
@@ -109,12 +123,21 @@ impl CursorHold {
         !std::mem::take(&mut self.skip_motion)
     }
 
+    /// Whether the cursor must stay hidden: held, or given back on Wayland
+    /// and still locked under its hint. egui shows the cursor again whenever
+    /// its icon changes, so its icon stays None until then.
+    pub(super) fn hidden(&self) -> bool {
+        self.held() || self.unlock_after.is_some()
+    }
+
     /// Take the cursor; None when it is already held (a drag that turns into
     /// mouselook keeps its first hold). `focus`: the camera drag began on a
     /// valid focus point.
     pub(super) fn take(&mut self, mouselook: bool, focus: bool, cursor: (f32, f32)) -> Option<HoldKind> {
-        // a hold asked after a postponed give-back keeps the cursor
+        // a hold asked after a postponed give-back keeps the cursor, and
+        // so does one asked while a Wayland release waits for its frame
         self.pending = None;
+        self.unlock_after = None;
         if self.kind.is_some() {
             return None;
         }
@@ -141,6 +164,27 @@ impl CursorHold {
             HoldKind::Mouselook | HoldKind::Focus => Return::Center,
             HoldKind::Drag { origin } => Return::At(origin),
         })
+    }
+
+    /// Wayland: the cursor was given back at `frame` and moved by a hint;
+    /// the lock waits for [`Self::unlock_due`].
+    fn unlock_later(&mut self, frame: u64) {
+        self.unlock_after = Some(frame);
+    }
+
+    /// Whether the waiting release is due at `frame`: two `frame()` calls
+    /// later, so that a whole frame, and normally the surface commit of its
+    /// present, came between the hint and the release. A frame that was not
+    /// presented (an acquire timeout) still counts: the release then comes
+    /// before the hint, and the cursor stays where it was, as before.
+    fn unlock_due(&mut self, frame: u64) -> bool {
+        match self.unlock_after {
+            Some(at) if frame >= at + 2 => {
+                self.unlock_after = None;
+                true
+            }
+            _ => false,
+        }
     }
 }
 
@@ -314,11 +358,17 @@ impl App {
     pub(super) fn release_cursor(&mut self, focus_lost: bool) {
         if self.gfx.is_none() {
             // the window is the frame's for now: forgetting the hold here
-            // left the cursor hidden and locked for good
+            // left the cursor hidden and locked for good. A Wayland release
+            // still waiting keeps its frame: the next frame with the window
+            // releases it.
             if self.cursor_hold.held() {
                 self.cursor_hold.pending = Some(focus_lost);
             }
             return;
+        }
+        if focus_lost && self.cursor_hold.unlock_after.take().is_some() {
+            // the window goes: no frame to wait for, release it now
+            self.unlock_cursor();
         }
         let Some(back) = self.cursor_hold.give_back(focus_lost) else {
             return;
@@ -326,21 +376,41 @@ impl App {
         let Some(win) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) else {
             return;
         };
+        if back != Return::Stay && wayland(win) {
+            // moved while still locked: the only move Wayland allows
+            match back {
+                Return::Center => self.move_cursor_to_center(),
+                Return::At((x, y)) => self.move_cursor((x, y)),
+                Return::Stay => {}
+            }
+            self.cursor_hold.unlock_later(self.frame_count);
+            return;
+        }
         let _ = win.set_cursor_grab(CursorGrabMode::None);
         match back {
             Return::Stay => {}
             Return::Center => self.move_cursor_to_center(),
             Return::At((x, y)) => self.move_cursor((x, y)),
         }
+        self.unlock_cursor();
+    }
+
+    /// Release the lock and show the cursor.
+    fn unlock_cursor(&mut self) {
         if let Some(win) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) {
+            let _ = win.set_cursor_grab(CursorGrabMode::None);
             win.set_cursor_visible(true);
         }
     }
 
-    /// The give-back the frame postponed, once it has the window back.
+    /// The give-back the frame postponed, once it has the window back, and
+    /// the Wayland release once the frames after its cursor hint went by.
     pub(super) fn release_postponed_cursor(&mut self) {
         if let Some(focus_lost) = self.cursor_hold.pending {
             self.release_cursor(focus_lost);
+        }
+        if self.gfx.is_some() && self.cursor_hold.unlock_due(self.frame_count) {
+            self.unlock_cursor();
         }
     }
 
@@ -361,9 +431,40 @@ impl App {
     }
 }
 
+/// Whether the window is a Wayland surface, where the cursor can only be
+/// moved while locked.
+fn wayland(window: &winit::window::Window) -> bool {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    window
+        .window_handle()
+        .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wayland_release_waits_two_frames_hidden() {
+        let mut hold = CursorHold::default();
+        hold.take(false, true, (40.0, 50.0));
+        assert_eq!(hold.give_back(false), Some(Return::Center));
+        hold.unlock_later(10);
+        // the frame that carries the hint has not gone by yet
+        assert!(!hold.unlock_due(10));
+        assert!(!hold.unlock_due(11));
+        assert!(!hold.held());
+        assert!(hold.hidden());
+        assert!(hold.unlock_due(12));
+        assert!(!hold.hidden());
+        // once only
+        assert!(!hold.unlock_due(13));
+        // a new hold before it is due keeps the cursor locked and hidden
+        hold.unlock_later(20);
+        hold.take(false, true, (40.0, 50.0));
+        assert!(!hold.unlock_due(30));
+        assert!(hold.hidden());
+    }
 
     #[test]
     fn mouselook_gives_the_cursor_back_at_the_centre() {

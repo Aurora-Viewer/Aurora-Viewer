@@ -9,7 +9,7 @@
 use super::GroupAction;
 use super::admin_members::{self, Me};
 use super::view::{self, Chip, View};
-use super::{Env, GroupProfileUi};
+use super::{Env, GroupWindow};
 use crate::theme::Palette;
 use crate::ui::context::{self, CtxAction};
 use crate::ui::place_details::Ctx;
@@ -204,10 +204,10 @@ pub(super) fn pill(ui: &mut egui::Ui, p: &Palette, label: &str, on: bool) -> egu
 }
 
 /// A round picture with its status dot.
-fn avatar(owner: &mut GroupProfileUi, ui: &egui::Ui, c: &Ctx, env: &Env, rect: Rect, id: Uuid, name: &str, online: bool) {
+fn avatar(owner: &mut GroupWindow, ui: &egui::Ui, c: &Ctx, env: &Env, rect: Rect, id: Uuid, name: &str, online: bool) {
     let pic = env.avatar_pics.get(&id);
     if pic.is_none() {
-        owner.want_pic(id, env.now);
+        owner.want_pic(id);
     }
     widgets::avatar_disc(ui, c.p, rect, pic, name, false);
     // what the scene or the friend list says, else what the group says
@@ -221,7 +221,7 @@ fn avatar(owner: &mut GroupProfileUi, ui: &egui::Ui, c: &Ctx, env: &Env, rect: R
 
 const ROW_H: f32 = 30.0;
 
-pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &View, actions: &mut Vec<GroupAction>) {
+pub fn show(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &View, actions: &mut Vec<GroupAction>) {
     let p = c.p;
     let manage = v.can(MANAGE);
     let body = Rect::from_min_max(
@@ -276,7 +276,7 @@ fn me(c: &Ctx, v: &View) -> Me {
 }
 
 /// The confirmations of Firestorm, then the action.
-fn confirm_dialog(st: &mut GroupProfileUi, ctx: &egui::Context, c: &Ctx, v: &View, actions: &mut Vec<GroupAction>) {
+fn confirm_dialog(st: &mut GroupWindow, ctx: &egui::Context, c: &Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let Some(confirm) = st.members.confirm.clone() else {
         return;
     };
@@ -356,7 +356,7 @@ fn confirm_dialog(st: &mut GroupProfileUi, ctx: &egui::Context, c: &Ctx, v: &Vie
 }
 
 /// The bar, the table, the selection's buttons.
-fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &View, manage: bool) {
+fn list(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &View, manage: bool) {
     let p = c.p;
     let mut invite = false;
     let mut export = false;
@@ -443,7 +443,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         });
     });
     if invite {
-        st.open_invite(v.id);
+        st.open_invite();
     }
     if export && let Some(d) = v.data {
         let world = c.world;
@@ -831,7 +831,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
 /// The chosen members' roles: ticked as they are (and as the waiting
 /// changes make them), changed with the abilities, saved together;
 /// "everyone" for all, the owners' locked when we may not change it.
-fn roles_card(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, p: &Palette, actions: &mut Vec<GroupAction>) {
+fn roles_card(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, p: &Palette, actions: &mut Vec<GroupAction>) {
     let targets: Vec<Uuid> = st
         .members
         .targets()
@@ -876,7 +876,7 @@ fn toggle(list: &mut Vec<Uuid>, id: Uuid) {
 /// changes wait.
 #[allow(clippy::too_many_arguments)]
 fn roles_body(
-    st: &mut GroupProfileUi,
+    st: &mut GroupWindow,
     ui: &mut egui::Ui,
     c: &mut Ctx,
     v: &View,
@@ -987,7 +987,7 @@ fn roles_body(
 
 /// "What they can do": the abilities of the chosen through their roles, by
 /// set (buildActionsList with the allowed-by-some powers).
-fn abilities_card(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, p: &Palette) {
+fn abilities_card(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, p: &Palette) {
     let Some(d) = v.data.filter(|d| d.role_members_complete) else {
         return;
     };
@@ -1062,10 +1062,14 @@ fn abilities_card(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &V
     });
 }
 
+/// The classic list's least height: what it always had.
+const CLASSIC_LIST_MIN_H: f32 = 260.0;
+
 /// The members in the classic look: name, title, status, as the members
-/// list of Firestorm's "Members and roles".
-pub fn classic_list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View) {
+/// list of Firestorm's "Members and roles", in `fit` of height at the most.
+pub fn classic_list(st: &mut GroupWindow, ui: &mut egui::Ui, c: &mut Ctx, v: &View, fit: f32) {
     let p = c.p;
+    let top = ui.cursor().top();
     widgets::search_field(
         ui,
         p,
@@ -1096,9 +1100,14 @@ pub fn classic_list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: 
     }
     let today = today();
     let width = widgets::scrolled_width(ui);
+    // what the filter and the headings above it took
+    let fit = (fit - (ui.cursor().top() - top)).max(CLASSIC_LIST_MIN_H);
     egui::ScrollArea::vertical()
         .id_salt("group_members_classic")
-        .max_height(260.0)
+        // the window's height, as the managed list has (`part(ui, fit)`) and
+        // as panel_group_roles.xml's member_list follows its panel; it stopped
+        // at 260 px for a group one does not manage
+        .max_height(fit)
         .auto_shrink([false, true])
         .show_rows(ui, 22.0, rows.len(), |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;

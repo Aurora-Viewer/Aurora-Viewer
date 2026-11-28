@@ -272,10 +272,11 @@ impl BuildTool {
     /// Children inherit their linkset root's right, independently of OwnerID
     /// and the owner's permission mask in ObjectProperties.
     pub fn can_modify(&self, world: &World, idx: usize) -> bool {
-        world
-            .objects
-            .get(super::root_of(world, idx))
-            .is_some_and(|root| root.update_flags & crate::ui::context::flags::OBJECT_MODIFY != 0)
+        !super::worn_by_other(world, idx)
+            && world
+                .objects
+                .get(super::root_of(world, idx))
+                .is_some_and(|root| root.update_flags & crate::ui::context::flags::OBJECT_MODIFY != 0)
     }
 
     /// LLPanelVolume::getState (indra/newview/llpanelvolume.cpp): "Animated
@@ -612,7 +613,7 @@ impl BuildTool {
             .collect();
         for &i in &prims {
             if let Some(o) = world.objects.get_mut(i) {
-                o.click_action = action;
+                o.set_click_action(action);
             }
         }
         for (handle, local_ids) in Self::by_region(world, &prims) {

@@ -83,6 +83,8 @@ pub struct Config {
     pub confirm_overwrite: bool,
     /// Ask before a close that stops the pose and loses its edited joints.
     pub confirm_close: bool,
+    /// Move a position-edited joint directly instead of solving its chain.
+    pub move_joint_only: bool,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -101,6 +103,7 @@ impl Default for Config {
             unlock_pelvis: false,
             confirm_overwrite: false,
             confirm_close: true,
+            move_joint_only: false,
         }
     }
 }
@@ -606,6 +609,21 @@ impl Editor {
         self.drag = None;
         self.gizmo.cancel();
         self.poser.scale_gizmo.cancel();
+    }
+    /// The IK Edit toolbar button and Build › IK Edit
+    /// (LLFloaterReg::toggleInstance): a minimized window expands, a shown
+    /// one closes, a closed one opens expanded.
+    pub fn toggle_ik(&mut self, ctx: &egui::Context) {
+        let window = self.window_id();
+        if self.open && !self.poser.active && crate::ui::widgets::floater_minimized(ctx, window) {
+            crate::ui::widgets::expand_floater(ctx, window);
+            return;
+        }
+        self.toggle();
+        if self.open {
+            let window = self.window_id();
+            crate::ui::widgets::open_floater(ctx, window, &mut self.open);
+        }
     }
     pub fn open_ik(&mut self) {
         if self.poser.active || !self.open {

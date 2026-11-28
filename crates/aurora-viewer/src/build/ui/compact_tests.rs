@@ -1401,6 +1401,8 @@ struct Inspector {
     escape_taken_first: bool,
     /// The keys the build tools are given as held.
     mods: Mods,
+    /// The camera's zoom the Focus tool's slider shows.
+    zoom_fraction: f32,
 }
 
 impl Inspector {
@@ -1432,6 +1434,7 @@ impl Inspector {
             numeric_drag: None,
             escape_taken_first: false,
             mods: Mods::default(),
+            zoom_fraction: 0.0,
             native_pixels_per_point: 1.0,
             screen: egui::vec2(1280.0, 900.0),
             text_fonts: Vec::new(),
@@ -1469,7 +1472,7 @@ impl Inspector {
                 images: &Default::default(),
                 media: &mut self.media,
                 scene: &mut self.scene,
-                zoom_fraction: 0.0,
+                zoom_fraction: self.zoom_fraction,
                 property_lines: &mut false,
                 demo: false,
             };
@@ -1629,24 +1632,30 @@ fn construction_large_keeps_each_section_and_tool_inside_a_stable_window() {
 }
 
 #[test]
-fn create_panel_holds_still_at_every_width_around_its_scroll_bar() {
+fn create_window_holds_still_at_every_width() {
     // #1092: the shape grid sized itself from the width left by the scroll
-    // bar, so at widths where only the wider grid overflowed the bar came
-    // and went on every frame and the whole panel jittered.
+    // bar, and the panel jittered where the bar came and went. The Create
+    // window (tool_floaters.rs) now has no scroll bar: its height follows
+    // the grid at every width, and nothing moves from frame to frame.
     let mut inspector = Inspector::new();
-    inspector.tool.set_tool(Tool::Create);
-    let label = aurora_i18n::tr!("build-ui-tools-keep-selection-tool");
+    inspector.tool.open_build(Tool::Create);
+    let label = aurora_i18n::tr!("build-create-keep-creating");
     let place = |texts: &[(String, egui::Rect)]| texts.iter().find(|(text, _)| text == label).map(|(_, rect)| rect.min);
-    // Horizontal navigation and the fixed options reduce the scrolling
-    // viewport. Keep the marker visible while the shape grid crosses the
-    // scroll-bar threshold at the current construction layout's height.
     for width in (300..=450).step_by(3) {
-        resize_inspector(&mut inspector, vec2(width as f32, 850.0));
+        crate::ui::widgets::size_floater(&inspector.ctx, "build_tool_create", vec2(width as f32, 420.0));
+        for _ in 0..5 {
+            inspector.show(vec![]);
+        }
         let first = place(&inspector.show(vec![]).1);
         assert!(first.is_some(), "Create options missing at width {width}");
         for _ in 0..4 {
             assert_eq!(place(&inspector.show(vec![]).1), first, "Create panel moved at width {width}");
         }
+        let window = inspector
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+            .expect("the Create window");
+        assert!((window.width() - width as f32).abs() < 1.0, "{width}: {window:?}");
     }
 }
 
@@ -4240,4 +4249,414 @@ fn compact_object_shape_fields_stay_inside_at_large_text_size() {
             );
         }
     }
+}
+
+#[test]
+fn one_selected_object_has_its_contents_listed_whatever_the_tab() {
+    // LLFloaterTools::refresh → LLPanelObjectInventory::refresh: a no-copy
+    // or no-transfer choice can then go into the contents at the first try.
+    use aurora_net::{NetCommand, build::BuildCmd};
+    let mut inspector = Inspector::new();
+    let idx = inspector.tool.contents_target(&inspector.world).unwrap();
+    let object = inspector.world.objects.get(idx).unwrap().full_id;
+    let asked = |tool: &BuildTool, id: uuid::Uuid| {
+        tool.out
+            .iter()
+            .filter(|c| matches!(c, NetCommand::Build(BuildCmd::RequestTaskInventory { object_id, .. }) if *object_id == id))
+            .count()
+    };
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "asked once the object is selected");
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "not again while it loads");
+    inspector.tool.on_task_inventory(&inspector.world, object, Some(1), Vec::new());
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object), 1, "not again once listed");
+    // Two objects: nothing is listed until a choice needs it.
+    let other = (0..inspector.world.objects.len())
+        .find(|&i| {
+            i != idx && crate::build::root_of(&inspector.world, i) == i && inspector.world.objects.get(i).is_some_and(|o| o.pcode == 9)
+        })
+        .unwrap();
+    let other_id = inspector.world.objects.get(other).unwrap().full_id;
+    inspector
+        .tool
+        .click_select(&mut inspector.world, &inspector.settings, Some(other), true);
+    assert_eq!(inspector.tool.roots(&inspector.world).len(), 2);
+    inspector.tool.out.clear();
+    inspector.show(vec![]);
+    inspector.show(vec![]);
+    assert_eq!(asked(&inspector.tool, object) + asked(&inspector.tool, other_id), 0);
+}
+
+/// One click of the primary button at `pos`, as the pointer gives it.
+fn click_at(inspector: &mut Inspector, pos: egui::Pos2) {
+    inspector.show(vec![egui::Event::PointerMoved(pos)]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }]);
+    }
+    inspector.show(vec![]);
+}
+
+/// The Create window's shape picker (human request, 2026-11-24): its
+/// button arms and puts it down without taking the tool in use, a shape
+/// clicked puts it down, and the shapes captured follow the grass, chosen
+/// by a click and removed from their right-click menu.
+#[test]
+fn the_shape_picker_arms_alone_and_the_captured_shapes_are_chosen_and_removed() {
+    use crate::build::shapes::{CapturedShape, shapes};
+    let mut inspector = Inspector::new();
+    inspector.settings.captured_shapes = vec![CapturedShape {
+        shape: shapes()[10].raw(),
+        scale: [1.0; 3],
+    }];
+    inspector.tool.open_build(Tool::Create);
+    inspector.tool.activate(Tool::Edit);
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    let rect = |inspector: &Inspector, key: &str| inspector.ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(key))).expect(key);
+    let grid = rect(&inspector, "build-create-shapes");
+    let capture = rect(&inspector, "build-create-capture");
+    let cell = (grid.width() - 24.0) / 5.0;
+    assert!(
+        (grid.height() - (cell * 4.0 + 18.0)).abs() < 0.5,
+        "a fourth row for the captured shape and the picker"
+    );
+    assert!(grid.expand(0.5).contains_rect(capture), "{grid:?} {capture:?}");
+    click_at(&mut inspector, capture.center());
+    assert!(inspector.tool.capturing_shape(), "armed");
+    assert_eq!(inspector.tool.tool, Tool::Edit, "the picker leaves Edit in use");
+    click_at(&mut inspector, capture.center());
+    assert!(!inspector.tool.shape_capture, "the button again puts it down");
+    click_at(&mut inspector, capture.center());
+    click_at(&mut inspector, grid.left_top() + vec2(10.0, 10.0));
+    assert!(!inspector.tool.shape_capture, "a shape clicked puts it down");
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    // the captured shape, first of the fourth row
+    let captured = grid.left_top() + vec2(cell * 0.5, (cell + 6.0) * 3.0 + cell * 0.5);
+    click_at(&mut inspector, captured);
+    assert_eq!(inspector.settings.create_shape, shapes().len() + 2);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    inspector.show(vec![egui::Event::PointerMoved(captured)]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: captured,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        }]);
+    }
+    let remove = aurora_i18n::tr!("build-capture-shape-remove");
+    let item = inspector
+        .show(vec![])
+        .1
+        .into_iter()
+        .find(|(text, _)| text == remove)
+        .expect("the captured shape's menu")
+        .1;
+    click_at(&mut inspector, item.center());
+    assert!(inspector.settings.captured_shapes.is_empty());
+    assert_eq!(inspector.settings.create_shape, 0, "its removal chooses the cube");
+}
+
+/// The Focus tool's zoom slider sends a zoom only when the user moves it:
+/// a camera zoom off its 0.01 step was rounded and sent back at every
+/// frame, and a zoom drag went by notches (2026-11-24).
+#[test]
+fn the_focus_zoom_slider_leaves_the_camera_zoom_alone_until_moved() {
+    let mut inspector = Inspector::new();
+    inspector.tool.open_build(Tool::Focus);
+    for zoom in [0.3337, 0.71, 0.0049] {
+        inspector.zoom_fraction = zoom;
+        for _ in 0..4 {
+            inspector.show(vec![]);
+        }
+        assert!(
+            !inspector
+                .tool
+                .ui
+                .requests
+                .iter()
+                .any(|r| matches!(r, super::super::Request::ZoomFraction(_))),
+            "zoom {zoom}: nothing sent"
+        );
+    }
+}
+
+/// The Aurora style's tools in windows of their own (human request,
+/// 2026-11-24): the rail's Create button opens its window beside the main
+/// one, which keeps its section; a press picks the tool in use; the button
+/// again closes the window.
+#[test]
+fn the_rail_tool_buttons_open_and_close_their_own_windows() {
+    use crate::build::layout::Item;
+    let mut inspector = Inspector::new();
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    let button = |inspector: &Inspector, item: Item| {
+        inspector
+            .tool
+            .ui
+            .layout
+            .targets
+            .iter()
+            .find(|(target, _, _)| *target == item)
+            .map(|(_, _, rect)| rect.center())
+            .expect("rail button")
+    };
+    let create = button(&inspector, Item::Create);
+    let section = inspector.tool.tab;
+    click_at(&mut inspector, create);
+    assert!(inspector.tool.tool_window_open(Tool::Create));
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    assert!(inspector.tool.main_open, "the main window stays");
+    assert_eq!(inspector.tool.tab, section);
+    let window = inspector
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+        .expect("the Create window");
+    let (main, texts) = inspector.show(vec![]);
+    let options = texts
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("build-create-keep-creating"))
+        .expect("the Create panel")
+        .1;
+    assert!(window.contains_rect(options), "the panel is in the Create window");
+    assert!(!main.intersects(window), "the window opens beside the main one");
+    assert!(
+        texts
+            .iter()
+            .any(|(text, rect)| text == aurora_i18n::tr!("build-tool-in-use") && window.contains_rect(*rect)),
+        "its title says its tool is the one in use"
+    );
+    // a press in the main window: Edit; in the Create window, a shape
+    // clicked: Create (its title bar leaves Edit)
+    click_at(&mut inspector, main.left_top() + vec2(40.0, 12.0));
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    assert!(inspector.tool.tool_window_open(Tool::Create));
+    click_at(&mut inspector, window.left_top() + vec2(40.0, 12.0));
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    let shapes = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-shapes")))
+        .expect("the shapes");
+    click_at(&mut inspector, shapes.left_top() + vec2(10.0, 10.0));
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    // lit, the rail button closes the window; Edit is back
+    click_at(&mut inspector, create);
+    assert!(!inspector.tool.tool_window_open(Tool::Create));
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    assert!(inspector.tool.open && inspector.tool.main_open);
+}
+
+/// The Create window (human request, 2026-11-24): no "Click in the world
+/// to build" line; the caret at its bottom hides its whole options part, as
+/// the Legacy style's window folds, and shows it again. The window has no
+/// scroll bar: its height follows what it shows, and its left and right
+/// edges resize its width only. The choice is kept in the build settings.
+#[test]
+fn the_create_window_fits_its_content_and_hides_its_options_part() {
+    let mut inspector = Inspector::new();
+    inspector.tool.open_build(Tool::Create);
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    let window = |inspector: &Inspector| {
+        inspector
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+            .expect("the Create window")
+    };
+    let shows = |inspector: &mut Inspector, label: &str| {
+        let rect = window(inspector);
+        inspector
+            .show(vec![])
+            .1
+            .iter()
+            .any(|(text, at)| text == label && rect.contains_rect(*at))
+    };
+    let caret = |inspector: &Inspector| {
+        inspector
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-options-toggle")))
+            .expect("the caret")
+    };
+    // as tall as its content: the caret, last, ends just above its bottom
+    let fits = |inspector: &Inspector| {
+        let (rect, caret) = (window(inspector), caret(inspector));
+        let gap = rect.bottom() - caret.bottom();
+        assert!(
+            (0.0..24.0).contains(&gap),
+            "the window ends at its content: {rect:?}, caret {caret:?}"
+        );
+    };
+    let drag = |inspector: &mut Inspector, start: egui::Pos2, target: egui::Pos2| {
+        inspector.show(vec![egui::Event::PointerMoved(start)]);
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        inspector.show(vec![egui::Event::PointerMoved(target)]);
+        inspector.show(vec![egui::Event::PointerMoved(target)]);
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        for _ in 0..3 {
+            inspector.show(vec![]);
+        }
+    };
+    let keep = aurora_i18n::tr!("build-create-keep-creating");
+    assert!(!shows(
+        &mut inspector,
+        aurora_i18n::tr!("build-ui-tools-click-in-the-world-to-build")
+    ));
+    assert!(shows(&mut inspector, keep), "shown by default");
+    fits(&inspector);
+    let open = window(&inspector);
+    // its bottom edge resizes nothing
+    drag(
+        &mut inspector,
+        open.center_bottom() - vec2(0.0, 1.0),
+        open.center_bottom() + vec2(0.0, 120.0),
+    );
+    assert!(
+        (window(&inspector).size() - open.size()).length() < 1.0,
+        "the bottom edge is no handle"
+    );
+    let at = caret(&inspector).center();
+    click_at(&mut inspector, at);
+    for _ in 0..6 {
+        inspector.show(vec![]);
+    }
+    assert!(!inspector.settings.create_options_shown);
+    assert!(!shows(&mut inspector, keep), "the options part is hidden");
+    let folded = window(&inspector);
+    assert!(folded.height() < open.height() - 40.0, "the window shrinks: {open:?} -> {folded:?}");
+    assert!((folded.width() - open.width()).abs() < 1.0, "at the width it had");
+    fits(&inspector);
+    // folded, its right edge still widens it, its height following
+    let edge = folded.right_center() - vec2(1.0, 0.0);
+    drag(&mut inspector, edge, edge + vec2(80.0, 40.0));
+    let wide = window(&inspector);
+    assert!(
+        wide.width() > folded.width() + 60.0,
+        "its width follows the edge: {folded:?} -> {wide:?}"
+    );
+    assert!(!inspector.settings.create_options_shown, "the drag shows no options");
+    fits(&inspector);
+    let at = caret(&inspector).center();
+    click_at(&mut inspector, at);
+    for _ in 0..6 {
+        inspector.show(vec![]);
+    }
+    assert!(inspector.settings.create_options_shown);
+    assert!(shows(&mut inspector, keep), "shown again");
+    assert!((window(&inspector).width() - wide.width()).abs() < 1.0, "at the width it was given");
+    fits(&inspector);
+    // and its edges narrow it again, down to its minimum, with its options
+    // shown or hidden (the human's report of 2026-11-24)
+    for shown in [true, false] {
+        if inspector.settings.create_options_shown != shown {
+            let at = caret(&inspector).center();
+            click_at(&mut inspector, at);
+            for _ in 0..6 {
+                inspector.show(vec![]);
+            }
+        }
+        let before = window(&inspector);
+        let edge = before.right_center() - vec2(1.0, 0.0);
+        drag(&mut inspector, edge, edge - vec2(70.0, 0.0));
+        let narrow = window(&inspector);
+        assert!(
+            narrow.width() < before.width() - 50.0,
+            "options shown {shown}: the right edge narrows it: {before:?} -> {narrow:?}"
+        );
+        fits(&inspector);
+        let edge = narrow.left_center() + vec2(1.0, 0.0);
+        drag(&mut inspector, edge, edge + vec2(400.0, 0.0));
+        let least = window(&inspector);
+        assert!(
+            (least.width() - 240.0).abs() < 1.0,
+            "options shown {shown}: the left edge narrows it to its minimum: {narrow:?} -> {least:?}"
+        );
+        fits(&inspector);
+        let edge = least.right_center() - vec2(1.0, 0.0);
+        drag(&mut inspector, edge, edge + vec2(120.0, 0.0));
+    }
+}
+
+/// The Create window (human request, 2026-11-24): opened, its tool is the
+/// one in use, its last shape under the pointer in the world; once another
+/// tool took over, only a click on a shape gives it back, not a press
+/// elsewhere in the window (its options, its caret, its title bar).
+#[test]
+fn only_a_shape_clicked_makes_create_the_tool_in_use_again() {
+    let mut inspector = Inspector::new();
+    inspector.tool.open_build(Tool::Create);
+    assert_eq!(inspector.tool.tool, Tool::Create, "in use once opened");
+    inspector.tool.activate(Tool::Edit);
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    let window = inspector
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+        .expect("the Create window");
+    let caret = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-options-toggle")))
+        .expect("the caret");
+    let shapes = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-shapes")))
+        .expect("the shapes");
+    let keep = aurora_i18n::tr!("build-create-keep-creating");
+    let option = inspector
+        .show(vec![])
+        .1
+        .into_iter()
+        .find(|(text, at)| text == keep && window.contains_rect(*at))
+        .expect("the options")
+        .1;
+    // between two shapes, beside the options, on the title bar
+    let gap = egui::pos2(shapes.left() + shapes.width() / 5.0 - 2.0, shapes.top() + 4.0);
+    for at in [gap, option.right_center() + vec2(60.0, 0.0), window.center_top() + vec2(0.0, 14.0)] {
+        click_at(&mut inspector, at);
+        assert_eq!(inspector.tool.tool, Tool::Edit, "a press at {at:?} leaves Edit in use");
+    }
+    let shown = inspector.settings.create_options_shown;
+    click_at(&mut inspector, caret.center());
+    assert_ne!(inspector.settings.create_options_shown, shown, "the caret still works");
+    assert_eq!(inspector.tool.tool, Tool::Edit, "the caret leaves Edit in use");
+    // a shape: Create again, with that shape
+    let third = egui::pos2(shapes.left() + shapes.width() * 0.5, shapes.top() + 10.0);
+    click_at(&mut inspector, third);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    assert_eq!(inspector.settings.create_shape, 2);
+    // that shape clicked again while in use: Create ends, the shape stays
+    // chosen and the window open; clicked once more, Create is back
+    click_at(&mut inspector, third);
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    assert_eq!(inspector.settings.create_shape, 2);
+    assert!(inspector.tool.tool_window_open(Tool::Create));
+    click_at(&mut inspector, third);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    // another shape while in use: Create stays, with it
+    let first = shapes.left_top() + vec2(10.0, 10.0);
+    click_at(&mut inspector, first);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    assert_eq!(inspector.settings.create_shape, 0);
 }

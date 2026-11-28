@@ -361,7 +361,7 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Creator tools
 
-- **LiveMesh**: see your Blender mesh in the viewer while you edit it, with
+- **LiveMesh**: see your Blender or Maya mesh in the viewer while you edit it, with
   nothing uploaded. Rigged meshes follow your own avatar, with their weights,
   shape keys and materials; static meshes and linksets become local objects
   you can place on the ground, move, rotate, resize, attach to your body or
@@ -418,7 +418,7 @@ are planned or in progress: they are not in the viewer yet.
 - **Borderless fullscreen**: Alt+Enter fills the screen without a title bar
   or borders, at once and without a restart, and gives the window back
   exactly as it was (Preferences › Graphics).
-- **In fifteen languages** (English, French, Japanese, German, Spanish,
+- **In fifteen languages with seventeen regional catalogues** (American, British and Australian English, French, Japanese, German, Spanish,
   Italian, Brazilian and European Portuguese, Polish, Russian, Ukrainian,
   Turkish, Norwegian Bokmål, Simplified and Traditional Chinese): the interface follows
   your system language or your choice, applied at once. Japanese uses Second
@@ -473,7 +473,7 @@ are planned or in progress: they are not in the viewer yet.
   Legacy layout one click away in Preferences › Aurora (bars, people,
   chat lines, inventory, places, search, About Land, Region / Estate, photos,
   controls and more).
-- **Arrange it your way**: customizable bottom, left and right toolbars,
+- **Arrange it your way**: customizable top, bottom, left and right toolbars,
   favourites in a menu, row or dock, and windows that move over the whole
   screen. The Legacy Viewer's toolbar buttons are all there: Quick
   preferences, a built-in web browser on a home page you choose, the voice
@@ -734,7 +734,7 @@ frame on your own PC.
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
 - **Interface** — in fifteen languages, flat Aurora theme, Inter font, Tabler icons, glass island bars,
-  customizable bottom and side toolbars, classic layout options, Aurora
+  customizable toolbars on all four edges and a rearrangeable main menu, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
   overlays; an immersive mode that keeps only the chat; Aurora team and
   Linden Lab marks; double-click walk / run / teleport and content-rating controls
@@ -795,14 +795,19 @@ Manager) and, when you tick it, a 30-day MFA authorization.
 
 ### Language
 
-The viewer ships English, French, Japanese (日本語), Simplified Chinese
+The viewer ships American, British and Australian English, French, Japanese (日本語), Simplified Chinese
 (简体中文), Traditional Chinese (繁體中文), Russian (Русский), German (Deutsch),
 Brazilian Portuguese (Português (Brasil)), Spanish (Español), Italian
 (Italiano), Polish (Polski), Turkish (Türkçe), European Portuguese (Português
 (Portugal)), Norwegian Bokmål (Norsk bokmål) and Ukrainian (Українська). It
 detects the system language
-by default. A choice saved in Preferences applies at once. The
-Japanese translation covers every message, with the official Second Life
+by default. A choice saved in Preferences applies at once. English (US),
+English (UK) and English (AU) are available independently. New Zealand,
+Ireland, South Africa, India, Singapore, Hong Kong, Malaysia and Malta use
+British English by default; Canada uses American English. Existing explicit
+language choices are retained. Users following their system language may
+automatically switch to British or Australian English after updating.
+The Japanese translation covers every message, with the official Second Life
 Japanese terms; it draws with Japanese interface fonts (Meiryo UI, Yu Gothic
 UI or MS UI Gothic) and writes dates the Japanese way. The other languages
 use the Second Life terms of the Legacy Viewer's interface in that language,
@@ -987,20 +992,152 @@ for block comments, and Tab / Shift+Tab to indent or outdent the selected
 lines. The arrows in the margin fold the blocks between braces; the Edit menu
 offers Collapse all / Expand all.
 
-### Toolbar buttons
+### Buttons and menus
 
-Right-click a toolbar and choose **Toolbar buttons…** to open the command
-catalogue. Drag buttons onto the bottom dock / bar or the left and right
-bars, between bars, or along a bar to reorder them. Empty side bars show
-drop zones while dragging a button. Right-click a button to remove it, or
-drop it back into the catalogue.
+Right-click a toolbar and choose the final **Customize interface** action to open the
+command catalogue. Drag a command or a submenu from the Aurora menu to the top,
+bottom, left or right bar. Drag along a bar to reorder buttons, between bars to
+move them, or away from destinations to remove them. The floating preview shows
+a trash badge before release; dropping outside the viewer cancels. Empty bars show drop zones
+throughout interface editing. Drag inside the Aurora menu to reorder entries or move them into
+another submenu; a group cannot be moved inside itself.
 
-Each bar has its own alignment, button sizing and icon / label mode. The
-chosen buttons, order, styles and lock are shared by all accounts in the
-same local profile. The catalogue also restores the defaults or clears all
-bars. An older per-account layout is adopted from the first account used
-after the update. Preferences › Aurora offers the glass island and classic
-bar layouts, including where favourites appear.
+Choose **Customize interface** from the Aurora menu, add its toolbar button, or open
+**Buttons and menus** to enter the visual editing mode. The four bars remain
+translucent and outlined, including empty destinations. Glass groups are called
+blocks; drag their compact dotted handle to move every control together. The
+adjacent settings gear changes only that block. Both controls face inward and
+stay centered together. Clicking any control selects it for
+editing, including the native status and audio blocks. The inspector and common
+right-click menu can split a block before/after a control or merge neighboring
+blocks. **Done**, or closing the catalogue, restores normal button actions.
+
+While dragging, the button appears in the provisional toolbar layout, at its
+eventual position and with the destination block's icon/label mode. Prospective separator space
+is visible directly between glass blocks. Move away to see the button as a
+small floating glass panel. Touching a block adds it there; dropping nearby with
+space creates a separate block. Hovering saves nothing. Returning an isolated
+block to the same place changes nothing; a detached block move reuses its
+existing separator boundary and size instead of accumulating gaps.
+
+Pause briefly over the centre of a button, then release when its folder badge
+appears to create a drawer. Both ends of the button remain insertion zones;
+a quick crossing or release reorders it instead. You can also use **Fold block into
+drawer** on an existing block. Move its button to any bar. **Drawer settings**,
+available from its right-click menu or selection inspector, shows its name,
+toggle display and icon before the default display of its contents (icons, labels
+or both). Click its icon button to open the picker beside the window; it flips
+to the left near the right screen edge. Individual button overrides retain priority. Drop a button or a whole
+block onto the drawer icon to append it, even when the drawer is closed. The
+icon highlights before release; hovering does not open it or save changes.
+Clicking the drawer
+opens/closes an anchored panel that fits its contents. Icon rows align with the
+toggle and retain its block height; scrolling appears only
+when the contents exceed the available viewport. While editing, drag commands into the open drawer, reorder
+them there, or drag them back to a bar. **Fold group into drawer** converts a
+group in place. Right-click its button and choose **Unfold as a block** to restore
+its contents as a separate block, preserving order and the drawer's content default.
+Drawer buttons support the same icon/presentation overrides as other buttons.
+Custom drawers have one level; ordinary native submenus remain available inside.
+The panel stays open while using its controls and closes with its button or
+Escape. Contents, names and placements survive restart; opening is temporary.
+
+The entire top row is one toolbar. Navigation/SLURL, availability status, balance,
+clock, latency, FPS, network traffic, media, music, volume, notifications and
+conversation icons can each move independently to the bottom or sides.
+Existing account/system blocks split in place, keeping the saved edge and order.
+The top row starts at the left by default. Each block's gear offers its own
+left/center/right alignment (top/center/bottom on a side bar), independently of
+its neighbours and the bar default. Anchors use available space while preserving
+block order and minimum gaps; explicit Fill sizing and elastic gaps still apply.
+The alignment follows the block through moves, folding and unfolding, and restart.
+A hollow catalogue tile can be dragged to move its existing toolbar entry.
+Drag **Separator** above the button search, or choose **Add separator** from
+a bar's context menu, to add a line inside a block: vertical in a horizontal bar
+and horizontal on the sides. It can be moved or removed like a button.
+**Block spacing** adds the existing gap between glass blocks. Open the editor to
+reveal all gaps, including empty blocks.
+Right-click a gap and open **Block spacing settings** to set its size or
+enable **Fill available space**. Size becomes the minimum when stretching;
+multiple elastic separators share the space left by the controls. The same
+setting controls width in horizontal bars and height on the sides, follows the
+separator when moved, and is saved independently for each instance.
+The catalogue starts with **Main**, a compact selection of everyday buttons.
+**Advanced** contains specialist controls and detailed menu entries. Search finds
+commands in both sections. Conversation icons form a column on the left or right
+and a row at the top or bottom, keeping unread counters and the overflow menu.
+The catalogue groups commands by category, with a category filter and a search
+across labels. Known menu/toolbar aliases appear once. Drag the window's edges to
+resize it; the grid reflows. Block settings are available from each block's gear.
+
+Restore defaults keeps the integrated navigation/address field, groups the right-hand
+information together, places media, music and volume in their own block, and
+keeps notifications alone in the rightmost block.
+The nearby-chat input is a movable entry: edit the interface to drag its field
+or whole block to any edge or into a drawer. It participates in the bottom toolbar's
+ordinary layout even when it is the first block;
+input, drafts, keyboard focus and the width handle follow it.
+Restore defaults places its block at the left; explicit saved alignments stay in effect.
+
+The **Presets** section above the catalogue offers four complete arrangements, saved layouts bundled with the viewer (`crates/aurora-viewer/assets/toolbar/`):
+
+- **Aurora**: separate chat and conversation blocks and grouped tools at the bottom; at the top, the Interfaces block with Preferences and the quick import bar after Bug report, then navigation, status, audio and notifications.
+- **Aurora OldSchool**: the traditional bottom toolbar, the build tools and Places on the left, and the six localized text menus after the Aurora, Bug report and Interfaces blocks.
+- **Aurora Photographer**: Aurora's bars with the capture tools on the left (snapshot, photo roll, 360° capture, immersive mode, Director, second camera) and Phototools, quick preferences, environments and personal lighting at the top.
+- **Legacy**: the traditional arrangement and the existing global Legacy look, with the Interfaces block right of Bug report.
+
+**Save to a notecard…** asks for a name and creates a native inventory notecard in `#Aurora/Aurora Interfaces`, creating missing folders before uploading. The Saved interfaces list reads this inventory folder automatically alongside the built-in presets; selecting a card restores it through the same guarded loader. It uses indented technical JSON containing the four bars, blocks, drawers, menu placements, separators and button appearances. **Load from a notecard…** browses your inventory and restores a validated configuration after you select a copyable notecard. The required `base` field restores Aurora or Legacy bars along with their layout; loading succeeds without a confirmation message. Other window styles, graphics preferences and window positions stay in effect. Cards use schema version 2; older cards are not supported. A download never replaces a layout or base you changed or locked while it was loading.
+
+Choosing a preset replaces the current toolbar arrangement, even locked: the new
+one stays locked. Selecting a button no longer inserts actions into this window;
+use its context menu or its block's gear. Split before/after creates block gaps.
+
+Every toolbar control uses **Customize interface** as its final context-menu entry,
+including native status/audio controls and Report a bug. It selects the clicked
+control. Normal menus retain the control's actions and individual properties.
+Outside customization mode, choose Icon only, Label only, Icon and label, or Default
+directly in the context menu. **Change icon**, with a fixed small glyph, opens the icon picker beside
+the menu, flipping left when needed. The display choices, Change icon and
+**Customize interface** share the final group. A separator follows the four display
+choices; another separates any preceding button-specific actions. Default inherits
+the containing block or drawer. In customization mode, **Button appearance**
+stays immediately above **Customize interface**. A second right click without
+moving the pointer closes a toolbar context menu, even when it covers its button.
+The microphone keeps its native on/off glyph: presentation modes remain editable,
+but its icon cannot be customized.
+Live native
+readouts retain their content during editing; their functional gestures are intercepted.
+Click a gap between blocks in editing mode to open its individual size/stretch settings.
+Block/bar layout operations are grouped in customization mode. Split native controls
+show their own properties: clock settings on the clock, graphics presets on FPS,
+and status choices on status. Cross-field visibility switches stay in Preferences.
+Right-click the bug
+button for **Copy viewer version**, or the notification bell for **Do not disturb**.
+
+Each bar has its own alignment and defaults. A block's context menu or settings
+gear changes only that block's icon/label mode and Auto/Fixed/Fill sizing. Fixed
+equalizes its own buttons; Fill uses remaining space after elastic separators.
+Drag the handle to move a block.
+Right-click a
+button or menu entry and choose **Button appearance** to override just that
+command: icon, label, both, or the containing block/drawer/menu default. Individual
+button overrides retain priority. The menu entry and its toolbar copy have independent overrides. The searchable
+icon grid picks another bundled or skin icon; **Restore default icon** clears that override.
+The **Report a bug** button offers version copying from its context menu;
+customize its appearance from the catalogue.
+
+The **SLURL address bar** button opens its own field beside the button, towards
+the inside of the viewport. Reclicking closes it. Opening refreshes and selects
+the current SLURL for copying or entering a destination, independently of the
+integrated navigation field. **Ctrl+L** opens integrated navigation; this shortcut is configurable. Location
+privacy restrictions still apply.
+
+Buttons, menu order, presentation and lock are shared by all accounts in the same
+local profile. Lock prevents moving or removing commands and changing individual
+button overrides. The catalogue restores
+defaults or clears the bars. Existing per-account layouts are adopted from the
+first account used after the update. Preferences › Aurora offers glass islands
+and the classic bar layout, including where favourites appear.
 
 ### Inventory
 
@@ -1188,6 +1325,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 | `--mcp-port <port>` | Sets the port for the local MCP server (implies `--mcp`) |
 | `--headless` | Runs without a window or GPU renderer (implies `--mcp`) |
 | `--offscreen-gpu` | Runs headless with a windowless offscreen GPU renderer for captures (implies `--mcp`) |
+| `--packaged` | A package manager installs Aurora's updates, as `AURORA_PACKAGED=1` (`docs/LINUX.md`, *Updates*); the link entry Aurora registers passes it, before the link |
 | `<slurl>`, `--url <slurl>` | Starts at this place, or hands it to the viewer already running; must come last |
 | `-h`, `--help` | Shows the help |
 | `-V`, `--version` | Prints the built version then exits, with no window, log or network |

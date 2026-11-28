@@ -1,9 +1,12 @@
 //! Group profile window (LLPanelGroup, indra/newview/llpanelgroup.cpp,
 //! llpanelgroupgeneral.cpp, llpanelgrouproles.cpp, llgroupactions.cpp,
-//! originally LGPL 2.1). A group's name opens it like LLGroupActions::show
+//! fsfloatergroup.cpp, originally LGPL 2.1). A group's name opens it like LLGroupActions::show
 //! (the "group ... inspect" links of Firestorm): "About Land", the build
-//! window, the search results, the People window. One window, on the last
-//! group asked for.
+//! window, the search results, the People window. One window per group,
+//! like the Legacy Viewer's standalone group floaters (FSFloaterGroup, on by
+//! default with FSUseStandaloneGroupFloater): a group already open is
+//! raised, another opens its own window beside it, each with its own tab,
+//! notice draft and edits.
 //!
 //! Two looks, chosen by the "Profiles" row of Preferences › Aurora:
 //! - Aurora: a header with the insignia over its blurred banner, the
@@ -45,10 +48,8 @@ use super::search::SearchAction;
 use super::widgets::{self, Floater};
 use crate::world::World;
 use egui::Vec2;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use uuid::Uuid;
-
-const WINDOW: &str = "group_profile";
 
 /// Ask for the profile of a group from anywhere in the interface (a link, a
 /// name); the app opens it at the end of the frame.
@@ -79,6 +80,9 @@ pub enum GroupAction {
     /// LLGroupMgr's data of the group, asked when the window opens on it or
     /// when our membership changed (`world.group_data.open`).
     Load { group: Uuid, member: bool },
+    /// The groups the windows show now, once that changed
+    /// (`world.group_data.observe`).
+    Observe(HashSet<Uuid>),
     /// "Refresh": the profile and the data again (LLGroupActions::refresh).
     Refresh { group: Uuid, member: bool },
     /// JoinGroupRequest, confirmed.
@@ -89,6 +93,9 @@ pub enum GroupAction {
     OpenNotice { group: Uuid, notice: Uuid },
     /// The notice's attachment, accepted into the inventory.
     SaveAttachment(Uuid),
+    /// "Copy to other groups" of a draft: each group's window opened on a
+    /// new notice holding it (`GroupProfileUi::copy_notice`).
+    CopyNotice { draft: notices::Compose, groups: Vec<Uuid> },
     /// send_group_notice: subject, message, (item, owner) attached.
     SendNotice {
         group: Uuid,
@@ -193,24 +200,56 @@ enum Confirm {
     TooManyGroups,
 }
 
+/// One group's profile window (an FSFloaterGroup instance, keyed by the
+/// group's id): what it shows and what is being written in it, kept until
+/// it closes.
 #[derive(Default)]
-pub struct GroupProfileUi {
-    group: Option<Uuid>,
+pub struct GroupWindow {
+    pub(super) group: Uuid,
+    /// Its floater's id, made once.
+    win_id: String,
     open: bool,
     raise: bool,
+    /// Frames to wait before raising (a copy's windows, one per frame in
+    /// their order): egui's move_to_top keeps the remembered order of the
+    /// layers raised in the same frame, even from the last session, so the
+    /// last one opened could end up behind the others.
+    raise_after: u8,
     /// Frames left to scroll the classic window to the section of the tab a
     /// `show_*` asked for (while the section unfolds; the Aurora window
     /// ignores it).
     reveal: u8,
     pub(super) tab: Tab,
-    /// The data was asked for this group, as member or not: asked again
-    /// when the membership changes or the data was forgotten.
-    loaded: Option<(Uuid, bool)>,
+    /// The data was asked, as member or not: asked again when the
+    /// membership changes or the data was forgotten.
+    loaded: Option<bool>,
     pub(super) members: members::MembersState,
     pub(super) notices: notices::NoticesState,
     pub(super) land: land::LandState,
     pub(super) experiences: experiences::ExperiencesState,
     pub(super) admin: administration::AdminState,
+    /// The classic title ("Group Profile - [NAME]") and the name it was
+    /// made from.
+    title: (String, String),
+    /// Asked while drawing, done by the owner after the window: the
+    /// residents shown without a picture, the invitation.
+    pics: Vec<Uuid>,
+    invite: bool,
+    /// The other groups whose windows hold a notice being written (a copy
+    /// replaces it), told by the owner before the window draws.
+    pub(super) drafting: BTreeSet<Uuid>,
+}
+
+#[derive(Default)]
+pub struct GroupProfileUi {
+    /// The open profile windows, one per group, in the order they opened.
+    windows: Vec<GroupWindow>,
+    /// The group whose window was opened or raised last (the demo's
+    /// `show_*`).
+    latest: Option<Uuid>,
+    /// The groups the windows showed when the group data was last told
+    /// (`GroupAction::Observe`).
+    observed: HashSet<Uuid>,
     confirm: Option<Confirm>,
     /// "Invite to the group".
     pub invite: invite::InviteUi,
@@ -238,74 +277,120 @@ impl GroupProfileUi {
     /// profile on that group, its invitation open.
     pub fn open_with_invite(&mut self, world: &mut World, id: Uuid) {
         self.open(world, id);
-        if self.group == Some(id) {
+        if self.is_shown(id) {
             self.open_invite(id);
         }
     }
 
-    /// LLGroupActions::show: the window on this group, brought to the front,
-    /// its profile asked again.
+    /// LLGroupActions::show → FSFloaterGroup::openGroupFloater: the group's
+    /// own window, raised as it is when already open, its profile asked
+    /// again.
     pub fn open(&mut self, world: &mut World, id: Uuid) {
         if id.is_nil() {
             return;
         }
         world.search.request_group(id);
-        if self.group != Some(id) {
-            self.tab = Tab::Home;
-            self.members = Default::default();
-            self.land = Default::default();
-            self.experiences = Default::default();
-            self.loaded = None;
+        match self.windows.iter_mut().find(|w| w.group == id) {
+            Some(w) => {
+                w.open = true;
+                w.raise = true;
+            }
+            None => {
+                self.windows.push(GroupWindow::new(id));
+                // observed before its first frame asks for its data, so that
+                // a batch of copies does not evict its own groups from the
+                // cache (LLPanelGroup::setGroupID adds the observer before
+                // the tabs ask)
+                self.observed = self.windows.iter().map(|w| w.group).collect();
+                world.group_data.observe(self.observed.clone());
+            }
         }
-        self.group = Some(id);
-        self.open = true;
-        self.raise = true;
+        self.latest = Some(id);
+    }
+
+    /// "Copy to other groups": each group's window, opened or raised, on a
+    /// new notice holding the draft (one that was being written there is
+    /// replaced, as the menu said). Only our groups where we may still send
+    /// notices, `MAX_COPY` at most; each is sent from its own window.
+    pub fn copy_notice(&mut self, world: &mut World, draft: notices::Compose, groups: Vec<Uuid>) {
+        let mut done = HashSet::new();
+        for id in groups {
+            if done.len() >= notices::MAX_COPY || !notices::may_send(world, id) || !done.insert(id) {
+                continue;
+            }
+            self.open(world, id);
+            let step = done.len() as u8;
+            if let Some(w) = self.windows.iter_mut().find(|w| w.group == id) {
+                w.show_tab(Tab::Notices);
+                w.notices.selected = None;
+                w.notices.compose = Some(notices::copied(&draft, world));
+                // raised one per frame in this order: the last in front
+                w.raise = false;
+                w.raise_after = step;
+            }
+        }
+    }
+
+    /// The window opened or raised last.
+    fn current(&mut self) -> Option<&mut GroupWindow> {
+        let id = self.latest?;
+        self.windows.iter_mut().find(|w| w.group == id)
     }
 
     /// Open the Administration tab, on Group identity when `identity` (the
     /// demo's captures).
     pub fn show_admin(&mut self, identity: bool) {
-        self.tab = Tab::Admin;
-        self.reveal = REVEAL_FRAMES;
-        if identity {
-            self.admin.section = administration::Section::Identity;
+        if let Some(w) = self.current() {
+            w.show_tab(Tab::Admin);
+            if identity {
+                w.admin.section = administration::Section::Identity;
+            }
         }
     }
 
     /// Open the Experiences tab (the demo's captures).
     pub fn show_experiences(&mut self) {
-        self.tab = Tab::Experiences;
-        self.reveal = REVEAL_FRAMES;
+        if let Some(w) = self.current() {
+            w.show_tab(Tab::Experiences);
+        }
     }
 
     /// Open the "Land and L$" tab on a page of the accounts (the demo's
     /// captures).
     pub fn show_land(&mut self, ledger: aurora_net::group_money::Ledger) {
-        self.tab = Tab::Land;
-        self.reveal = REVEAL_FRAMES;
-        self.land.ledger = ledger;
+        if let Some(w) = self.current() {
+            w.show_tab(Tab::Land);
+            w.land.ledger = ledger;
+        }
     }
 
     /// Open the Notices tab (the demo's captures), on a new notice when
     /// `compose`.
     pub fn show_notices(&mut self, compose: bool) {
-        self.tab = Tab::Notices;
-        self.reveal = REVEAL_FRAMES;
-        if compose {
-            self.notices.compose = Some(Default::default());
+        if let Some(w) = self.current() {
+            w.show_tab(Tab::Notices);
+            if compose {
+                w.notices.compose = Some(Default::default());
+            }
         }
     }
 
     /// Open the Members tab with a member selected (the demo's captures).
     pub fn show_member(&mut self, id: Uuid) {
-        self.tab = Tab::Members;
-        self.reveal = REVEAL_FRAMES;
-        self.members.selected = Some(id);
+        if let Some(w) = self.current() {
+            w.show_tab(Tab::Members);
+            w.members.selected = Some(id);
+        }
     }
 
-    /// The group shown, while the window is open.
-    pub fn shown(&self) -> Option<Uuid> {
-        self.group.filter(|_| self.open)
+    /// A window shows this group.
+    pub fn is_shown(&self, group: Uuid) -> bool {
+        self.windows.iter().any(|w| w.group == group && w.open)
+    }
+
+    /// The floater id of this group's window, while it is open.
+    pub fn window_id(&self, group: Uuid) -> Option<&str> {
+        self.windows.iter().find(|w| w.group == group && w.open).map(|w| w.win_id.as_str())
     }
 
     /// Join from search or the profile through the same confirmation,
@@ -314,15 +399,6 @@ impl GroupProfileUi {
         let v = view::View::of(world, group);
         if v.member.is_none() && v.profile.is_some_and(|g| g.open_enrollment) {
             self.ask_join(world, &v, group);
-        }
-    }
-
-    /// A row on screen has no picture yet: asked at a few new residents a
-    /// second, as the People window does.
-    pub(super) fn want_pic(&mut self, id: Uuid, now: f64) {
-        if self.pics_asked.contains(&id) || self.pic_budget.take(now) {
-            self.pics_asked.insert(id);
-            self.wanted_pics.insert(id);
         }
     }
 
@@ -342,54 +418,78 @@ impl GroupProfileUi {
         if let Some(group) = self.invite.take_reload() {
             actions.push(GroupAction::ReloadForInvite(group));
         }
-        if let Some(id) = self.shown() {
-            self.profile_window(ctx, c, env, id, &mut actions);
+        let drafting: BTreeSet<Uuid> = self
+            .windows
+            .iter()
+            .filter(|w| w.notices.compose.is_some())
+            .map(|w| w.group)
+            .collect();
+        for i in 0..self.windows.len() {
+            let w = &mut self.windows[i];
+            w.drafting = drafting.iter().copied().filter(|g| *g != w.group).collect();
+            self.profile_window(ctx, c, env, i, &mut actions);
         }
-        // the invitation is a window of its own (LLFloaterGroupInvite), with
-        // or without the group's profile
-        if let Some(group) = self.invite.target() {
-            let v = view::View::of(c.world, group);
-            self.invite.show(ctx, c, env.avatar_pics, &v, &mut actions);
-        }
+        // FSFloaterGroup is not single_instance: a closed window goes, with
+        // what was written in it
+        self.windows.retain(|w| w.open);
+        self.observe(&mut actions);
+        // the invitations are windows of their own (LLFloaterGroupInvite, one
+        // per group), with or without the group's profile
+        self.invite.show(ctx, c, env.avatar_pics, &mut actions);
         self.confirm_dialog(ctx, c.p, &mut actions);
         actions
     }
 
-    /// The profile window on group `id`.
-    fn profile_window(&mut self, ctx: &egui::Context, c: &mut Ctx, env: &Env, id: Uuid, actions: &mut Vec<GroupAction>) {
-        if std::mem::take(&mut self.raise) {
-            widgets::expand_floater(ctx, WINDOW);
+    /// The group data told which groups the windows show, when that changed
+    /// (LLGroupMgr's observers: their data stays in the cache).
+    fn observe(&mut self, actions: &mut Vec<GroupAction>) {
+        let same = self.windows.len() == self.observed.len() && self.windows.iter().all(|w| self.observed.contains(&w.group));
+        if !same {
+            self.observed = self.windows.iter().map(|w| w.group).collect();
+            actions.push(GroupAction::Observe(self.observed.clone()));
         }
-        let member = c.world.groups.is_member(&id);
-        let forgotten = c.world.group_data.get(&id).is_none();
-        if self.loaded != Some((id, member)) || forgotten {
-            self.loaded = Some((id, member));
-            actions.push(GroupAction::Load { group: id, member });
-        }
-        let v = view::View::of(c.world, id);
-        let screen = ctx.content_rect();
-        let mut open = self.open;
-        if env.classic {
-            let size = Vec2::new(430.0, 640.0);
-            let mut floater = Floater::new(
-                WINDOW,
-                aurora_i18n::tr!("ui-group-profile-title"),
-                screen.center() - size * 0.5 + Vec2::new(60.0, 20.0),
-                size,
-            );
-            floater.min_size = Vec2::new(320.0, 300.0);
-            floater.show(ctx, c.p, &mut open, |ui| self.classic(ui, c, env, &v, actions));
-        } else {
-            let size = Vec2::new(960.0, 840.0);
-            let mut floater = Floater::new(WINDOW, v.name.clone(), screen.center() - size * 0.5, size);
-            floater.min_size = Vec2::new(640.0, 460.0);
-            floater.show(ctx, c.p, &mut open, |ui| self.aurora(ui, c, env, &v, actions));
-        }
-        self.open = open;
     }
 
-    /// The resident picker of the invitation window (it searches the
-    /// world), after the windows.
+    /// The profile window `i`, then what it asked of the rest: pictures (a
+    /// few new residents a second, as the People window does), the
+    /// invitation, Join.
+    fn profile_window(&mut self, ctx: &egui::Context, c: &mut Ctx, env: &Env, i: usize, actions: &mut Vec<GroupAction>) {
+        let picking = self.windows[i].admin.picking_insignia();
+        let header = self.windows[i].show(ctx, c, env, actions);
+        let Self {
+            windows,
+            pics_asked,
+            pic_budget,
+            wanted_pics,
+            ..
+        } = self;
+        let w = &mut windows[i];
+        for id in w.pics.drain(..) {
+            if pics_asked.contains(&id) || pic_budget.take(env.now) {
+                pics_asked.insert(id);
+                wanted_pics.insert(id);
+            }
+        }
+        let (group, invite) = (w.group, std::mem::take(&mut w.invite));
+        // the insignia picker is one window ("texture_picker"): the one just
+        // opened takes it from the other group windows
+        if !picking && w.admin.picking_insignia() {
+            for (j, other) in windows.iter_mut().enumerate() {
+                if j != i {
+                    other.admin.stop_picking_insignia();
+                }
+            }
+        }
+        match header {
+            Some(view::Header::Join) => self.join(c.world, group),
+            Some(view::Header::Invite) => self.open_invite(group),
+            None if invite => self.open_invite(group),
+            None => {}
+        }
+    }
+
+    /// The resident pickers of the invitation and of each window's
+    /// Administration (they search the world), after the windows.
     pub fn dialogs(
         &mut self,
         ctx: &egui::Context,
@@ -398,23 +498,121 @@ impl GroupProfileUi {
         images: &HashMap<Uuid, egui::TextureHandle>,
     ) -> HashSet<Uuid> {
         self.invite.picker(ctx, p, world);
-        let mut wanted = self.admin.dialogs(ctx, p, world, images);
+        let mut wanted = HashSet::new();
+        for w in &mut self.windows {
+            wanted.extend(w.admin.dialogs(ctx, p, world, images));
+        }
         wanted.extend(self.create.picker(ctx, p, world, images));
         wanted
     }
 
     /// "Invite" of the head and of the Members tab (LLGroupActions::invite).
-    pub(super) fn open_invite(&mut self, group: Uuid) {
+    fn open_invite(&mut self, group: Uuid) {
         self.invite.open(group, Vec::new());
+    }
+}
+
+impl GroupWindow {
+    fn new(group: Uuid) -> Self {
+        GroupWindow {
+            group,
+            win_id: format!("group_profile-{group}"),
+            open: true,
+            raise: true,
+            ..Default::default()
+        }
+    }
+
+    /// A tab asked from outside (the demo's captures): the classic window
+    /// scrolls to its section.
+    fn show_tab(&mut self, tab: Tab) {
+        self.tab = tab;
+        self.reveal = REVEAL_FRAMES;
+    }
+
+    /// A row on screen has no picture yet: the owner asks for it at its
+    /// pace.
+    pub(super) fn want_pic(&mut self, id: Uuid) {
+        self.pics.push(id);
+    }
+
+    /// "Invite" of the head, the Members tab and Administration
+    /// (LLGroupActions::invite), opened by the owner after the window.
+    pub(super) fn open_invite(&mut self) {
+        self.invite = true;
+    }
+
+    /// The window, and what its header asked (Join, Invite).
+    fn show(&mut self, ctx: &egui::Context, c: &mut Ctx, env: &Env, actions: &mut Vec<GroupAction>) -> Option<view::Header> {
+        if !self.open {
+            return None;
+        }
+        let id = self.group;
+        if self.raise_after > 0 {
+            self.raise_after -= 1;
+            self.raise = self.raise_after == 0;
+            ctx.request_repaint();
+        }
+        if std::mem::take(&mut self.raise) {
+            widgets::expand_floater(ctx, &self.win_id);
+        }
+        let member = c.world.groups.is_member(&id);
+        let forgotten = c.world.group_data.get(&id).is_none();
+        if self.loaded != Some(member) || forgotten {
+            self.loaded = Some(member);
+            actions.push(GroupAction::Load { group: id, member });
+        }
+        let v = view::View::of(c.world, id);
+        let screen = ctx.content_rect();
+        let mut open = self.open;
+        // the floater borrows its id while the body borrows the window
+        let win_id = std::mem::take(&mut self.win_id);
+        let header = if env.classic {
+            // floater_fs_group.xml: "Group Profile - [NAME]", or title_loading
+            // while the name is not known, made again only when it changes
+            if self.title.0 != v.name || self.title.1.is_empty() {
+                let title = if v.name.is_empty() {
+                    aurora_i18n::tr!("ui-group-profile-title-loading").to_owned()
+                } else {
+                    aurora_i18n::tr!("ui-group-profile-title-named", name = v.name.clone())
+                };
+                self.title = (v.name.clone(), title);
+            }
+            let size = Vec2::new(430.0, 640.0);
+            let mut floater = Floater::new(
+                &win_id,
+                self.title.1.clone(),
+                screen.center() - size * 0.5 + Vec2::new(60.0, 20.0),
+                size,
+            )
+            .cascade(widgets::CascadeGroup::Profile { classic: true });
+            floater.min_size = Vec2::new(320.0, 300.0);
+            floater.show(ctx, c.p, &mut open, |ui| {
+                self.classic(ui, c, env, &v, actions);
+                None
+            })
+        } else {
+            let size = Vec2::new(960.0, 840.0);
+            let mut floater = Floater::new(&win_id, v.name.clone(), screen.center() - size * 0.5, size)
+                .cascade(widgets::CascadeGroup::Profile { classic: false });
+            floater.min_size = Vec2::new(640.0, 460.0);
+            floater.show(ctx, c.p, &mut open, |ui| self.aurora(ui, c, env, &v, actions))
+        };
+        self.win_id = win_id;
+        self.open = open;
+        header.flatten()
     }
 
     /// The Aurora look: the header, the tabs, the tab.
-    fn aurora(&mut self, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &view::View, actions: &mut Vec<GroupAction>) {
-        match view::header(ui, c, v, env, &mut self.tab, actions) {
-            Some(view::Header::Join) => self.join(c.world, v.id),
-            Some(view::Header::Invite) => self.open_invite(v.id),
-            None => {}
-        }
+    fn aurora(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &mut Ctx,
+        env: &Env,
+        v: &view::View,
+        actions: &mut Vec<GroupAction>,
+    ) -> Option<view::Header> {
+        let header = view::header(ui, c, v, env, &mut self.tab, actions);
         // members only: back home after leaving the group
         if (self.tab == Tab::Land && !land::visible(v)) || (self.tab == Tab::Experiences && !experiences::visible(v)) {
             self.tab = Tab::Home;
@@ -434,6 +632,7 @@ impl GroupProfileUi {
             Tab::Experiences => experiences::show(self, ui, c, v, actions),
             Tab::Admin => administration::show(self, ui, c, v, actions),
         }
+        header
     }
 
     /// The classic look: the pane of "Search", then the Legacy Viewer's
@@ -472,7 +671,7 @@ impl GroupProfileUi {
                     if members::manages(v) {
                         members::show(self, &mut part(ui, fit), c, env, v, actions);
                     } else {
-                        members::classic_list(self, ui, c, v);
+                        members::classic_list(self, ui, c, v, fit);
                     }
                 });
                 if administration::visible(v) {
@@ -523,7 +722,9 @@ impl GroupProfileUi {
             other => GroupAction::Search(other),
         }));
     }
+}
 
+impl GroupProfileUi {
     /// LLGroupActions::join: the group limit, then the fee.
     fn ask_join(&mut self, world: &World, v: &view::View, group: Uuid) {
         let limit = super::contacts::group_limit(world);

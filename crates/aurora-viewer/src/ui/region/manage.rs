@@ -635,7 +635,7 @@ pub(super) fn scripts(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View
             let size = Vec2::new(0.0, 28.0);
             let label = aurora_i18n::tr!("region-scripts-open");
             if widgets::action_button_if(ui, p, "gauge-filled", label, widgets::ActionKind::Flat, size, can && !waiting).clicked() {
-                top_objects::open(s, v, world, report);
+                top_objects::open(ui.ctx(), s, v, world, report);
             }
         });
     }

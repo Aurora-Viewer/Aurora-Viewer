@@ -7,6 +7,9 @@ use crate::theme::Palette;
 use crate::world::World;
 use egui::{RichText, Vec2};
 
+/// The Set Display Name window's id.
+pub const WINDOW: &str = "display_name";
+
 /// Characters, not bytes.
 const DISPLAY_NAME_MAX_LENGTH: usize = 31;
 
@@ -42,9 +45,10 @@ fn now() -> f64 {
 }
 
 impl DisplayNameUi {
-    /// onOpen: empty fields.
-    pub fn open(&mut self) {
-        self.open = true;
+    /// onOpen: empty fields. Shown again, a minimized window expands
+    /// (LLFloaterReg::showInstance).
+    pub fn open(&mut self, ctx: &egui::Context) {
+        super::widgets::open_floater(ctx, WINDOW, &mut self.open);
         self.name.clear();
         self.confirm.clear();
         self.error = None;
@@ -55,7 +59,7 @@ impl DisplayNameUi {
         let mut out = None;
         let mut open = self.open;
         Floater::new(
-            "display_name",
+            WINDOW,
             aurora_i18n::tr!("common-set-display-name"),
             egui::pos2(screen.center().x - 200.0, screen.center().y - 150.0),
             Vec2::new(400.0, 300.0),
@@ -221,6 +225,19 @@ pub fn reply_message(status: i32, content: &aurora_llsd::Llsd) -> Result<String,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Set Display Name chosen again from the menu or the profile: a
+    /// minimized window expands (LLFloaterReg::showInstance).
+    #[test]
+    fn shown_again_it_expands() {
+        let ctx = egui::Context::default();
+        let mut ui = DisplayNameUi::default();
+        ui.open(&ctx);
+        assert!(ui.open);
+        crate::ui::widgets::minimize_floater(&ctx, WINDOW);
+        ui.open(&ctx);
+        assert!(crate::ui::widgets::floater_expand_asked(&ctx, WINDOW));
+    }
 
     #[test]
     fn lockout_date_in_slt() {

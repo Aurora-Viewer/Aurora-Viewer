@@ -131,10 +131,20 @@ struct Frame {
     aurora: vec4<f32>,          // the aurora: x how bright (0: none), y its heading (rad, clockwise from north), z its foot's height (0..1), w colours (0 green, 1 violet, 2 red)
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
     tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
-    soft: vec4<f32>,            // x: 1 = the soft shadows' mask is read (main view), y: share of the light the sun's shadows let through (1 - intensity), z: projectors' light size in metres (0: the 5-tap filter), main view only
+    soft: vec4<f32>,            // x: 1 = the soft shadows' mask is read (main view), y: share of the light the sun's shadows let through (1 - intensity), z: projectors' light size in metres (0: the 5-tap filter), main view only; w: skip Ignore Object in the narrowed pick view
     snow_stamp_z: array<vec4<f32>, 4>, // the soles' heights of snow_stamps (m), four to a vec4
     snow_far: vec4<f32>,        // x how far the snow lying is drawn (m), whatever falls (while it snows and while it melts); yzw unused
     curvature: vec4<f32>,       // planet curvature (apply_curvature): xy the main camera (region m), z 1 / 2R (0: flat), w unused
+    // Aurora Weather's fog (fog.rs frame_terms; weather_fog): [0] x extinction
+    // at the ground (1/m), y the height it thins over (m), z the ground level
+    // away from the volume (m), w the share left high up; [1] rgb its colour
+    // (the light it scatters), w the scattering's lean (Henyey-Greenstein g);
+    // [2] x the volume's nearest depth, y its farthest (m), z its slices, w
+    // FOG_MODE_*; [3] x 1 / ln(far / near), yzw the camera's axis (depths);
+    // [4] the flow grid's corner (xyz, m) and a cell's side (w; 0: none),
+    // [5] its cells (main view); [6] the ground map's corner (xy, m) and
+    // side (z; 0: none)
+    fog_look: array<vec4<f32>, 7>,
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -221,6 +231,7 @@ const FLAG_PORTAL_CLIP: u32 = 16384u;
 const FLAG_PORTAL_EFFECT: u32 = 32768u;
 const FLAG_WORLD_BLEND_PICK: u32 = 2147483648u; // flags.w, above texture animation
 const FLAG_OBJECT_MASK_PICK: u32 = 1073741824u; // flags.w, world/worn objects only
+const FLAG_IGNORE_OBJECT_PICK: u32 = 134217728u; // flags.w bit 27, Ignore Object click action
 // flags.w bits 24..26: layer rank of a rigged face (types.rs flags, object.wgsl eye_clip)
 const LAYER_RANK_SHIFT: u32 = 24u;
 const LAYER_RANK_MAX: u32 = 7u;
@@ -333,6 +344,15 @@ struct ProbeSet {
 // the sun's soft shadows (soft_shadows.wgsl): per pixel, the light let
 // through (10 bits) and the distance of the surface it was made for (an f16)
 @group(0) @binding(30) var soft_tex: texture_2d<u32>;
+// Aurora Weather's fog volume (fog.rs): per froxel, the light it scattered
+// toward the camera up to there (rgb) and what it lets through (a). A 1^3
+// texture of (0, 0, 0, 1) in the passes without one.
+@group(0) @binding(33) var fog_volume: texture_3d<f32>;
+// Its flow grid (fog.rs `Flow`): how open the air is, 0 sealed to 1 open.
+@group(0) @binding(34) var fog_flow_air: texture_3d<f32>;
+// The ground it lies on (fog_ground.rs): per cell x the terrain or the water,
+// y that smoothed (the level it pools on); 1 km around the camera.
+@group(0) @binding(35) var fog_land: texture_2d<f32>;
 
 @group(1) @binding(0) var<storage, read> records: array<DrawRecord>;
 @group(1) @binding(1) var<storage, read> palettes: array<mat4x4<f32>>;
@@ -1397,12 +1417,273 @@ fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
     if (frame.sky_ll.x < 0.5) {
         // a sky with a reflection probe ambiance: hazeF.glsl, as its surfaces
         // are lit by softenLightF's non-classic branch (env.rs)
-        return ll_haze(col, ll_atmos(world_pos - frame.camera_pos.xyz));
+        return weather_fog(ll_haze(col, ll_atmos(world_pos - frame.camera_pos.xyz)), world_pos);
     }
     let dist = distance(world_pos, frame.camera_pos.xyz);
     let height_factor = exp(-max(world_pos.z - frame.params.y, 0.0) * 0.004);
     let f = 1.0 - exp(-dist * frame.fog.w * height_factor);
-    return mix(col, frame.fog.rgb, clamp(f, 0.0, 1.0));
+    return weather_fog(mix(col, frame.fog.rgb, clamp(f, 0.0, 1.0)), world_pos);
+}
+
+// ------------------------------------------------- Aurora Weather's fog
+// Fog that pools low, drifts and scatters the light (fog.rs, fog.wgsl): over
+// what the haze left, between the camera and a surface. FOG_MODE_HEIGHT
+// works it out here from its height alone; FOG_MODE_VOLUME (the main view)
+// reads the froxel volume fog.wgsl lit and integrated, then the height fog
+// past the volume's far end. Off, nothing: the image of before.
+const FOG_MODE_OFF: u32 = 0u;
+const FOG_MODE_HEIGHT: u32 = 1u;
+const FOG_MODE_VOLUME: u32 = 2u;
+
+// fog_look[2].w bit: the weather's shelter map is drawn and this view's
+// height fog reads it (the main view; the others' shadow atlas may lack it).
+const FOG_MODE_SHELTER: u32 = 4u;
+// What the fog keeps of its density under cover, and of the sky's light.
+// None of its density: a share of it showed in closed rooms under a thick
+// fog (8 % of a fog thick enough outside veiled a theater 10 m deep, on the
+// grid, 2026-11-22); a room is clear whatever the weather outside.
+const FOG_SHELTERED_DENSITY: f32 = 0.0;
+const FOG_SHELTERED_SKY: f32 = 0.25;
+
+fn fog_mode() -> u32 {
+    return u32(frame.fog_look[2].w) & 3u;
+}
+
+fn fog_shelter_on() -> bool {
+    return (u32(frame.fog_look[2].w) & FOG_MODE_SHELTER) != 0u;
+}
+
+// How much a point is under cover (1 under a roof, 0 in the open), from the
+// weather's shelter map (env.wgsl `rain_sheltered`, one tap): fog does not
+// fill the houses, and the sky does not light it there. 0 where the map is
+// not drawn or does not reach.
+fn fog_sheltered(p: vec3<f32>) -> f32 {
+    if (frame.features.y == 0u) { return 0.0; }
+    let slot = frame.features.y - 1u;
+    let lp = frame.spot_vp[min(slot, 15u)] * vec4<f32>(p, 1.0);
+    if (lp.w < 0.5) { return 0.0; }
+    let ndc = lp.xyz / lp.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || ndc.z < 0.0 || ndc.z > 1.0) { return 0.0; }
+    // its square in the atlas: projector_shadows.rs `map_origin`, as
+    // env.wgsl `rain_shelter_tile`
+    let size = f32(textureDimensions(shadow_map).x) * 0.5;
+    let half = size * 0.5;
+    var tile: vec2<f32>;
+    if (slot < 4u) {
+        tile = vec2<f32>(size + f32(slot % 2u) * half, size + f32(slot / 2u) * half);
+    } else {
+        let k = slot - 4u;
+        tile = vec2<f32>(f32(k % 4u) * half, size * 2.0 + f32(k / 4u) * half);
+    }
+    let dims = vec2<f32>(textureDimensions(shadow_map));
+    let at = clamp(uv, vec2<f32>(0.5 / half), vec2<f32>(1.0 - 0.5 / half));
+    return 1.0 - textureSampleCompareLevel(shadow_map, shadow_sampler, (tile + at * half) / dims, ndc.z - 0.0005);
+}
+
+// The sky's light on the fog, from all around: the horizon's. Under a
+// classic sky, in the haze's own hue (calcAtmosphericVars' additive, its
+// sunlit part with an even glow), at the horizon's brightness: the fog and
+// the haze beyond it meet without a change of tint. (The haze's additive at
+// its own scale, its sunlit part left out for the volume to shadow, left
+// the fog nearly black: that sunlit part is most of the haze's light.)
+fn fog_sky_light() -> vec3<f32> {
+    let horizon = frame.sky_horizon.rgb;
+    if (!is_classic_sky()) { return horizon; }
+    let blue_density = frame.sky_blue_density.rgb;
+    let haze_density = frame.sky_blue_density.w;
+    let combined = max(blue_density + vec3<f32>(haze_density), vec3<f32>(1e-6));
+    let amb = frame.sky_ambient.rgb;
+    let cloud_shadow = frame.sky_sunlight.w;
+    let tmp_ambient = amb + (vec3<f32>(1.0) - amb) * cloud_shadow * 0.5;
+    let lit = frame.sky_obj_light.rgb * (1.0 - cloud_shadow) + tmp_ambient;
+    let additive = (frame.sky_blue_horizon.rgb * blue_density + vec3<f32>(frame.sky_blue_horizon.w * haze_density)) / combined * lit;
+    let hue = srgb_to_linear(clamp(additive, vec3<f32>(0.0), vec3<f32>(10.0)) * 2.0);
+    let luma = vec3<f32>(0.2126, 0.7152, 0.0722);
+    return hue * (dot(horizon, luma) / max(dot(hue, luma), 1e-4));
+}
+
+// Henyey-Greenstein's phase function: the share of light scattered at an
+// angle of cosine `c` from where it was going, `g` its lean forward.
+fn fog_phase(c: f32, g: f32) -> f32 {
+    let g2 = g * g;
+    return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
+}
+
+// What the fog's height leaves of its ground density at `z`, over ground
+// level `base` (1 at and below it, toward the high share far above).
+fn fog_height_share(z: f32, base: f32) -> f32 {
+    let high = frame.fog_look[0].w;
+    return high + (1.0 - high) * exp(-max(z - base, 0.0) / max(frame.fog_look[0].y, 0.1));
+}
+
+// The fog's optical depth along a straight segment of length `len` from
+// height `za` to `zb`, on ground level `base`: the share left high up all
+// along, plus the exponential's exact integral above the ground (and its
+// full value below it).
+fn fog_optical_depth(za: f32, zb: f32, len: f32, base: f32) -> f32 {
+    let f = frame.fog_look[0];
+    let lo = min(za, zb);
+    let hi = max(za, zb);
+    let dz = hi - lo;
+    var mean_exp: f32;
+    if (dz < 1e-3) {
+        mean_exp = exp(-max(lo - base, 0.0) / max(f.y, 0.1));
+    } else {
+        // the share below the ground (full density), then the exponential
+        // from where the segment leaves it (none when it never does)
+        let below = clamp((base - lo) / dz, 0.0, 1.0);
+        let a = max(lo, base);
+        let b = max(hi, base);
+        let h = max(f.y, 0.1);
+        mean_exp = below + h * (exp(-(a - base) / h) - exp(-(b - base) / h)) / dz;
+    }
+    return f.x * len * (f.w + (1.0 - f.w) * mean_exp);
+}
+
+// The sun's light on the fog `rel` metres from the camera, as the surfaces
+// there take it: a classic sky's is the Legacy sunlight (ll_sun_linear,
+// the radiance of a white face turned to it: pi times that is the
+// irradiance the others' sun_color is), the others' sun_color. At night
+// both are the moon's, as the surfaces take it (world/env.rs: the light of
+// `sun_dir` is the moon's while the sun is down); sun_color was once
+// scaled by the sun being up (`sun_dir.w`), which left the fog unlit, and
+// with no moon's rays, by night.
+fn fog_sun(rel: vec3<f32>) -> vec3<f32> {
+    if (is_classic_sky()) {
+        return ll_sun_linear(ll_atmos(rel)) * PI;
+    }
+    return frame.sun_color.rgb;
+}
+
+// The light the fog scatters toward the camera, per unit of it, looking
+// along `dir`: the sky's (all around; less of it the more `cover`, the share
+// of the way under cover) and the sun's, leaning toward it; unshadowed (the
+// volume shadows it).
+fn fog_light(dir: vec3<f32>, cover: f32) -> vec3<f32> {
+    let sun = fog_sun(dir * 100.0) * fog_phase(dot(dir, frame.sun_dir.xyz), frame.fog_look[1].w);
+    let sky = fog_sky_light() * mix(1.0, FOG_SHELTERED_SKY, cover);
+    return frame.fog_look[1].rgb * max(sky + sun, vec3<f32>(0.0));
+}
+
+// The smoothed ground the fog lies on under `xy` (bilinear between the map's
+// 4 m cells), or the camera's past the map.
+fn fog_ground_at(xy: vec2<f32>) -> f32 {
+    let r = frame.fog_look[6];
+    if (r.z <= 0.0) { return frame.fog_look[0].z; }
+    let uv = (xy - r.xy) / r.z;
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) { return frame.fog_look[0].z; }
+    let size = i32(textureDimensions(fog_land).x);
+    let pos = clamp(uv * f32(size) - 0.5, vec2<f32>(0.0), vec2<f32>(f32(size - 1)));
+    let i = vec2<i32>(floor(pos));
+    let j = min(i + vec2<i32>(1), vec2<i32>(size - 1));
+    let f = fract(pos);
+    let a = textureLoad(fog_land, i, 0).y;
+    let b = textureLoad(fog_land, vec2<i32>(j.x, i.y), 0).y;
+    let c = textureLoad(fog_land, vec2<i32>(i.x, j.y), 0).y;
+    let d = textureLoad(fog_land, j, 0).y;
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// `col` seen through the height fog from `start` to `end`, `cover` the share
+// of the way under cover (its density thinned there). Each half of the way
+// lies on the ground under it (its ends' mean): far off, the fog climbs the
+// hills and fills the valleys as the volume does near, and seen from high
+// up it does not stop where the volume does.
+fn fog_segment(col: vec3<f32>, start: vec3<f32>, end: vec3<f32>, cover: f32) -> vec3<f32> {
+    let rel = end - start;
+    let len = length(rel);
+    if (len < 1e-3) { return col; }
+    let mid = (start + end) * 0.5;
+    let b0 = fog_ground_at(start.xy);
+    let bm = fog_ground_at(mid.xy);
+    let b1 = fog_ground_at(end.xy);
+    let od = fog_optical_depth(start.z, mid.z, len * 0.5, (b0 + bm) * 0.5)
+        + fog_optical_depth(mid.z, end.z, len * 0.5, (bm + b1) * 0.5);
+    let depth = od * mix(1.0, FOG_SHELTERED_DENSITY, cover);
+    let t = exp(-depth);
+    return col * t + fog_light(rel / len, cover) * (1.0 - t);
+}
+
+// The share of the way from the camera to `p` under cover, from three taps
+// of the shelter map (the camera, the middle, the point): a room keeps its
+// fog out, the open seen from it keeps its own. 0 without the map.
+fn fog_cover(p: vec3<f32>) -> f32 {
+    if (!fog_shelter_on()) { return 0.0; }
+    let cam = frame.camera_pos.xyz;
+    return (fog_sheltered(cam) + fog_sheltered(mix(cam, p, 0.5)) + fog_sheltered(p)) / 3.0;
+}
+
+// Where the volume holds a point: its uvw (w the slice coordinate), and
+// whether it is past the volume's far end (w > 1).
+fn fog_volume_uvw(world_pos: vec3<f32>) -> vec3<f32> {
+    let clip = frame.view_proj * vec4<f32>(world_pos, 1.0);
+    let uv = clip.xy / max(clip.w, 1e-4) * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
+    let depth = dot(world_pos - frame.camera_pos.xyz, frame.fog_look[3].yzw);
+    let near = frame.fog_look[2].x;
+    let w = log(max(depth, near) / near) * frame.fog_look[3].x;
+    return vec3<f32>(uv, w);
+}
+
+// A premultiplied layer at `world_pos` (rgb times its cover, its cover)
+// laid over a scene already seen through the weather's fog: the layer's own
+// colour through it, so that the two together are as if fogged at once.
+fn weather_fog_layer(c: vec4<f32>, world_pos: vec3<f32>) -> vec4<f32> {
+    if (fog_mode() == FOG_MODE_OFF || c.a <= 1e-4) { return c; }
+    return vec4<f32>(weather_fog(c.rgb / c.a, world_pos) * c.a, c.a);
+}
+
+// How open the air at `p` is (the flow grid, read half a cell up as fog.wgsl
+// `fog_open` does); 1 where the grid does not reach.
+fn fog_air(p: vec3<f32>) -> f32 {
+    let cell = frame.fog_look[4].w;
+    if (cell <= 0.0) { return 1.0; }
+    let size = frame.fog_look[5].xyz * cell;
+    let c = (p + vec3<f32>(0.0, 0.0, cell * 0.5) - frame.fog_look[4].xyz) / size;
+    if (any(c <= vec3<f32>(0.0)) || any(c >= vec3<f32>(1.0))) { return 1.0; }
+    return textureSampleLevel(fog_flow_air, lin_clamp, c, 0.0).x;
+}
+
+// Interleaved gradient noise (Jimenez, "Next Generation Post Processing in
+// Call of Duty: Advanced Warfare", SIGGRAPH 2014): a different jitter for
+// neighbouring froxels.
+fn fog_ign(p: vec2<f32>) -> f32 {
+    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
+}
+
+// `col` of a surface at `world_pos` seen through the weather's fog.
+fn weather_fog(col_in: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+    let mode = fog_mode();
+    if (mode == FOG_MODE_OFF) { return col_in; }
+    // (a surface's colour below zero, as the void sea's far off at night,
+    // would come out darker than the fog in front of it)
+    let col = max(col_in, vec3<f32>(0.0));
+    let cam = frame.camera_pos.xyz;
+    if (mode == FOG_MODE_HEIGHT) { return fog_segment(col, cam, world_pos, fog_cover(world_pos)); }
+    let uvw = fog_volume_uvw(world_pos);
+    let slices = frame.fog_look[2].z;
+    // the slice's far side holds what it integrated: a point inside the
+    // first slice takes its share of it. Read up to half a slice nearer or
+    // farther, by the pixel and the frame (the anti-aliasing averages it):
+    // the steps from one slice to the next showed as bands across the
+    // ground at a low angle
+    let pixel = uvw.xy * frame.screen.xy + vec2<f32>(f32((frame.anim_clock.x / 16u) % 64u) * 5.588238);
+    let k = uvw.z * slices + fog_ign(pixel) - 0.5;
+    let at = vec3<f32>(clamp(uvw.xy, vec2<f32>(0.0), vec2<f32>(1.0)), clamp((k - 0.5) / slices, 0.5 / slices, 1.0 - 0.5 / slices));
+    var v = textureSampleLevel(fog_volume, lin_clamp, at, 0.0);
+    if (k < 1.0) { v = mix(vec4<f32>(0.0, 0.0, 0.0, 1.0), v, max(k, 0.0)); }
+    if (uvw.z <= 1.0) {
+        // a surface seen from sealed air through sealed air (a closed room's
+        // walls from inside it) takes none: the volume's froxels, metres
+        // deep, reach past the walls and brought the fog outside in
+        let air = max(max(fog_air(cam), fog_air(mix(cam, world_pos, 0.5))), fog_air(world_pos));
+        return mix(col, col * v.a + v.rgb, smoothstep(0.0, 0.3, air));
+    }
+    // past its far end: the height fog from there on, behind the volume
+    let rel = world_pos - cam;
+    let depth = dot(rel, frame.fog_look[3].yzw);
+    let edge = cam + rel * (frame.fog_look[2].y / max(depth, 1e-3));
+    return fog_segment(col, edge, world_pos, 0.0) * v.a + v.rgb;
 }
 
 // Whether a surface takes the water's fog in its own shading (apply_fog):
@@ -1434,6 +1715,19 @@ fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
         return col*wf.transmission+wf.color;
     }
     return apply_air_fog(col,world_pos);
+}
+
+// `apply_fog` for an additive layer (additive particles). What it lands on
+// already holds the weather fog's light in front of it: the layer takes the
+// fog's transmittance only, not that light again, or every sprite shows as a
+// fog-coloured quad in thick fog. `weather_fog` is affine in its colour
+// (`col * T + L`), so its light is what it gives a black surface. The haze
+// and the water's fog stay as `apply_fog` has them.
+fn apply_fog_additive(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+    let fogged = apply_fog(col, world_pos);
+    let weather = !water_fogs_source(world_pos) || (!camera_underwater() && water_excluded(world_pos));
+    if (!weather || fog_mode() == FOG_MODE_OFF) { return fogged; }
+    return max(fogged - weather_fog(vec3<f32>(0.0), world_pos), vec3<f32>(0.0));
 }
 
 // ------------------------------------------------------------- shadows

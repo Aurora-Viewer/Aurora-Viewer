@@ -315,10 +315,40 @@ impl App {
         pressed && self.alt_codes.active() && reads && self.alt_codes.key_pressed(code, ke.repeat)
     }
 
+    /// A Ctrl+Alt layout character (Ctrl+Alt+2 -> @) typed in a field of
+    /// the window outside `id`, as `ctrl_alt_text` reads it in the viewer's
+    /// own window: egui-winit drops the text of a key pressed with Ctrl in a
+    /// window outside too. True for such a press, which the window's next
+    /// pass reads as typed text and nothing else sees.
+    #[cfg(target_os = "windows")]
+    fn outside_ctrl_alt_text(&mut self, id: WindowId, event: &WindowEvent) -> bool {
+        let WindowEvent::KeyboardInput {
+            event: key,
+            is_synthetic: false,
+            ..
+        } = event
+        else {
+            return false;
+        };
+        // (a menu open in the window reads the keyboard too: the text it is
+        // handed then goes to no field)
+        let Some(text) = self.ctrl_alt_text_in(key, self.outside.reads_keys(id)) else {
+            return false;
+        };
+        // typing like any other: activity for auto-away
+        self.last_input = Instant::now();
+        self.outside.text(id, text);
+        true
+    }
+
     /// An event of the system, first: a window outside reads its own, and
     /// says whether the viewer's handling takes it too.
     pub(super) fn outside_window_event(&mut self, id: WindowId, event: &WindowEvent) -> Went {
         if self.outside_alt_code_key(id, event) {
+            return Went::Outside;
+        }
+        #[cfg(target_os = "windows")]
+        if self.outside_ctrl_alt_text(id, event) {
             return Went::Outside;
         }
         let Some(asked) = self.outside.window_event(id, event) else {

@@ -8,18 +8,46 @@ impl App {
     /// The History window on a conversation: a direct one under the Chat
     /// Service shows its stitched history and puts its resident first in
     /// the queue (LLFloaterConversationPreview, LL viewer 26.5); any other
-    /// its transcript file.
-    pub(super) fn open_history(&mut self, resident: Option<uuid::Uuid>, title: String, file: Option<std::path::PathBuf>) {
+    /// its transcript source. The source's stem stands in for a resident
+    /// not named yet (a Conversation Log entry's `history_file`, else its
+    /// name), so its plaintext is still read.
+    pub(super) fn open_history(
+        &mut self,
+        resident: Option<uuid::Uuid>,
+        title: String,
+        source: Option<crate::world::chat_log::HistorySource>,
+    ) {
+        let fallback = source.as_ref().and_then(|s| s.stem()).map(str::to_owned);
         match resident {
-            Some(id) if self.world.open_direct_preview(id) => self.history_ui.show_stitched(title, id, file),
-            _ => self.history_ui.show_file(title, file),
+            Some(id) if self.world.open_direct_preview(id, fallback.as_deref()) => self.history_ui.show_stitched(title, id, source),
+            _ => {
+                let peer = resident.and_then(|id| self.world.private_peer(id));
+                self.history_ui.show_source(title, peer, source)
+            }
         }
+    }
+
+    /// ChatHistoryIsMissing: the transcript of an entry is not on disk.
+    fn transcript_missing(&mut self) {
+        self.world
+            .notifications
+            .push(Kind::Info, aurora_i18n::tr!("conversation-log-transcript-missing"), "", Data::None);
     }
 
     /// Each frame, with the other windows.
     pub(super) fn conversation_log_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
         if self.demo {
             self.demo_conversation_log();
+        }
+        // the transcript asked to open outside Aurora, once found
+        match self.world.chat_log.take_located() {
+            Some(Some(file)) => {
+                if let Err(e) = crate::open_path::open(&file) {
+                    log::warn!("conversation log: the transcript does not open outside ({e})");
+                }
+            }
+            Some(None) => self.transcript_missing(),
+            None => {}
         }
         let input = ui::conversation_log::Inputs {
             world: &self.world,
@@ -38,23 +66,16 @@ impl App {
         }
         match action {
             Some(ui::conversation_log::Action::Transcript(c)) => {
-                let (title, file) = self.world.logged_transcript(&c);
+                let (title, source) = self.world.logged_transcript_source(&c);
                 let resident = (c.kind == crate::world::chat_log::conversations::Kind::Private).then_some(c.participant);
-                self.open_history(resident, title, file);
+                self.open_history(resident, title, source);
             }
             Some(ui::conversation_log::Action::TranscriptExternally(c)) => {
-                // chat_history_external: the file, else ChatHistoryIsMissing
-                match self.world.logged_transcript(&c).1 {
-                    Some(file) => {
-                        if let Err(e) = crate::open_path::open(&file) {
-                            log::warn!("conversation log: the transcript does not open outside ({e})");
-                        }
-                    }
-                    None => {
-                        self.world
-                            .notifications
-                            .push(Kind::Info, aurora_i18n::tr!("conversation-log-transcript-missing"), "", Data::None);
-                    }
+                // chat_history_external: the file (looked for on the
+                // transcript thread, opened below once found), else
+                // ChatHistoryIsMissing
+                if !self.world.locate_logged_transcript(&c) {
+                    self.transcript_missing();
                 }
             }
             Some(ui::conversation_log::Action::Remove { session, time }) => {

@@ -84,7 +84,8 @@ hundreds of Rust crates. We credit all of them, precisely, every time:
 - **`main` is protected**, for everyone, admins included: nobody pushes to it
   directly; everything goes through a PR, then through the merge queue.
 - **CI** (GitHub Actions, on Windows) has two stages:
-  - on each PR, the quick checks: formatting, clippy, secret scan (the
+  - on each PR, the quick checks: formatting, clippy, secret scan, and
+    the translation catalogues' tests, which take seconds (the other
     tests, the agent already ran them on its machine);
   - in the merge queue, everything, tests included, on the PR combined with
     the latest `main`: what lands on `main` is exactly what was tested.
@@ -354,7 +355,7 @@ there (`scripts/test-tools-console.py`, Python 3).
 | Dev viewer | Your local repository, default profile (the agents' one) |
 | Debug viewer | Your local repository with a console, the debug controls and full debug information (`debugging` profile, its own folder of a few GB) |
 | Demo | The viewer offline, with the choice of an `AURORA_DEMO_*` scenario (read from [docs/TESTING.md](docs/TESTING.md)) |
-| Agent tasks | The folders of `work\`: PR, changes in progress, last build, size; cleanup of those whose PR is merged |
+| Agent tasks | The folders of `work\`: PR, changes in progress, last build, size; cleanup of those whose PR is merged. A task's PR is found whether its branch was pushed to the main repository or to your own fork (PR opened from the fork), as for `end-task.ps1` and the housekeeping of `new-task.ps1` |
 | Disk | The space taken by the builds, and the cleanup (`clean.ps1`) |
 | Viewer logs | Open the folder, read the end of the last log, copy its path for an agent |
 | PR tracking | The live panel (see below) |

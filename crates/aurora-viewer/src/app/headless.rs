@@ -104,6 +104,8 @@ impl App {
                     ml,
                     self.settings.walk_backwards_without_turning,
                     self.settings.avatar_turn_speed,
+                    self.settings.avatar_rotate_threshold_slow,
+                    self.settings.avatar_rotate_threshold_fast,
                 );
             }
             self.revoke_on_sit();

@@ -39,8 +39,132 @@ const APPS: [&str; 14] = [
 /// builds keep `~/.alchemynext`, which `APPS` covers.
 const XDG_APPS: [&str; 1] = ["alchemynext"];
 
-/// Label of the beta grid in the folder names (SECOND_LIFE_BETA_LABEL).
+/// Label of the beta grid in the folder names (SECOND_LIFE_BETA_LABEL): the
+/// account's beta-grid folder when none exists yet.
 const BETA_SUFFIX: &str = ".second_life_beta";
+
+/// The beta grid's labels as viewers write them after `<first_last>.`, its
+/// label lower-cased with spaces as `_` (LLDir::setLindenUserDir and
+/// setPerAccountChatLogsDir, given LLGridManager::getGridLabel in
+/// llstartup.cpp): `second_life_beta` for "Second Life Beta"
+/// (SECOND_LIFE_BETA_LABEL, indra/newview/llviewernetwork.h; the `gridname`
+/// of `util.aditi.lindenlab.com` in app_settings/grids.xml), and `aditi`,
+/// the grid's nick there and its id in LLGridManager::initialize. The
+/// "(Aditi)" names of strings.xml are only shown at the login.
+const BETA_LABELS: [&str; 2] = ["second_life_beta", "aditi"];
+
+/// Whether `label`, after `<first_last>.`, is one of the beta grid's labels
+/// (`BETA_LABELS`, any case). Any other label, an OpenSim grid's or the
+/// demo's, even one holding "beta", is not: its files never mix with the
+/// beta grid's.
+fn is_beta_label(label: &str) -> bool {
+    BETA_LABELS.iter().any(|beta| label.eq_ignore_ascii_case(beta))
+}
+
+/// The account's beta-grid folders in `root` (`<base>.<beta label>`, any
+/// case), the most recently changed first.
+fn beta_folders(root: &Path, base: &str) -> Vec<String> {
+    let found = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            beta_label_of(&name, base)?;
+            let changed = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+            Some((changed, name))
+        })
+        .collect();
+    newest_first(found)
+}
+
+/// Folder names by the time they last changed, the most recent first (then
+/// by name, for a stable choice).
+fn newest_first(mut found: Vec<(std::time::SystemTime, String)>) -> Vec<String> {
+    found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    found.into_iter().map(|(_, name)| name).collect()
+}
+
+/// The beta-grid label of an account folder's name `<base>.<label>`.
+fn beta_label_of<'a>(name: &'a str, base: &str) -> Option<&'a str> {
+    let head = name.get(..base.len())?;
+    let label = name.get(base.len()..)?.strip_prefix('.')?;
+    (head.eq_ignore_ascii_case(base) && !label.is_empty() && is_beta_label(label)).then_some(label)
+}
+
+/// Which viewer family owns a chat log root folder (`APPS`, `XDG_APPS`), or
+/// `Other` when the user chose another folder: what its new 1:1 files are
+/// named like when the folder has none yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootViewer {
+    /// The Legacy Viewer and Aperture.
+    Legacy,
+    Alchemy,
+    SecondLife,
+    BlackDragon,
+    Catznip,
+    /// Other known third-party viewers listed in `APPS` (`Kokua`, `Kirstens S24`,
+    /// `Kirstens S24 DX`, `Megapahit`, `SLLovenseViewer`).
+    ThirdParty,
+    Other,
+}
+
+impl RootViewer {
+    fn of(root: &Path) -> Self {
+        let Some(raw) = root.file_name().and_then(|n| n.to_str()) else {
+            return Self::Other;
+        };
+        let name = raw.trim_start_matches('.').to_ascii_lowercase();
+        if name.starts_with("firestorm") || name.starts_with("aperture") {
+            Self::Legacy
+        } else if name.starts_with("alchemy") {
+            Self::Alchemy
+        } else if name == "secondlife" {
+            Self::SecondLife
+        } else if name == "blackdragon" {
+            Self::BlackDragon
+        } else if name == "catznip" {
+            Self::Catznip
+        } else if matches!(
+            name.as_str(),
+            "kokua" | "kirstens s24 dx" | "kirstens s24" | "megapahit" | "sllovenseviewer"
+        ) {
+            Self::ThirdParty
+        } else {
+            Self::Other
+        }
+    }
+}
+
+/// Whether `root` belongs to a viewer whose default 1:1 transcript naming
+/// scheme is the username form (`jane_doe.txt`: SecondLife, Alchemy,
+/// BlackDragon) rather than the Legacy form (`Jane Doe.txt`: the Legacy Viewer,
+/// Catznip, other TPVs or an unknown folder).
+pub fn uses_username_log_names(root: Option<&Path>) -> bool {
+    matches!(
+        root.map(RootViewer::of),
+        Some(RootViewer::SecondLife | RootViewer::Alchemy | RootViewer::BlackDragon)
+    )
+}
+
+/// Whether `root`'s name is a known Second Life or third-party viewer
+/// application folder (`APPS` / `XDG_APPS`).
+pub fn is_viewer_root(root: &Path) -> bool {
+    RootViewer::of(root) != RootViewer::Other
+}
+
+fn has_subfolder(root: &Path, name: &str) -> bool {
+    if root.join(name).is_dir() {
+        return true;
+    }
+    std::fs::read_dir(root)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|e| e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(name)) && e.file_type().is_ok_and(|t| t.is_dir()))
+}
 
 /// Who to look for in a Legacy Viewer's folders.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,17 +182,82 @@ impl Account {
         format!("{}_{}", self.first, self.last).to_lowercase().replace(' ', "_")
     }
 
-    /// The account's folder in a Legacy Viewer's chat log folder
-    /// (LLDir::setPerAccountChatLogsDir): `first_last`, then `.<grid label>`
-    /// off the main grid, `.demo` for the demo. None on another grid, whose
-    /// label only the Legacy Viewer knows (`grid_known`).
-    pub fn chat_folder(&self) -> Option<String> {
+    /// The account's folder in a viewer's chat log root `root`
+    /// (LLDir::setPerAccountChatLogsDir, indra/llfilesystem/lldir.cpp,
+    /// originally LGPL 2.1: `<first_last>`, then `.` and the grid's label,
+    /// lower-cased with spaces as `_`, unless that label is `second_life`):
+    /// `first_last` on the main grid, `.demo` for the demo. On the beta grid
+    /// each viewer writes its own label for it, so a beta-grid folder that
+    /// already exists is taken (the most recently changed when there are
+    /// several), else `.second_life_beta`; never the bare main-grid folder,
+    /// even where a viewer writes the beta grid's files there. Lists `root`
+    /// on the beta grid: placement only, off the frame. None on another
+    /// grid, whose label only the other viewer knows (`grid_known`).
+    pub fn chat_folder(&self, root: &Path) -> Option<String> {
+        let base = self.folder();
         match self.grid.as_str() {
-            "agni" => Some(self.folder()),
-            "aditi" => Some(format!("{}{BETA_SUFFIX}", self.folder())),
-            grid if self.grid_known() => Some(format!("{}.{grid}", self.folder())),
+            "agni" => Some(base),
+            "aditi" => Some(
+                beta_folders(root, &base)
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| format!("{base}{BETA_SUFFIX}")),
+            ),
+            grid if self.grid_known() => Some(format!("{base}.{grid}")),
             _ => None,
         }
+    }
+
+    /// Whether `dir` is itself this account's Legacy Viewer subfolder (for
+    /// example when the user picked `<root>/<first_last>` directly instead
+    /// of `<root>`). A bare `<custom>/<first_last>` outside a known viewer
+    /// root only counts when it already holds Legacy Viewer files, so a custom
+    /// root whose folder name happens to match `first_last` stays a root.
+    pub fn is_account_dir(&self, dir: &Path) -> bool {
+        let Some(leaf) = dir.file_name().and_then(|n| n.to_str()) else {
+            return false;
+        };
+        let base = self.folder();
+        let in_account_layout =
+            || dir.parent().is_some_and(is_viewer_root) || crate::world::chat_log::names::has_legacy_account_files(dir, false);
+        match self.grid.as_str() {
+            "agni" => leaf.eq_ignore_ascii_case(&base) && !has_subfolder(dir, &base) && in_account_layout(),
+            // a beta-grid folder only, never the bare main-grid one
+            "aditi" => beta_label_of(leaf, &base).is_some(),
+            grid if self.grid_known() => leaf.eq_ignore_ascii_case(&format!("{base}.{grid}")),
+            _ => false,
+        }
+    }
+
+    /// When logged into Aditi (`aditi`) and `dir` is this account's own
+    /// main-grid folder (`<first_last>` under a viewer root or holding
+    /// transcripts) rather than a subfolder accepted by `is_account_dir`,
+    /// returns the leaf name so UI can warn about the grid mismatch instead
+    /// of blaming another account.
+    pub fn is_own_main_grid_dir(&self, dir: &Path) -> Option<String> {
+        if self.grid != "aditi" {
+            return None;
+        }
+        let leaf = dir.file_name()?.to_str()?;
+        let base = self.folder();
+        if !leaf.eq_ignore_ascii_case(&base) || self.is_account_dir(dir) {
+            return None;
+        }
+        let looks_like_account =
+            dir.parent().is_some_and(is_viewer_root) || crate::world::chat_log::names::has_legacy_account_files(dir, false);
+        looks_like_account.then(|| leaf.to_owned())
+    }
+
+    /// Resolve the account's shared chat folder and the viewer root it lives
+    /// under for a user-chosen `root` (which may be either `<viewer_root>`
+    /// or the account subfolder `<viewer_root>/<account>` itself).
+    pub fn resolve_chat_dir(&self, root: &Path) -> Option<(PathBuf, PathBuf)> {
+        if self.is_account_dir(root) {
+            let viewer_root = root.parent().unwrap_or(root).to_path_buf();
+            return Some((root.to_path_buf(), viewer_root));
+        }
+        let name = self.chat_folder(root)?;
+        Some((root.join(name), root.to_path_buf()))
     }
 
     /// False on another grid than Second Life's: its label comes from the
@@ -84,10 +273,11 @@ impl Account {
     pub fn owns(&self, name: &str) -> bool {
         let base = self.folder();
         match self.grid.as_str() {
-            "aditi" => name == format!("{base}{BETA_SUFFIX}"),
+            "aditi" => beta_label_of(name, &base).is_some(),
             _ if !self.grid_known() => name
                 .strip_prefix(base.as_str())
-                .is_some_and(|rest| rest.starts_with('.') && rest != BETA_SUFFIX),
+                .and_then(|rest| rest.strip_prefix('.'))
+                .is_some_and(|label| !label.is_empty() && !is_beta_label(label)),
             _ => name == base,
         }
     }
@@ -208,15 +398,139 @@ mod tests {
 
     #[test]
     fn the_chat_folder_written_like_the_legacy_viewer() {
-        assert_eq!(account("agni").chat_folder().as_deref(), Some("jane_doe"));
-        assert_eq!(account("aditi").chat_folder().as_deref(), Some("jane_doe.second_life_beta"));
+        let root = Path::new("/data/Firestorm_x64");
+        assert_eq!(account("agni").chat_folder(root).as_deref(), Some("jane_doe"));
+        assert_eq!(account("aditi").chat_folder(root).as_deref(), Some("jane_doe.second_life_beta"));
         // never the main grid's folder
-        assert_eq!(account("demo").chat_folder().as_deref(), Some("jane_doe.demo"));
-        assert_eq!(account("custom_osgrid_org").chat_folder(), None);
+        assert_eq!(account("demo").chat_folder(root).as_deref(), Some("jane_doe.demo"));
+        assert_eq!(account("custom_osgrid_org").chat_folder(root), None);
         // the folder it writes is the one the import reads
         for grid in ["agni", "aditi"] {
             let a = account(grid);
-            assert!(a.owns(&a.chat_folder().expect("folder")), "{grid}");
+            assert!(a.owns(&a.chat_folder(root).expect("folder")), "{grid}");
         }
+    }
+
+    #[test]
+    fn the_beta_grid_folder_by_the_general_rule() {
+        let aditi = account("aditi");
+        // no beta-grid folder yet: `.second_life_beta` under every root, a
+        // known viewer's or not
+        for root in [
+            "/data/Firestorm_x64",
+            "/data/AlchemyNext",
+            "/data/SecondLife",
+            "/data/BlackDragon",
+            "/data/Catznip",
+            "/home/j/.local/share/alchemynext",
+        ] {
+            assert_eq!(
+                aditi.chat_folder(Path::new(root)).as_deref(),
+                Some("jane_doe.second_life_beta"),
+                "{root}"
+            );
+        }
+        // the beta grid's labels, never another grid's nor the main grid's,
+        // even one that holds "beta" or "aditi"
+        for (name, beta) in [
+            ("jane_doe.second_life_beta", true),
+            ("Jane_Doe.Aditi", true),
+            ("JANE_DOE.SECOND_LIFE_BETA", true),
+            ("jane_doe.second_life_beta_(aditi)", false),
+            ("jane_doe.second_life_beta_test_grid_(aditi)", false),
+            ("jane_doe.beta", false),
+            ("jane_doe.my_beta_grid", false),
+            ("jane_doe.aditi_beta", false),
+            ("jane_doe", false),
+            ("jane_doe.", false),
+            ("jane_doe.osgrid", false),
+            ("jane_doe.demo", false),
+            ("john_doe.aditi", false),
+        ] {
+            assert_eq!(beta_label_of(name, "jane_doe").is_some(), beta, "{name}");
+            assert_eq!(aditi.owns(name), beta, "{name}");
+        }
+        // on another grid, any label but the beta grid's: an OpenSim grid
+        // whose label holds "beta" is its own
+        let other = account("custom_beta_example_org");
+        assert!(other.owns("jane_doe.my_beta_grid"));
+        assert!(other.owns("jane_doe.osgrid"));
+        assert!(!other.owns("jane_doe.second_life_beta"));
+        assert!(!other.owns("jane_doe.aditi"));
+        assert!(!other.owns("jane_doe"));
+        // several: the most recently changed, then by name
+        let at = |s| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s);
+        assert_eq!(
+            newest_first(vec![
+                (at(10), "jane_doe.second_life_beta".into()),
+                (at(20), "jane_doe.aditi".into()),
+                (at(20), "jane_doe.aditi_beta".into()),
+            ]),
+            ["jane_doe.aditi", "jane_doe.aditi_beta", "jane_doe.second_life_beta"]
+        );
+
+        // an existing beta-grid folder is taken, whichever viewer's root;
+        // the bare main-grid one and another grid's never
+        let custom = std::env::temp_dir().join(format!("aurora-legacy-profile-{}", uuid::Uuid::new_v4()));
+        for root in [custom.join("Firestorm_x64"), custom.join("SecondLife"), custom.join("archive")] {
+            std::fs::create_dir_all(root.join("jane_doe")).expect("main-grid folder");
+            std::fs::create_dir_all(root.join("jane_doe.osgrid")).expect("another grid's folder");
+            assert_eq!(aditi.chat_folder(&root).as_deref(), Some("jane_doe.second_life_beta"), "{root:?}");
+            std::fs::create_dir_all(root.join("jane_doe.aditi")).expect("beta-grid folder");
+            assert_eq!(aditi.chat_folder(&root).as_deref(), Some("jane_doe.aditi"), "{root:?}");
+            // the folder it writes is the one the import reads
+            assert!(aditi.owns("jane_doe.aditi"));
+            assert!(aditi.is_account_dir(&root.join("jane_doe.aditi")));
+            assert!(!aditi.is_account_dir(&root.join("jane_doe")));
+            assert_eq!(
+                aditi.resolve_chat_dir(&root.join("jane_doe.aditi")),
+                Some((root.join("jane_doe.aditi"), root.clone()))
+            );
+        }
+        // on the beta grid, the bare folder is the account's main-grid one,
+        // under any viewer's root
+        for root in ["Firestorm_x64", "SecondLife"] {
+            let bare = custom.join(root).join("jane_doe");
+            assert_eq!(aditi.is_own_main_grid_dir(&bare).as_deref(), Some("jane_doe"), "{root}");
+        }
+
+        // Selecting an empty custom root named `<first_last>` stays a root, while
+        // `<viewer_root>/<first_last>` or a custom folder holding transcripts normalizes.
+        let agni = account("agni");
+        let fs_root = custom.join("Firestorm_x64");
+        let empty_custom_named_root = custom.join("nested_empty").join("jane_doe");
+        std::fs::create_dir_all(&empty_custom_named_root).expect("empty custom root");
+        assert!(!agni.is_account_dir(&empty_custom_named_root));
+        assert_eq!(
+            agni.resolve_chat_dir(&empty_custom_named_root),
+            Some((empty_custom_named_root.join("jane_doe"), empty_custom_named_root.clone()))
+        );
+        let populated_custom_sub = custom.join("transcripts").join("jane_doe");
+        std::fs::create_dir_all(&populated_custom_sub).expect("populated custom account");
+        std::fs::write(populated_custom_sub.join("Bob.txt"), "[2026/10/12 14:00]  Bob: hi\n").unwrap();
+        assert_eq!(
+            agni.resolve_chat_dir(&populated_custom_sub),
+            Some((populated_custom_sub.clone(), custom.join("transcripts")))
+        );
+        assert_eq!(
+            agni.resolve_chat_dir(&fs_root.join("jane_doe")),
+            Some((fs_root.join("jane_doe"), fs_root.clone()))
+        );
+        assert_eq!(aditi.is_own_main_grid_dir(&empty_custom_named_root), None);
+        assert_eq!(aditi.is_own_main_grid_dir(&fs_root.join("jane_doe.aditi")), None);
+        for viewer in [
+            "Firestorm_x64",
+            "SecondLife",
+            "AlchemyNext",
+            "Kokua",
+            "Kirstens S24",
+            "Kirstens S24 DX",
+            "Megapahit",
+            "SLLovenseViewer",
+        ] {
+            assert!(is_viewer_root(&custom.join(viewer)), "{viewer}");
+        }
+        assert!(!is_viewer_root(&custom));
+        std::fs::remove_dir_all(&custom).expect("cleanup");
     }
 }
