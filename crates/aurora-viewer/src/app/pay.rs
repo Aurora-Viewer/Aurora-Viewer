@@ -20,7 +20,7 @@ impl App {
             self.world
                 .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
         }
-        let classic = self.settings.classic_pay_window;
+        let classic = self.settings.classic_pay_window || self.pay_ui.demo_classic;
         let (confirm, threshold) = (self.settings.confirm_payments, self.settings.payment_confirm_threshold);
         let rules = ui::pay::Rules {
             classic,
@@ -74,7 +74,7 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_PAY=resident|short|confirm|sent|group|hold|button
+    /// AURORA_DEMO_PAY=resident|short|confirm|sent|group|hold|button|classic
     /// (docs/TESTING.md): the Pay window in that state, Nova as the payee.
     /// An object's payment is AURORA_DEMO_ACTIONS=pay.
     pub(super) fn demo_pay(&mut self) {

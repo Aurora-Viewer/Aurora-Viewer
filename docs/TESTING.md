@@ -7531,8 +7531,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   which holds it; let go sooner and nothing is paid. `hold`: the terminal
   drawn most of the way through a hold (the card on the reader, three
   lights on), for a capture. `button`: the Pay button alone for this run,
-  as with the setting off (the shared settings are not changed). An
-  object's payment is `AURORA_DEMO_ACTIONS=pay`.
+  as with the setting off; `classic`: the Legacy look for this run (the
+  shared settings are not changed by either). An object's payment is
+  `AURORA_DEMO_ACTIONS=pay`.
 - **`AURORA_DEMO_MONEY_TRACKER=<mode>`**: opens Me › Money tracker on twelve
   made-up transactions of the last 75 minutes (tips through an object,
   gifts, a sale and a purchase, an upload fee, a group's joining fee).

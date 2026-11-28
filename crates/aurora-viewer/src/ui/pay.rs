@@ -155,6 +155,9 @@ pub struct PayUi {
     /// `Settings::pay_contactless` says (a test never changes the settings
     /// every viewer shares).
     pub demo_button: bool,
+    /// AURORA_DEMO_PAY=classic: the Legacy look for this run, whatever
+    /// `Settings::classic_pay_window` says.
+    pub demo_classic: bool,
 }
 
 /// Textures by id: the profile pictures by avatar, the UI images by asset
@@ -1210,9 +1213,11 @@ impl PayUi {
     pub fn demo(&mut self, id: Uuid, mode: &str) {
         let group = mode == "group";
         self.open(id, group);
-        // the terminal half-way through a hold, or the Pay button alone
+        // the terminal most of the way through a hold, the Pay button alone,
+        // or the Legacy look
         self.demo_hold = (mode == "hold").then_some(0.9);
         self.demo_button = mode == "button";
+        self.demo_classic = mode == "classic";
         if let Some(payee) = self.payee.as_mut() {
             match mode {
                 "short" => payee.amount = "1500".into(),
