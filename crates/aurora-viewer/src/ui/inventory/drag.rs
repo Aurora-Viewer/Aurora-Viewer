@@ -542,6 +542,8 @@ pub(super) fn target(
                 at,
                 allowed,
             });
+        } else if rules::in_type(inv, to, 50) && cargo.ids() != [to] {
+            st.message = aurora_i18n::tr!("received-inbox-destination-blocked").into();
         }
         return;
     }
@@ -561,9 +563,8 @@ pub(super) fn target(
         if st.pending.is_some() {
             st.message = aurora_i18n::tr!("ui-inventory-wait-for-the-current-change-to-finish").into();
         } else {
-            // what the cursor showed is what happens: a copy or links the
-            // place refuses (the Current Outfit) do nothing
-            if allowed || mode == DropMode::Move {
+            // Received Items explains a refused drop even for copy and links.
+            if allowed || mode == DropMode::Move || rules::in_type(inv, to, 50) && cargo.ids() != [to] {
                 drop_cargo(inv, cargo.ids(), to, mode, st, prefs, facts, actions);
             }
         }

@@ -504,6 +504,76 @@ fn protected_folder_cannot_move_but_its_contents_can_move_in_and_out() {
 }
 
 #[test]
+fn moving_or_pasting_into_received_items_explains_the_folder_restriction() {
+    let mut inv = fixture();
+    super::demo::seed_received(&mut inv, id(1));
+    let outside = id(8100);
+    let inbox = system(&inv, 50).expect("inbox");
+    let purchase = id(8_300_001);
+    let none = HashSet::new();
+    let message = aurora_i18n::tr!("received-inbox-destination-blocked");
+
+    for to in [inbox, purchase] {
+        assert_eq!(move_selection(&inv, &[outside], to, &none, &none).err().as_deref(), Some(message));
+        for (cut, links) in [(true, false), (false, false), (false, true)] {
+            assert_eq!(
+                paste(&inv, &[outside], to, cut, links, &none, &none).err().as_deref(),
+                Some(message)
+            );
+        }
+    }
+    assert!(move_selection(&inv, &[id(8_300_002)], inv.root, &none, &none).is_ok());
+}
+
+#[test]
+fn explicit_copy_paste_into_a_loaded_purchase_keeps_the_original() {
+    let mut inv = fixture();
+    super::demo::seed_received(&mut inv, id(1));
+    let inbox = system(&inv, 50).expect("inbox");
+    let purchase = id(8_300_001);
+    let copyable = id(8100);
+    let original_parent = inv.items[&copyable].parent;
+    let change = copy_into_received_purchase(&inv, &[copyable], purchase).expect("clipboard copy");
+    assert_eq!(change.copies.len(), 1);
+    assert_eq!(change.copies[0].item, copyable);
+    assert_eq!(change.copies[0].parent, purchase);
+    assert_eq!(inv.items[&copyable].parent, original_parent);
+    assert!(change.operations.is_empty());
+    assert!(!received_purchase_copy_allowed(&inv, &[copyable], inbox));
+    assert!(!received_purchase_copy_allowed(&inv, &[id(8109)], purchase));
+    assert!(!received_purchase_copy_allowed(&inv, &[id(8000)], purchase));
+    assert!(!received_purchase_copy_allowed(&inv, &[copyable, id(8_300_002)], purchase));
+    inv.folders.get_mut(&purchase).unwrap().state = FetchState::Unknown;
+    assert!(!received_purchase_copy_allowed(&inv, &[copyable], purchase));
+}
+
+#[test]
+fn a_received_purchase_offer_reaches_acknowledgement_without_consuming_a_copyable_item() {
+    use super::outgoing::Effect;
+    use aurora_net::{InventoryOfferStatus, NetCommand};
+
+    let mut inv = fixture();
+    super::demo::seed_received(&mut inv, id(1));
+    let item = id(8_300_002);
+    let recipient = id(77);
+    let session = Some(id(78));
+    let bucket = offer_for_residents(&inv, item, &HashSet::new(), 1).expect("eligible item");
+    let NetCommand::OfferInventory {
+        to, receipt, ref bucket, ..
+    } = inv.begin_offer(session, recipient, item, bucket).unwrap()
+    else {
+        panic!("expected an outgoing offer");
+    };
+    assert_eq!(to, recipient);
+    assert_eq!(bucket.as_slice(), [&[6][..], item.as_bytes()].concat());
+    receipt.send(InventoryOfferStatus::Transmitted).unwrap();
+    assert!(inv.poll_offers(session).is_empty());
+    receipt.send(InventoryOfferStatus::Acknowledged).unwrap();
+    assert!(matches!(inv.poll_offers(session).as_slice(), [Effect::Sent { recipient: to, folder: false, .. }] if *to == recipient));
+    assert_eq!(inv.items[&item].parent, id(8_300_001));
+}
+
+#[test]
 fn a_folder_holding_a_locked_folder_goes_to_the_trash_with_it() {
     let inv = fixture();
     let (outer, locked) = (id(8000), id(8001));
@@ -779,6 +849,45 @@ fn offers_are_bounded_and_include_the_folder_as_the_first_tuple() {
         &offer(&inv, id(8100), &HashSet::new()).expect("copyable item")
     ));
     assert!(offer(&inv, id(8100), &HashSet::from([id(8100)])).is_err());
+}
+
+#[test]
+fn an_unworn_transferable_object_can_be_given_after_take_returns_it_to_received_items() {
+    let mut inv = fixture();
+    demo::seed_received(&mut inv, id(2));
+    let inbox = id(8_300_000);
+    let purchase = id(8_300_001);
+    let template = id(8_300_002);
+    let trash = system(&inv, 14).unwrap_or_default();
+    let folder = crate::build::take_folder(&inv, [purchase], trash).expect("Take returns to the purchase folder");
+    let mut taken = inv.items[&template].clone();
+    taken.id = id(8_300_004);
+    taken.parent = folder;
+    taken.next_owner_mask = COPY | MODIFY;
+    let item = taken.id;
+    inv.add_items(vec![taken]);
+
+    let unworn = HashSet::new();
+    assert!(!renameable(&inv, item));
+    assert!(!destination(&inv, purchase));
+    assert!(!mutable(&inv, item), "the receipt stays read-only for edits");
+    assert!(relocatable(&inv, item, &HashSet::new()), "the item can be moved out");
+    assert!(offer(&inv, inbox, &unworn).is_err(), "the system inbox is not offered");
+    assert!(offer(&inv, purchase, &unworn).is_ok(), "an eligible purchase folder can be offered");
+
+    let expected = offer_for_residents(&inv, item, &unworn, 1).expect("can give from the inbox");
+    assert_eq!(expected[0], 6);
+    assert_eq!(&expected[1..], item.as_bytes());
+    assert!(offer_for_residents(&inv, item, &HashSet::from([item]), 1).is_err());
+
+    let record = inv.items.get_mut(&item).expect("taken item");
+    record.owner_mask &= !TRANSFER;
+    assert!(offer_for_residents(&inv, item, &unworn, 1).is_err());
+    assert!(offer(&inv, purchase, &unworn).is_err(), "a folder cannot hide a no-transfer item");
+    let record = inv.items.get_mut(&item).expect("taken item");
+    record.owner_mask |= TRANSFER;
+    record.parent = inv.root;
+    assert_eq!(offer_for_residents(&inv, item, &unworn, 1).unwrap(), expected);
 }
 
 #[test]

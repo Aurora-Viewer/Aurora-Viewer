@@ -807,7 +807,7 @@ fn build_mode(
             ready && single && rules::renameable(inv, id),
             Command::Rename(id),
         );
-        let share = ready && writable && ids.iter().all(|id| rules::offer(inv, *id, &facts.worn).is_ok());
+        let share = ready && ids.iter().all(|id| rules::offer(inv, *id, &facts.worn).is_ok());
         c.add(
             "share",
             TEXT,
@@ -1439,6 +1439,23 @@ mod tests {
         crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
         inv
     }
+    #[test]
+    fn marketplace_inbox_share_menu_checks_transfer_independently_of_rename() {
+        let mut inv = inventory();
+        let facts = facts();
+        crate::world::inventory::demo::seed_received(&mut inv, facts.agent);
+        let item = Uuid::from_u128(8_300_002);
+        let st = InventoryUi::default();
+        let prefs = InventoryPreferences::default();
+        let menu = build(&inv, item, &st, &prefs, &facts);
+        assert!(menu.entries.iter().any(|entry| entry.id == "share" && entry.enabled));
+        assert!(menu.entries.iter().any(|entry| entry.id == "rename" && !entry.enabled));
+
+        inv.items.get_mut(&item).expect("received object").owner_mask &= !rules::TRANSFER;
+        let menu = build(&inv, item, &st, &prefs, &facts);
+        assert!(menu.entries.iter().any(|entry| entry.id == "share" && !entry.enabled));
+    }
+
     #[test]
     fn sound_menu_separates_local_and_world_playback_for_items_links_and_bulk_selection() {
         let mut inv = inventory();

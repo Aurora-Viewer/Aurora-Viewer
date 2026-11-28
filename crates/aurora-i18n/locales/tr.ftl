@@ -1652,7 +1652,6 @@ ao-swimming-down = Aşağı yüzme
 ao-always = Her zaman
 rez-under-land-group = Arazinin grubu altında oluştur
 ui-sound-object-rezzed = Envanterden nesne oluşturuldu
-rez-marketplace = Bu nesneyi bırakmadan önce Pazaryeri ilanlarından çıkarın.
 rez-incomplete = Öğe veya avatar henüz yüklenmedi.
 rez-object-only = Dünyaya yalnızca envanter nesneleri bırakılabilir.
 rez-worn = Bu nesneyi dünyaya bırakmadan önce ayırın.

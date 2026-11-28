@@ -1651,7 +1651,6 @@ ao-swimming-down = Svømme ned
 ao-always = Alltid
 rez-under-land-group = Rezz under landgruppen
 ui-sound-object-rezzed = Objekt rezzet fra beholdningen
-rez-marketplace = Flytt dette objektet ut av Marketplace-oppføringene før du slipper det.
 rez-incomplete = Gjenstanden eller avataren er ikke lastet inn ennå.
 rez-object-only = Bare objekter fra beholdningen kan slippes i verden.
 rez-worn = Løsne dette objektet før du slipper det i verden.

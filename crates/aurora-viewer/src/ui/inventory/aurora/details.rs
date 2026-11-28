@@ -141,11 +141,7 @@ fn add(inv: &Inventory, id: Uuid, actions: &mut Vec<InvAction>) {
 
 /// "Give": the resident picker, for the selection.
 fn can_give(inv: &Inventory, ids: &[Uuid], st: &InventoryUi, facts: &Facts) -> bool {
-    st.pending.is_none()
-        && !ids.is_empty()
-        && ids
-            .iter()
-            .all(|id| rules::mutable(inv, *id) && rules::offer(inv, *id, &facts.worn).is_ok())
+    st.pending.is_none() && !ids.is_empty() && ids.iter().all(|id| rules::offer(inv, *id, &facts.worn).is_ok())
 }
 
 fn give(st: &mut InventoryUi, ids: Vec<Uuid>) {
@@ -761,6 +757,16 @@ fn details_below(
         line = aurora_i18n::tr!("inventory-details-in", kind = line, folder = place);
     }
     ui.label(egui::RichText::new(line).size(12.5).color(p.muted));
+    if inv.items.get(&id).is_some_and(|it| !matches!(it.asset_type, 2 | 24 | 25)) && rules::in_type(inv, id, 50) {
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(aurora_i18n::tr!("received-inbox-edit-move-out"))
+                    .size(12.5)
+                    .color(p.muted),
+            )
+            .wrap(),
+        );
+    }
     if let Some(folder) = inv.folders.get(&id) {
         ui.horizontal(|ui| {
             if widgets::action_button(
@@ -998,6 +1004,21 @@ mod tests {
         assert_eq!(Main::of(&inv, id(6), &facts), Some(Main::TakeOff));
         assert_eq!(Main::of(&inv, id(13), &facts), None, "a worn body part is replaced, not taken off");
         assert_eq!(Main::of(&inv, id(21), &facts), Some(Main::Activate(false)));
+    }
+
+    #[test]
+    fn marketplace_inbox_details_can_give_an_unworn_transferable_object() {
+        let mut inv = Inventory::default();
+        let mut facts = Facts {
+            agent: Uuid::from_u128(2),
+            ..Default::default()
+        };
+        crate::world::inventory::demo::seed(&mut inv, facts.agent);
+        crate::world::inventory::demo::seed_received(&mut inv, facts.agent);
+        let item = Uuid::from_u128(8_300_002);
+        assert!(can_give(&inv, &[item], &InventoryUi::default(), &facts));
+        facts.worn.insert(item);
+        assert!(!can_give(&inv, &[item], &InventoryUi::default(), &facts));
     }
 
     #[test]

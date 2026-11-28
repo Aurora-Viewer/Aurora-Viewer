@@ -33,7 +33,11 @@ pub(super) fn show(
     let Some((_, edit)) = &mut st.property_edit else {
         return false;
     };
-    let can_edit = rules::mutable(inv, id) && !matches!(it.asset_type, 2 | 24 | 25) && st.pending.is_none();
+    let editable_type = !matches!(it.asset_type, 2 | 24 | 25);
+    let can_edit = editable_type && rules::mutable(inv, id) && st.pending.is_none();
+    if editable_type && rules::in_type(inv, id, 50) {
+        ui.label(aurora_i18n::tr!("received-inbox-edit-move-out"));
+    }
     let response = panel(
         ui,
         p,

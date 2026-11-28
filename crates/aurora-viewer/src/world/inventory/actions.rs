@@ -320,8 +320,9 @@ pub fn restorable(it: &aurora_net::inventory::InvItem, opensim: bool) -> bool {
 pub fn next_owner_editable(it: &aurora_net::inventory::InvItem) -> bool {
     it.owner_mask & TRANSFER != 0 && !matches!(it.inv_type, 2 | 3) && !matches!(it.asset_type, 2 | 3)
 }
-/// Can be edited (renamed, created in, shared…): not in the Library, the
-/// current outfit nor Received Items, which only lets its contents leave.
+/// Can be edited (renamed or created in): not in the Library, the current
+/// outfit nor Received Items. Moving and using existing entries have their
+/// own checks.
 /// The locked folders do not count: they only hold themselves in place
 /// (`movable`).
 pub fn mutable(inv: &Inventory, id: Uuid) -> bool {
@@ -597,6 +598,9 @@ pub fn move_selection(
         return super::super::outfit_folders::move_into(inv, ids, to);
     }
     if !destination(inv, to) && Some(to) != system(inv, 14) {
+        if in_type(inv, to, 50) {
+            return Err(aurora_i18n::tr!("received-inbox-destination-blocked").into());
+        }
         return Err(aurora_i18n::tr!("world-inventory-actions-this-folder-cannot-receive-the-selection").into());
     }
     let mut change = Mutation::default();
@@ -693,6 +697,31 @@ pub fn copy_tree(inv: &Inventory, id: Uuid, to: Uuid) -> Result<Mutation, String
     copy_one(inv, id, to, &mut change, &mut HashSet::new())?;
     Ok(change)
 }
+
+/// Explicit clipboard copies can go into a loaded purchase folder. The
+/// delivery root and ordinary drag destinations keep their own rules.
+pub fn received_purchase_folder(inv: &Inventory, to: Uuid) -> bool {
+    inv.folders
+        .get(&to)
+        .is_some_and(|folder| folder.info.type_default == -1 && folder.state == FetchState::Fetched)
+        && mutable_content(inv, to, None)
+        && in_type(inv, to, 50)
+}
+
+pub fn received_purchase_copy_allowed(inv: &Inventory, items: &[Uuid], to: Uuid) -> bool {
+    received_purchase_folder(inv, to)
+        && matches!(items, [id] if inv.items.get(id).is_some_and(|item| {
+            !matches!(item.asset_type, 24 | 25) && held(inv, item) & COPY != 0
+        }))
+}
+
+pub fn copy_into_received_purchase(inv: &Inventory, items: &[Uuid], to: Uuid) -> Result<Mutation, String> {
+    if !received_purchase_copy_allowed(inv, items, to) {
+        return Err(aurora_i18n::tr!("received-inbox-copy-only").into());
+    }
+    copy_tree(inv, items[0], to)
+}
+
 pub fn paste(
     inv: &Inventory,
     ids: &[Uuid],
@@ -703,6 +732,9 @@ pub fn paste(
     worn: &HashSet<Uuid>,
 ) -> Result<Mutation, String> {
     if ids.is_empty() || !(if links { link_destination(inv, to) } else { destination(inv, to) }) {
+        if !ids.is_empty() && in_type(inv, to, 50) {
+            return Err(aurora_i18n::tr!("received-inbox-destination-blocked").into());
+        }
         return Err(aurora_i18n::tr!("world-inventory-actions-the-clipboard-is-empty-or-the-folder-is-protected").into());
     }
     if let Some(root) = crate::world::marketplace::root(inv).filter(|root| under(inv, to, *root)) {
@@ -1139,7 +1171,10 @@ pub fn offer(inv: &Inventory, id: Uuid, worn: &HashSet<Uuid>) -> Result<Vec<u8>,
         if !seen.insert(id) || seen.len() > 42 {
             return Err(aurora_i18n::tr!("world-inventory-actions-sharing-is-limited-to-42-items-per-folder").into());
         }
-        if !mutable(inv, id) || in_type(inv, id, 14) || worn.contains(&id) {
+        // The inbox is read-only for edits. LLGiveInventory::isInventoryGiveAcceptable
+        // and LLInvFVBridge::canShare allow offering its transferable contents.
+        // The folder check below still excludes the system inbox itself.
+        if !mutable_content(inv, id, None) || in_type(inv, id, 14) || worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-a-protected-trashed-or-worn-item-cannot-be-shared").into());
         }
         if let Some(f) = inv.folders.get(&id) {

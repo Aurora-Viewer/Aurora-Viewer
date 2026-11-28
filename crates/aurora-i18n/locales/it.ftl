@@ -1651,7 +1651,6 @@ ao-swimming-down = Nuoto verso il basso
 ao-always = Sempre
 rez-under-land-group = Rezza sotto il gruppo del terreno
 ui-sound-object-rezzed = Oggetto rezzato dall'inventario
-rez-marketplace = Spostare questo oggetto fuori dagli annunci del Marketplace prima di rilasciarlo.
 rez-incomplete = L'oggetto o l'avatar non è ancora stato caricato.
 rez-object-only = Nel mondo si possono rilasciare solo oggetti dell'inventario.
 rez-worn = Staccare questo oggetto prima di rilasciarlo nel mondo.
