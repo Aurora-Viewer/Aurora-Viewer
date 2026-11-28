@@ -905,7 +905,7 @@ mod interface_tests {
         let ui = interface.ui().expect("the interface apart").texture().clone();
         let read = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("read"),
-            size: u64::from(W * H * 4),
+            size: crate::readback::readback_size(u64::from(W * H * 4)),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
