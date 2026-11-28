@@ -5217,6 +5217,78 @@ is visible on the live local avatar; the existing Studio view-projection keeps
 bone handles aligned with the inspection camera. Closing the Studio-owned
 editor ends its clip preview and returns to the Studio's ordinary pose mode.
 
+Shape handles (#5022). The Studio bar's Shape button opens the worn shape in
+the ordinary shape editor (`shape_editor::State`, one draft); while Studio is
+active its "Handles on the avatar" switch (`Settings::shape_handles`, off by
+default) replaces the window with a bar (`ui/shape_handles.rs::bar`) and dots
+on the avatar (`ui/shape_handles.rs::overlay`). `shape_editor/handles.rs` is
+pure: `derive` moves each slider of a `Part` (Body: the Body, Torso and Legs
+tabs; Head: the face tabs) across its range on the rest skeleton and places
+it on the point it moves most, on a collision volume (body), on a vertex of
+the system head's mesh where the slider's morph shows while it is drawn
+(`Anchor::vertex`, morphed and skinned as the avatar draws it), or on a
+Bento face bone under a mesh head, moved out onto the face by the way from
+the bone to the system head's surface (`lift_to_face`) and spread at least
+7 mm apart across the face within an area (`spread_face`; a midline dot
+loses the twin on top of it), then, once the worn
+head's geometry is read on a worker (`shape_editor/face_surface.rs`,
+`Scene::face_meshes`), onto that head's own surface: the outermost skin
+of the worn face meshes on the dot's own line out from the head's centre,
+whichever bones that skin follows; at most two clearly different sliders per
+point, mirrored to the other side. Among points a slider moves nearly as
+much, a chain of volumes it shifts takes the point where they meet (Knee
+Angle at the knee), else the highest, then the most directly reshaped. The
+bar's Body | Head picks the part and the app frames it
+(`App::frame_handles_part`, `Studio::inspect_head`); each part opens on its
+areas (`handles::area_of`: the editor's face tabs on the head; on the body
+the part of the skeleton the dot sits on, arms, legs (a feral's hind limbs
+included), head and neck or torso), and a click shows one area's dots
+(`State::handles_area`). The areas are lit and picked on the avatar's own
+meshes (`shape_editor/mesh_areas.rs`: each joint's area as a part class of
+the renderer's part tint and pick, the poser's `part_joints`,
+`part_classes` and `part_pick`, which `App` gives the shape handles while
+they want them), so a mesh body or head, a furry or a feral lights and
+picks where its skin follows the bones (the eyes' bones are the Eyes
+area's and the brows the Head's, whatever moves them); the system head, whose face is
+morphs on one bone, and an avatar whose meshes are not drawn keep glows
+over the face's dots or the body's collision volumes. A double-click
+on a handle opens its number window (`number_window`, the sliders' own value
+field), and the bar's Save as opens the editor's name dialog. `shown_params`
+keeps, under a hidden system body or head, the sliders that
+move a joint the worn rigged meshes use (`Scene::rigged_joints`, `bom_mask`
+and alpha bakes in `App::update_shape_handles`). A drag holds the drawn pose
+(`Pose`), rebuilds the skeleton with `Rig::world_with` for trial slider values
+(`Body`, feet kept on the floor) and solves damped least squares in screen
+space, within each slider's range (`Drag::step`). A handle is drawn as an
+arrow along its strongest slider's way on screen; the hovered or held one
+also shows each slider's path sampled through the same model
+(`handles::track`), its default and the shape editor's end captions. A slider
+that resizes its part (`handles::resizes`: its volume's centre moves little and
+it grows on two axes) is a grow mark with the part's outline at the slider's
+ends (`handles::outline`, the ellipsoid seen along the view), and its drag
+drives that outline's reach on screen by the pointer's distance from the
+part's centre instead of the point, which works from any angle (pressed near
+the part's middle, it scrubs: up and right grow). A dot whose sliders move
+it only a few points on screen across their whole range (Knee Angle seen
+from the side), and a bone's resize under a mesh head, which has no
+outline, scrub the slider like a number instead (`Drag::scrub`), growing
+the way the slider moves the dot on screen, however little; seen straight
+along its motion (Love Handles from the front), out from its part's centre
+on screen when the slider takes the dot away from that centre; up and
+right when neither tells. The Head
+framing aims at the head volume's place, a feral's ahead of its body too. Each step takes central
+slopes and is halved until it brings the point closer (no overshoot across a
+slider's bend). While a handle is held or typed into, the others dim. Until
+a body part's new morph is built, the avatar keeps drawing the previous one
+(`Scene` avatar records), so a drag shows no flash of the unmorphed body. Edits go to the draft and
+`State::changed` only: the local preview is the sliders' one, and Save sends
+the shape once through the editor's own `SaveWearable` path.
+`shape_editor/history.rs` gives the draft one undo history for the sliders and
+the handles (a gesture is one step; Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y). The handles
+hide while the poser or the animation editor holds the avatar, and their dots
+own the pointer (`State::handles_pointer` in `App::ui_takes_pointer`) so a
+press on one does not orbit the camera.
+
 ## Local interactive water
 
 AO quick controls (2026-10-18, the card of 2026-11-27): `ui/ao/quick.rs` opens above the toolbar AO

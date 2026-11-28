@@ -403,9 +403,7 @@ impl ShapeParams {
     /// Apply their drivers without quantizing the edited values to bytes.
     pub fn edited_weights(&self, base: &[u8], changed: &BTreeMap<i32, f32>) -> HashMap<i32, f32> {
         let mut weights = self.weights(base);
-        for (&id, &weight) in changed {
-            self.set_weight(&mut weights, id, weight, 0);
-        }
+        self.apply_changes(&mut weights, changed);
         self.effective(weights)
     }
 
@@ -507,13 +505,27 @@ impl ShapeParams {
         self.shape_weights(weights, rig)
     }
     pub fn weights_with(&self, values: &[u8], changed: &BTreeMap<i32, f32>) -> HashMap<i32, f32> {
-        let mut weights = self.weights(values);
-        for (id, weight) in changed {
-            if weight.is_finite() {
-                self.set_weight(&mut weights, *id, *weight, 0);
-            }
-        }
+        self.with_changes(self.weights(values), changed)
+    }
+    /// [`Self::weights_with`] over weights already expanded from the
+    /// appearance values (`weights`): the shape handles evaluate the body
+    /// many times a frame and expand the drivers of the values once.
+    pub fn with_changes(&self, mut weights: HashMap<i32, f32>, changed: &BTreeMap<i32, f32>) -> HashMap<i32, f32> {
+        self.apply_changes(&mut weights, changed);
         self.effective(weights)
+    }
+
+    /// Set the `changed` weights, the drivers last: a worn shape's draft
+    /// lists its driven parameters too (Saddle Bags' 850 and 854, Love Handles'
+    /// 855 and 856), and set in id order after their driver they put back the
+    /// value it had replaced, so a shape handle's drag saw no change while
+    /// the avatar, drawn from the transmitted values, did.
+    fn apply_changes(&self, weights: &mut HashMap<i32, f32>, changed: &BTreeMap<i32, f32>) {
+        let driver = |id: &i32| self.params.get(id).is_some_and(|p| matches!(p.kind, Kind::Driver(_)));
+        let (drivers, others): (Vec<_>, Vec<_>) = changed.iter().filter(|(_, w)| w.is_finite()).partition(|(id, _)| driver(id));
+        for (id, weight) in others.into_iter().chain(drivers) {
+            self.set_weight(weights, *id, *weight, 0);
+        }
     }
     pub fn shape_weights(&self, weights: HashMap<i32, f32>, rig: &Rig) -> Shape {
         let male = weights.get(&PARAM_MALE).copied().unwrap_or(0.0) > 0.5;

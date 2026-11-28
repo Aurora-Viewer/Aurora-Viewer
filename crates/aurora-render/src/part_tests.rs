@@ -15,7 +15,9 @@ fn function(source: &str, name: &str) -> String {
     source[start..end].to_owned()
 }
 
-fn shader() -> String {
+/// The production part shaders; `through`: an unrigged face lets the pick
+/// through (`FrameParams::part_pick_through`, the shape handles).
+fn shader(through: bool) -> String {
     let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
     let common = include_str!("shaders/common.wgsl");
     let mut source = format!(
@@ -27,11 +29,11 @@ const FLAG_DOUBLE_SIDED:u32={sided}u;
 {record}
 struct SkinBind {{joint:vec4<u32>}};
 const skin_binds=array<SkinBind,2>(SkinBind(vec4<u32>(0u)),SkinBind(vec4<u32>(1u,0u,0u,0u)));
-struct Frame {{eye:vec4<f32>,part_joints:array<vec4<u32>,2>,part_classes:array<vec4<u32>,8>}};
+struct Frame {{eye:vec4<f32>,part_joints:array<vec4<u32>,2>,part_classes:array<vec4<u32>,8>,part_pick_mode:vec4<u32>}};
 // Joint 0 belongs to Body (1), joint 1 to the left hand (3).
 const frame=Frame(vec4<f32>(0.0),array<vec4<u32>,2>(vec4<u32>(2u,0u,0u,0u),vec4<u32>(0u)),
     array<vec4<u32>,8>(vec4<u32>(49u,0u,0u,0u),vec4<u32>(0u),vec4<u32>(0u),vec4<u32>(0u),
-        vec4<u32>(0u),vec4<u32>(0u),vec4<u32>(0u),vec4<u32>(0u)));
+        vec4<u32>(0u),vec4<u32>(0u),vec4<u32>(0u),vec4<u32>(0u)),vec4<u32>({through}u,0u,0u,0u));
 @group(0) @binding(0) var<storage,read> records:array<DrawRecord>;
 struct VsIn {{pos:vec3<f32>,weights:vec4<f32>,joints:vec4<u32>,instance:u32}};
 fn eye_model(r:DrawRecord,v:VsIn)->mat4x4<f32> {{return r.model;}}
@@ -57,6 +59,7 @@ fn input(vertex:u32,instance:u32)->VsIn {{
         blend = flags::ALPHA_BLEND,
         sided = flags::DOUBLE_SIDED,
         record = declaration(common, "DrawRecord"),
+        through = u32::from(through),
     );
     for name in ["PoserPartOut", "PoserPickOut"] {
         source.push_str(&declaration(&object, name));
@@ -112,9 +115,17 @@ fn check_part_rasterization(instance: wgpu::Instance) {
     };
     eprintln!("Poser raster regression adapter: {:?}", adapter.get_info());
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("part GPU device");
+    for through in [false, true] {
+        check_part_mode(device.clone(), queue.clone(), through);
+    }
+}
+
+/// The cases, with unrigged faces occluding the pick (the poser) or letting
+/// it through (`through`, the shape handles); the mask is the same.
+fn check_part_mode(device: wgpu::Device, queue: wgpu::Queue, through: bool) {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("production poser parts regression"),
-        source: wgpu::ShaderSource::Wgsl(shader().into()),
+        source: wgpu::ShaderSource::Wgsl(shader(through).into()),
     });
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
@@ -238,8 +249,19 @@ fn check_part_rasterization(instance: wgpu::Instance) {
             3,
             [255, 255],
         ),
-        ("accessory first", vec![accessory, covered_hand], 0, [0, 255]),
-        ("accessory last", vec![covered_hand, accessory], 0, [0, 255]),
+        // the hand behind glasses: hidden from the poser, not the handles
+        (
+            "accessory first",
+            vec![accessory, covered_hand],
+            if through { 3 } else { 0 },
+            [0, 255],
+        ),
+        (
+            "accessory last",
+            vec![covered_hand, accessory],
+            if through { 3 } else { 0 },
+            [0, 255],
+        ),
         ("hand first", vec![hand, body], 3, [255, 255]),
         ("hand last", vec![body, hand], 3, [255, 255]),
         (
@@ -374,7 +396,7 @@ fn check_part_rasterization(instance: wgpu::Instance) {
         assert_eq!(
             u32::from_le_bytes(bytes[..4].try_into().unwrap()),
             expected_part,
-            "{name}: picked part"
+            "{name} (through {through}): picked part"
         );
         assert_eq!(&bytes[256..258], &expected_mask, "{name}: mask share and coverage");
         let depth_bytes = scene_readback.get_mapped_range(..).expect("scene depth bytes");

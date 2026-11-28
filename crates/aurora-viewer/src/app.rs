@@ -5758,8 +5758,11 @@ impl App {
         if pressed && input == Input::key(winit::keyboard::KeyCode::Escape) && self.director_escape() {
             return;
         }
+        // the shape handles take Escape first (back from an area, then the
+        // bar closes): it leaves the Studio once they are gone
         if (self.avatar_studio.active || self.studio_transition.busy())
             && !self.viewfinder_on()
+            && !self.shape_ui.handles_view()
             && pressed
             && input == Input::key(winit::keyboard::KeyCode::Escape)
         {
@@ -12309,12 +12312,21 @@ impl App {
             // (the joints go with the frame's parameters), or whose part
             // under the cursor it asks (part_pick.rs): its faces listed
             let pick = gfx.renderer.take_part_pick();
-            self.ik_editor.set_poser_mesh_pick(pick);
+            // or the shape handles' areas on the agent's meshes (#5022): they
+            // never show while the poser holds the avatar (handles_blocked)
+            let shape_parts = self.shape_ui.mesh_part_wanted();
+            if shape_parts {
+                self.shape_ui.set_mesh_pick(pick);
+                self.ik_editor.set_poser_mesh_pick(None);
+            } else {
+                self.ik_editor.set_poser_mesh_pick(pick);
+            }
             self.scene.poser_part = self
                 .ik_editor
                 .poser_part_overlay()
                 .map(|(id, _)| id)
                 .or(self.ik_editor.poser_pick_subject())
+                .or(shape_parts.then_some(self.world.agent_id))
                 .and_then(|id| self.world.objects.index_of_uuid(&id));
             if self.world.teleporting {
                 self.ik_editor.stop_editing();
@@ -12794,8 +12806,13 @@ impl App {
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
             // the poser's subject drawn as meshes or not (an impostor, a
             // jelly doll, first person): its part falls back to the bones
-            self.ik_editor
-                .set_poser_meshes_drawn(self.scene.poser_part.map(|_| self.scene.poser_part_skinned));
+            // (the shape handles' areas, the same: they keep their glows)
+            let drawn = self.scene.poser_part.map(|_| self.scene.poser_part_skinned);
+            if self.shape_ui.mesh_part_wanted() {
+                self.shape_ui.set_meshes_drawn(drawn);
+            } else {
+                self.ik_editor.set_poser_meshes_drawn(drawn);
+            }
             // (the keyboard in any of the viewer's windows: the Create tool is
             // chosen in the build tools' window, which may be outside)
             let preview = if (self.in_front() || self.demo && self.capture.is_some())
@@ -13366,15 +13383,27 @@ impl App {
             // the poser's hovered part, drawn from the subject's meshes
             // none in a photo: the part is the poser's interface, not the
             // scene (a photo without the interface must not carry it)
+            // (or the shape handles' area under the pointer, #5022)
             part_joints: self
                 .ik_editor
                 .poser_part_overlay()
+                .map(|(_, mask)| mask)
+                .or(self.shape_ui.mesh_tint)
                 .filter(|_| self.snapshots.capturing.is_none())
-                .map_or([0; 8], |(_, mask)| mask),
-            part_classes: self.ik_editor.poser_pick_classes(&self.world.avatar_lib.rig),
+                .unwrap_or([0; 8]),
+            part_classes: if self.shape_ui.mesh_pick_wanted {
+                self.shape_ui.mesh_part_classes()
+            } else {
+                self.ik_editor.poser_pick_classes(&self.world.avatar_lib.rig)
+            },
+            // the shape handles' areas: glasses or a helmet do not hide the
+            // skin behind them from a click
+            part_pick_through: self.shape_ui.mesh_pick_wanted,
             part_pick: self
                 .ik_editor
                 .poser_pick_subject()
+                .map(|_| ())
+                .or(self.shape_ui.mesh_pick_wanted.then_some(()))
                 .filter(|_| self.snapshots.capturing.is_none())
                 .filter(|_| self.cursor_pos.0 >= 0.0 && self.cursor_pos.1 >= 0.0)
                 .map(|_| [self.cursor_pos.0 as u32, self.cursor_pos.1 as u32]),
@@ -13987,7 +14016,8 @@ impl App {
             // the second, or a click that changed a row's size is lost.
             actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
             self.ao_preview_unseen();
-            self.studio_overlay(ui.ctx());
+            self.studio_overlay(ui.ctx(), &projector);
+            self.demo_shape_handles(&projector);
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             crate::outside::carry::hint(ui.ctx(), &self.palette);
             if inventory_drop.is_empty() {
@@ -21329,13 +21359,24 @@ impl App {
                 self.outfit_batch_window(&ctx, &p);
                 self.update_demo_shape_mesh();
                 self.shape_ui.update(&mut self.world, &self.scene, &ctx);
-                let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet);
+                self.update_shape_handles();
+                let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet, self.shape_ui.handles);
                 let shape_group = self.shape_ui.group;
                 let (shape_actions, visible) = ui::shape::show(&ctx, &p, &mut self.world, &mut self.shape_ui, (&self.settings).into());
                 self.demo_shape_drag();
-                if shape_preferences != (self.shape_ui.hints, self.shape_ui.feet) {
+                if shape_preferences != (self.shape_ui.hints, self.shape_ui.feet, self.shape_ui.handles) {
                     self.settings.shape_show_hints = self.shape_ui.hints;
                     self.settings.shape_height_feet = self.shape_ui.feet;
+                    // only a switch clicked this frame: a demo's in-memory
+                    // choice (AURORA_DEMO_SHAPE_HANDLES) is never saved
+                    if shape_preferences.2 != self.shape_ui.handles {
+                        self.settings.shape_handles = self.shape_ui.handles;
+                        if self.shape_ui.handles_view() {
+                            self.studio_reset_view();
+                            // then the part shown (the head, if it was left on it)
+                            self.shape_ui.part_framing = true;
+                        }
+                    }
                     self.settings.save();
                 }
                 self.shape_ui.request_hints(&self.world, &self.scene.jobs, &ctx, &visible);

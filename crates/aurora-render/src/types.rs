@@ -1925,6 +1925,10 @@ pub struct FrameParams {
     /// 5 wings, 6 tail), eight four-bit classes per word. The shader sums
     /// each part's weights and interpolates them before picking a part.
     pub part_classes: [u32; 32],
+    /// Whether an unrigged worn object lets the pick through to the skin
+    /// behind it: the shape handles' areas (glasses do not hide the eyes,
+    /// a helmet the head); the poser's pick keeps it as an occluder.
+    pub part_pick_through: bool,
     /// The pixel whose visible part of `part_faces` to read back
     /// (part_pick.rs): the cursor while Ctrl hovers the subject.
     pub part_pick: Option<[u32; 2]>,

@@ -326,6 +326,7 @@ impl State {
                     edited: original.clone(),
                     original,
                     pending: None,
+                    history: Default::default(),
                 });
                 self.changed(world);
             }

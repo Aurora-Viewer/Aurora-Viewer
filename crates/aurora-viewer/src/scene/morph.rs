@@ -37,6 +37,24 @@ pub struct MorphTarget {
     d_uvs: Vec<[f32; 2]>,
 }
 
+impl MorphTarget {
+    /// How far the morph moves one vertex at weight 1 (none when the morph
+    /// leaves it): one point of the system head for the shape handles. The
+    /// file lists a morph's vertices in ascending order.
+    pub fn delta(&self, vertex: u32) -> Option<Vec3> {
+        let i = self.vertices.binary_search(&vertex).ok()?;
+        self.d_positions.get(i).copied()
+    }
+    /// Move `positions` (a part's vertices) by the morph at `weight`.
+    pub fn add_to(&self, positions: &mut [Vec3], weight: f32) {
+        for (&v, d) in self.vertices.iter().zip(&self.d_positions) {
+            if let Some(p) = positions.get_mut(v as usize) {
+                *p += *d * weight;
+            }
+        }
+    }
+}
+
 /// The morph parameters of avatar_lad.xml: (parameter, morph name) by mesh
 /// file, without the morphs that wait for a mask.
 pub fn mesh_params(lad: &[u8]) -> HashMap<String, Vec<(i32, String)>> {
@@ -162,6 +180,25 @@ mod tests {
 
     fn part<'a>(lib: &'a AvatarLibrary, name: &str) -> &'a AvatarPart {
         lib.parts.iter().find(|p| p.name == name).expect("body part")
+    }
+
+    /// `MorphTarget::delta` searches a morph's vertices: they come sorted.
+    #[test]
+    fn a_morph_lists_its_vertices_in_order_and_finds_one() {
+        let lib = AvatarLibrary::load();
+        for part in &lib.parts {
+            for m in &part.morphs {
+                assert!(m.vertices.windows(2).all(|w| w[0] < w[1]), "{} morph {}", part.name, m.param);
+                if let Some((&v, d)) = m.vertices.iter().zip(&m.d_positions).nth(m.vertices.len() / 2) {
+                    assert_eq!(m.delta(v), Some(*d));
+                }
+            }
+        }
+        let head = part(&lib, "head");
+        let m = &head.morphs[0];
+        let mut positions = vec![Vec3::ZERO; head.vertices.len()];
+        m.add_to(&mut positions, 2.0);
+        assert_eq!(positions[m.vertices[0] as usize], m.d_positions[0] * 2.0);
     }
 
     #[test]

@@ -3466,6 +3466,10 @@ fn vs_part_pick(in: VsIn) -> PoserPickOut {
             out.parts_lo += select(vec4<f32>(0.0), vec4<f32>(weight), vec4<u32>(part) == vec4<u32>(0u, 1u, 2u, 3u));
             out.parts_hi += select(vec4<f32>(0.0), vec4<f32>(weight), vec4<u32>(part) == vec4<u32>(4u, 5u, 6u, 7u));
         }
+    } else if (frame.part_pick_mode.x != 0u) {
+        // The shape handles: glasses or a helmet do not hide the area behind
+        // them (class 7, never a part, marks the face for fs_part_pick).
+        out.parts_hi.w = 1.0;
     } else {
         // Unrigged accessories still win depth and occlude the body.
         out.parts_lo.x = 1.0;
@@ -3476,7 +3480,7 @@ fn vs_part_pick(in: VsIn) -> PoserPickOut {
 @fragment
 fn fs_part_pick(in: PoserPickOut, @builtin(front_facing) front: bool) -> @location(0) vec4<u32> {
     portal_clip(records[in.record], in.world_pos);
-    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    if (!poser_part_texel_shown(records[in.record], in.uv, front) || in.parts_hi.w > 0.5) { discard; }
     var best = 0u;
     var weight = in.parts_lo.x;
     for (var part = 1u; part <= 6u; part++) {

@@ -142,7 +142,7 @@ pub(super) fn name_row(ui: &mut egui::Ui, p: &Palette, glyph: Option<&str>, name
     clicked
 }
 
-fn groups() -> [&'static str; 9] {
+pub(super) fn groups() -> [&'static str; 9] {
     [
         aurora_i18n::tr!("shape-group-body"),
         aurora_i18n::tr!("shape-group-head"),
@@ -222,6 +222,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
     let had_copy = st.copy_name.is_some();
     let mut visible = Vec::new();
     let mut changed = false;
+    // the sliders before this frame's edits: where an undo step starts
+    let before = st.draft.as_ref().map(|d| d.edited.params.clone());
+    let mut history_step: Option<bool> = None;
     st.editing = false;
     let mut open = true;
     let mut close = false;
@@ -244,327 +247,398 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
     )
     .help(aurora_i18n::tr!("shape-help"));
     floater.min_size = Vec2::new(350.0, 430.0);
-    floater.show(ctx, p, &mut open, |ui| {
-        if let Some(draft) = &mut st.draft {
-            let busy = draft.pending.is_some();
-            let modify = draft.can_modify(world);
-            let copy = draft.can_copy(world);
-            let male = draft.edited.params.get(&80).copied().unwrap_or(0.0) > 0.5;
-            widgets::surface(ui, p, |ui| {
-                ui.set_min_width(ui.available_width());
-                (import, export) = name_row(
-                    ui,
-                    p,
-                    Some("man-filled"),
-                    RichText::new(&draft.item.name).strong().size(15.0).color(p.ink),
-                    modify && !busy && !st.xml.busy(),
-                    draft.can_export_xml(world) && !st.xml_export.busy(),
-                );
-                ui.columns(2, |columns| {
-                    columns[0].add_enabled_ui(modify && !busy, |ui| {
-                        let mut selection = male;
-                        ui.horizontal(|ui| {
-                            widgets::radio_value(ui, p, &mut selection, true, aurora_i18n::tr!("shape-male"));
-                            widgets::radio_value(ui, p, &mut selection, false, aurora_i18n::tr!("shape-female"));
-                        });
-                        if selection != male {
-                            draft.edited.params.insert(80, f32::from(selection));
-                            changed = true;
-                        }
-                    });
-                    let weights = world
-                        .avatar_lib
-                        .shape_params
-                        .weights_with(world.server_visual_params(), &draft.edited.params);
-                    let shape = world.avatar_lib.shape_params.shape_weights(weights, &world.avatar_lib.rig);
-                    let (_, height) = crate::scene::shape::body_size(&world.avatar_lib.rig, &shape.local_pos, &shape.scale);
-                    // LLPanelEditWearable::updateTypeSpecificControls adds 0.195 m
-                    // to the server collision height for the displayed stature.
-                    let height = height + 0.195;
-                    columns[0].horizontal(|ui| {
-                        let value = aurora_i18n::number((height * if st.feet { 3.28084 } else { 1.0 }) as f64, 2);
-                        ui.label(RichText::new(aurora_i18n::tr!("shape-height", value = value)).color(p.muted));
-                        if widgets::flat_button(
-                            ui,
-                            p,
-                            if st.feet {
-                                aurora_i18n::tr!("shape-feet")
-                            } else {
-                                aurora_i18n::tr!("shape-meters")
-                            },
-                        )
-                        .clicked()
-                        {
-                            st.feet = !st.feet;
-                        }
-                    });
-                    actions.extend(
-                        appearance_controls(&mut columns[1], p, controls)
-                            .into_iter()
-                            .map(Action::Appearance),
+    if st.handles_view() {
+        // Avatar Studio's handles take the window's place
+        let bar = super::shape_handles::bar(ctx, p, world, st);
+        reset |= bar.reset;
+        close |= bar.close;
+        if bar.save {
+            actions.push(Action::Save(None));
+        }
+        history_step = bar.history;
+    } else {
+        floater.show(ctx, p, &mut open, |ui| {
+            if let Some(draft) = &mut st.draft {
+                let busy = draft.pending.is_some();
+                let modify = draft.can_modify(world);
+                let copy = draft.can_copy(world);
+                let male = draft.edited.params.get(&80).copied().unwrap_or(0.0) > 0.5;
+                widgets::surface(ui, p, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    (import, export) = name_row(
+                        ui,
+                        p,
+                        Some("man-filled"),
+                        RichText::new(&draft.item.name).strong().size(15.0).color(p.ink),
+                        modify && !busy && !st.xml.busy(),
+                        draft.can_export_xml(world) && !st.xml_export.busy(),
                     );
-                });
-            });
-            ui.add_space(6.0);
-            let names = groups();
-            let category_row = ui.horizontal(|ui| {
-                if widgets::icon_button(ui, p, "arrow-left", aurora_i18n::tr!("common-previous"), st.group > 0) {
-                    st.group -= 1;
-                    st.filter.clear();
-                }
-                let width = (ui.available_width() - 28.0).max(180.0);
-                let count = (width / 72.0).floor().clamp(3.0, 9.0) as usize;
-                let start = st.group.saturating_sub(count / 2).min(9 - count);
-                let mut selected = st.group - start;
-                let tabs: Vec<_> = names[start..start + count].iter().map(|name| (*name, true)).collect();
-                ui.scope(|ui| {
-                    ui.set_width(width);
-                    if widgets::tabs(ui, p, &mut selected, &tabs) {
-                        st.filter.clear();
-                    }
-                });
-                st.group = start + selected;
-                if widgets::icon_button(ui, p, "arrow-right", aurora_i18n::tr!("common-next"), st.group < 8) {
-                    st.group += 1;
-                    st.filter.clear();
-                }
-            });
-            if let Some(group) = category_wheel(
-                ctx,
-                st.group,
-                &mut st.category_wheel,
-                &mut st.category_wheel_frame,
-                &category_row.response,
-                !had_confirmation && !had_copy,
-            ) {
-                st.group = group;
-                st.filter.clear();
-            }
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                let width = (ui.available_width() - 32.0 - ui.spacing().item_spacing.x).max(80.0);
-                widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("shape-search"), width);
-                if widgets::icon_toggle(ui, p, "photo-filled", aurora_i18n::tr!("shape-hints"), st.hints) {
-                    st.hints = !st.hints;
-                }
-            });
-            if !modify {
-                ui.label(RichText::new(aurora_i18n::tr!("shape-readonly")).color(p.warn));
-            }
-            let sex = if draft.edited.params.get(&80).copied().unwrap_or(0.0) > 0.5 {
-                2
-            } else {
-                1
-            };
-            let query = st.filter.trim().to_lowercase();
-            let mut params: Vec<_> = catalog::PARAMS
-                .iter()
-                .filter(|param| {
-                    param.sex & sex != 0
-                        && (if query.is_empty() {
-                            param.group == st.group
-                        } else {
-                            param.labels().0.to_lowercase().contains(&query)
-                        })
-                })
-                .collect();
-            params.sort_by(|a, b| a.group.cmp(&b.group).then(a.order.total_cmp(&b.order)).then(a.id.cmp(&b.id)));
-            // LLPanelEditWearable keeps its save controls at the bottom.
-            // Lay them out first using their actual height: an unreserved
-            // pending/wrapped label otherwise grows the floater every frame.
-            let rest = ui.available_rect_before_wrap();
-            ui.allocate_rect(rest, egui::Sense::hover());
-            let mut footer = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(rest)
-                    .layout(egui::Layout::bottom_up(egui::Align::Min)),
-            );
-            if busy {
-                footer.label(RichText::new(aurora_i18n::tr!("shape-saving")).color(p.muted));
-            }
-            footer.add_enabled_ui(!busy, |ui| {
-                ui.horizontal(|ui| {
-                    let size = Vec2::new((ui.available_width() - 16.0) / 3.0, 30.0);
-                    if widgets::action_button_if(
-                        ui,
-                        p,
-                        "copy-filled",
-                        aurora_i18n::tr!("common-save-as"),
-                        ActionKind::Flat,
-                        size,
-                        copy,
-                    )
-                    .clicked()
-                    {
-                        st.copy_name = Some(draft.item.name.clone());
-                    }
-                    if widgets::action_button_if(ui, p, "restore", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size, true)
-                        .clicked()
-                    {
-                        reset = true;
-                        close = true;
-                    }
-                    if widgets::action_button_if(
-                        ui,
-                        p,
-                        "device-floppy",
-                        aurora_i18n::tr!("common-save"),
-                        ActionKind::Primary,
-                        size,
-                        modify && draft.dirty(),
-                    )
-                    .clicked()
-                    {
-                        actions.push(Action::Save(None));
-                    }
-                });
-            });
-            if !st.message.is_empty() {
-                footer.add_space(6.0);
-                footer.label(RichText::new(&st.message).size(12.0).color(p.warn));
-            }
-            footer.add_space(6.0);
-            let mut controls = footer.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(footer.available_rect_before_wrap())
-                    .layout(egui::Layout::top_down(egui::Align::Min)),
-            );
-            let ui = &mut controls;
-            let available = ui.available_height().max(0.0);
-            // Keep a complete row (both hints, captions and value) reachable
-            // at the minimum viewport. Fixed row geometry makes virtualisation
-            // accurate even while asynchronous previews replace placeholders.
-            let image_size = ((widgets::scrolled_width(ui) - 8.0) * 0.5)
-                .min(128.0)
-                .min((available - 80.0).clamp(64.0, 128.0));
-            let row_height = if st.hints { image_size + 80.0 } else { 67.0 };
-            let mut hint_views: Vec<_> = Vec::new();
-            egui::ScrollArea::vertical()
-                .id_salt(("shape_parameters", st.group, st.hints))
-                .max_height(available)
-                .auto_shrink([false, false])
-                .show_rows(ui, row_height, params.len(), |ui, range| {
-                    if params.is_empty() {
-                        ui.label(RichText::new(aurora_i18n::tr!("shape-no-results")).color(p.muted));
-                    }
-                    ui.add_enabled_ui(modify && !busy, |ui| {
-                        for index in range {
-                            let param = params[index];
-                            let (label, min_label, max_label) = param.labels();
-                            visible.push(param.id);
-                            ui.push_id(param.id, |parent| {
-                                let (rect, _) =
-                                    parent.allocate_exact_size(Vec2::new(parent.available_width(), row_height), egui::Sense::hover());
-                                let mut row = parent.new_child(
-                                    egui::UiBuilder::new()
-                                        .max_rect(rect)
-                                        .layout(egui::Layout::top_down(egui::Align::Min)),
-                                );
-                                row.set_clip_rect(rect.intersect(parent.clip_rect()));
-                                row.spacing_mut().item_spacing.y = 3.0;
-                                let ui = &mut row;
-                                ui.label(RichText::new(label).strong().color(p.ink));
-                                if st.hints {
-                                    ui.horizontal(|ui| {
-                                        for (max, text) in [(false, min_label), (true, max_label)] {
-                                            ui.vertical(|ui| {
-                                                let size = Vec2::splat(image_size);
-                                                let response = if let Some(model) = st.models.get(&(param.id, max)) {
-                                                    let view = aurora_render::preview::View {
-                                                        yaw: param.angle.to_radians(),
-                                                        pitch: 0.0,
-                                                        distance: param.distance * if param.group == 0 { 1.6 } else { 1.32 },
-                                                        background: p.field.to_normalized_gamma_f32(),
-                                                        ambient: [0.42; 3],
-                                                        ..Default::default()
-                                                    };
-                                                    aurora_render::preview::paint_hint(
-                                                        ui,
-                                                        ui.scope_id().with(max),
-                                                        model.clone(),
-                                                        view,
-                                                        size,
-                                                    )
-                                                } else {
-                                                    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-                                                    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
-                                                    ui.painter().text(
-                                                        rect.center(),
-                                                        egui::Align2::CENTER_CENTER,
-                                                        aurora_i18n::tr!("shape-preview-loading"),
-                                                        egui::FontId::proportional(11.0),
-                                                        p.muted,
-                                                    );
-                                                    response
-                                                };
-                                                ui.painter().rect_stroke(
-                                                    response.rect,
-                                                    ui.visuals().window_corner_radius,
-                                                    egui::Stroke::new(1.0, if response.hovered() { p.violet_light } else { p.raised }),
-                                                    egui::StrokeKind::Inside,
-                                                );
-                                                if response.clicked() {
-                                                    let step = (param.max - param.min) * 0.01;
-                                                    let value = draft.value(param) + if max { step } else { -step };
-                                                    draft.set(param, value);
-                                                    changed = true;
-                                                }
-                                                ui.add(egui::Label::new(RichText::new(text).size(11.0).color(p.muted)).truncate());
-                                            });
-                                        }
-                                    });
-                                }
-                                let old = draft.value(param);
-                                let mut percent = (old - param.min) / (param.max - param.min) * 100.0;
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(100.0);
-                                    let a = ui.add(egui::Slider::new(&mut percent, 0.0..=100.0).show_value(false));
-                                    let b = ui.add_sized(
-                                        Vec2::new(62.0, 22.0),
-                                        egui::DragValue::new(&mut percent)
-                                            .range(0.0..=100.0)
-                                            .speed(0.1)
-                                            .custom_formatter(|value, _| aurora_i18n::number(value, 1))
-                                            .custom_parser(aurora_i18n::parse_number),
-                                    );
-                                    if a.changed() || b.changed() {
-                                        draft.set(param, param.min + (param.max - param.min) * percent / 100.0);
-                                        changed = true;
-                                    }
-                                    st.editing |= a.dragged() || b.dragged() || b.has_focus();
+                    ui.columns(2, |columns| {
+                        columns[0].add_enabled_ui(modify && !busy, |ui| {
+                            let mut selection = male;
+                            ui.horizontal(|ui| {
+                                widgets::radio_value(ui, p, &mut selection, true, aurora_i18n::tr!("shape-male"));
+                                widgets::radio_value(ui, p, &mut selection, false, aurora_i18n::tr!("shape-female"));
+                            });
+                            if selection != male {
+                                draft.edited.params.insert(80, f32::from(selection));
+                                changed = true;
+                            }
+                        });
+                        let weights = world
+                            .avatar_lib
+                            .shape_params
+                            .weights_with(world.server_visual_params(), &draft.edited.params);
+                        let shape = world.avatar_lib.shape_params.shape_weights(weights, &world.avatar_lib.rig);
+                        let (_, height) = crate::scene::shape::body_size(&world.avatar_lib.rig, &shape.local_pos, &shape.scale);
+                        // LLPanelEditWearable::updateTypeSpecificControls adds 0.195 m
+                        // to the server collision height for the displayed stature.
+                        let height = height + 0.195;
+                        columns[0].horizontal(|ui| {
+                            let value = aurora_i18n::number((height * if st.feet { 3.28084 } else { 1.0 }) as f64, 2);
+                            ui.label(RichText::new(aurora_i18n::tr!("shape-height", value = value)).color(p.muted));
+                            if widgets::flat_button(
+                                ui,
+                                p,
+                                if st.feet {
+                                    aurora_i18n::tr!("shape-feet")
+                                } else {
+                                    aurora_i18n::tr!("shape-meters")
+                                },
+                            )
+                            .clicked()
+                            {
+                                st.feet = !st.feet;
+                            }
+                        });
+                        actions.extend(
+                            appearance_controls(&mut columns[1], p, controls)
+                                .into_iter()
+                                .map(Action::Appearance),
+                        );
+                        // the handles only exist over Avatar Studio's avatar
+                        if st.studio {
+                            columns[1].horizontal(|ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    widgets::switch_labeled(ui, p, &mut st.handles, aurora_i18n::tr!("shape-handles"))
+                                        .on_hover_text(aurora_i18n::tr!("shape-handles-hint"));
                                 });
-                                ui.add_space(9.0);
                             });
                         }
                     });
                 });
-            // Keep offscreen geometry bounded to the visible rows.
-            hint_views.extend(visible.iter().copied());
-            st.models.retain(|(id, _), _| hint_views.contains(id));
-        } else {
-            ui.label(
-                RichText::new(if st.loading.is_some() {
-                    aurora_i18n::tr!("shape-loading")
+                ui.add_space(6.0);
+                let names = groups();
+                let category_row = ui.horizontal(|ui| {
+                    if widgets::icon_button(ui, p, "arrow-left", aurora_i18n::tr!("common-previous"), st.group > 0) {
+                        st.group -= 1;
+                        st.filter.clear();
+                    }
+                    let width = (ui.available_width() - 28.0).max(180.0);
+                    let count = (width / 72.0).floor().clamp(3.0, 9.0) as usize;
+                    let start = st.group.saturating_sub(count / 2).min(9 - count);
+                    let mut selected = st.group - start;
+                    let tabs: Vec<_> = names[start..start + count].iter().map(|name| (*name, true)).collect();
+                    ui.scope(|ui| {
+                        ui.set_width(width);
+                        if widgets::tabs(ui, p, &mut selected, &tabs) {
+                            st.filter.clear();
+                        }
+                    });
+                    st.group = start + selected;
+                    if widgets::icon_button(ui, p, "arrow-right", aurora_i18n::tr!("common-next"), st.group < 8) {
+                        st.group += 1;
+                        st.filter.clear();
+                    }
+                });
+                if let Some(group) = category_wheel(
+                    ctx,
+                    st.group,
+                    &mut st.category_wheel,
+                    &mut st.category_wheel_frame,
+                    &category_row.response,
+                    !had_confirmation && !had_copy,
+                ) {
+                    st.group = group;
+                    st.filter.clear();
+                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let width = (ui.available_width() - 3.0 * (32.0 + ui.spacing().item_spacing.x)).max(80.0);
+                    widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("shape-search"), width);
+                    let editable = modify && !busy;
+                    if widgets::icon_button(
+                        ui,
+                        p,
+                        "arrow-back-up",
+                        aurora_i18n::tr!("shape-undo"),
+                        editable && draft.history.can_undo(),
+                    ) {
+                        history_step = Some(false);
+                    }
+                    if widgets::icon_button(
+                        ui,
+                        p,
+                        "arrow-forward-up",
+                        aurora_i18n::tr!("shape-redo"),
+                        editable && draft.history.can_redo(),
+                    ) {
+                        history_step = Some(true);
+                    }
+                    if widgets::icon_toggle(ui, p, "photo-filled", aurora_i18n::tr!("shape-hints"), st.hints) {
+                        st.hints = !st.hints;
+                    }
+                });
+                if !modify {
+                    ui.label(RichText::new(aurora_i18n::tr!("shape-readonly")).color(p.warn));
+                }
+                let sex = if draft.edited.params.get(&80).copied().unwrap_or(0.0) > 0.5 {
+                    2
                 } else {
-                    &st.message
-                })
-                .color(p.muted),
-            );
-            if st.loading.is_none()
-                && widgets::action_button(
-                    ui,
-                    p,
-                    "refresh",
-                    aurora_i18n::tr!("shape-retry"),
-                    ActionKind::Flat,
-                    Vec2::new(120.0, 30.0),
-                )
-                .clicked()
-            {
-                actions.push(Action::Retry);
+                    1
+                };
+                let query = st.filter.trim().to_lowercase();
+                let mut params: Vec<_> = catalog::PARAMS
+                    .iter()
+                    .filter(|param| {
+                        param.sex & sex != 0
+                            && (if query.is_empty() {
+                                param.group == st.group
+                            } else {
+                                param.labels().0.to_lowercase().contains(&query)
+                            })
+                    })
+                    .collect();
+                params.sort_by(|a, b| a.group.cmp(&b.group).then(a.order.total_cmp(&b.order)).then(a.id.cmp(&b.id)));
+                // LLPanelEditWearable keeps its save controls at the bottom.
+                // Lay them out first using their actual height: an unreserved
+                // pending/wrapped label otherwise grows the floater every frame.
+                let rest = ui.available_rect_before_wrap();
+                ui.allocate_rect(rest, egui::Sense::hover());
+                let mut footer = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(rest)
+                        .layout(egui::Layout::bottom_up(egui::Align::Min)),
+                );
+                if busy {
+                    footer.label(RichText::new(aurora_i18n::tr!("shape-saving")).color(p.muted));
+                }
+                footer.add_enabled_ui(!busy, |ui| {
+                    ui.horizontal(|ui| {
+                        let size = Vec2::new((ui.available_width() - 16.0) / 3.0, 30.0);
+                        if widgets::action_button_if(
+                            ui,
+                            p,
+                            "copy-filled",
+                            aurora_i18n::tr!("common-save-as"),
+                            ActionKind::Flat,
+                            size,
+                            copy,
+                        )
+                        .clicked()
+                        {
+                            st.copy_name = Some(draft.item.name.clone());
+                        }
+                        if widgets::action_button_if(ui, p, "restore", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size, true)
+                            .clicked()
+                        {
+                            reset = true;
+                            close = true;
+                        }
+                        if widgets::action_button_if(
+                            ui,
+                            p,
+                            "device-floppy",
+                            aurora_i18n::tr!("common-save"),
+                            ActionKind::Primary,
+                            size,
+                            modify && draft.dirty(),
+                        )
+                        .clicked()
+                        {
+                            actions.push(Action::Save(None));
+                        }
+                    });
+                });
+                if !st.message.is_empty() {
+                    footer.add_space(6.0);
+                    footer.label(RichText::new(&st.message).size(12.0).color(p.warn));
+                }
+                footer.add_space(6.0);
+                let mut controls = footer.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(footer.available_rect_before_wrap())
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                );
+                let ui = &mut controls;
+                let available = ui.available_height().max(0.0);
+                // Keep a complete row (both hints, captions and value) reachable
+                // at the minimum viewport. Fixed row geometry makes virtualisation
+                // accurate even while asynchronous previews replace placeholders.
+                let image_size = ((widgets::scrolled_width(ui) - 8.0) * 0.5)
+                    .min(128.0)
+                    .min((available - 80.0).clamp(64.0, 128.0));
+                let row_height = if st.hints { image_size + 80.0 } else { 67.0 };
+                let mut hint_views: Vec<_> = Vec::new();
+                egui::ScrollArea::vertical()
+                    .id_salt(("shape_parameters", st.group, st.hints))
+                    .max_height(available)
+                    .auto_shrink([false, false])
+                    .show_rows(ui, row_height, params.len(), |ui, range| {
+                        if params.is_empty() {
+                            ui.label(RichText::new(aurora_i18n::tr!("shape-no-results")).color(p.muted));
+                        }
+                        ui.add_enabled_ui(modify && !busy, |ui| {
+                            for index in range {
+                                let param = params[index];
+                                let (label, min_label, max_label) = param.labels();
+                                visible.push(param.id);
+                                ui.push_id(param.id, |parent| {
+                                    let (rect, _) =
+                                        parent.allocate_exact_size(Vec2::new(parent.available_width(), row_height), egui::Sense::hover());
+                                    let mut row = parent.new_child(
+                                        egui::UiBuilder::new()
+                                            .max_rect(rect)
+                                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                                    );
+                                    row.set_clip_rect(rect.intersect(parent.clip_rect()));
+                                    row.spacing_mut().item_spacing.y = 3.0;
+                                    let ui = &mut row;
+                                    ui.label(RichText::new(label).strong().color(p.ink));
+                                    if st.hints {
+                                        ui.horizontal(|ui| {
+                                            for (max, text) in [(false, min_label), (true, max_label)] {
+                                                ui.vertical(|ui| {
+                                                    let size = Vec2::splat(image_size);
+                                                    let response = if let Some(model) = st.models.get(&(param.id, max)) {
+                                                        let view = aurora_render::preview::View {
+                                                            yaw: param.angle.to_radians(),
+                                                            pitch: 0.0,
+                                                            distance: param.distance * if param.group == 0 { 1.6 } else { 1.32 },
+                                                            background: p.field.to_normalized_gamma_f32(),
+                                                            ambient: [0.42; 3],
+                                                            ..Default::default()
+                                                        };
+                                                        aurora_render::preview::paint_hint(
+                                                            ui,
+                                                            ui.scope_id().with(max),
+                                                            model.clone(),
+                                                            view,
+                                                            size,
+                                                        )
+                                                    } else {
+                                                        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+                                                        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
+                                                        ui.painter().text(
+                                                            rect.center(),
+                                                            egui::Align2::CENTER_CENTER,
+                                                            aurora_i18n::tr!("shape-preview-loading"),
+                                                            egui::FontId::proportional(11.0),
+                                                            p.muted,
+                                                        );
+                                                        response
+                                                    };
+                                                    ui.painter().rect_stroke(
+                                                        response.rect,
+                                                        ui.visuals().window_corner_radius,
+                                                        egui::Stroke::new(1.0, if response.hovered() { p.violet_light } else { p.raised }),
+                                                        egui::StrokeKind::Inside,
+                                                    );
+                                                    if response.clicked() {
+                                                        let step = (param.max - param.min) * 0.01;
+                                                        let value = draft.value(param) + if max { step } else { -step };
+                                                        draft.set(param, value);
+                                                        changed = true;
+                                                    }
+                                                    ui.add(egui::Label::new(RichText::new(text).size(11.0).color(p.muted)).truncate());
+                                                });
+                                            }
+                                        });
+                                    }
+                                    let old = draft.value(param);
+                                    let mut percent = (old - param.min) / (param.max - param.min) * 100.0;
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(100.0);
+                                        let a = ui.add(egui::Slider::new(&mut percent, 0.0..=100.0).show_value(false));
+                                        let b = ui.add_sized(
+                                            Vec2::new(62.0, 22.0),
+                                            egui::DragValue::new(&mut percent)
+                                                .range(0.0..=100.0)
+                                                .speed(0.1)
+                                                .custom_formatter(|value, _| aurora_i18n::number(value, 1))
+                                                .custom_parser(aurora_i18n::parse_number),
+                                        );
+                                        if a.changed() || b.changed() {
+                                            draft.set(param, param.min + (param.max - param.min) * percent / 100.0);
+                                            changed = true;
+                                        }
+                                        st.editing |= a.dragged() || b.dragged() || b.has_focus();
+                                    });
+                                    ui.add_space(9.0);
+                                });
+                            }
+                        });
+                    });
+                // Keep offscreen geometry bounded to the visible rows.
+                hint_views.extend(visible.iter().copied());
+                st.models.retain(|(id, _), _| hint_views.contains(id));
+            } else {
+                ui.label(
+                    RichText::new(if st.loading.is_some() {
+                        aurora_i18n::tr!("shape-loading")
+                    } else {
+                        &st.message
+                    })
+                    .color(p.muted),
+                );
+                if st.loading.is_none()
+                    && widgets::action_button(
+                        ui,
+                        p,
+                        "refresh",
+                        aurora_i18n::tr!("shape-retry"),
+                        ActionKind::Flat,
+                        Vec2::new(120.0, 30.0),
+                    )
+                    .clicked()
+                {
+                    actions.push(Action::Retry);
+                }
             }
-        }
-    });
+        });
+    }
+    // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y while no field takes the keys, and
+    // never while the poser or the animation editor holds the avatar: they
+    // have their own undo on the same keys, and one press must undo one
+    // thing (the shape keeps its Undo and Redo buttons)
+    if st.draft.as_ref().is_some_and(|d| d.pending.is_none() && d.can_modify(world))
+        && !st.handles_blocked
+        && !had_confirmation
+        && !had_copy
+        && !egui::Popup::is_any_open(ctx)
+        && ctx.memory(|m| m.focused().is_none() && m.top_modal_layer().is_none())
+    {
+        let pressed = ctx.input_mut(|input| {
+            let mut found = None;
+            input.events.retain(|event| match event {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if found.is_none() => match crate::shape_editor::history::shortcut(*key, *modifiers) {
+                    Some(redo) => {
+                        found = Some(redo);
+                        false
+                    }
+                    None => true,
+                },
+                _ => true,
+            });
+            found
+        });
+        history_step = history_step.or(pressed);
+    }
     if reset && let Some(draft) = &mut st.draft {
         draft.edited = draft.original.clone();
     }
@@ -579,10 +653,31 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
             st.message = message;
         }
     }
+    if changed && let (Some(before), Some(draft)) = (&before, &mut st.draft) {
+        draft.history.begin(before);
+    }
     if changed || reset {
         st.changed(world);
     }
-    if !open || (!had_confirmation && !had_copy && ctx.input(|i| i.key_pressed(egui::Key::Escape))) || close {
+    if let Some(redo) = history_step {
+        st.step_history(world, redo);
+    }
+    // a gesture ends when nothing is held: a slider or a handle released, a
+    // typed value left, a click (one step each)
+    // a handle held, or a number window open (one step for what it types)
+    st.editing |= st.handle_drag.is_some() || st.handle_entry.is_some();
+    if !st.editing
+        && let Some(draft) = &mut st.draft
+    {
+        draft.history.settle(&draft.edited.params);
+    }
+    // Escape first steps back from an area of the handles to all of them
+    let escape = !had_confirmation && !had_copy && st.handle_entry.is_none() && ctx.input(|i| i.key_pressed(egui::Key::Escape));
+    let area_back = escape && st.handles_view() && st.handles_area.is_some();
+    if area_back {
+        st.handles_area = None;
+    }
+    if !open || (escape && !area_back) || close {
         if st.draft.as_ref().is_some_and(|d| d.pending.is_some()) {
             st.open = true;
         } else if st.draft.as_ref().is_some_and(|d| d.dirty()) {

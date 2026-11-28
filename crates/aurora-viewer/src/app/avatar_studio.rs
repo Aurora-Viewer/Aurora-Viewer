@@ -372,13 +372,20 @@ impl App {
         }
     }
 
-    pub(super) fn studio_overlay(&mut self, ctx: &egui::Context) {
+    pub(super) fn studio_overlay(&mut self, ctx: &egui::Context, proj: &crate::ui::hud::Projector) {
         // nothing of it while the UI is not drawn (Ctrl+Alt+F1)
         if !self.avatar_studio.active || self.viewfinder_on() || self.interface.ui_off {
+            // left mid-drag (its shortcut, the UI hidden): the gesture ends
+            // here, or it stays open and every later edit joins its undo step
+            crate::ui::shape_handles::end_drag(&mut self.shape_ui);
+            self.shape_ui.handle_entry = None;
+            // nor the area's tint and pick, which would stay on the avatar
+            self.shape_ui.drop_mesh_part();
             return;
         }
         let mut reset = false;
         let mut reset_animation = false;
+        let mut shape = false;
         egui::Area::new(egui::Id::unique("avatar_studio_controls"))
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 52.0))
             .order(egui::Order::Middle)
@@ -511,6 +518,22 @@ impl App {
                         {
                             self.ik_editor.show_studio_animation_timeline();
                         }
+                        // the worn shape, as sliders or as handles on the avatar (#5022)
+                        let shape_label = if self.shape_ui.open {
+                            aurora_i18n::tr!("avatar-studio-shape-close")
+                        } else {
+                            aurora_i18n::tr!("avatar-studio-shape")
+                        };
+                        shape = crate::ui::widgets::action_button(
+                            ui,
+                            &self.palette,
+                            "man-filled",
+                            shape_label,
+                            crate::ui::widgets::ActionKind::Flat,
+                            egui::vec2(0.0, crate::ui::bars::islands::SLOT),
+                        )
+                        .on_hover_text(aurora_i18n::tr!("avatar-studio-shape-tip"))
+                        .clicked();
                         if ui.button(reset_label).clicked() {
                             if self.avatar_studio.animation_editor {
                                 self.avatar_studio.reset_animation_confirm = true;
@@ -527,6 +550,18 @@ impl App {
         if self.avatar_studio.animation_editor {
             self.ik_editor.studio_animation_timeline(ctx, &self.palette, &self.world);
         }
+        if shape {
+            self.toggle_studio_shape();
+        }
+        let eye = self
+            .studio_view(proj.width / proj.height.max(1.0))
+            .map_or(self.camera.position, |view| view.eye);
+        let scene = crate::ui::shape_handles::Scene {
+            proj,
+            eye,
+            scale: self.settings.build.gizmo_scale,
+        };
+        crate::ui::shape_handles::overlay(ctx, &self.palette, &mut self.world, &mut self.shape_ui, &scene);
         if self.avatar_studio.reset_animation_confirm {
             let mut answer = None;
             let modal = crate::ui::widgets::Modal::new(egui::Id::unique("avatar_studio_reset_animation")).show(ctx, |ui| {
@@ -584,23 +619,33 @@ impl App {
             if reset_animation {
                 self.ik_editor.reset_animation_from_avatar_studio(&self.world);
             }
-            let offset = self.avatar_studio.floor_offset;
-            let podium_center = self.avatar_studio.podium_center;
-            let pose = self.avatar_studio.pose;
-            let lighting = self.avatar_studio.lighting;
-            let animation_editor = self.avatar_studio.animation_editor;
-            let hover_height = self.avatar_studio.hover_height;
-            let (partner_hover, hover_partner) = (self.avatar_studio.partner_hover_height, self.avatar_studio.hover_partner);
-            self.avatar_studio.enter(self.avatar_studio.facing, self.studio_subject().1);
-            self.avatar_studio.floor_offset = offset;
-            self.avatar_studio.podium_center = podium_center;
-            self.avatar_studio.pose = pose;
-            self.avatar_studio.lighting = lighting;
-            self.avatar_studio.animation_editor = animation_editor;
-            self.avatar_studio.hover_height = hover_height;
-            self.avatar_studio.partner_hover_height = partner_hover;
-            self.avatar_studio.hover_partner = hover_partner;
+            self.studio_reset_view();
         }
+    }
+
+    /// The Studio's opening composition (its Reset), keeping the pose,
+    /// lighting, hover and modes: the whole body in view, as the shape
+    /// handles want it when they appear.
+    pub(super) fn studio_reset_view(&mut self) {
+        if !self.avatar_studio.active {
+            return;
+        }
+        let offset = self.avatar_studio.floor_offset;
+        let podium_center = self.avatar_studio.podium_center;
+        let pose = self.avatar_studio.pose;
+        let lighting = self.avatar_studio.lighting;
+        let animation_editor = self.avatar_studio.animation_editor;
+        let hover_height = self.avatar_studio.hover_height;
+        let (partner_hover, hover_partner) = (self.avatar_studio.partner_hover_height, self.avatar_studio.hover_partner);
+        self.avatar_studio.enter(self.avatar_studio.facing, self.studio_subject().1);
+        self.avatar_studio.floor_offset = offset;
+        self.avatar_studio.podium_center = podium_center;
+        self.avatar_studio.pose = pose;
+        self.avatar_studio.lighting = lighting;
+        self.avatar_studio.animation_editor = animation_editor;
+        self.avatar_studio.hover_height = hover_height;
+        self.avatar_studio.partner_hover_height = partner_hover;
+        self.avatar_studio.hover_partner = hover_partner;
     }
 }
 
