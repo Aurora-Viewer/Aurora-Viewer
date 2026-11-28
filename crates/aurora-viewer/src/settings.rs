@@ -1641,6 +1641,9 @@ pub struct Settings {
     /// forward) and the left button held on our avatar orbits the camera,
     /// the other way round from the default. Off by default.
     pub mmo_mouse_buttons: bool,
+    /// Aurora extension: the left button held on our avatar orbits the
+    /// camera around it instead of steering it. Off by default.
+    pub avatar_drag_orbits: bool,
     pub arrows_strafe: bool,
     /// The arrow keys (and Page Up / Down, Home) move the avatar while the
     /// chat bar has the keyboard, even with text in it; an empty bar always
@@ -2922,6 +2925,7 @@ impl Default for Settings {
             arrows_strafe: false,
             world_mouse_walk: false,
             mmo_mouse_buttons: false,
+            avatar_drag_orbits: false,
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
