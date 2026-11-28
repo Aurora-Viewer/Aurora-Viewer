@@ -239,6 +239,9 @@ pub enum InvAction {
     },
     /// Preview the item and return to its originating inventory list when it closes.
     Preview(Uuid, Option<egui::Id>),
+    /// Several previews opened together, grouped in tabs where they share a
+    /// family; each returns to the originating inventory list like `Preview`.
+    PreviewMany(Vec<Uuid>, Option<egui::Id>),
     /// Open a sky or water settings item in its editor (LLSettingsBridgeAction).
     EditEnvironment(Uuid),
     Gesture(crate::ui::gestures::Action),
@@ -872,6 +875,12 @@ pub struct InventoryUi {
     move_to: Option<move_to::MoveTo>,
     pub links_filter: Option<Uuid>,
     pub windows: Vec<InventoryWindow>,
+    pub(super) tab_hosts: super::preview_tabs::Hosts,
+    /// Properties asked for in a folder or additional window: answered by
+    /// the main inventory's state, which holds every Properties window
+    /// (`document.rs`, `answer_properties`).
+    pub(super) properties_asked: Vec<document::PropertiesAsk>,
+    pub(super) tab_host: Option<super::preview_tabs::View>,
     pub thumbnail: thumbnail::ThumbnailUi,
     hover: hover::State,
     pub share_picker: super::avatar_picker::AvatarPicker,
@@ -3562,6 +3571,11 @@ pub fn show(
         st.consume_clipboard |= dual.consume_clipboard;
         dual.consume_clipboard = false;
         st.windows.append(&mut dual.windows);
+        // the right pane's Properties requests and tab groups belong to the
+        // main inventory, which holds every Properties and document window
+        // (`execute` hands them over for every pane but the main one)
+        st.properties_asked.append(&mut dual.properties_asked);
+        st.tab_hosts.append(&mut dual.tab_hosts);
         dual.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
         remember_recent_filters(dual, prefs);
         context_notecards::show(ctx, p, &mut world.inventory, dual, prefs, &mut dual_actions);
@@ -3572,10 +3586,40 @@ pub fn show(
     }
     let mut windows = std::mem::take(&mut st.windows);
     bring_forward_shown(ctx, &mut windows);
+    for window in &mut windows {
+        if let Some(view) = &mut window.state.tab_host {
+            st.tab_hosts.report(view);
+        }
+    }
+    st.tab_hosts.update(windows.iter().filter_map(|window| {
+        let item = window.state.preview.or(match window.state.dialog {
+            Some(EditDialog::Properties(id)) => Some(id),
+            _ => None,
+        })?;
+        let item = world.inventory.items.get(&item)?;
+        Some(super::preview_tabs::Member {
+            key: window.id,
+            name: item.name.clone(),
+            dirty: window.state.preview_dirty,
+            enabled: window.state.preview.is_none() || world.inventory.can_preview(item.asset_type),
+            asking: matches!(window.state.dialog, Some(EditDialog::Discard(_) | EditDialog::SaveEmbedded(_))),
+        })
+    }));
+    for host in st.tab_hosts.opened() {
+        super::widgets::open_floater(ctx, &host, &mut false);
+    }
+    // Keep selection fixed through this frame: a click in an earlier editor
+    // must not draw a second body for the same host later in this loop.
+    let mut tab_views: std::collections::HashMap<_, _> = windows
+        .iter()
+        .filter_map(|window| st.tab_hosts.view(window.id).map(|view| (window.id, view)))
+        .collect();
     let mut spawned = Vec::new();
     // (window index, its actions of this frame): allocated only on a frame
     // where a window asked for something
     let mut window_actions = Vec::new();
+    // the right pane's requests, handed over above
+    let mut asked = std::mem::take(&mut st.properties_asked);
     for (index, w) in windows.iter_mut().enumerate() {
         let first_action = actions.len();
         if !w.open {
@@ -3589,6 +3633,7 @@ pub fn show(
             continue;
         }
         w.state.ui_id = w.id;
+        w.state.tab_host = tab_views.remove(&w.id);
         if w.id == listings::PANEL && w.state.fetch_all {
             fetch_whole_inventory(&mut world.inventory, &mut w.state);
         }
@@ -3724,6 +3769,8 @@ pub fn show(
         folder_colors::show(ctx, p, &world.inventory, &mut w.state, prefs);
         context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         delete::finish_detach(&world.inventory, &mut w.state, prefs, &facts, &mut actions);
+        // a tab in the back of its group draws no body, but its windows of
+        // their own (a question, Move to, a notecard's attachment) stay
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
         move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         dialogs::preview(
@@ -3767,11 +3814,16 @@ pub fn show(
         if w.id != listings::PANEL {
             w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
         }
+        if let Some(view) = &mut w.state.tab_host {
+            st.tab_hosts.report(view);
+        }
+        st.tab_hosts.append(&mut w.state.tab_hosts);
         remember_recent_filters(&mut w.state, prefs);
         if actions.len() > first_action {
             window_actions.push((index, first_action..actions.len()));
         }
         spawned.append(&mut w.state.windows);
+        asked.append(&mut w.state.properties_asked);
     }
     for (index, range) in window_actions {
         tag_window_edits(&windows[index], &mut actions, range);
@@ -3796,6 +3848,9 @@ pub fn show(
     windows.retain(keeps_window);
     windows.append(&mut spawned);
     st.windows = windows;
+    for ask in asked {
+        st.answer_properties(ctx, ask);
+    }
     if let Some(id) = st.demo_menu {
         let mut menu_open = true;
         super::menu::popup_at(
@@ -3822,6 +3877,8 @@ mod delete_tests;
 mod drag_tests;
 #[cfg(test)]
 mod outside_dialog_tests;
+#[cfg(test)]
+mod tab_tests;
 #[cfg(test)]
 mod texture_tests;
 

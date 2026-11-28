@@ -1,5 +1,19 @@
 # Aurora Viewer architecture
 
+Bulk inventory resource opens use `InvAction::PreviewMany` and the texture
+library’s tab hosts. Membership and selection belong to the host, while each
+material/texture keeps its existing preview state, draft, save routing and
+close confirmation. Only the selected tab renders; background save replies
+still reach the original item. Single-item opens retain their own windows.
+`ui/preview_tabs.rs` hosts other inventory previews and properties, with
+window keys separate from item identities. It carries membership, selection
+and close requests while each editor retains its state and acknowledgement
+routing. Script hosts retain the original source-text ID and register the
+active editor on the host layer, so tab changes preserve cursors and route
+Find correctly. Inactive scripts still poll preprocessing and external-file
+workers; errors stop host closure and reveal the affected editor. A group's
+window takes the lowest slot free for its kind, so its place and size are
+remembered; its tabs are locked while it closes or a save question waits.
 `ui/toolbar/native_context.rs` scopes native toolbar widgets while their context
 menus render. The shared menu popup appends one final Customize interface entry
 inside that scope; ordinary world/window menus do not acquire it. A queued target

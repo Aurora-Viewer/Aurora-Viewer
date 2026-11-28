@@ -26,6 +26,41 @@ pub(super) fn panorama_state(dimensions: Option<(u32, u32)>, name: &str, choice:
     (eligible, on)
 }
 
+/// A bulk-open host owns only membership/selection; per-item editors keep
+/// their existing drafts, upload routing, cameras and close confirmations.
+pub(super) struct PreviewGroup {
+    pub(super) id: Uuid,
+    pub(super) items: Vec<Uuid>,
+    /// The selected item by id: an index would move to another item when
+    /// one before it leaves the group.
+    pub(super) selected: Uuid,
+    /// A preview asked for while the selected material's save question
+    /// waits: selected once it is answered, never over it.
+    pending: Option<Uuid>,
+    closing: bool,
+    dirty: HashSet<Uuid>,
+}
+
+impl PreviewGroup {
+    /// Keeps the selection through a change of `items` (from `before`): an
+    /// item that left gives its place to the tab after it, else the one
+    /// before.
+    fn keep_selected(&mut self, before: &[Uuid]) {
+        if self.items.contains(&self.selected) {
+            return;
+        }
+        let at = before.iter().position(|id| *id == self.selected).unwrap_or(0);
+        if let Some(id) = before[at..]
+            .iter()
+            .chain(before[..at].iter().rev())
+            .chain(self.items.iter())
+            .find(|id| self.items.contains(id))
+        {
+            self.selected = *id;
+        }
+    }
+}
+
 pub(super) struct BatchExport {
     item: Uuid,
     asset: Uuid,
@@ -34,6 +69,13 @@ pub(super) struct BatchExport {
 
 pub(crate) fn window_id(item: Uuid) -> String {
     format!("resource_preview_{item}")
+}
+
+/// A tab group's id, which names its window: the lowest slot free, so the
+/// window keeps its place and size from one group to the next (and egui one
+/// memory entry per slot). The high bits keep it apart from item ids.
+fn group_slot_id(slot: u128) -> Uuid {
+    Uuid::from_u128(0x7461_625f_686f_7374_0000_0000_0000_0000 | slot)
 }
 
 impl LibraryUi {
@@ -160,7 +202,12 @@ impl LibraryUi {
         if let Some(editor) = &mut window.editor {
             editor.confirm_close = true;
         }
-        widgets::open_floater(ctx, &window_id(window.id), &mut true);
+        let host = self
+            .preview_groups
+            .iter()
+            .find(|group| group.items.contains(&window.id))
+            .map_or(window.id, |group| group.id);
+        widgets::open_floater(ctx, &window_id(host), &mut true);
         self.focus_preview = Some(window.id);
         false
     }
@@ -261,7 +308,18 @@ impl LibraryUi {
             .windows
             .iter_mut()
             .find(|w| w.editor.as_ref().is_some_and(|e| e.saving == Some(request)))?;
+        let original = window.id;
         window.id = copied;
+        for group in &mut self.preview_groups {
+            for id in group.items.iter_mut().chain([&mut group.selected]).chain(group.pending.as_mut()) {
+                if *id == original {
+                    *id = copied;
+                }
+            }
+        }
+        if self.focus_preview == Some(original) {
+            self.focus_preview = Some(copied);
+        }
         let editor = window.editor.as_ref()?;
         editor
             .dirty()
@@ -279,6 +337,15 @@ impl LibraryUi {
         let editor = window.editor.as_mut()?;
         let material = editor.submitted.as_deref().cloned();
         editor.finish_save(result);
+        if result.is_err() {
+            let item = window.id;
+            for group in &mut self.preview_groups {
+                if group.items.contains(&item) {
+                    group.closing = false;
+                    self.focus_preview = Some(item);
+                }
+            }
+        }
         material
     }
     pub(crate) fn export_texture(&mut self, item: Uuid, png: bool) {
@@ -324,8 +391,57 @@ impl LibraryUi {
                 pano_view: None,
             });
         }
-        widgets::open_floater(ctx, &window_id(item.id), &mut existing);
+        let host = self
+            .preview_groups
+            .iter()
+            .find(|group| group.items.contains(&item.id))
+            .map_or(item.id, |group| group.id);
+        widgets::open_floater(ctx, &window_id(host), &mut existing);
         self.focus_preview = Some(item.id);
+    }
+
+    pub(crate) fn open_group(&mut self, ctx: &egui::Context, world: &World, ids: Vec<Uuid>) {
+        let mut seen = HashSet::new();
+        let items: Vec<_> = ids
+            .into_iter()
+            .filter_map(|id| catalogue::resource(&world.inventory, id))
+            .filter(|item| world.inventory.can_preview(item.asset_type))
+            .map(|item| item.id)
+            .filter(|id| seen.insert(*id))
+            .collect();
+        if items.len() < 2 {
+            for id in items {
+                self.open_preview(ctx, world, id);
+            }
+            return;
+        }
+        for id in &items {
+            self.open_preview(ctx, world, *id);
+        }
+        // Moving an existing preview into a new batch must not duplicate its
+        // draft. A group left with one tab is dissolved: that preview shows
+        // in a window of its own again (`ui::preview_tabs::Hosts::group`).
+        for group in &mut self.preview_groups {
+            let before = group.items.clone();
+            group.items.retain(|id| !seen.contains(id));
+            group.keep_selected(&before);
+        }
+        self.preview_groups.retain(|group| group.items.len() >= 2);
+        let id = (0..)
+            .map(group_slot_id)
+            .find(|id| !self.preview_groups.iter().any(|group| group.id == *id))
+            .expect("a free slot");
+        // an earlier group of this slot may have been minimized
+        widgets::open_floater(ctx, &window_id(id), &mut false);
+        self.preview_groups.push(PreviewGroup {
+            id,
+            selected: items[0],
+            items,
+            pending: None,
+            closing: false,
+            dirty: HashSet::new(),
+        });
+        self.focus_preview = self.preview_groups.last().and_then(|group| group.items.first().copied());
     }
 
     pub(super) fn show_previews(
@@ -341,11 +457,108 @@ impl LibraryUi {
         // Keep one shared worker/GPU cache for every swatch and window.
         self.update_exports(ctx, world, scene, actions);
         let mut windows = std::mem::take(&mut self.windows);
-        windows.retain_mut(|window| self.preview_window(ctx, p, world, scene, images, prefs, window, actions));
+        // A save-and-close acknowledgement can arrive for an inactive tab.
+        windows.retain(|window| !window.editor.as_ref().is_some_and(|editor| editor.close_ready));
+        let valid: HashSet<_> = windows
+            .iter()
+            .filter(|w| catalogue::resource(&world.inventory, w.id).is_some())
+            .map(|w| w.id)
+            .collect();
+        let dirty: HashSet<_> = windows
+            .iter()
+            .filter(|w| w.editor.as_ref().is_some_and(|e| e.dirty()))
+            .map(|w| w.id)
+            .collect();
+        let mut groups = std::mem::take(&mut self.preview_groups);
+        for group in &mut groups {
+            let before = group.items.clone();
+            group.items.retain(|id| valid.contains(id));
+            if group.items.is_empty() {
+                continue;
+            }
+            group.keep_selected(&before);
+            let allowed = |id: &Uuid| {
+                world
+                    .inventory
+                    .items
+                    .get(id)
+                    .is_some_and(|item| world.inventory.can_preview(item.asset_type))
+            };
+            // the selected material's save question keeps its tab in front:
+            // a preview asked for meanwhile waits for the answer
+            let asking = windows
+                .iter()
+                .any(|window| window.id == group.selected && window.editor.as_ref().is_some_and(|editor| editor.confirm_close));
+            // (a focus on the asking tab itself, a failed save or the item
+            // opened again, keeps the request already waiting, as
+            // `preview_tabs::Group::select` does)
+            if let Some(focus) = self
+                .focus_preview
+                .filter(|id| group.items.contains(id) && !(asking && *id == group.selected))
+            {
+                group.pending = Some(focus);
+            }
+            if !asking {
+                if let Some(id) = group.pending.take().filter(|id| group.items.contains(id) && allowed(id)) {
+                    group.selected = id;
+                }
+                if !allowed(&group.selected)
+                    && let Some(id) = group.items.iter().copied().find(allowed)
+                {
+                    group.selected = id;
+                }
+            }
+            group.dirty.clear();
+            group.dirty.extend(group.items.iter().copied().filter(|id| dirty.contains(id)));
+            let item = group.selected;
+            let window = windows.iter_mut().find(|window| window.id == item).expect("group member exists");
+            if !self.preview_window(ctx, p, world, scene, images, prefs, window, actions, Some(group)) {
+                windows.retain(|window| window.id != item);
+                group.items.retain(|id| *id != item);
+            }
+            // the other tabs' own windows (an enlarged panorama, a texture
+            // picker) stay whichever tab is selected
+            for window in windows
+                .iter_mut()
+                .filter(|window| window.id != item && group.items.contains(&window.id))
+            {
+                self.preview_extras(ctx, p, world, images, window);
+            }
+        }
+        groups.retain(|group| !group.items.is_empty());
+        let grouped: HashSet<_> = groups.iter().flat_map(|group| group.items.iter().copied()).collect();
+        windows.retain_mut(|window| {
+            grouped.contains(&window.id) || self.preview_window(ctx, p, world, scene, images, prefs, window, actions, None)
+        });
+        self.preview_groups = groups;
         self.windows = windows;
         self.map_uploads.retain(|_, (item, _)| self.windows.iter().any(|w| w.id == *item));
         if let Some(id) = self.focus_preview.take() {
-            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(window_id(id))));
+            let host = self
+                .preview_groups
+                .iter()
+                .find(|group| group.items.contains(&id))
+                .map_or(id, |group| group.id);
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(window_id(host))));
+        }
+    }
+
+    /// The windows of their own a preview opens: the enlarged panorama,
+    /// over the whole window, and the material editor's texture picker.
+    /// Drawn for every tab of a group, not only the selected one.
+    fn preview_extras(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        world: &mut World,
+        images: &HashMap<Uuid, egui::TextureHandle>,
+        window: &mut PreviewWindow,
+    ) {
+        if let (Some(view), Some(shown)) = (&mut window.pano_view, &window.texture.shown) {
+            view.show_full(ctx, p, egui::Id::unique(("texture_panorama", window.id)), shown);
+        }
+        if let Some(editor) = &mut window.editor {
+            self.wanted_images.extend(editor.show_picker(ctx, p, world, images));
         }
     }
 
@@ -359,6 +572,7 @@ impl LibraryUi {
         prefs: &mut Preferences,
         window: &mut PreviewWindow,
         actions: &mut Vec<Action>,
+        mut group: Option<&mut PreviewGroup>,
     ) -> bool {
         let Some(item) = catalogue::resource(&world.inventory, window.id).cloned() else {
             return false;
@@ -369,12 +583,14 @@ impl LibraryUi {
         let material = item.asset_type == 57;
         let asset = catalogue::asset(&item);
         let path = super::super::inventory::inventory_path(&world.inventory, item.parent);
-        let id = window_id(item.id);
+        let id = window_id(group.as_ref().map_or(item.id, |g| g.id));
         // Human-requested defaults by resource type. Only new windows inherit
         // the last manual size; visible windows retain their own geometry.
         if window.first_show {
             window.texture.display = prefs.texture_display;
-            if let Some(size) = prefs.preview_size(material) {
+            if group.is_none()
+                && let Some(size) = prefs.preview_size(material)
+            {
                 widgets::size_floater(ctx, &id, size);
             }
             window.first_show = false;
@@ -386,175 +602,239 @@ impl LibraryUi {
         } else {
             Vec2::new(460.0, 520.0)
         });
-        let mut floater = Floater::new(&id, &item.name, ctx.content_rect().center() - size * 0.5, size)
+        let title = if group.is_some() {
+            crate::ui::preview_tabs::group_title()
+        } else {
+            item.name.clone()
+        };
+        let mut floater = Floater::new(&id, &title, ctx.content_rect().center() - size * 0.5, size)
             .cascade(widgets::CascadeGroup::inventory(item.asset_type));
         floater.min_size = Vec2::new(220.0, 260.0);
         floater.steady_size = material;
         floater.show(ctx, p, &mut open, |ui| {
-            if material {
-                if window
-                    .editor
-                    .as_ref()
-                    .is_none_or(|editor| editor.asset != asset && !editor.dirty() && editor.saving.is_none())
-                    && let Some(value) = if item.asset_id.is_nil() {
-                        Some(std::sync::Arc::new(aurora_assets::PbrMaterial::default()))
-                    } else {
-                        scene.materials.get(&asset)
-                    }
-                {
-                    window.editor = Some(material_editor::Editor::new(asset, value));
-                }
-            } else {
-                self.wanted_images.insert(asset);
-                if rules::held(&world.inventory, &item) & (rules::COPY | rules::MODIFY | rules::TRANSFER)
-                    != rules::COPY | rules::MODIFY | rules::TRANSFER
-                {
-                    window.texture.export = None;
-                    window.texture.export_path = None;
-                }
-                window.texture.prepare(ctx, asset, scene);
-                let copy_uuid = window
-                    .texture
-                    .copy_uuid_allowed(&world.inventory, item.asset_id, world.god_level > 0);
-                let image = window.texture.image.as_ref().or_else(|| images.get(&asset));
-                let dimensions = scene.textures.full_size(&asset).or(window.texture.dimensions);
-                let before = window.texture.display;
-                // a 2:1 texture can be looked into as a panorama; an Aurora
-                // 360° upload (by its name) opens that way
-                let (eligible, mut pano_on) = panorama_state(dimensions, &item.name, window.pano);
-                let was_on = pano_on;
-                texture_view::toolbar(
-                    ui,
-                    p,
-                    &item,
-                    &world.inventory,
-                    copy_uuid,
-                    dimensions,
-                    &mut window.texture.display,
-                    eligible.then_some(&mut pano_on),
-                    actions,
-                );
-                if pano_on != was_on {
-                    window.pano = Some(pano_on);
-                }
-                if !pano_on && let Some(view) = &mut window.pano_view {
-                    view.full = false;
-                }
-                // the picture in exactly the room the description, the
-                // buttons and the notes leave
-                let (mut view, foot) = widgets::above_footer(ui);
-                if pano_on {
-                    if let Some(shown) = window.texture.shown.clone() {
-                        let pano_view = window.pano_view.get_or_insert_with(|| crate::ui::panorama::PanoView::new(0.0));
-                        texture_view::panorama_picture(&mut view, p, egui::Id::unique(("texture_panorama", item.id)), pano_view, &shown);
-                    } else {
-                        view.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
-                    }
-                } else {
-                    texture_view::picture(&mut view, p, image, dimensions, &window.texture.display, Some(item.id));
-                }
-                if window.texture.display != before {
-                    prefs.texture_display = window.texture.display;
-                }
-                // (a panorama magnifies part of the image: it needs the
-                // finest level)
-                if window.texture.display.actual_size || window.texture.export.is_some() || pano_on {
-                    scene.textures.note_usage_fixed(&asset, 16384.0);
-                }
-                scene.textures.note_usage_boosted(
-                    &asset,
-                    if window.texture.display.actual_size || window.texture.export.is_some() {
-                        16384.0
-                    } else {
-                        view.available_width().max(view.available_height()) * ctx.pixels_per_point()
-                    },
-                );
-                foot.show(ui, |ui| {
-                    let description = window.description.get_or_insert_with(|| item.desc.clone());
-                    let response = crate::ui::widgets::text_field(ui, material_editor::can_edit(world, &item), description, |b, ui| {
-                        egui::TextEdit::singleline(b)
-                            .hint_text(aurora_i18n::tr!("common-description"))
-                            .char_limit(127)
-                            .desired_width(ui.available_width())
+            if let Some(group) = group.as_mut() {
+                ui.horizontal(|ui| {
+                    let width = (ui.available_width() - 34.0).max(0.0);
+                    ui.allocate_ui(egui::vec2(width, 36.0), |ui| {
+                        crate::ui::preview_tabs::tab_strip(ui, |ui| {
+                            let labels: Vec<_> = group
+                                .items
+                                .iter()
+                                .map(|id| {
+                                    let name = world.inventory.items.get(id).map_or("", |it| it.name.as_str());
+                                    let dirty = group.dirty.contains(id);
+                                    if dirty { format!("{name} *") } else { name.to_owned() }
+                                })
+                                .collect();
+                            // a close under way or the save question of the
+                            // selected material keeps the tabs where they are,
+                            // or another tab would hide the question
+                            let locked = group.closing || window.editor.as_ref().is_some_and(|editor| editor.confirm_close);
+                            ui.horizontal(|ui| {
+                                for (index, name) in labels.iter().enumerate() {
+                                    let member = group.items[index];
+                                    let selected = group.selected == member;
+                                    let allowed = world
+                                        .inventory
+                                        .items
+                                        .get(&member)
+                                        .is_some_and(|item| world.inventory.can_preview(item.asset_type));
+                                    let response = widgets::pill_tab_why(
+                                        ui,
+                                        p,
+                                        name,
+                                        selected,
+                                        allowed && (selected || !locked),
+                                        crate::ui::preview_tabs::disabled_tab_tip(allowed, group.closing),
+                                    );
+                                    if response.clicked() && !locked {
+                                        group.selected = member;
+                                        response.scroll_to_me(None);
+                                    } else if selected && (self.focus_preview == Some(item.id) || group.closing) {
+                                        response.scroll_to_me(Some(egui::Align::Center));
+                                    }
+                                }
+                            });
+                        });
                     });
-                    if response.lost_focus() && *description != item.desc && material_editor::can_edit(world, &item) {
-                        actions.push(Action::Change(Mutation {
-                            operations: vec![Operation::Patch {
-                                id: item.id,
-                                folder: false,
-                                body: aurora_llsd::llsd_map! { "desc" => description.clone() },
-                            }],
-                            refresh: vec![item.parent],
-                            ..Default::default()
-                        }));
-                    }
-                    if let Some(uploader) = window.texture.metadata.uploader {
-                        world.social.want_name(uploader);
-                        let name = world.person_name(&uploader).unwrap_or_else(|| uploader.to_string());
-                        if ui
-                            .small_button(aurora_i18n::tr!("resource-preview-uploader", name = name))
-                            .clicked()
-                        {
-                            actions.push(Action::Profile(uploader));
-                        }
-                    }
-                    if let Some(date) = &window.texture.metadata.date {
-                        ui.label(
-                            RichText::new(aurora_i18n::tr!("resource-preview-upload-date", date = date.clone()))
-                                .small()
-                                .color(p.muted),
-                        );
-                    }
-                    if window.texture.export.is_some() {
-                        ui.label(aurora_i18n::tr!("resource-preview-export-loading"));
-                    }
-                    if !window.texture.message.is_empty() {
-                        ui.label(&window.texture.message);
-                    }
-                    ui.add(egui::Label::new(RichText::new(&path).size(11.0).color(p.muted)).truncate())
-                        .on_hover_text(&path);
-                    ui.horizontal(|ui| {
-                        if ui.button(aurora_i18n::tr!("common-ok")).clicked() {
-                            close_clicked = true;
-                        }
-                        if ui
-                            .add_enabled(
-                                !rules::library(&world.inventory, item.id) && !rules::in_type(&world.inventory, item.id, 14),
-                                egui::Button::new(aurora_i18n::tr!("resource-preview-discard")),
-                            )
-                            .clicked()
-                        {
-                            actions.push(Action::Discard(item.id));
-                        }
-                    });
-                    ui.label(
-                        RichText::new(if rules::held(&world.inventory, &item) & rules::COPY != 0 {
-                            aurora_i18n::tr!("texture-library-copy")
-                        } else {
-                            aurora_i18n::tr!("texture-library-no-copy")
-                        })
-                        .size(11.0)
-                        .color(p.muted),
-                    );
+                    close_clicked |= icon_button(ui, p, "x", aurora_i18n::tr!("resource-preview-close-tab")).clicked();
                 });
             }
-            if material {
-                if let Some(editor) = &mut window.editor {
-                    let model =
-                        self.previews
-                            .material_model(item.id, editor.draft.clone(), editor.shape, scene, &mut self.wanted_images, ctx);
-                    let thumbnails = self.previews.thumbnails(item.id);
-                    editor.show(ui, p, &item, world, images, &thumbnails, model, &mut window.view, &path, actions);
+            ui.push_id(item.id, |ui| {
+                if material {
+                    if window
+                        .editor
+                        .as_ref()
+                        .is_none_or(|editor| editor.asset != asset && !editor.dirty() && editor.saving.is_none())
+                        && let Some(value) = if item.asset_id.is_nil() {
+                            Some(std::sync::Arc::new(aurora_assets::PbrMaterial::default()))
+                        } else {
+                            scene.materials.get(&asset)
+                        }
+                    {
+                        window.editor = Some(material_editor::Editor::new(asset, value));
+                    }
                 } else {
-                    ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
+                    self.wanted_images.insert(asset);
+                    if rules::held(&world.inventory, &item) & (rules::COPY | rules::MODIFY | rules::TRANSFER)
+                        != rules::COPY | rules::MODIFY | rules::TRANSFER
+                    {
+                        window.texture.export = None;
+                        window.texture.export_path = None;
+                    }
+                    window.texture.prepare(ctx, asset, scene);
+                    let copy_uuid = window
+                        .texture
+                        .copy_uuid_allowed(&world.inventory, item.asset_id, world.god_level > 0);
+                    let image = window.texture.image.as_ref().or_else(|| images.get(&asset));
+                    let dimensions = scene.textures.full_size(&asset).or(window.texture.dimensions);
+                    let before = window.texture.display;
+                    // a 2:1 texture can be looked into as a panorama; an Aurora
+                    // 360° upload (by its name) opens that way
+                    let (eligible, mut pano_on) = panorama_state(dimensions, &item.name, window.pano);
+                    let was_on = pano_on;
+                    texture_view::toolbar(
+                        ui,
+                        p,
+                        &item,
+                        &world.inventory,
+                        copy_uuid,
+                        dimensions,
+                        &mut window.texture.display,
+                        eligible.then_some(&mut pano_on),
+                        actions,
+                    );
+                    if pano_on != was_on {
+                        window.pano = Some(pano_on);
+                    }
+                    if !pano_on && let Some(view) = &mut window.pano_view {
+                        view.full = false;
+                    }
+                    // the picture in exactly the room the description, the
+                    // buttons and the notes leave
+                    let (mut view, foot) = widgets::above_footer(ui);
+                    if pano_on {
+                        if let Some(shown) = window.texture.shown.clone() {
+                            let pano_view = window.pano_view.get_or_insert_with(|| crate::ui::panorama::PanoView::new(0.0));
+                            texture_view::panorama_picture(
+                                &mut view,
+                                p,
+                                egui::Id::unique(("texture_panorama", item.id)),
+                                pano_view,
+                                &shown,
+                            );
+                        } else {
+                            view.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
+                        }
+                    } else {
+                        texture_view::picture(&mut view, p, image, dimensions, &window.texture.display, Some(item.id));
+                    }
+                    if window.texture.display != before {
+                        prefs.texture_display = window.texture.display;
+                    }
+                    // (a panorama magnifies part of the image: it needs the
+                    // finest level)
+                    if window.texture.display.actual_size || window.texture.export.is_some() || pano_on {
+                        scene.textures.note_usage_fixed(&asset, 16384.0);
+                    }
+                    scene.textures.note_usage_boosted(
+                        &asset,
+                        if window.texture.display.actual_size || window.texture.export.is_some() {
+                            16384.0
+                        } else {
+                            view.available_width().max(view.available_height()) * ctx.pixels_per_point()
+                        },
+                    );
+                    foot.show(ui, |ui| {
+                        let description = window.description.get_or_insert_with(|| item.desc.clone());
+                        let response = crate::ui::widgets::text_field(ui, material_editor::can_edit(world, &item), description, |b, ui| {
+                            egui::TextEdit::singleline(b)
+                                .hint_text(aurora_i18n::tr!("common-description"))
+                                .char_limit(127)
+                                .desired_width(ui.available_width())
+                        });
+                        if response.lost_focus() && *description != item.desc && material_editor::can_edit(world, &item) {
+                            actions.push(Action::Change(Mutation {
+                                operations: vec![Operation::Patch {
+                                    id: item.id,
+                                    folder: false,
+                                    body: aurora_llsd::llsd_map! { "desc" => description.clone() },
+                                }],
+                                refresh: vec![item.parent],
+                                ..Default::default()
+                            }));
+                        }
+                        if let Some(uploader) = window.texture.metadata.uploader {
+                            world.social.want_name(uploader);
+                            let name = world.person_name(&uploader).unwrap_or_else(|| uploader.to_string());
+                            if ui
+                                .small_button(aurora_i18n::tr!("resource-preview-uploader", name = name))
+                                .clicked()
+                            {
+                                actions.push(Action::Profile(uploader));
+                            }
+                        }
+                        if let Some(date) = &window.texture.metadata.date {
+                            ui.label(
+                                RichText::new(aurora_i18n::tr!("resource-preview-upload-date", date = date.clone()))
+                                    .small()
+                                    .color(p.muted),
+                            );
+                        }
+                        if window.texture.export.is_some() {
+                            ui.label(aurora_i18n::tr!("resource-preview-export-loading"));
+                        }
+                        if !window.texture.message.is_empty() {
+                            ui.label(&window.texture.message);
+                        }
+                        ui.add(egui::Label::new(RichText::new(&path).size(11.0).color(p.muted)).truncate())
+                            .on_hover_text(&path);
+                        ui.horizontal(|ui| {
+                            if ui.button(aurora_i18n::tr!("common-ok")).clicked() {
+                                close_clicked = true;
+                            }
+                            if ui
+                                .add_enabled(
+                                    !rules::library(&world.inventory, item.id) && !rules::in_type(&world.inventory, item.id, 14),
+                                    egui::Button::new(aurora_i18n::tr!("resource-preview-discard")),
+                                )
+                                .clicked()
+                            {
+                                actions.push(Action::Discard(item.id));
+                            }
+                        });
+                        ui.label(
+                            RichText::new(if rules::held(&world.inventory, &item) & rules::COPY != 0 {
+                                aurora_i18n::tr!("texture-library-copy")
+                            } else {
+                                aurora_i18n::tr!("texture-library-no-copy")
+                            })
+                            .size(11.0)
+                            .color(p.muted),
+                        );
+                    });
                 }
-            }
+                if material {
+                    if let Some(editor) = &mut window.editor {
+                        let model =
+                            self.previews
+                                .material_model(item.id, editor.draft.clone(), editor.shape, scene, &mut self.wanted_images, ctx);
+                        let thumbnails = self.previews.thumbnails(item.id);
+                        editor.show(ui, p, &item, world, images, &thumbnails, model, &mut window.view, &path, actions);
+                    } else {
+                        ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
+                    }
+                }
+            });
         });
-        open &= !close_clicked;
-        // the enlarged panorama, over the whole window
-        if let (Some(view), Some(shown)) = (&mut window.pano_view, &window.texture.shown) {
-            view.show_full(ctx, p, egui::Id::unique(("texture_panorama", item.id)), shown);
+        if let Some(group) = group.as_mut() {
+            group.closing |= !open;
+            if group.closing && window.editor.as_ref().is_none_or(|e| !e.close_after_save) {
+                open = false;
+            }
         }
+        open &= !close_clicked;
+        self.preview_extras(ctx, p, world, images, window);
         if let Some(editor) = &mut window.editor {
             if editor.close_ready {
                 return false;
@@ -563,7 +843,6 @@ impl LibraryUi {
                 open = true;
                 editor.confirm_close = true;
             }
-            self.wanted_images.extend(editor.show_picker(ctx, p, world, images));
             if editor.confirm_close {
                 widgets::Modal::new(egui::Id::unique(("material_close", item.id))).show(ctx, |ui| {
                     ui.label(aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes"));
@@ -593,12 +872,19 @@ impl LibraryUi {
                         }
                         if ui.button(aurora_i18n::tr!("common-cancel")).clicked() {
                             editor.confirm_close = false;
+                            if let Some(group) = group.as_mut() {
+                                group.closing = false;
+                            }
                         }
                     });
                 });
             }
         }
-        if let Some(size) = widgets::take_floater_resize(ctx, &id) {
+        // the single preview's remembered size: a tab group (its strip of
+        // tabs, its own window) neither takes it nor gives it
+        if let Some(size) = widgets::take_floater_resize(ctx, &id)
+            && group.is_none()
+        {
             prefs.record_preview_size(material, size);
         }
         open
