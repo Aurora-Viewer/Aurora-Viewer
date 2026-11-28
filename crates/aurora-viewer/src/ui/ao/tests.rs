@@ -1988,3 +1988,24 @@ fn a_moved_entry_keeps_its_place_after_its_save() {
     let shown_e = row(&mut f, "Aurora Stand E").top();
     assert!(shown_a > shown_e, "shown in its new place after the save");
 }
+
+/// A click on the strip's field lists the sets (its right-click menu, on
+/// the same field, keeps an id of its own), and a set picked there is used.
+#[test]
+fn the_mini_strip_lists_the_sets_on_a_click() {
+    let mut f = Fixture::new();
+    let mut other = f.catalog.selected(f.account.selected).expect("set").clone();
+    other.id = Uuid::from_u128(0x0e90);
+    other.name = "Other set".into();
+    other.default = false;
+    f.catalog.sets.push(other.clone());
+    f.account.mini_open = true;
+    f.manager_open = false;
+    f.settle();
+    let name = f.catalog.selected(f.account.selected).expect("set").name.to_uppercase();
+    f.click(&name);
+    f.settle();
+    let out = f.click("Other set");
+    assert!(out.iter().any(|a| matches!(a, Action::Preferences)));
+    assert_eq!(f.account.selected, other.id);
+}

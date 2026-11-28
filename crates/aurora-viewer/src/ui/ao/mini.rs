@@ -181,8 +181,9 @@ fn strip(
 }
 
 /// The strip's right-click menu: the full AO window, and closing the strip.
+/// (An id of its own: a left click on the same field lists the sets.)
 fn strip_menu(response: &egui::Response, p: &Palette, manager_open: &mut bool, close: &mut bool) {
-    super::super::menu::context_menu(response, p, |ui| {
+    super::super::menu::context_menu_of_button(response, p, |ui| {
         if super::super::menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ao-quick-manager")) {
             widgets::open_floater(ui.ctx(), "ao", manager_open);
         }
