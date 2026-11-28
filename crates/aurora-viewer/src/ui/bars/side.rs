@@ -138,7 +138,24 @@ pub(crate) fn bars(
         // contents change. An empty Legacy bar must already use its panel;
         // switching from an Area during hover invalidates the snapped target.
         if islands {
-            let island = column(ui, p, icons, buttons, toolbar, panels, mic, &row, room, &mut action, &display);
+            // the chat island raised over the dock's row takes its room
+            // from the windows, not from a bar that does not reach it
+            let (own, raised) = super::chrome::side_room(ui.ctx(), room);
+            let raised = raised.map(|raised| (raised, room));
+            let island = column(
+                ui,
+                p,
+                icons,
+                buttons,
+                toolbar,
+                panels,
+                mic,
+                &row,
+                own,
+                raised,
+                &mut action,
+                &display,
+            );
             if !buttons.is_empty() {
                 room = room_beside(room, bar, island);
                 edges[usize::from(bar == Bar::Right)] = if bar == Bar::Left { island.right() } else { island.left() };
@@ -173,7 +190,11 @@ fn opens(bar: Bar) -> egui::RectAlign {
 }
 
 /// A side toolbar in a glass island (the islands' look, and the drop zone
-/// of an empty one in both looks). Returns the island.
+/// of an empty one in both looks). Returns the island. `raised` is the
+/// place the bottom dock's raised chat island takes in `room`, and the room
+/// that keeps clear of it: the bar takes that one only when it would stand
+/// over the island, so that a bar that does not reach it stays where it is
+/// when the island rises and comes down.
 #[allow(clippy::too_many_arguments)]
 fn column(
     ui: &mut egui::Ui,
@@ -185,6 +206,7 @@ fn column(
     mic: &mut MicButton,
     row: &Row,
     room: Rect,
+    raised: Option<(Rect, Rect)>,
     action: &mut BarAction,
     display: &crate::ui::toolbar::structure::Display,
 ) -> Rect {
@@ -216,19 +238,24 @@ fn column(
         })
         .collect();
     let scopes = sizing::block_styles(&ctx, buttons, style.sizing, style.mode != ButtonMode::IconsOnly);
-    let (mut island, button, width, heights) = geometry_fixed(
-        screen,
-        room,
-        row.bar,
-        style,
-        natural,
-        &blocks,
-        &crate::ui::toolbar::structure::stretch(&ctx, buttons),
-        &scopes,
-    );
+    let stretch = crate::ui::toolbar::structure::stretch(&ctx, buttons);
+    let place = |room: Rect| geometry_fixed(screen, room, row.bar, style, natural, &blocks, &stretch, &scopes);
+    let editing = ToolbarUi::editing(&ctx);
+    let mut room = room;
+    let mut placed = place(room);
+    // (being edited, the bar takes its whole room)
+    if let Some((raised, clear)) = raised
+        && raised.left() < placed.0.right()
+        && placed.0.left() < raised.right()
+        && (editing || placed.0.bottom() > raised.top())
+    {
+        room = clear;
+        placed = place(room);
+    }
+    let (mut island, button, width, heights) = placed;
     let contents = island;
     let widths = sizing::block_widths(buttons, &natural(button), button, &scopes);
-    if ToolbarUi::editing(&ctx) {
+    if editing {
         island.min.y = room.top();
         island.max.y = room.bottom();
     }

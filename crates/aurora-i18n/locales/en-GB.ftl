@@ -584,6 +584,8 @@ ui-options-plate-shift-click-help = Independent action with Shift held on someon
 
 ui-options-plate-ctrl-click-help = Independent action with Ctrl held on someone's plate. Alt and Ctrl + Shift keep their usual behaviour.
 
+ui-options-chat-logs-legacy-append-only = Both First Last.txt and first_last.txt are recognised. Aurora adds new lines to the existing files and never rewrites or renames them.
+
 ui-options-chat-logs-show-help = When a conversation opens, the end of its file is shown greyed above the new messages.
 
 search-land-sort-per-meter = Price per metre
@@ -643,6 +645,7 @@ import-collision-analyzing = Analysing…
 poser-bridge-disabled = Requests go through the Aurora bridge, turned off in Preferences › Aurora › Behaviour.
 
 poser-hint-position = metres, avatar axes · the chain follows
+poser-hint-position-only = metres, avatar axes · this joint only
 
 poser-hint-scale = factors · centre cube = uniform
 
