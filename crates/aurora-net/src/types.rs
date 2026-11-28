@@ -577,6 +577,8 @@ pub enum NetEvent {
     /// its own flag in the next request; `error` is then the server's text.
     /// `next_server`: the login server sends the login on to this other
     /// server (`LoginError::NextServer`), which the user agrees to first.
+    /// `unencrypted_server`: the login would go to this server over plain
+    /// `http` (`LoginError::Unencrypted`), which the user agrees to first.
     LoginFailed {
         error: String,
         mfa_required: bool,
@@ -585,6 +587,7 @@ pub enum NetEvent {
         bad_credentials: bool,
         previous_session: bool,
         next_server: Option<String>,
+        unencrypted_server: Option<String>,
     },
     LoggedIn(Arc<LoginResponse>),
     /// A simulator circuit was established (main or neighbor).
@@ -840,8 +843,15 @@ pub enum NetEvent {
     VoiceModerationFailed {
         everyone: bool,
     },
+    /// A teleport refused or failed (`teleport_failed.rs`): `reason` is the
+    /// simulator's text, `code` the id the viewer looks up for its own
+    /// wording (AlertInfo's Message, else the reason, which may be empty),
+    /// `region` its REGION_NAME. `code` is None for the viewer's own
+    /// failures: they get no CouldNotTeleportReason popup.
     TeleportFailed {
         reason: String,
+        code: Option<String>,
+        region: String,
     },
     /// The TeleportFailed that follows is a refusal for the destination's
     /// content rating (teleport_access.rs): the viewer may offer to change
@@ -1110,6 +1120,12 @@ pub enum NetEvent {
     /// Members of a group: one GroupMembersReply packet, or the whole list
     /// of the GroupMemberData capability.
     GroupMembers(Box<crate::groups::MembersPage>),
+    /// A GroupMemberData request that failed or came back empty
+    /// (groupMembersRequestCoro clears `mMemberRequestInFlight` whatever the
+    /// outcome), so that the next queued request can go out.
+    GroupMembersFailed {
+        request: uuid::Uuid,
+    },
     /// Roles of a group (GroupRoleDataReply, one packet).
     GroupRoles(Box<crate::groups::RolesPage>),
     /// Role / member pairs of a group (GroupRoleMembersReply, one packet).
@@ -1433,7 +1449,11 @@ pub enum NetEvent {
     InventoryItems(Vec<crate::inventory::InvItem>),
     /// Original records requested to recover simulator-arrived attachments.
     /// Keep the creation context even if the object detaches before readback.
-    AttachmentInventoryItems(Vec<crate::inventory::InvItem>),
+    AttachmentInventoryItems {
+        items: Vec<crate::inventory::InvItem>,
+        /// The same read also satisfied ordinary inventory demand.
+        coalesced: bool,
+    },
     InventoryOrphansFetched {
         request: u64,
         owner: Uuid,
@@ -1443,10 +1463,16 @@ pub enum NetEvent {
     InventoryCreated(crate::inventory::InvItem),
     InventoryItemsFailed {
         items: Vec<Uuid>,
+        /// Read for a worn attachment (`FetchAttachmentItems`).
+        attachment: bool,
+        /// The same AIS read also satisfied the other delivery kind.
+        coalesced: bool,
     },
     /// Items the server answered do not exist: broken links' originals.
     InventoryItemsMissing {
         items: Vec<Uuid>,
+        attachment: bool,
+        coalesced: bool,
     },
     /// Answer to `UploadBake`: the new texture.
     BakeUploaded {
@@ -1582,7 +1608,7 @@ pub struct AttachRequest {
 
 /// What the simulator sends of its region (LLViewerRegion::setInterestListMode,
 /// indra/newview/llviewerregion.cpp, originally LGPL 2.1): the camera's
-/// view by default, everything while the 360° snapshot window is open.
+/// view by default, everything while the 360° photo or Area Search is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InterestListMode {
     #[default]
@@ -1850,7 +1876,7 @@ pub enum NetCommand {
     /// The interest list mode (LLAgent::changeInterestListMode): posted to
     /// the InterestList capability of every region that has it, and again
     /// to the agent's region when its capabilities arrive while the mode is
-    /// not the default (the 360° snapshot window).
+    /// not the default (the 360° photo, Area Search).
     SetInterestListMode(InterestListMode),
     /// Controls that changed enough to be sent now (`NetClient::set_controls`).
     /// Every change of the control flags comes through here, in order: a
@@ -2318,6 +2344,11 @@ pub enum NetCommand {
         owner: Uuid,
         library: bool,
     },
+    /// Internal acknowledgement after model validation of inventory records.
+    InventoryItemsKnown {
+        items: Vec<Uuid>,
+        owner: Uuid,
+    },
     /// Fetch items by id (FetchInventory2).
     FetchItems {
         items: Vec<Uuid>,
@@ -2699,6 +2730,18 @@ pub struct ExperienceLogEvent {
     pub object_name: String,
     pub parcel_name: String,
     pub attachment: bool,
+}
+
+impl NetEvent {
+    /// A teleport failure of the viewer's own (blocked, offline, given up):
+    /// no simulator code, so no Legacy popup, only the notice.
+    pub fn viewer_teleport_failed(reason: impl Into<String>) -> Self {
+        NetEvent::TeleportFailed {
+            reason: reason.into(),
+            code: None,
+            region: String::new(),
+        }
+    }
 }
 
 #[cfg(test)]

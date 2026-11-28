@@ -61,8 +61,9 @@ pub(super) fn encode(rig: &Rig, pose: &SubjectPose, unlock_pelvis: bool) -> Resu
             } else {
                 basis.inverse() * pose.rotations[bone] * basis
             };
-            // Declared Z/X/Y channels are applied successively: Hamilton Y*X*Z.
-            let (y, x, z) = q.to_euler(EulerRot::YXZ);
+            // Declared Z/X/Y channels compose left to right (Z·X·Y), as the
+            // import, the Legacy Viewer's loader and Blender read them.
+            let (z, x, y) = q.to_euler(EulerRot::ZXY);
             let _ = write!(out, "{:.6} {:.6} {:.6} ", z.to_degrees(), x.to_degrees(), y.to_degrees());
         }
         out.push('\n');

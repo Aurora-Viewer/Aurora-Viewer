@@ -559,7 +559,7 @@ impl LibraryUi {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if widgets::flat_button(ui, p, aurora_i18n::tr!("texture-library-retry")).clicked() {
                     for id in &self.catalogue.failed {
-                        world.inventory.request(*id);
+                        world.inventory.retry(*id);
                     }
                     self.catalogue.invalidate();
                 }

@@ -24,6 +24,7 @@ pub mod drawn;
 pub mod face_pattern;
 pub mod fetch_priority;
 pub(crate) mod flexible;
+mod fog_ground;
 mod foot_scope;
 mod foot_support;
 pub mod geometry_need;
@@ -965,6 +966,10 @@ pub struct Scene {
     /// and what it wears go to `part_faces`, the part kept on its skinned
     /// faces by the frame's `part_joints`.
     pub poser_part: Option<usize>,
+    /// LiveMesh's Fit lab clipping map: the avatars it is drawn on (object
+    /// indices) and the garments' objects; their faces go to `fit_garment`
+    /// and the other skinned faces of those avatars to `fit_body`.
+    pub fit_clip: Option<(HashSet<usize>, HashSet<usize>)>,
     /// Whether the last lists drew any of that avatar's skinned faces (its
     /// body or a rigged mesh): without, the poser keeps the bone outline.
     pub poser_part_skinned: bool,
@@ -1054,6 +1059,8 @@ pub struct Scene {
     /// Rain prototype: the terrain's heights around the camera
     /// (`rain_ground.rs`).
     rain_ground: rain_ground::RainGroundCache,
+    /// Aurora Weather's fog: the ground it pools on (`fog_ground.rs`).
+    fog_ground: fog_ground::FogGroundCache,
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
@@ -1085,6 +1092,9 @@ pub struct Scene {
     /// When each skeleton was last posed (an impostor keeps its pose
     /// between pictures).
     posed_at: FastMap<Uuid, Instant>,
+    /// Skeletons another view shows moving (Inspect's 3D): posed every frame,
+    /// however far they are.
+    pub watched: HashSet<Uuid>,
     /// The skeletons posed in this frame, by object index.
     posed_now: FastSet<usize>,
     /// AURORA_SYNC_CHECK: impostor pictures taken, and those taken with a
@@ -1551,6 +1561,22 @@ fn shift_display_pose(local: Mat4, out: &mut [[[f32; 4]; 4]]) {
 }
 
 impl Scene {
+    /// At exit, as `ObjectStore::leak_at_exit`: lets go of what a long
+    /// session gathers without freeing it block by block on the main thread
+    /// (during the session these go to the trash thread, #3081). The
+    /// geometries (`GpuGeom`: arena offsets, bounds and the picking copies of
+    /// every resident mesh) and the per-object draw lists are plain memory,
+    /// and the mesh and texture streamers' byte caches too. What holds a GPU
+    /// staging chunk is left to drop normally (the geometries waiting for
+    /// their copy, the uploads, the staging pool): forgetting one would keep
+    /// the device alive while the process ends.
+    pub(crate) fn leak_at_exit(&mut self) {
+        std::mem::forget(std::mem::take(&mut self.geoms));
+        std::mem::forget(std::mem::take(&mut self.gpu));
+        self.meshes.leak_at_exit();
+        self.textures.leak_at_exit();
+    }
+
     /// LLViewHighlightTransparent / LLPipeline::rebuildDrawInfo: invisible
     /// faces need temporary records while the transparency overlay is on.
     /// See indra/newview/llviewermenu.cpp and pipeline.cpp (LGPL 2.1).
@@ -1786,6 +1812,7 @@ impl Scene {
             held_at: None,
             photo_marks: Default::default(),
             poser_part: None,
+            fit_clip: None,
             poser_part_skinned: false,
             give_marks: Default::default(),
             rlva_silhouettes: Default::default(),
@@ -1824,6 +1851,7 @@ impl Scene {
             light_scratch: Default::default(),
             spot_shadows: Default::default(),
             rain_ground: Default::default(),
+            fog_ground: Default::default(),
             mirror_objects: Default::default(),
             shelter_holds: Default::default(),
             selection_wire: Default::default(),
@@ -1845,6 +1873,7 @@ impl Scene {
             impostors: Default::default(),
             far_avatars: Default::default(),
             posed_at: Default::default(),
+            watched: HashSet::new(),
             posed_now: Default::default(),
             picture_check: (0, 0, None),
             loading: Default::default(),
@@ -5358,7 +5387,13 @@ impl Scene {
             let selection = &self.selection_wire;
             let captured = |g: &ObjGpu, i: usize| !plan.capture.is_empty() && g.avatar(i).is_some_and(|a| plan.capture.contains_key(&a));
             // the poser's hovered part: its avatar and what it wears
-            let posed = |g: &ObjGpu, i: usize| self.poser_part.is_some() && g.avatar(i) == self.poser_part;
+            let posed = |g: &ObjGpu, i: usize| {
+                (self.poser_part.is_some() && g.avatar(i) == self.poser_part)
+                    || self
+                        .fit_clip
+                        .as_ref()
+                        .is_some_and(|(avatars, _)| g.avatar(i).is_some_and(|a| avatars.contains(&a)))
+            };
             if by_index {
                 // (the pictured avatars and what they wear: read in the
                 // objects, on the frames a picture is taken)
@@ -5426,6 +5461,7 @@ impl Scene {
         let pattern_faces = &self.pattern_faces;
         let photo_marks = &self.photo_marks;
         let poser_part = self.poser_part;
+        let fit_clip = self.fit_clip.as_ref();
         let give_marks = &self.give_marks.1;
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
@@ -5456,6 +5492,8 @@ impl Scene {
             select_faces: Vec<DrawCmd>,
             select_pattern: Vec<DrawCmd>,
             part_faces: Vec<DrawCmd>,
+            fit_garment: Vec<DrawCmd>,
+            fit_body: Vec<DrawCmd>,
             part_skinned: usize,
             debug_blue: Vec<DrawCmd>,
             debug_green: Vec<DrawCmd>,
@@ -5485,6 +5523,8 @@ impl Scene {
             select_faces: Vec::new(),
             select_pattern: Vec::new(),
             part_faces: Vec::new(),
+            fit_garment: Vec::new(),
+            fit_body: Vec::new(),
             part_skinned: 0,
             debug_blue: Vec::new(),
             debug_green: Vec::new(),
@@ -5671,6 +5711,18 @@ impl Scene {
                         l.part_faces.push(cmd);
                         l.part_skinned += usize::from(g.rigged || g.is_avatar);
                     }
+                    // the Fit lab's map: the garment, and the bodies that
+                    // wear it (the system body and the rigged meshes worn)
+                    if let Some((avatars, garments)) = fit_clip
+                        && pass != Pass::Hidden
+                        && avatar.is_some_and(|a| avatars.contains(&a))
+                    {
+                        if garments.contains(&idx) {
+                            l.fit_garment.push(cmd);
+                        } else if g.rigged || g.is_avatar {
+                            l.fit_body.push(cmd);
+                        }
+                    }
                 }
                 if pass == Pass::Hidden {
                     // LLVolumeGeometryManager excludes attachments and rigged
@@ -5805,6 +5857,8 @@ impl Scene {
             a.select_faces.append(&mut b.select_faces);
             a.select_pattern.append(&mut b.select_pattern);
             a.part_faces.append(&mut b.part_faces);
+            a.fit_garment.append(&mut b.fit_garment);
+            a.fit_body.append(&mut b.fit_body);
             a.part_skinned += b.part_skinned;
             a.casters.append(&mut b.casters);
             a.shelter.append(&mut b.shelter);
@@ -5887,6 +5941,8 @@ impl Scene {
         self.lists.select_faces = result.select_faces;
         self.lists.select_pattern = result.select_pattern;
         self.lists.part_faces = result.part_faces;
+        self.lists.fit_garment = result.fit_garment;
+        self.lists.fit_body = result.fit_body;
         self.poser_part_skinned = result.part_skinned > 0;
         self.lists.glow_alpha = result.glow_alpha;
         for (slot, cmd, blend) in result.impostor {
@@ -6144,7 +6200,7 @@ impl Scene {
                 .unwrap_or(true);
             // Our animation stops drive simulator state even when the camera
             // is looking elsewhere (in particular the pre-jump -> jump).
-            if !near && owner != world.agent_id {
+            if !near && owner != world.agent_id && !self.watched.contains(&owner) {
                 continue;
             }
             // where it looks (LLHUDEffectLookAt::update / calcTargetPosition)
@@ -6222,7 +6278,8 @@ impl Scene {
             motions.aurora_feet = self.ground_avatar_feet;
             motions.look_over_animations = photo_look;
             motions.look_glance = if photo_look { world.look_at.photo.glance } else { 0.0 };
-            motions.preview_bend = if owner == world.agent_id {
+            // (LiveMesh's bend shows on the Fit lab's mannequins too)
+            motions.preview_bend = if owner == world.agent_id || world.is_mannequin(&owner) {
                 self.preview_bend
             } else {
                 anim::PreviewBend::default()
@@ -6268,6 +6325,7 @@ impl Scene {
                 && motions.poser.is_none()
                 && !self.portals.planes.contains_key(&idx)
                 && owner != world.agent_id
+                && !self.watched.contains(&owner)
                 && world.avatar_poses.contains_key(&owner)
                 && let Some(a) = self.far_avatars.get(&idx)
                 && let Some(&at) = self.posed_at.get(&owner)
@@ -6760,7 +6818,9 @@ impl Scene {
             self.physics.remove(&owner);
             return None;
         };
-        let update = self.body_physics.updates(owner == world.agent_id, position.distance(eye));
+        let update = self
+            .body_physics
+            .updates(owner == world.agent_id || self.watched.contains(&owner), position.distance(eye));
         let mut state = self.physics.remove(&owner).unwrap_or_else(|| body_physics::BodyPhysics::new(now));
         if !update {
             state.hold();
@@ -7015,6 +7075,31 @@ mod layer_rank_tests {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    /// At exit the geometries are let go, not freed on the main thread (the
+    /// count would fall back to the test's own copy).
+    #[test]
+    fn the_scene_lets_go_of_its_geometries_at_exit() {
+        let mut scene = Scene::new(std::env::temp_dir(), Arc::new(AvatarLibrary::load()));
+        let geom = Arc::new(GpuGeom {
+            faces: vec![None],
+            min: Vec3::ZERO,
+            max: Vec3::ONE,
+            joint_bounds: Vec::new(),
+            pick_faces: Vec::new(),
+        });
+        scene.geom_insert(
+            GeomKey::Mesh {
+                id: Uuid::from_u128(0x2894),
+                lod: 0,
+            },
+            GeomState::Ready(geom.clone()),
+        );
+        assert_eq!(Arc::strong_count(&geom), 2);
+        scene.leak_at_exit();
+        drop(scene);
+        assert_eq!(Arc::strong_count(&geom), 2, "left behind, not freed");
+    }
 
     #[test]
     fn hud_damping_distance_does_not_use_the_world_camera() {
@@ -7482,6 +7567,49 @@ mod tests {
             Scene::object_geom_key(&Object::from_update(1, update), 3),
             Some(GeomKey::Mesh { id: map, lod: 3 })
         );
+    }
+
+    /// Inspect's 3D of someone far away: an impostor keeps its pose between two
+    /// pictures, or past the draw distance, unless it is watched.
+    #[test]
+    fn a_watched_impostor_is_posed_every_frame() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        world.agent_id = Uuid::from_u128(0xA6);
+        world.apply(NetEvent::MainRegionChanged { handle: 1 });
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::action_avatar(false)],
+        });
+        let far = crate::demo::DEMO_AGENT;
+        let idx = world.objects.index_of_uuid(&far).expect("avatar");
+        let mut scene = Scene::new(std::path::PathBuf::new(), lib);
+        scene.palette_base(far);
+        let start = Instant::now();
+        let mut posed = |scene: &mut Scene, ms: u64| {
+            scene.far_avatars.insert(
+                idx,
+                impostors::Far {
+                    idx,
+                    center: Vec3::ZERO,
+                    distance: 50.0,
+                    in_view: false,
+                    silhouette: false,
+                },
+            );
+            scene.update_poses(&mut world, Vec3::ZERO, start + std::time::Duration::from_millis(ms));
+            scene.stats.posed
+        };
+        assert_eq!(posed(&mut scene, 0), 1);
+        assert_eq!(posed(&mut scene, 16), 0, "it keeps its pose");
+        scene.watched.insert(far);
+        assert_eq!([posed(&mut scene, 32), posed(&mut scene, 48)], [1, 1]);
+        // out of the draw distance too
+        scene.gpu.resize_with(idx + 1, Default::default);
+        scene.gpu[idx].center = Vec3::splat(10_000.0);
+        assert_eq!(posed(&mut scene, 64), 1);
+        scene.watched.clear();
+        assert_eq!(posed(&mut scene, 80), 0);
     }
 
     #[test]

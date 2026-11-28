@@ -697,6 +697,7 @@ mod tests {
                     actions: &mut actions,
                     embedded_contacts: false,
                     contact_sheet_on_click: false,
+                    contact_sheet_room: false,
                 };
                 set_rows(ui, &mut c, &mut st, "A", SET_ROW_H);
             });

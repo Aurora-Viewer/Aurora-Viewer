@@ -78,6 +78,13 @@ impl Command {
 }
 
 impl ListingsUi {
+    /// Open the window for a question or a window of an inventory command,
+    /// expanded when minimized (LLFloaterReg::showInstance).
+    fn bring_up(&mut self) {
+        self.open = true;
+        self.shown = true;
+    }
+
     /// LLFolderBridge::pasteFromClipboard: validate again after confirmation,
     /// since stock, permissions or the clipboard may have changed meanwhile.
     #[allow(clippy::too_many_arguments)]
@@ -115,7 +122,7 @@ impl ListingsUi {
             ids.iter().any(|id| mp::depth(inv, root, *id) < 0).then_some(Prompt::MoveInventory)
         };
         if let Some(prompt) = prompt.filter(|prompt| !confirmed && self.asks(*prompt)) {
-            self.open = true;
+            self.bring_up();
             self.confirm = Some(Confirm::Paste {
                 to,
                 ids: ids.to_vec(),
@@ -217,7 +224,7 @@ impl ListingsUi {
         };
         match prompt.filter(|prompt| self.asks(*prompt)) {
             Some(prompt) => {
-                self.open = true;
+                self.bring_up();
                 self.confirm = Some(Confirm::Inventory {
                     change,
                     cut,
@@ -294,11 +301,11 @@ impl ListingsUi {
         match command {
             Command::Create => self.create_listing(inv, worn, root, id, actions),
             Command::Associate => {
-                self.open = true;
+                self.bring_up();
                 self.associate = Some((id, String::new()));
             }
             Command::Check => {
-                self.open = true;
+                self.bring_up();
                 self.run_audit(inv, worn, root, id);
             }
             Command::List => self.list(inv, worn, root, id, actions),

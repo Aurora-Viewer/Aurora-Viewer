@@ -92,11 +92,13 @@ mod tests {
             true,
         )]));
         assert!(enabled(&world));
+        assert!(world.agent.rotate_grabbed, "the vehicle took left/right: no local turn");
         for event in crate::demo::demo_reply(&NetCommand::ForceScriptControlRelease) {
             world.apply(event);
         }
         assert!(!world.script_controls.any());
         assert!(!enabled(&world));
+        assert!(!world.agent.rotate_grabbed, "released: the avatar turns again");
     }
 
     #[test]

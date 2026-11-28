@@ -88,6 +88,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "diaper",
     "door-enter",
     "door-exit",
+    "dots",
     "eraser",
     "external-link",
     "eye-closed",
@@ -101,6 +102,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "gavel",
     "gif",
     "grid-3x3",
+    "grip-horizontal",
     "grip-vertical",
     "hammer-off",
     "hand-grab",
@@ -130,6 +132,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "loader-2",
     "lock-open",
     "lock-cog",
+    "mist",
     "pencil-off",
     "login-2",
     "logout",
@@ -158,6 +161,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "plus",
     "power",
     "question-mark",
+    "radar-2",
     "radio",
     "refresh",
     "refresh-dot",
@@ -168,6 +172,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "rotate-2",
     "resize",
     "ripple",
+    "rotate",
     "rotate-3d",
     "rotate-360",
     "rotate-clockwise",
@@ -175,7 +180,10 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "route",
     "rss",
     "run",
+    "scan-eye",
     "select-all",
+    "separator-horizontal",
+    "separator-vertical",
     "scissors",
     "shape",
     "share",
@@ -265,6 +273,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "bookmark",
     "bookmarks",
     "bounce-right",
+    "bounce-right",
     "box-align-bottom",
     "brand-discord",
     "brand-github",
@@ -342,6 +351,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "forbid",
     "gauge",
     "ghost",
+    "ghost-2",
     "gift",
     "grid-pattern",
     "hanger-2",
@@ -372,6 +382,8 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "layout-sidebar-left-collapse",
     "layout-sidebar-left-expand",
     "layout-sidebar-right",
+    "layout-sidebar-right-collapse",
+    "layout-sidebar-right-expand",
     "layout-grid",
     "layout-navbar-collapse",
     "layout-navbar-expand",
@@ -806,7 +818,13 @@ pub(crate) fn inventory_link_name(base: &str) -> &'static str {
 
 /// Whether `name` is an embedded icon or one of the skin's aliases.
 pub(crate) fn embedded(name: &str) -> bool {
-    OUTLINE.iter().chain(FILLED).chain(INVENTORY_LINKS).any(|(n, _)| *n == name)
+    OUTLINE
+        .iter()
+        .chain(FILLED)
+        .chain(INVENTORY_LINKS)
+        .chain(BRAND_SVGS)
+        .chain(PNGS)
+        .any(|(n, _)| *n == name)
         || alias_target(name).is_some()
         || generated_folder(name).is_some()
 }
@@ -856,6 +874,17 @@ static GLOBAL: std::sync::RwLock<Option<HashMap<String, egui::TextureHandle>>> =
 /// Icon from the current skin, by name.
 pub fn global(name: &str) -> Option<egui::TextureHandle> {
     GLOBAL.read().ok()?.as_ref()?.get(name).cloned()
+}
+
+/// Available bundled and skin icons for the button appearance picker.
+pub fn names() -> Vec<String> {
+    let mut names: Vec<_> = GLOBAL
+        .read()
+        .ok()
+        .and_then(|icons| icons.as_ref().map(|icons| icons.keys().cloned().collect()))
+        .unwrap_or_default();
+    names.sort_unstable();
+    names
 }
 
 #[derive(Default)]

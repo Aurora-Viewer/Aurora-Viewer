@@ -1,4 +1,4 @@
-//! People â€º Recent in Aurora's look (the People mock-up v2): the residents
+//! People › Recent in Aurora's look (the People mock-up v2): the residents
 //! we dealt with lately (`world/recent.rs`, LLRecentPeople; the recent tab
 //! of LLPanelPeople, panel_people.xml) as Near you's rows, newest first,
 //! with how long ago and the region we were in. The menu is the avatar
@@ -19,19 +19,53 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &
     super::split(ui, c, data, st, "people-recent-list", list, super::person_sheet);
 }
 
-/// "12 min ago Â· Ahern". Under RLVa @showloc a region the agent is
+/// LLAvatarListItem::formatSeconds (indra/newview/llavatarlistitem.cpp):
+/// use the largest whole unit, with fixed 30-day months and 365-day years.
+fn elapsed_text(seconds: u64) -> String {
+    const DAY: u64 = 86_400;
+    let days = seconds / DAY;
+    if days >= 365 {
+        aurora_i18n::tr!("profile-age-years", count = (days / 365) as i64)
+    } else if days >= 30 {
+        aurora_i18n::tr!("profile-age-months", count = (days / 30) as i64)
+    } else if days >= 7 {
+        aurora_i18n::tr!("profile-age-weeks", count = (days / 7) as i64)
+    } else if days >= 1 {
+        aurora_i18n::tr!("profile-age-days", count = days as i64)
+    } else if seconds >= 3600 {
+        aurora_i18n::tr!("people-recent-hours", count = (seconds / 3600) as i64)
+    } else if seconds >= 60 {
+        aurora_i18n::tr!("people-recent-minutes", count = (seconds / 60) as i64)
+    } else {
+        aurora_i18n::tr!("people-recent-seconds", count = seconds as i64)
+    }
+}
+
+fn interaction_time(when: std::time::SystemTime, zone: crate::settings::ClockZone, twelve: bool) -> Option<String> {
+    use crate::ui::bars::clock;
+    let unix = i64::try_from(when.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs()).ok()?;
+    let (year, month, day, _, hour, minute, second) = crate::ui::land::parts_at(unix, clock::offset(zone, unix));
+    Some(aurora_i18n::tr!(
+        "people-recent-last-interaction",
+        date = format!("{year:04}-{month:02}-{day:02}"),
+        time = clock::hour_text(hour, minute, &format!(":{second:02}"), twelve),
+        zone = clock::zone_name(zone, unix)
+    ))
+}
+
+/// "12 min ago · Ahern". Under RLVa @showloc a region the agent is
 /// connected to is "(Hidden region)", as every list names it
 /// (RlvUtil::isNearbyRegion, rlvcommon.cpp); one met there under the
 /// restriction was kept without its name (`World::met`).
 fn ago(met: &Met, world: &crate::world::World) -> String {
-    let seconds = met.when.elapsed().map_or(0.0, |d| d.as_secs_f64());
-    let when = aurora_i18n::tr!("people-recent-ago", when = super::nearby::seen_text(seconds));
+    let seconds = met.when.elapsed().map_or(0, |d| d.as_secs());
+    let when = aurora_i18n::tr!("people-recent-ago", when = elapsed_text(seconds));
     if met.region.is_empty() {
         when
     } else if world.rlva_hides_region(&met.region) {
-        format!("{when} Â· {}", aurora_i18n::tr!("rlva-hidden-region"))
+        format!("{when} · {}", aurora_i18n::tr!("rlva-hidden-region"))
     } else {
-        format!("{when} Â· {}", met.region)
+        format!("{when} · {}", met.region)
     }
 }
 
@@ -150,7 +184,10 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     }
     rows::person_menu(&resp, p, world, NameScope::Roster, &st.sel, id);
     let detail = (cut && resp.hover_pos().is_some_and(|at| at.x <= end.names_right)).then_some(name);
-    rows::contact_tip(resp, detail);
+    rows::contact_tip(resp, detail, || {
+        use crate::ui::bars::clock;
+        interaction_time(met.when, clock::zone(), clock::chat_twelve_hours())
+    });
 }
 
 fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, id: Uuid, slot: Rect, buttons: &[(&str, &str)]) {
@@ -176,6 +213,36 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, id: Uuid, sl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recent_age_uses_the_largest_complete_unit() {
+        let day = 86_400;
+        for (seconds, expected) in [
+            (59, aurora_i18n::tr!("people-recent-seconds", count = 59)),
+            (60, aurora_i18n::tr!("people-recent-minutes", count = 1)),
+            (3600, aurora_i18n::tr!("people-recent-hours", count = 1)),
+            (day - 1, aurora_i18n::tr!("people-recent-hours", count = 23)),
+            (day, aurora_i18n::tr!("profile-age-days", count = 1)),
+            (7 * day, aurora_i18n::tr!("profile-age-weeks", count = 1)),
+            (30 * day - 1, aurora_i18n::tr!("profile-age-weeks", count = 4)),
+            (30 * day, aurora_i18n::tr!("profile-age-months", count = 1)),
+            (2_332 * 3600, aurora_i18n::tr!("profile-age-months", count = 3)),
+            (365 * day - 1, aurora_i18n::tr!("profile-age-months", count = 12)),
+            (365 * day, aurora_i18n::tr!("profile-age-years", count = 1)),
+        ] {
+            assert_eq!(elapsed_text(seconds), expected, "{seconds} seconds");
+        }
+    }
+
+    #[test]
+    fn recent_hover_uses_the_saved_instant_and_its_zone_date() {
+        let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(3661);
+        let stamp = interaction_time(when, crate::settings::ClockZone::Slt, false).expect("valid date");
+        assert!(
+            stamp.contains("1969-12-31") && stamp.contains("17:01:01") && stamp.contains("SLT"),
+            "{stamp}"
+        );
+    }
 
     /// RLVa @showloc: a region the agent is connected to is "(Hidden
     /// region)" in the list, another keeps its name.

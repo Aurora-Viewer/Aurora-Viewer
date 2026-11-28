@@ -83,7 +83,12 @@ impl App {
         {
             chosen_cache.push(next);
         }
-        let transcripts = super::folders::chat_log_root(&self.settings.chat_log_location);
+        let transcripts: Vec<PathBuf> = self
+            .settings
+            .chat_log_locations()
+            .into_iter()
+            .filter_map(|p| super::folders::chat_log_root(&p.to_string_lossy()))
+            .collect();
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
         let spawned = std::thread::Builder::new().name("aurora-uninstall".into()).spawn(move || {
@@ -94,7 +99,7 @@ impl App {
                 if system.dry_run() { " (dry run)" } else { "" }
             );
             let (steps, blender) = uninstall::run(&plan, system.as_mut());
-            let remaining = uninstall::remaining(uninstall::folder_candidates(&chosen_cache, transcripts, &blender), Path::exists);
+            let remaining = uninstall::remaining(uninstall::folder_candidates(&chosen_cache, &transcripts, &blender), Path::exists);
             let _ = tx.send(Report {
                 steps,
                 blender,

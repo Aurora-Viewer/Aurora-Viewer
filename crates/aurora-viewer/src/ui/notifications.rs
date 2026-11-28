@@ -32,6 +32,8 @@ pub(crate) const CARD_ROW_SPACING: f32 = 6.0;
 pub struct NotifUi {
     pub privacy: crate::world::rlva::privacy::TextFilter,
     pub open: bool,
+    /// To Do listed something at the last frame.
+    pub was_listed: bool,
     /// Bottom-left of the bell (where the list opens).
     pub anchor: Option<egui::Pos2>,
     /// (notification id, expiry time)
@@ -51,6 +53,11 @@ pub struct NotifUi {
     /// its cards, the friends' toasts at the top right) stands exactly under
     /// it. `None` with Firestorm's bars.
     pub column: Option<egui::Rect>,
+    /// The width the user dragged Aurora's center to (px, 0 = its default
+    /// width), from and back to `Settings::notification_width`.
+    pub width: f32,
+    /// A drag of that width ended, or a double click reset it: save it.
+    pub width_committed: bool,
     /// Aurora's center (`ui::notification_center`).
     pub center: super::notification_center::CenterUi,
 }
@@ -1026,6 +1033,12 @@ fn shown_toasts(list: &Notifications, nui: &NotifUi, dnd: bool) -> (Vec<u64>, us
     (keep, behind)
 }
 
+/// Port of LLSysWellWindow::removeItemByID (indra/newview/llsyswellwindow.cpp):
+/// close when the To Do list becomes empty.
+pub(crate) fn list_emptied(was_listed: bool, listed_now: bool, tab: super::notification_center::Tab) -> bool {
+    tab == super::notification_center::Tab::ToDo && was_listed && !listed_now
+}
+
 /// List under the bell and toasts; returns the answers to apply.
 pub fn show(
     ctx: &egui::Context,
@@ -1046,6 +1059,11 @@ pub fn show(
     nui.column = None;
     update_toasts(list, nui, now, env.message_seconds, env.tip_seconds, env.hidden, dnd);
 
+    let listed_now = list.listed().next().is_some();
+    if nui.open && list_emptied(nui.was_listed, listed_now, nui.center.tab) {
+        nui.open = false;
+    }
+    nui.was_listed = listed_now;
     let anchor = nui.anchor.unwrap_or(egui::pos2(8.0, 60.0));
     if nui.open {
         nui.toasts.clear();

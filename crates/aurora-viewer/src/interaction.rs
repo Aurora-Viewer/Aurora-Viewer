@@ -645,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn world_click_other_residents_attachment_needs_touch_but_no_edit_rights() {
+    fn world_click_other_residents_attachment_needs_touch_and_edits_nothing() {
         let mut w = world();
         let (wearer, owner) = w
             .objects
@@ -667,7 +667,9 @@ mod tests {
             assert_eq!(result.clicked, picked.key);
             assert_eq!(result.key, picked.key, "ObjectGrab and ObjectDeGrab address the clicked prim");
             assert_eq!(result.root, crate::demo::action_id(971));
-            assert!(!crate::build::selectable(&w, idx));
+            // selectable to look at, as in the Legacy Viewer, never to change
+            assert!(crate::build::selectable(&w, idx));
+            assert!(crate::build::worn_by_other(&w, idx));
         }
         w.objects.get_mut(root_idx).unwrap().update_flags = 0;
         assert!(target(&w, child_idx, &props).is_none());

@@ -57,10 +57,14 @@ pub fn focus_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: M
             tool.focus_mode == FocusMode::Zoom,
             egui::Slider::new(&mut v, 0.0..=0.5)
                 .custom_parser(aurora_i18n::parse_number)
-                .step_by(0.01)
                 .show_value(false),
         );
-        if r.changed() {
+        // no step, and only the user's own move: egui rounded a value off
+        // its 0.01 step at every frame and called it changed, which put the
+        // camera back on the slider's notches all through a zoom drag (the
+        // human's report of 2026-11-24); LLSliderCtrl::setValue commits
+        // nothing either
+        if r.changed() && (r.is_pointer_button_down_on() || r.has_focus()) {
             tool.ui.requests.push(Request::ZoomFraction(v * 2.0));
         }
     });
@@ -96,14 +100,62 @@ pub fn grab_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: Mo
     }
 }
 
-/// Create tool: the 15 shapes, options, tree / grass species.
-pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
+/// Create tool: the 15 shapes, then the options and tree / grass species,
+/// which the caret at the bottom shows or hides as the Legacy style's
+/// window does its lower part (kept in the build settings; the window
+/// follows, tool_floaters.rs).
+/// What a click in the Create panel's grid asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateClick {
+    /// A shape, `again` when it was the one already chosen.
+    Shape { again: bool },
+    /// The shape picker's button (Aurora window only).
+    Capture,
+    /// "Keep creating" just turned on (Aurora window only): Create is put
+    /// in use, as the option says (human request, 2026-11-25).
+    KeepCreating,
+}
+
+/// The Aurora Create panel, `active` while Create is the tool in use, with
+/// the shapes captured from prims and the picker's button (lit while it
+/// waits for a world click, `capturing`).
+pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, active: bool, capturing: bool) -> Option<CreateClick> {
     ui.vertical(|ui| {
         let cell = Vec2::splat((ui.available_width() - 24.0) / 5.0);
-        create_shapes(ui, p, s, cell);
-        ui.add_space(12.0);
-        create_options(ui, p, s);
-    });
+        // no "Copy selection" in this window (human request, 2026-11-25):
+        // the Legacy style's window keeps it
+        s.copy_selection = false;
+        let mut picked = create_shapes(ui, p, s, cell, active, Some(capturing));
+        if s.create_options_shown {
+            ui.add_space(12.0);
+            if create_options(ui, p, s, false) && picked.is_none() {
+                picked = Some(CreateClick::KeepCreating);
+            }
+        }
+        ui.add_space(6.0);
+        let icon = if s.create_options_shown {
+            "caret-up-filled"
+        } else {
+            "caret-down-filled"
+        };
+        let response = crate::ui::widgets::action_button(
+            ui,
+            p,
+            icon,
+            "",
+            crate::ui::widgets::ActionKind::Flat,
+            Vec2::new(ui.available_width(), 14.0),
+        )
+        .on_hover_text(aurora_i18n::tr!("build-create-options-toggle"));
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::unique("build-create-options-toggle"), response.rect));
+        if response.clicked() {
+            s.create_options_shown = !s.create_options_shown;
+        }
+        picked
+    })
+    .inner
 }
 
 /// floater_tools.xml: the 5 × 3 shape grid to the left of the rez options.
@@ -116,98 +168,237 @@ pub(super) fn create_legacy_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildS
         "legacy-create-shapes",
     );
     let cell = Vec2::splat((shapes.available_width() - 24.0) / 5.0);
-    create_shapes(&mut shapes, p, s, cell);
+    create_shapes(&mut shapes, p, s, cell, true, None);
     let mut options = super::legacy::pane(
         ui,
         egui::Rect::from_min_max(egui::pos2(middle + 5.0, rect.top()), rect.max),
         "legacy-create-options",
     );
-    create_options(&mut options, p, s);
+    create_options(&mut options, p, s, true);
 }
 
-fn create_shapes(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, cell: Vec2) {
-    egui::Grid::new("shapes")
-        .min_col_width(cell.x)
-        .spacing(Vec2::splat(6.0))
-        .show(ui, |ui| {
-            for i in 0..shapes().len() + 2 {
-                let sel = s.create_shape == i && !s.copy_selection;
-                let (rect, resp) = ui.allocate_exact_size(cell, egui::Sense::click());
-                let fill = if sel {
-                    p.violet
-                } else if resp.hovered() {
-                    p.raised
-                } else {
-                    p.field
-                };
-                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
-                let col = if sel { p.on_accent } else { p.ink };
-                let name = match i {
-                    i if i < shapes().len() => {
-                        let sh = &shapes()[i];
-                        super::shape_preview::paint(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
-                        sh.name
-                    }
-                    i if i == shapes().len() => {
-                        super::shape_preview::paint_plant(ui, rect.shrink(3.0), true, col);
-                        aurora_i18n::tr!("build-ui-tools-tree")
-                    }
-                    _ => {
-                        super::shape_preview::paint_plant(ui, rect.shrink(3.0), false, col);
-                        aurora_i18n::tr!("build-ui-tools-grass")
-                    }
-                };
-                if resp.on_hover_text(name).clicked() {
-                    // LLFloaterTools::setObjectType also unticks "Copy selection"
-                    s.create_shape = i;
-                    s.copy_selection = false;
-                }
-                if i % 5 == 4 {
-                    ui.end_row();
-                }
+/// The shape grid. The chosen shape is lit in the accent while Create is
+/// the tool in use (`active`), on a dimmer accent otherwise (human request,
+/// 2026-11-24). With `captured` (the Aurora window: whether the picker is
+/// armed), the shapes captured from prims follow the grass, then the
+/// picker's button; a right click removes a captured shape.
+fn create_shapes(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut BuildSettings,
+    cell: Vec2,
+    active: bool,
+    captured: Option<bool>,
+) -> Option<CreateClick> {
+    // Five cells a row, placed from this frame's cell size: an egui::Grid
+    // keeps its last frame's column widths, and a window narrowed around it
+    // was held at its old width (the Create window, 2026-11-24).
+    const GAP: f32 = 6.0;
+    let fixed = shapes().len() + 2;
+    let count = match captured {
+        Some(_) => fixed + s.captured_shapes.len() + 1,
+        None => fixed,
+    };
+    let rows = count.div_ceil(5);
+    let (block, _) = ui.allocate_exact_size(
+        Vec2::new(cell.x * 5.0 + GAP * 4.0, cell.y * rows as f32 + GAP * (rows - 1) as f32),
+        egui::Sense::hover(),
+    );
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("build-create-shapes"), block));
+    let mut picked = None;
+    let mut removed = None;
+    for i in 0..count {
+        let at = block.min + Vec2::new((i % 5) as f32 * (cell.x + GAP), (i / 5) as f32 * (cell.y + GAP));
+        let rect = egui::Rect::from_min_size(at, cell);
+        if let Some(armed) = captured
+            && i == count - 1
+        {
+            if capture_button(ui, p, s, rect, armed) {
+                picked = Some(CreateClick::Capture);
             }
-        });
+            continue;
+        }
+        let sel = s.create_shape == i && !s.copy_selection;
+        let resp = ui.interact(rect, ui.make_persistent_id(("create_shape", i)), egui::Sense::click());
+        let fill = if sel && active {
+            p.violet
+        } else if sel {
+            // chosen, Create not in use
+            p.violet.gamma_multiply(0.35)
+        } else if resp.hovered() {
+            p.raised
+        } else {
+            p.field
+        };
+        if sel && !active {
+            // under the dim accent, the panel's field
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
+        }
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+        let col = if sel && active { p.on_accent } else { p.ink };
+        let name: String = match i {
+            i if i < shapes().len() => {
+                let sh = &shapes()[i];
+                super::shape_preview::paint(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
+                sh.name.to_owned()
+            }
+            i if i == shapes().len() => {
+                super::shape_preview::paint_plant(ui, rect.shrink(3.0), true, col);
+                aurora_i18n::tr!("build-ui-tools-tree").to_owned()
+            }
+            i if i == shapes().len() + 1 => {
+                super::shape_preview::paint_plant(ui, rect.shrink(3.0), false, col);
+                aurora_i18n::tr!("build-ui-tools-grass").to_owned()
+            }
+            i => {
+                let k = i - fixed;
+                let params = s.captured_shapes[k].shape.to_params();
+                super::shape_preview::paint(ui, rect.shrink(3.0), &params, glam::Quat::IDENTITY, col);
+                crate::ui::menu::context_menu(&resp, p, |ui| {
+                    if crate::ui::menu::item(ui, p, "trash-filled", aurora_i18n::tr!("build-capture-shape-remove")) {
+                        removed = Some(k);
+                    }
+                });
+                let kind = super::object::types()[super::object::ui_from_volume(&params).ty].0;
+                aurora_i18n::tr!("build-capture-shape-tooltip", kind = kind)
+            }
+        };
+        if resp.on_hover_text(name).clicked() {
+            // LLFloaterTools::setObjectType also unticks "Copy selection"
+            s.create_shape = i;
+            s.copy_selection = false;
+            picked = Some(CreateClick::Shape { again: sel });
+        }
+    }
+    if let Some(k) = removed {
+        s.remove_captured(k);
+    }
+    picked
 }
 
-fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
+/// The shape picker's cell: lit while it waits for a world click, greyed
+/// once `shapes::MAX_CAPTURED` shapes are kept. True when clicked.
+fn capture_button(ui: &mut egui::Ui, p: &Palette, s: &BuildSettings, rect: egui::Rect, armed: bool) -> bool {
+    let full = s.captured_shapes.len() >= crate::build::shapes::MAX_CAPTURED;
+    let sense = if full && !armed {
+        egui::Sense::hover()
+    } else {
+        egui::Sense::click()
+    };
+    let resp = ui.interact(rect, ui.make_persistent_id("create_shape_capture"), sense);
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("build-create-capture"), rect));
+    let fill = if armed {
+        p.violet
+    } else if resp.hovered() && !full {
+        p.raised
+    } else {
+        p.field
+    };
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+    let ink = if armed {
+        p.on_accent
+    } else if full {
+        p.muted_dim
+    } else {
+        p.ink
+    };
+    let glyph = egui::Rect::from_center_size(rect.center(), Vec2::splat((rect.width() * 0.45).min(22.0)));
+    super::compact::glyph(ui, glyph, "color-picker", ink);
+    let tip = if armed {
+        aurora_i18n::tr!("build-capture-shape-armed")
+    } else if full {
+        aurora_i18n::tr!("build-capture-shape-full")
+    } else {
+        aurora_i18n::tr!("build-capture-shape-button")
+    };
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !full || armed, tip));
+    resp.on_hover_text(tip).clicked()
+}
+
+/// The Create options. The Legacy style's (`legacy`) are floater_tools.xml's:
+/// "Copy selection" with its Center and Rotate. The Aurora window's
+/// (human requests, 2026-11-25) have no "Copy selection", and its own
+/// placement options for every shape it makes (`BuildSettings::
+/// create_centers`); "Copy prim rotation" and "Align to surface" are one
+/// or the other.
+/// True when "Keep creating" was just turned on.
+fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, legacy: bool) -> bool {
+    let mut kept = false;
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-        if let Some(v) = check(
-            ui,
-            p,
-            s.keep_tool,
-            false,
-            aurora_i18n::tr!("build-ui-tools-keep-selection-tool"),
-            true,
-        ) {
+        let keep = if legacy {
+            aurora_i18n::tr!("build-ui-tools-keep-selection-tool")
+        } else {
+            aurora_i18n::tr!("build-create-keep-creating")
+        };
+        if let Some(v) = check(ui, p, s.keep_tool, false, keep, true) {
             s.keep_tool = v;
+            kept = v;
         }
-        if let Some(v) = check(
-            ui,
-            p,
-            s.copy_selection,
-            false,
-            aurora_i18n::tr!("build-ui-tools-copy-selection"),
-            true,
-        ) {
-            s.copy_selection = v;
-        }
-        ui.indent("copy_opts", |ui| {
+        if legacy {
             if let Some(v) = check(
                 ui,
                 p,
-                s.copy_centers,
-                false,
-                aurora_i18n::tr!("build-ui-tools-center"),
                 s.copy_selection,
+                false,
+                aurora_i18n::tr!("build-ui-tools-copy-selection"),
+                true,
             ) {
-                s.copy_centers = v;
+                s.copy_selection = v;
             }
-            if let Some(v) = check(ui, p, s.copy_rotates, false, aurora_i18n::tr!("common-rotate"), s.copy_selection) {
-                s.copy_rotates = v;
+            ui.indent("copy_opts", |ui| {
+                if let Some(v) = check(
+                    ui,
+                    p,
+                    s.copy_centers,
+                    false,
+                    aurora_i18n::tr!("build-ui-tools-center"),
+                    s.copy_selection,
+                ) {
+                    s.copy_centers = v;
+                }
+                if let Some(v) = check(ui, p, s.copy_rotates, false, aurora_i18n::tr!("common-rotate"), s.copy_selection) {
+                    s.copy_rotates = v;
+                }
+            });
+        } else {
+            let prim = s.create_volume().is_some();
+            if let Some(v) = check(
+                ui,
+                p,
+                s.create_centers,
+                false,
+                aurora_i18n::tr!("build-create-center-on-prim"),
+                prim,
+            ) {
+                s.create_centers = v;
             }
-        });
+            if let Some(v) = check(
+                ui,
+                p,
+                s.create_rotates,
+                false,
+                aurora_i18n::tr!("build-create-copy-prim-rotation"),
+                prim,
+            ) {
+                s.create_rotates = v;
+                s.create_aligns &= !v;
+            }
+            if let Some(v) = check(
+                ui,
+                p,
+                s.create_aligns,
+                false,
+                aurora_i18n::tr!("build-create-align-to-surface"),
+                prim,
+            ) {
+                s.create_aligns = v;
+                s.create_rotates &= !v;
+            }
+        }
         // tree_grass_combo (FIRE-7802)
         let tree = s.create_shape == shapes().len();
         let grass = s.create_shape == shapes().len() + 1;
@@ -239,6 +430,7 @@ fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
                 });
         });
     });
+    kept
 }
 
 /// Land tool: brush radio, size / force, apply.
@@ -302,9 +494,6 @@ pub fn land_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     });
 }
 
-/// GP_LAND_DIVIDE_JOIN, GP_LAND_RELEASE (llagent / roles_constants.h).
-const GP_LAND_DIVIDE_JOIN: u64 = 1 << 19;
-const GP_LAND_RELEASE: u64 = 1 << 20;
 /// REGION_FLAGS_ALLOW_PARCEL_CHANGES.
 const REGION_FLAGS_ALLOW_PARCEL_CHANGES: u32 = 1 << 26;
 
@@ -384,19 +573,21 @@ pub fn parcel_panel(
     // who may do what (LLPanelLandInfo::refresh)
     let (mine, owner_divide, owner_release, can_buy) = match parcel.as_ref() {
         Some(pi) => {
-            let group_power = |power: u64| pi.is_group_owned && world.groups.group(&pi.group_id).is_some_and(|g| g.powers & power != 0);
             let mine = pi.owner_id == world.agent_id;
+            // LLPanelLandInfo::refresh: LLViewerParcelMgr::isParcelOwnedByAgent
+            // with GP_LAND_DIVIDE_JOIN for Subdivide and GP_LAND_RELEASE for
+            // Abandon land, the rule About Land uses too (`owned_by_agent`:
+            // our land, a god, or the owning group's power)
+            use crate::world::land::{owned_by_agent, powers};
+            let rights = world.agent_rights();
+            let owner_divide = owned_by_agent(pi, &rights, powers::LAND_DIVIDE_JOIN);
+            let owner_release = owned_by_agent(pi, &rights, powers::LAND_RELEASE);
             let for_sale = pi.flags & aurora_net::parcel_flags::FOR_SALE != 0;
             let can_buy = for_sale
                 && !mine
                 && (pi.sale_price > 0 || !pi.auth_buyer.is_nil())
                 && (pi.auth_buyer.is_nil() || pi.auth_buyer == world.agent_id);
-            (
-                mine,
-                mine || group_power(GP_LAND_DIVIDE_JOIN),
-                mine || group_power(GP_LAND_RELEASE),
-                can_buy || pi.owner_id.is_nil(),
-            )
+            (mine, owner_divide, owner_release, can_buy || pi.owner_id.is_nil())
         }
         None => (false, false, false, false),
     };

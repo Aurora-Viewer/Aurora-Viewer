@@ -122,11 +122,12 @@ fn name_color(line: &ChatLine, world: &World) -> Color32 {
 pub(super) fn cards(
     ctx: &egui::Context,
     p: &Palette,
+    emoji: &mut crate::ui::emoji::Emoji,
     world: &World,
     pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
     want_names: &mut HashSet<uuid::Uuid>,
     wanted_pics: &mut HashSet<uuid::Uuid>,
-    bottom: f32,
+    place: super::LinesPlace,
     seconds: f32,
     max_lines: u32,
     times: bool,
@@ -157,78 +158,69 @@ pub(super) fn cards(
     }
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &ChatLine)> = Vec::new();
-    let mut shift = egui::Vec2::ZERO;
-    let lift = -(ctx.content_rect().bottom() - bottom) - 6.0;
-    egui::Area::new(egui::Id::unique("chat_toasts"))
-        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, lift))
-        .interactable(false)
-        .order(egui::Order::Background)
-        .show(ctx, |ui| {
-            // a card that leaves or arrives moves the others in this frame
-            // only (#2544)
-            let held = super::Held::new(ui, lift);
-            ui.set_max_width(WIDTH);
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for group in groups(&recent) {
-                let card_alpha = group.iter().map(|l| alpha(seconds, l, now)).fold(0.0_f32, f32::max);
-                let (console_tint, console_blur) =
-                    crate::ui::surface_opacity::relative(crate::ui::surface_opacity::console(), crate::ui::surface_opacity::CONSOLE);
-                let tint = Color32::from_rgba_unmultiplied(
-                    p.bar.r(),
-                    p.bar.g(),
-                    p.bar.b(),
-                    (190.0 * console_tint * card_alpha).min(255.0) as u8,
-                );
-                let radius = ui.visuals().window_corner_radius;
-                let glass = p.panel_alpha < 255;
-                let mut slot = None;
-                let small = super::object_row::compact(group[0], compact_automated);
-                let card = egui::Frame::new()
-                    .fill(if glass { Color32::TRANSPARENT } else { tint })
-                    .corner_radius(radius)
-                    .inner_margin(if small {
-                        egui::Margin::symmetric(9, 3)
-                    } else {
-                        egui::Margin::symmetric(9, 6)
-                    })
-                    .show(ui, |ui| {
-                        slot = Some(ui.painter().add(egui::Shape::Noop));
-                        // a card from beyond the say range has its content
-                        // dimmed, never its glass (one range per card)
-                        ui.multiply_opacity(card_alpha * crate::ui::colors::beyond_range_alpha(group[0]));
-                        if small {
-                            compact_card(
-                                ui, p, world, want_names, &group, seconds, now, card_alpha, times, &mut links, &mut names,
-                            );
-                            return;
-                        }
-                        card(
-                            ui,
-                            p,
-                            world,
-                            pics,
-                            want_names,
-                            wanted_pics,
-                            &group,
-                            seconds,
-                            now,
-                            card_alpha,
-                            times,
-                            &mut links,
-                            &mut names,
+    let shift = super::lines_area(ctx, place, WIDTH, |ui, right| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for group in groups(&recent) {
+            let card_alpha = group.iter().map(|l| alpha(seconds, l, now)).fold(0.0_f32, f32::max);
+            let (console_tint, console_blur) =
+                crate::ui::surface_opacity::relative(crate::ui::surface_opacity::console(), crate::ui::surface_opacity::CONSOLE);
+            let tint = Color32::from_rgba_unmultiplied(
+                p.bar.r(),
+                p.bar.g(),
+                p.bar.b(),
+                (190.0 * console_tint * card_alpha).min(255.0) as u8,
+            );
+            let radius = ui.visuals().window_corner_radius;
+            let glass = p.panel_alpha < 255;
+            let mut slot = None;
+            let small = super::object_row::compact(group[0], compact_automated);
+            let (start, link0, name0) = (super::painted(ui), links.len(), names.len());
+            let card = egui::Frame::new()
+                .fill(if glass { Color32::TRANSPARENT } else { tint })
+                .corner_radius(radius)
+                .inner_margin(if small {
+                    egui::Margin::symmetric(9, 3)
+                } else {
+                    egui::Margin::symmetric(9, 6)
+                })
+                .show(ui, |ui| {
+                    slot = Some(ui.painter().add(egui::Shape::Noop));
+                    // a card from beyond the say range has its content
+                    // dimmed, never its glass (one range per card)
+                    ui.multiply_opacity(card_alpha * crate::ui::colors::beyond_range_alpha(group[0]));
+                    if small {
+                        compact_card(
+                            ui, p, emoji, world, want_names, &group, seconds, now, card_alpha, times, &mut links, &mut names,
                         );
-                    });
-                if glass && let Some(slot) = slot {
-                    ui.painter().set(
-                        slot,
-                        aurora_render::glass_panel_faded(card.response.rect, f32::from(radius.nw), tint, card_alpha * console_blur),
+                        return;
+                    }
+                    card(
+                        ui,
+                        p,
+                        emoji,
+                        world,
+                        pics,
+                        want_names,
+                        wanted_pics,
+                        &group,
+                        seconds,
+                        now,
+                        card_alpha,
+                        times,
+                        &mut links,
+                        &mut names,
                     );
-                }
-                ui.add_space(4.0);
+                });
+            let rect = super::align_line(ui, right, start, card.response.rect, &mut links[link0..], &mut names[name0..]);
+            if glass && let Some(slot) = slot {
+                ui.painter().set(
+                    slot,
+                    aurora_render::glass_panel_faded(rect, f32::from(radius.nw), tint, card_alpha * console_blur),
+                );
             }
-            shift = held.settle(ui);
-        });
-    super::Held::publish(ctx, shift);
+            ui.add_space(4.0);
+        }
+    });
     for (k, (rect, link, col)) in links.iter().enumerate() {
         bubble_link(ctx, p, world, k, rect.translate(shift), link, *col);
     }
@@ -243,6 +235,7 @@ pub(super) fn cards(
 fn card<'a>(
     ui: &mut egui::Ui,
     p: &Palette,
+    emoji: &mut crate::ui::emoji::Emoji,
     world: &World,
     pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
     want_names: &mut HashSet<uuid::Uuid>,
@@ -266,6 +259,7 @@ fn card<'a>(
         body(
             ui,
             p,
+            emoji,
             world,
             want_names,
             first,
@@ -288,12 +282,13 @@ fn card<'a>(
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                let font = egui::FontId::new(chat_size(ui.ctx(), 12.5), crate::ui::fonts::semibold(ui.ctx()));
+                let size = chat_size(ui.ctx(), 12.5);
+                let font = egui::FontId::new(size, crate::ui::fonts::semibold(ui.ctx()));
                 let galley = ui
                     .painter()
                     .layout(first.from.clone(), font, name_color(first, world), text_w * 0.6);
                 let (r, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-                ui.painter().galley(r.min, galley, p.ink);
+                emoji.paint_galley(ui.painter(), r.min, galley, size, p.ink, 1.0);
                 names.push((r, first));
                 // a member of the Aurora team (objects never are)
                 let author = if first.kind.is_own() { world.agent_id } else { first.source };
@@ -311,7 +306,7 @@ fn card<'a>(
             });
             for &line in group {
                 let fade = alpha(seconds, line, now) / card_alpha.max(0.01);
-                body(ui, p, world, want_names, line, text_w, fade, links);
+                body(ui, p, emoji, world, want_names, line, text_w, fade, links);
             }
         });
     });
@@ -324,6 +319,7 @@ fn card<'a>(
 fn compact_card<'a>(
     ui: &mut egui::Ui,
     p: &Palette,
+    emoji: &mut crate::ui::emoji::Emoji,
     world: &World,
     want_names: &mut HashSet<uuid::Uuid>,
     group: &[&'a ChatLine],
@@ -372,7 +368,7 @@ fn compact_card<'a>(
         let mut painter = ui.painter().clone();
         painter.multiply_opacity(fade);
         let origin = (rect.min + egui::vec2(lead, 0.0)).round_to_pixels(painter.pixels_per_point());
-        painter.galley(origin, galley.clone(), p.ink);
+        emoji.paint_galley(&painter, origin, galley.clone(), size, p.ink, 1.0);
         let baseline = origin.y + crate::ui::widgets::galley_baseline(&painter, &galley);
         if let Some(time) = time {
             crate::ui::widgets::paint_on_baseline(&painter, time, rect.left(), baseline, p.muted_dim);
@@ -444,6 +440,7 @@ fn picture(
 fn body(
     ui: &mut egui::Ui,
     p: &Palette,
+    emoji: &mut crate::ui::emoji::Emoji,
     world: &World,
     want_names: &mut HashSet<uuid::Uuid>,
     line: &ChatLine,
@@ -465,7 +462,7 @@ fn body(
     let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
     let mut painter = ui.painter().clone();
     painter.multiply_opacity(fade);
-    painter.galley(rect.min, galley.clone(), p.ink);
+    emoji.paint_galley(&painter, rect.min, galley.clone(), size, p.ink, 1.0);
     let col = super::message_color(line, p, world).gamma_multiply(fade);
     line_extras(ui, p, world, &visual, rect.min, size, fade, badges, line_links, col, links);
 }
@@ -486,6 +483,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         }
     }
 
@@ -518,7 +516,8 @@ mod tests {
                     theme.apply(&ctx, 1.0);
                     crate::ui::fonts::set_chat_scale(&ctx, scale, 1.0);
                     let p = theme.palette();
-                    let draw = |limit| {
+                    let mut emoji = crate::ui::emoji::Emoji::load();
+                    let mut draw = |limit| {
                         let mut out = ctx.run_ui(
                             egui::RawInput {
                                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 1000.0))),
@@ -528,11 +527,12 @@ mod tests {
                                 super::super::toasts(
                                     ui.ctx(),
                                     &p,
+                                    &mut emoji,
                                     &world,
                                     &HashMap::new(),
                                     &mut HashSet::new(),
                                     &mut HashSet::new(),
-                                    900.0,
+                                    crate::ui::chat::LinesPlace::above(900.0),
                                     60.0,
                                     limit,
                                     true,
@@ -654,8 +654,9 @@ mod tests {
                 ctx.set_pixels_per_point(pixels);
                 let p = crate::theme::Theme::default().palette();
                 let _icons = crate::ui::icons::Icons::load(&ctx, None);
+                let mut emoji = crate::ui::emoji::Emoji::load();
                 // (an area shows from its second frame)
-                let run = || {
+                let mut run = || {
                     ctx.run_ui(
                         egui::RawInput {
                             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))),
@@ -665,11 +666,12 @@ mod tests {
                             cards(
                                 ui.ctx(),
                                 &p,
+                                &mut emoji,
                                 &world,
                                 &HashMap::new(),
                                 &mut HashSet::new(),
                                 &mut HashSet::new(),
-                                700.0,
+                                crate::ui::chat::LinesPlace::above(700.0),
                                 1e10,
                                 40,
                                 true,
@@ -859,7 +861,8 @@ mod tests {
         crate::theme::Theme::default().apply(&ctx, 1.0);
         let p = crate::theme::Theme::default().palette();
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1536.0, 864.0));
-        let frame = |events: Vec<egui::Event>| {
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut frame = |events: Vec<egui::Event>| {
             let mut out = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(screen),
@@ -870,11 +873,12 @@ mod tests {
                     cards(
                         ui.ctx(),
                         &p,
+                        &mut emoji,
                         &world,
                         &HashMap::new(),
                         &mut HashSet::new(),
                         &mut HashSet::new(),
-                        800.0,
+                        crate::ui::chat::LinesPlace::above(800.0),
                         20.0,
                         40,
                         false,

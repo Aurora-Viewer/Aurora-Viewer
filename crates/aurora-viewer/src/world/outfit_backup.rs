@@ -60,7 +60,8 @@ impl Backup {
             }
         }
         let mut items = Vec::new();
-        for link in links.into_iter().filter(|l| !l.folder) {
+        // the worn bridge is never part of an outfit (#4865)
+        for link in links.into_iter().filter(|l| !l.folder && !appearance::is_bridge(inv, l.target)) {
             let original = inv.items.get(&link.target);
             // Retain known broken links too, so a subsequent import reports
             // them rather than silently pretending the backup is complete.
@@ -161,6 +162,11 @@ impl Backup {
             missing: Vec::new(),
         };
         for saved in &self.items {
+            // A backup made before #4865 may hold the bridge: it is neither
+            // worn from the backup (the viewer wears its own) nor missing.
+            if saved.asset_type == 6 && (saved.name == super::bridge::NAME || appearance::is_bridge(inv, saved.item_id)) {
+                continue;
+            }
             let item = inv.items.get(&saved.item_id).filter(|it| {
                 it.asset_type == saved.asset_type
                     && (it.owner.is_nil() || it.owner == agent)
