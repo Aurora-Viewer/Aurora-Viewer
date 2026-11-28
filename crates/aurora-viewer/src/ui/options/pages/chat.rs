@@ -1051,6 +1051,13 @@ fn notifications(cx: &mut Cx) {
                 &field!(system_notifications_when_active),
             );
         });
+        // the launcher badge and the KDE flash exist on Linux only
+        #[cfg(target_os = "linux")]
+        cx.toggle(
+            tr!("ui-options-linux-taskbar-badge"),
+            tr!("ui-options-linux-taskbar-badge-hint"),
+            &field!(linux_taskbar_badge),
+        );
     });
 }
 

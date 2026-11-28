@@ -84,6 +84,13 @@ the desktop puts the window under the entry's icon. Compositor rules can
 match it too (Hyprland: `class:^(aurora-viewer)$`; KDE: window class
 `aurora-viewer`).
 
+The launcher badge (Preferences › Chat › Launcher badge, off by default)
+needs that same `aurora-viewer.desktop` installed: the task manager puts the
+number on the icon of the entry named in the signal
+(`application://aurora-viewer.desktop`), and a window it cannot match to
+that entry gets no badge. KDE Plasma and the other launchers that read the
+Unity launcher API show it; a desktop that does not just ignores it.
+
 ## Web pages and video
 
 The first time a web page or a video needs them, the viewer asks before it

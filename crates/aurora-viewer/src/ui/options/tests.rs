@@ -503,6 +503,13 @@ fn no_setting_of_the_former_pages_is_lost() {
     }
 }
 
+/// The launcher badge exists on Linux only, so it is not in `BEFORE`.
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_taskbar_badge_has_its_row_on_linux() {
+    assert!(covered(&collected(), "linux_taskbar_badge"), "`linux_taskbar_badge` has no row");
+}
+
 #[test]
 fn rlva_settings_live_on_their_own_page() {
     let paths = collected();

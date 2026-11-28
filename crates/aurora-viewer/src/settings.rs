@@ -1237,6 +1237,11 @@ pub struct Settings {
     pub system_notifications: bool,
     /// The same notifications while the window is in front (FSGrowlWhenActive, off).
     pub system_notifications_when_active: bool,
+    /// Linux only: the number of unread items on the launcher's icon
+    /// (`linux_badge.rs`), and on KDE the taskbar button flashing while the
+    /// window is behind, not only minimized. Off: needs a launcher that
+    /// shows badges, such as KDE Plasma.
+    pub linux_taskbar_badge: bool,
     pub chat_toast_seconds: f32,
     /// Wrapped text rows above the chat bar (ConsoleMaxLines, 40; 0 hides them).
     pub chat_console_max_lines: u32,
@@ -2781,6 +2786,7 @@ impl Default for Settings {
             script_dialog_limit: crate::world::script_dialog_limit::Limit::PerChannel,
             system_notifications: false,
             system_notifications_when_active: false,
+            linux_taskbar_badge: false,
             chat_toast_seconds: 20.0,
             chat_console_max_lines: 40,
             chat_lines_direction: ChatLinesDirection::Auto,
