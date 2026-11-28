@@ -74,6 +74,8 @@ macro_rules! each_value {
             shadow_quality,
             projector_shadows,
             projector_shadow_limit,
+            point_shadows,
+            point_shadow_limit,
             ssao,
             ao_method,
             gtao_quality,
@@ -598,6 +600,17 @@ mod tests {
             };
             assert!(now_equal, "{name} was not kept when the boost ended");
         }
+    }
+
+    #[test]
+    fn point_light_shadows_turned_on_during_the_boost_stay_on() {
+        let mut s = Settings::default();
+        let mut held = boost(&mut s);
+        s.point_shadows = true;
+        s.point_shadow_limit = 3;
+        held.sync(&s);
+        held.restore(&mut s);
+        assert_eq!((s.point_shadows, s.point_shadow_limit), (true, 3));
     }
 
     #[test]

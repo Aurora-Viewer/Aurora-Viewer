@@ -1056,6 +1056,7 @@ pub struct Scene {
     light_scratch: lights::Scratch,
     /// The projectors that cast shadows (`lights.rs`).
     spot_shadows: lights::SpotShadowSlots,
+    point_shadows: lights::SpotShadowSlots,
     /// Rain prototype: the terrain's heights around the camera
     /// (`rain_ground.rs`).
     rain_ground: rain_ground::RainGroundCache,
@@ -1850,6 +1851,7 @@ impl Scene {
             light_textures: HashMap::new(),
             light_scratch: Default::default(),
             spot_shadows: Default::default(),
+            point_shadows: Default::default(),
             rain_ground: Default::default(),
             fog_ground: Default::default(),
             mirror_objects: Default::default(),
