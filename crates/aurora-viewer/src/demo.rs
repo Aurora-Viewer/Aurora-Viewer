@@ -2561,6 +2561,18 @@ pub fn slurls_scene() -> bool {
 /// the unknown region's badge is seen to arrive.
 pub const SLURLS_LOOKUP_DELAY: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// How late the demo server answers a grant of rights to a friend with
+/// ChangeUserRights, as the grid does after a round trip:
+/// AURORA_DEMO_RIGHTS_DELAY_MS (800 by default), `lost` for no answer at
+/// all (the viewer's timeout then lets the newest choice leave).
+pub fn rights_answer_delay() -> Option<std::time::Duration> {
+    match std::env::var("AURORA_DEMO_RIGHTS_DELAY_MS") {
+        Ok(v) if v.trim() == "lost" => None,
+        Ok(v) => Some(std::time::Duration::from_millis(v.trim().parse().unwrap_or(800))),
+        Err(_) => Some(std::time::Duration::from_millis(800)),
+    }
+}
+
 /// The text of `slurls_scene`, its links in each SLURL form.
 pub fn slurls_text() -> String {
     let link = |prefix: &str, region: &str, pos: (f32, f32, f32)| {

@@ -46,6 +46,7 @@ pub mod favorites;
 pub mod fit_poses;
 pub mod flying_at_exit;
 mod friend_join;
+pub mod friend_rights;
 pub mod friends_only;
 pub mod group_ban_all;
 pub mod group_data;
@@ -4998,7 +4999,21 @@ impl World {
                 // LLAvatarTracker::processChange
                 for (related, r) in rights {
                     if agent == self.agent_id {
-                        if let Some(f) = self.social.friends.iter_mut().find(|f| f.id == related) {
+                        // the answer to our grant: see friend_rights
+                        let shown = match self.social.rights_sync.answered(related, r) {
+                            friend_rights::Answer::Show(r) => Some(r),
+                            friend_rights::Answer::Keep => None,
+                            friend_rights::Answer::Send(w) => {
+                                self.groups.out.push(aurora_net::NetCommand::GrantUserRights {
+                                    friend: related,
+                                    rights: w,
+                                });
+                                None
+                            }
+                        };
+                        if let Some(r) = shown
+                            && let Some(f) = self.social.friends.iter_mut().find(|f| f.id == related)
+                        {
                             f.rights_given = r;
                         }
                     } else if let Some(f) = self.social.friends.iter_mut().find(|f| f.id == agent) {

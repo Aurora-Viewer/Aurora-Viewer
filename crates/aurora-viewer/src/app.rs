@@ -2633,6 +2633,13 @@ impl App {
                 return;
             }
         }
+        // one grant of rights in flight per friend (world/friend_rights.rs):
+        // a newer choice waits for the server's answer to the one sent
+        if let NetCommand::GrantUserRights { friend, rights } = cmd
+            && !self.world.social.rights_sync.send(friend, rights, Instant::now())
+        {
+            return;
+        }
         if let NetCommand::PickInfoRequest { creator, pick } = &cmd {
             use crate::world::profiles::PickRead;
             match self.world.profiles.pick_read(*creator, *pick, Instant::now()) {
@@ -2805,6 +2812,18 @@ impl App {
             }
         }
         if self.demo && self.gesture_demo_command(&cmd) {
+            return;
+        }
+        // the demo server applies a grant of rights and answers it a little
+        // later, as the grid does (AURORA_DEMO_RIGHTS_DELAY_MS)
+        if self.demo && matches!(cmd, NetCommand::GrantUserRights { .. }) {
+            match crate::demo::rights_answer_delay() {
+                Some(delay) => {
+                    log::info!("demo rights: {cmd:?} answered in {delay:?}");
+                    self.demo_lookups.push((Instant::now() + delay, cmd));
+                }
+                None => log::info!("demo rights: {cmd:?} left without an answer"),
+            }
             return;
         }
         // AURORA_DEMO_SLURLS: a region lookup answered a little later
@@ -10882,12 +10901,20 @@ impl App {
         let (due, later) = std::mem::take(&mut self.demo_lookups).into_iter().partition(|(at, _)| *at <= now);
         self.demo_lookups = later;
         for (_, cmd) in due {
+            if let NetCommand::GrantUserRights { friend, rights } = cmd {
+                // ChangeUserRights about our own grant
+                self.world.apply(NetEvent::UserRights {
+                    agent: self.world.agent_id,
+                    rights: vec![(friend, rights)],
+                });
+                continue;
+            }
             for ev in crate::demo::demo_reply(&cmd) {
                 self.world.apply(ev);
             }
         }
-        if !self.demo_lookups.is_empty() {
-            self.egui_ctx.request_repaint_after(crate::demo::SLURLS_LOOKUP_DELAY / 4);
+        if let Some(next) = self.demo_lookups.iter().map(|(at, _)| *at).min() {
+            self.egui_ctx.request_repaint_after(next.saturating_duration_since(now));
         }
         let me = ui::minimap::to_global(&self.world, self.world.agent.position);
         if self.world.movement_complete && !self.world.teleporting {
