@@ -143,10 +143,16 @@ pub(crate) fn resolve(inv: &Inventory, base: Uuid, text: &str) -> Option<Uuid> {
         // the longest name that ends where a level ends
         let next = subfolders(inv, at)
             .into_iter()
-            .filter_map(|(id, name)| {
-                strip_name(rest, &name)
-                    .filter(|after| after.is_empty() || after.starts_with(SEPARATOR))
-                    .map(|after| (id, name.len(), after))
+            .flat_map(|(id, label)| {
+                // Keep paths written with the stored system folder name usable.
+                [label, rules::name(inv, id)]
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(move |(index, name)| {
+                        strip_name(rest, &name)
+                            .filter(|after| after.is_empty() || after.starts_with(SEPARATOR))
+                            .map(|after| (id, (name.len(), index == 0), after))
+                    })
             })
             .max_by_key(|(_, len, _)| *len)?;
         at = next.0;
@@ -516,6 +522,7 @@ mod tests {
                     id,
                     parent,
                     name: name.into(),
+                    type_default: -1,
                     ..Default::default()
                 },
                 children: Vec::new(),
@@ -575,6 +582,21 @@ mod tests {
         // a folder window has no ~ above its top
         assert_eq!(resolve(&inv, Uuid::from_u128(2), "~/Shirts"), None);
         assert_eq!(resolve(&inv, root, "Clothing/Hats"), None);
+    }
+
+    #[test]
+    fn a_system_folder_path_accepts_the_displayed_and_stored_names() {
+        let (mut inv, root) = tree();
+        let clothing = Uuid::from_u128(2);
+        let shirts = Uuid::from_u128(3);
+        let folder = inv.folders.get_mut(&clothing).expect("clothing fixture");
+        folder.info.type_default = 5;
+        folder.info.name = "Stored clothing".into();
+
+        let displayed = path_text(&inv, root, shirts);
+        assert_ne!(displayed, "~/Stored clothing/Shirts");
+        assert_eq!(resolve(&inv, root, &displayed), Some(shirts));
+        assert_eq!(resolve(&inv, root, "~/Stored clothing/Shirts"), Some(shirts));
     }
 
     #[test]

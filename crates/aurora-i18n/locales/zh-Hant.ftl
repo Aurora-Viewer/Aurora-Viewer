@@ -88,7 +88,6 @@ anim-couple-face = 面對面
 anim-couple-face-tip = 讓人物 B 站在您前方半米處並面向您
 anim-couple-reset-place = 重設位置
 anim-timeline-keys-selected = 已選 { $count } 個關鍵影格：拖動即可移動，Ctrl+C 複製，Delete 刪除，右鍵或 Esc 取消選擇
-anim-edit-shortcut-play = 播放或暫停（空格）
 anim-edit-shortcut-rewind = 回到開頭（Home）
 anim-edit-shortcut-undo = 復原（Ctrl+Z）
 anim-edit-shortcut-redo = 重做（Ctrl+Y 或 Ctrl+Shift+Z）
@@ -305,13 +304,8 @@ owned-land-area = { $actual } 平方米 · { $billable } 平方米 計費
 owned-land-total = 合計：{ $actual } 平方米 · { $billable } 平方米 計費
 owned-land-contributions = 向群組貢獻的土地
 owned-land-contribution = { $area } 平方米
-toolbar-edit = 工具列按鈕…
-toolbar-title = 工具列按鈕
 toolbar-remove = 移除此按鈕
 toolbar-locked-bars = 鎖定工具列
-toolbar-help = 將按鈕拖到停靠區或側邊工具列；拖回此處即可移除。在工具列上按一下右鍵可開啟相同設定。
-toolbar-help-classic = 將按鈕拖到底部工具列或側邊工具列；拖回此處即可移除。在工具列上按一下右鍵可開啟相同設定。
-toolbar-help-modes = 按鈕的顯示方式如圖所示，或者僅顯示為圖示，具體取決於每個工具列的設定。
 toolbar-search = 尋找指令（{ $count }）
 toolbar-in-dock = 在停靠區
 toolbar-in-bottom = 在底部工具列
@@ -1411,7 +1405,6 @@ inventory-column-both-rights = 您 → 下一個所有者
 inventory-columns = 欄位
 inventory-column-permissions = 權限
 inventory-columns-reset = 重設庫存佈局
-inventory-resize-columns = 拖動可調整列寬。按兩下可重設列寬。
 inventory-resize-sidebar = 拖動可調整資料夾側邊欄寬度。按兩下可重設寬度。
 inventory-resize-gallery = 拖動可在方格與清單之間分配空間。按兩下可重設。
 inventory-view-menu = 檢視
@@ -2135,9 +2128,7 @@ ui-options-chat-text-size-hint = 附近聊天、對話中的訊息以及聊天�
 ui-options-chat-beyond-range = 超出聊天範圍的文字亮度
 ui-options-chat-beyond-range-hint = 來自超出聊天範圍（20 米）的居民與物件的文字，例如透過喊話聽到的，以此亮度顯示：1 與其他文字一樣亮，數值越低越暗。預設 0.8，與傳統檢視器一致。
 ui-options-chat-keep-focus = 傳送後保持聊天欄啟用
-ui-options-chat-keep-focus-hint = Enter 傳送，聊天欄繼續待命以輸入下一條；在空聊天欄按 Enter 或點選別處則恢復移動控制。傳送後，對話視窗中的附近聊天也會跟隨。
 ui-options-chat-enter-toggles = 在對話中按 Enter 切換輸入
-ui-options-chat-enter-toggles-hint = 在空輸入框中按 Enter 時，對話視窗（附近聊天、私聊與群組聊天）也會回到移動控制狀態，與聊天欄相同；從世界中按 Enter 會重新開始輸入。
 ui-options-chat-enter-last-field = Enter 返回上次使用的聊天輸入框
 ui-options-chat-enter-last-field-hint = 從世界中按 Enter 會回到您上次使用的聊天輸入框（點選過或發言過的），附近聊天、群組聊天或私聊，且其視窗已開啟；否則始終使用聊天欄。關閉該項或該視窗已關閉時，Enter 使用聊天欄。
 ui-options-gesture-autocomplete = 在附近聊天中補全手勢
@@ -5041,7 +5032,6 @@ ui-bars-immersive-hide-tags = 隱藏名牌
 toolbar-use-name-tag-preferences = 使用名牌偏好設定
 ui-bars-immersive-show-huds = 顯示 HUD
 ui-bars-immersive-hide-huds = 隱藏 HUD
-ui-bars-customize-bars = 自訂狀態列…
 session-inventory-upload-the-clothing-upload-timed-out-reload-inventory-before-trying = 服裝上傳超時。請先重新載入庫存再重試。
 session-inventory-upload-the-clothing-upload-was-interrupted = 服裝上傳已中斷。
 ui-place-details-could-not-find-the-region-s-location-it-may = 無法找到該區域的位置。它可能暫時不可用或已被移除。
@@ -6194,7 +6184,6 @@ ui-options-preset-potato = 極低
 ui-options-preset-low = 低
 ui-options-preset-medium = 中
 ui-options-preset-high = 高
-ui-options-preset-deluxe = 極高 (RT)
 ui-options-preset-custom = 自訂
 ui-options-preset-mac-mid-high = 中高（推薦此 Mac 使用）
 graphics-saved-title = 已儲存的圖形設定檔
@@ -6343,7 +6332,6 @@ ui-options-look-at-lines-help = 從每個化身到其注視準星的連線
 ui-options-my-look-at = 我的注視目標
 ui-options-private-look-at = 不向他人傳送我的注視目標
 ui-options-private-point-at = 不傳送我的選擇目標提示
-ui-options-private-point-at-help = 隱藏您正在編輯的物件，編輯時手臂保持放下，並隱藏編輯光束。
 ui-options-private-edit-beam = 隱藏編輯光束
 ui-options-private-edit-beam-help = 編輯或抓取物件時徹底隱藏編輯光束，自己與其他人都看不到，也不會傳送。不影響選取目標提示以及給予或放下物品時的光束。
 ui-options-private-look-at-help = 他人看到您直視前方，而非看您所看之處
@@ -8906,7 +8894,6 @@ common-for-sale = 出售：
 ui-land-general-for-sale-to = 出售給：
 ui-profile-coming-soon = 即將推出
 ui-profile-aurora-my-profile = 我的個人檔案
-ui-profile-aurora-help = 居民的個人檔案：他們是誰、您可以對他們做什麼，然後是他們的收藏地點、分類廣告、第一人生、網頁檔案和您的備註。偏好設定 › Aurora › 個人檔案 可恢復傳統檢視器的視窗。
 ui-profile-aurora-conversation = 對話
 ui-profile-aurora-call = 語音通話
 ui-profile-aurora-add-friend = 加為好友
@@ -8937,7 +8924,6 @@ ui-profile-aurora-their-map = 在地圖上找到他們
 ui-profile-aurora-their-objects = 修改、刪除或取得他們的物件
 ui-profile-aurora-received-tip = { $right }：{ $state }
 ui-profile-aurora-tab-profile = 個人檔案
-ui-profile-aurora-tab-picks = 收藏地點
 ui-profile-aurora-tab-classifieds = 分類廣告
 ui-profile-aurora-tab-first-life = 第一人生
 ui-profile-aurora-tab-web = 網頁
@@ -8970,12 +8956,7 @@ ui-profile-aurora-unsaved = 未儲存的更改（{ $parts }）
 ui-profile-aurora-part-bio = 簡介
 ui-profile-aurora-part-first-life = 第一人生
 ui-profile-aurora-part-notes = 備註
-ui-profile-aurora-part-places = { $count ->
-    [one] { $count } 個地點
-   *[other] { $count } 個地點
-    }
 ui-profile-aurora-part-classified = 分類廣告
-ui-profile-aurora-snapshot = 地點圖片
 ui-profile-aurora-teleport = 瞬間傳送
 ui-profile-aurora-description = 描述
 ui-profile-aurora-category = 類別
@@ -8991,11 +8972,6 @@ ui-profile-aurora-copy-slurl = 複製 SLURL
 ui-profile-aurora-here = 我的目前位置
 ui-profile-aurora-add-here = 新增我所在的地點
 ui-profile-aurora-picks-count = { $count } / { $limit }（帳號上限）
-ui-profile-aurora-picks-empty = 尚無收藏地點
-ui-profile-aurora-picks-empty-text = { $name } 尚未分享任何地點。
-ui-profile-aurora-picks-empty-own = 分享您的收藏地點
-ui-profile-aurora-picks-empty-own-text = 其他居民可在您的檔案中看到並一鍵瞬間傳送過去。
-ui-profile-aurora-delete-pick = 刪除地點“{ $name }”？
 ui-profile-aurora-classifieds-empty = 無分類廣告
 ui-profile-aurora-classifieds-empty-text = { $name } 沒有已發布的分類廣告。
 ui-profile-aurora-classifieds-empty-own = 讓某個地點或服務為人所知
@@ -12197,7 +12173,7 @@ ui-group-notices-saved = 已儲存
 ui-group-notices-attachment = 附件
 ui-group-notices-subject = 主題
 ui-group-notices-message = 訊息……
-ui-group-notices-drop = 從庫存拖入項目（可複製 + 可轉讓）
+ui-group-notices-drop = 從物品欄、我的最愛或地點拖入物品或地標（需要複製及轉讓權限）。
 ui-group-notices-not-attachable = 此項目無法作為附件：它必須可複製且可轉讓，且未被穿戴。
 ui-group-notices-remove-attachment = 移除附件
 ui-group-notices-send = { $count ->
@@ -14471,7 +14447,6 @@ inventory-new-outfit = 新建裝扮
 inventory-listing-refresh = 重新整理清單
 inventory-recover-folder = 移動到失物招領
 inventory-show-main = 在主檢視中顯示
-inventory-open-current = 在此視窗中開啟
 inventory-copy-outfit-list = 將裝扮清單複製到剪貼簿
 appearance-outfit-copy-entry = { $item } - { $creator }
 appearance-outfit-copy-preparing = 正在準備裝扮清單…
@@ -15224,7 +15199,6 @@ ui-options-build-editing = 編輯
 ui-options-build-auto-material-tab = 開啟與所選內容相符的材質分頁
 ui-options-build-auto-material-tab-hint = 選取物件時，若其某個面顯示 PBR 材質則開啟 PBR 分頁，否則開啟 Blinn-Phong。關閉後保持上次選擇的分頁。
 ui-options-build-show-beams = 顯示選擇光束
-ui-options-build-show-beams-hint = 顯示您和其他化身在編輯、抓取或給予物品時的選取光束。此選項僅控制顯示；隱私設定中的「隱藏編輯光束」也會阻止本機顯示及網路傳送。
 ui-options-build-beam-color = 光束顏色
 ui-options-build-beam-color-hint = 您所發射的光束顏色，其他玩家看到的也是這個顏色。
 large-surface-title = 表面積過大的物件
@@ -15476,3 +15450,1149 @@ game-control-action-boom-down = 相機下移 ↓
 game-control-action-escape = Esc
 picker-local-newest = 最新優先
 picker-local-name = 名稱 A–Z
+
+### Release translations
+
+ui-options-planet-curvature = 行星曲率
+ui-options-planet-curvature-help = 在圓形星球上繪制世界:開放的水落到真正的地平線,而不是流出眼睛高度,下面是天空。 只有視圖變化:區域、物理和其他人看到的東西保持平坦。 在地球上,繪制距離內的降落是幾厘米;在遠海上顯示。
+ui-options-planet-radius = 行星半徑
+ui-options-planet-radius-help = 地球的半徑是6371公里:從10米高處,海洋在11公리遠處結束。 一個較小的行星使地平線更接近
+ui-options-camera-frame-while-posing = 擺姿勢時框架頭像
+ui-options-camera-frame-while-posing-tip = 打開姿勢框架會將頭像設置為幀,點擊關節會使攝像頭靠近它。 拖動關節不會移動攝像機。
+ui-options-camera-still-while-posing = 拍照時保持相機靜止
+ui-options-camera-still-while-posing-tip = 當您拍照時,相機會停止跟蹤頭像、焦點和身體部位,而走路不會重置它。 軌道、縮放、平移和預設仍然有效。
+ui-options-group-emotes = 包含發件人的消息的群組表情
+ui-options-group-emotes-hint = 在 Aurora 聊天樣式下，像「/me waves」這樣的動作會和同一人緊接著傳送的前後訊息共用標題，動作本身不另開標題。
+content-perms-nested = 在對象中包含對象
+content-perms-nested-help = 也會修改容器中物件的內容，最多處理 5 層巢狀物件。每個物件都會在世界中生成於收納它的基本體上方 2 公尺處。系統會停止執行中的指令碼，修改內容，再啟動指令碼並將物件存回原處。刪除世界中的暫存副本前，會先設定並檢查存回物件的權限。沒有複製、轉讓或修改權限的物件會保持關閉。您需要在生成物件的位置擁有建造權限。
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } 內容中的對象將被打開,跳過: { $skipped }.
+       *[other] { $objects } 內容中的對象將被打開,跳過: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = 禁止復制或轉讓
+content-perms-nested-skip-no-modify = 無法修改
+content-perms-nested-skip-depth = 超過5級深
+content-perms-nested-rezzing = 放置對象 “{ $name }世界上最美麗的女人 { $level })…
+content-perms-nested-stopping = 停止“{ $name }”的腳本
+content-perms-nested-applying = 更改“{ $name }”內容
+content-perms-nested-restoring = 開始“{ $name }”的腳本再次 . .
+content-perms-nested-saving = 保存對象“{ $name }”回到其容器中 . .
+content-perms-nested-deleting = 在世界上刪除臨時副本 “{ $name }”…
+content-perms-nested-finished = 已更新物品：{ $count }。處理的巢狀物件：{ $objects }。已略過：{ $skipped }。
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept }保留在原來的旁邊:名稱不同。
+       *[other] { $kept }保留在他們的原始旁邊:名稱不同。
+    }
+content-perms-nested-stopped = 停止:世界中的臨時副本被刪除,原始項目保持不變。
+content-perms-nested-stop-help = 停止操作，並刪除仍在世界中的暫存副本。原有物品保持原狀，已存回容器的物件會保留變更。
+content-perms-nested-scripts-warning = 每個物件都會先在世界中生成（rez），因此爆炸、傳送或發放物品等生成時觸發的指令碼動作，會在指令碼被停止前執行。若要防止這些動作，請先在您管理的區域中透過「區域／地產」開啟「停用指令碼」，操作完成後再關閉該選項。
+content-perms-nested-original-kept = “{ $name }”已保存回來,但它的原始項目無法刪除:兩者都在內容中。
+content-perms-nested-copy-left = 世界中“{ $name }”的臨時副本無法刪除:手動刪除。
+content-perms-nested-save-unconfirmed = 保存回來沒有被確認
+content-perms-nested-saved-perms-unconfirmed = 操作已停止：無法確認存回容器中的物件權限。世界中的暫存工作副本已保留，請先檢查再決定是否刪除。
+content-perms-nested-timeout = 模擬器沒有及時響應
+content-perms-nested-rez-refused = 停止: 模擬器拒絕放置在世界 “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = 停止:“{ $name }”在15秒內沒有出現,如果它后來出現在原始對象上方,請刪除它。
+content-perms-nested-not-ours = 停止:在世界中放置的“{ $name }”對象不來自這些內容,它被留在世界。
+content-perms-nested-unverified = 停止:出現在“{ $name }”的對象無法從這些內容中檢查是否放置在世界上,因此它被留在世界中。
+content-perms-nested-group-split = 停止 : “ { $name } ” ( 保存為一個的多個物體)作為單一物體返回,其放置在世界中的部分保留在世界中:選擇它們并將它們重新組合。
+content-perms-nested-failed = “{ $name }” 保持不變： { $reason }.
+content-perms-nested-original-gone = 「{ $name }」已保留在世界中。系統未能確認它已存回，原有物品也已不在。
+content-perms-nested-gone = 物體離開了世界
+content-perms-nested-land-denied = 停止:您無法在這個原始對象上面建造,因為這些對象會被放置在世界中。
+content-perms-nested-parcel-full = 停止:包沒有空間留給世界中的臨時副本。
+content-perms-nested-rlva = 停止:在世界中放置對象受到限制(RLVa ) 。
+content-perms-nested-too-many = 太多的腳本
+content-perms-nested-unreadable = 您訪問的頁面無法找到
+content-perms-demo-chest = 儲物柜
+content-perms-demo-notes = 存儲箱內的筆記
+content-perms-demo-outer = 外盒
+content-perms-demo-glow = 腳本,使對象發光
+content-perms-demo-readme = 先讀我
+content-perms-demo-inner = 內容器
+content-perms-demo-inner-note = 內盒內的說明
+content-perms-demo-tiny = 非常小的盒子
+content-perms-demo-spin = 旋轉對象的腳本
+content-perms-demo-heirloom = 家族遺物
+content-perms-demo-sealed = 密封盒
+content-perms-demo-linked = 連接對象組
+content-perms-demo-pebble = 小圓石
+content-perms-demo-stack = 箱堆
+dev-toolbox-o10 = 阿凡達搜尋框
+ui-appearance-date-newest-first = 日期:最新的首先
+ui-appearance-date-oldest-first = 日期:最早的第一個
+ui-appearance-favorites-to-top = 返回頂部
+ui-appearance-images-to-top = 回到頂部
+ui-environment-sort-by-name = 按字母順序排列
+ui-environment-sorted-by-name = 按照名稱排序。 單擊以從庫存中恢復訂單。
+ui-environment-in-inventory-order = 在您的庫存順序。 點擊排序他們 A–Z.
+ui-chat-contacts-groups-sub = 團體 · { $count }
+ui-options-soft-shadows = 柔影
+ui-options-soft-shadows-help = 太陽陰影的邊緣越柔和,物體距離其陰影越遠,就像在現實生活中一樣:高桿的陰影向頂部模糊,而腳仍保持清晰。 試驗性,默認關閉;顯卡耗費毫秒
+ui-options-shadow-softness = 影子柔軟度
+ui-options-shadow-softness-help = 柔和陰影的光線大小:1是2.3度的光,2是一個較大的光,柔化陰影兩倍(真正的太陽大約是0.2 ) , 0是一個沒有尺寸的光:陰影像以前一樣,投影機包括在內
+ui-options-shadow-softness-needs-soft = 打開軟陰影以使用此功能
+ui-options-shadow-intensity = 陰影強度
+ui-options-shadow-intensity-help = 太陽影子有多暗:1是正常的黑暗,較低讓更多的光線進入他們
+ui-options-system-fonts-searching = 尋找字體…
+demo-emotes-nova = /me設置了一個長凳下來的噴泉
+demo-emotes-orion = 從這里看起來很棒!
+demo-teleport-access-neighbour = 成年鄰居(演示)
+photo-light-shadow-softness = 影子柔軟度
+photo-light-shadow-intensity = 陰影強度
+photo-light-shadow-reset = 回到首選項的值
+world-teleport-access-blocked-title = 電傳阻止
+world-teleport-access-adults-only = 您要訪問的區域包含{ $rating }個內容,僅供成人訪問。
+world-teleport-access-change-and-reteleport = 您嘗試前往的區域含有 { $rating } 分級的內容。您目前的偏好設定不允許 { $rating } 分級的內容。您可以變更設定並繼續傳送，也可以取消這次傳送。
+world-teleport-access-change = 您嘗試前往的區域含有 { $rating } 分級的內容。您目前的偏好設定不允許 { $rating } 分級的內容。您可以變更設定或取消傳送。變更設定後，請重新嘗試傳送。
+world-teleport-access-out-of-sync = 我們正在與您的電傳技術困難,因為您的偏好設置與服務器同步。
+world-teleport-access-rated = 您選擇的位置評分為{ $rating }。
+world-teleport-access-allow = 您目前的偏好設定不允許 { $rating } 分級的內容。允許這類內容將更新您的偏好設定。
+world-teleport-access-allow-button = 允許{ $rating }內容
+world-teleport-access-not-on-account = 您正在訪問的區域評級為 { $rating },這對于您的帳戶類型不可用。
+world-teleport-access-change-and-continue = 改變并繼續
+world-teleport-access-change-preferences = 更改首選項
+world-teleport-access-preference-changed-title = 內容評級更改
+world-teleport-access-preference-changed = 您將不再收到關于即將訪問包含 { $rating } 內容的區域的通知。 您可以在"偏好設置 › 隱私"中更改您的內容偏好。
+people-show-group-sheet = 顯示群組詳細信息
+people-group-details-empty = 沒有要顯示的組
+ui-options-plate-click-own-help = 左鍵點擊某人的盤子,光標變成手形。 在你自己的盤子上,點擊會打開你的個人資料或菜單;按住那里的按鈕仍然會轉動你的頭像。
+ao-import-unfinished-retry = 未完成作品 AO 導入已存在于 #Aurora/{ $folder }使用恢復通知中的 AO 重試之前關閉窗口。
+ao-unfinished-import =
+    { $count ->
+        [one] #Aurora/{ $folder } 中的 AO 匯入尚未完成。組數：{ $count }。
+       *[other] #Aurora/{ $folder } 中的 AO 匯入尚未完成。組數：{ $count }。
+    }
+ao-finish-import = 完成進口
+ao-show-in-inventory = 在庫存中顯示
+ao-duplicate-native =
+    { $count ->
+        [one] 找到另一個資料夾：#Aurora/{ $folder }。組數：{ $count }。要將它合併至目前使用的 AO 資料夾嗎？
+       *[other] 找到另一個資料夾：#Aurora/{ $folder }。組數：{ $count }。要將它合併至目前使用的 AO 資料夾嗎？
+    }
+ao-native-already-exists = 已存在此名稱的內置動畫覆蓋
+rlva-tools-retained = 在登錄前保留
+rlva-read-at-login = 更改將在下次登錄時生效。
+rlva-debug-commands-chat = 每個命令也會在附近的聊天中獲得一行,在對象名稱下:它執行了什么、失敗了什么以及為什么、等待登錄的是什么。
+rlva-blocked-start-im = 無法找到頁面 IM 會議 { $recipient } 由于 RLV 限制
+rlva-blocked-start-conference = 無法找到頁面 [RECIPIENT] 由于 RLV 限制
+rlva-anonym-waiting = （載入中…）
+rlva-anonym-unknown = （未知）
+rlva-blocked-teleport = 由于RLV限制,無法啟動傳送
+rlva-blocked-permission-attach = 試圖連接 '{ $object }您訪問的頁面不存在 RLV 限制
+rlva-blocked-permission-teleport = '{ $object }' 被拒絕權限,以電傳你由于 RLV 限制
+rlva-blocked-view-notecard = 由于RLVa限制,無法打開notecard。
+rlva-blocked-view-script = 由于RLVa限制,無法打開腳本。
+rlva-blocked-view-texture = 由于RLVa限制,無法打開紋理。
+rlva-debug-explicit-point = 忽略庫存項目和文件夾上的附加點名稱
+rlva-debug-explicit-point-hint = 當附加點被鎖定時,Wear and Add 將對象發送到其默認點而不是其名稱或文件夾名稱提供的點(不完整 ) 。
+phototools-environment-settings = 環境設定
+phototools-quick-environments = 快速環境
+phototools-environment-presets = 環境預設
+phototools-general-render = 一般渲染設置
+phototools-render-options = 渲染選項
+ui-bars-clouds-paused = 云停止
+ui-bars-clouds-paused-tip = 云彩在此會話中保持靜止。 點擊讓它們再次移動。
+phototools-tab-dof-glow = 景深與輝光
+phototools-lights-shadows = 光線和陰影設置
+phototools-ambient-occlusion = 環境光遮蔽設定
+phototools-dof = 景深設定
+phototools-tone-mapping = HDR 色調映射設置
+phototools-glow = 發光設置
+phototools-photo-banner = 照片窗口打開:照片的窗口也有行更改照片。 場景深度保留為您的下一張照片;光線,曝光,陰影,環境遮擋和磨損燈光持續到照片視窗關閉。
+phototools-photo-boost = 照片質量提升:圖形行顯示提升值,您在其中所做的更改將保留為您自己的更改。
+phototools-photo-focus-help = 點擊:在世界上最后點擊的點。 指針:指針下方的點. 手動:您設置的距離.
+phototools-photo-distance-help = 手動對焦時鏡頭聚焦的距離。
+phototools-director-lens = 當 Director's Lens 窗口打開時,它會在下面的設置上顯示。
+phototools-view-angle-viewfinder = 取景器擁有視角:當它關閉時,您的視角會回來。
+ui-options-dof-show-focus-point = 顯示焦點
+ui-options-dof-show-focus-point-help = 鏡頭聚焦點上的小十字線:黃色是自由的,紅色是鎖定的。
+
+### Updated release translations
+
+render-features-menu = 渲染特性
+render-features-ui = 介面
+toolbar-command-ao-mini = 迷你 AO 視窗
+keybinds-ui-feature = 顯示/隱藏整個界面 (渲染功能 › UI)
+import-image-size-limit = 最大圖像大小
+import-image-size-single = 最大圖像大小
+import-image-size-inherit = 全域設定（{ $size } 像素）
+import-image-size-pixels = { $size } 像素
+import-image-size-inherit-help = 全局設置遵循底部"導入"旁邊的限制,其當前值顯示在括號中。 較大的圖像會自動縮小到選定的限度。
+import-image-size-global-help = 導入的最大圖像大小。 個別圖像和材料選擇優先,較大的圖像自動縮小。
+ui-chat-applink-preferences-tip = 在"首選項"中打開此設置
+ui-options-bento-idle = 修復Bento空閑動畫
+ui-options-bento-idle-hint = 在所有其他動畫下播放優先級 0 Bento 動畫,因此手、嘴、翅膀和尾巴回到自然姿勢而不是在動畫后停留;其他人也會看到它
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] UUID號物體復制品
+       *[other] 復制的對象UUID
+    }
+ui-appearance-batch-choose-folder = 在{ $folder }拍攝的服裝
+ui-appearance-batch-all = 所有裝扮
+ui-appearance-batch-chosen = { $chosen } 2013年1月1日至 { $total }
+ui-appearance-batch-select-missing = 無照片
+ui-inventory-dialogs-detach-and-delete = 取下並刪除
+ui-inventory-dialogs-detach-and-delete-body = 您的化身正在穿戴其中一些物品。系統會先取下這些物品，再移入資源回收筒。
+ui-inventory-delete-detach-cannot = 無法再取下並刪除這些正在穿戴的物品。
+ui-inventory-delete-detach-refused = 此項目不能卸載和刪除。
+ui-inventory-delete-detach-busy = 另一個庫存變化正在進行中,一旦完成后再試一次。
+ui-inventory-delete-detach-timeout = 無法取下穿戴中的物品，因此並未刪除它們。
+common-modify = 修改
+build-ui-contents-filters = 內容過濾器
+build-ui-contents-next-owner-permissions = 下一個所有者的權限
+ui-options-voice-output = 語音輸出
+ui-options-voice-output-used-for-voice-chat = 用于語音聊天;世界聲音,音樂和媒體使用 音頻輸出
+ui-options-same-as-audio-output = 與音頻輸出相同
+ui-options-copy-setting-link = 復制鏈接到設置
+ui-options-setting-unavailable = 此設置不可用。
+ui-context-show-in-inventory-none = 您的庫存中沒有任何物品具有此物品的名稱。
+ui-profile-aurora-help = 居民的個人資料:他們是誰,您可以用他們做什么,然后他們的選擇,分類,第一次生活,網絡個人資源和你的筆記。 Preferences › Aurora › Profiles 帶回了舊版查看器窗口。
+ui-profile-aurora-tab-picks = 精選
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] 精選: { $count }
+       *[other] 精選: { $count }
+    }
+ui-profile-aurora-snapshot = 畫面
+ui-profile-aurora-picks-empty = 還沒有精選
+ui-profile-aurora-picks-empty-text = { $name } 尚未分享任何精選。
+ui-profile-aurora-picks-empty-own = 分享對您重要的內容
+ui-profile-aurora-picks-empty-own-text = 您可以在精選裡展示自己在意的地點、人物或事物。
+ui-profile-aurora-delete-pick = 刪除精選「{ $name }」？
+script-search-whole-words = 完整字
+ao-mini-title = 迷你 AO 視窗
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }:沒有選擇動畫
+ao-quick-pin = 打開mini AO窗口
+build-layout-button-icon = 圖標
+build-layout-button-label = 標籤
+build-layout-button-both = 圖標和標簽
+build-detach-shown = 在它自己的窗口中:點擊隱藏它。 將該窗口的標題拖到構建窗口上,以重新放置它。
+build-detach-hidden = 在自己的窗口中,隱藏:點擊顯示它。
+build-material-save-as = 保存材料為
+build-material-save-name = 庫存中新材料的名稱:
+build-material-new-material = 新材料
+build-material-save-not-allowed = 保存需要在每個選擇的面上有一個 PBR 材料,對象上的復制和修改權限,以及庫存中具有復制與修改 權限的材料副本。
+build-material-saved = 材料"{ $name }"已保存至您的庫存。
+build-material-save-failed = 該材料無法保存到您的庫存。
+toolbar-add-from-menu = 添加到工具欄
+toolbar-remove-from-menu = 從工具欄中刪除
+toolbar-command-build-edit = 編輯對象
+toolbar-command-build-create = 建立基本體
+toolbar-command-build-land = 編輯土地
+
+### Updated release translations
+
+inventory-search-no-copy = 不可複製
+inventory-search-no-modify = 無法修改
+inventory-search-no-transfer = 不可轉讓
+ui-options-chat-keep-focus-hint = 按 Enter 傳送訊息，聊天列會保持輸入焦點，即使聊天列是空的也一樣。按 Esc 或點擊場景即可恢復移動操作。
+ui-options-chat-enter-toggles-hint = 在「對話」視窗的空白輸入欄按 Enter 可恢復移動操作，適用於附近聊天、私訊和群組聊天。在場景中按 Enter 可再次輸入。
+build-ui-features-physics-none-root-hint = 只有鏈接集的子素數才能使用物理形狀 None:根素數,或單獨的素數保持 Prim 或 Convex hull。
+controls-position-tip = 攝像頭位置:設置攝像機在頭像后面的位置,準確
+camera-position-hint = 從頭像的米:X向前,Y左邊,Z上。 Ctrl +輪提高相機,Shift +輪焦點。
+camera-position-save = 保存為相機位置 . .
+photo-looks-replace = 替換
+photo-looks-empty = 還沒有效果。 指向下面的過濾器試用,然后點擊或拖動到這里。
+photo-looks-active = 進行中
+photo-looks-count = { $count } 2013年1月1日至 { $max }
+photo-looks-expand-all = 全部展開
+photo-looks-collapse-all = 全部摺疊
+photo-looks-hint = 效果從上到下套用。拖曳卡片或選取後按 Alt + ↑ ↓ 可調整順序。按右鍵可移除該效果。
+photo-looks-right-click-out = 右鍵單擊:將其從活動效果中移除
+photo-looks-drop = 在這里拖動效果,或點擊下面的一個
+photo-looks-full = { $max } 2013年1月1日至 { $max }:刪除一個,或打開"替換"以交換一個。
+photo-looks-catalogue = 效應目錄
+photo-looks-catalogue-tip = 指向效果以在照片上試用;點按它以添加它,或將其拖到活動效果中
+photo-looks-catalogue-fold = 顯示或隱藏目錄
+photo-looks-replace-tip = 替換:在目錄中點擊將替換選定的卡片,而不是添加新卡片
+photo-looks-replacing = 點擊交換 { $name }
+photo-looks-done = 完成
+photo-looks-take-out-zone = 下來拿出來
+photo-looks-hide = 隱藏{ $name }(它保持其位置)
+photo-looks-show = 表演{ $name }
+photo-looks-more = 更多操作
+photo-looks-move-up = 上移
+photo-looks-move-down = 下移
+photo-looks-replace-one = 替換.
+photo-looks-take-out = 取出
+photo-looks-not-in-360-tag = 不在360度
+photo-looks-all = 全部
+photo-looks-favorites = 收藏夾:您主演的每個效果
+photo-looks-favorites-empty = 指向某個效果并點擊它的星標:它會在列表中顯示第一,并且在這里。
+photo-looks-favorite = 添加到收藏夾
+photo-looks-unfavorite = 從收藏夾中刪除
+photo-looks-card = { $name }, { $place } 2013年1月1日至 { $count }Alt + 箭頭鍵移動它。
+photo-looks-legacy-note = 傳統查看器過濾器沒有額外設置。
+photo-knob-toning = 色調調整
+photo-knob-local-contrast = 局部對比
+build-face-button = 面部 { $number }: 在每個選定的prim上選擇它。 Shift+click: 添加或刪除它。
+build-face-invert = 翻轉所選面孔
+build-face-all = 選擇每個面孔
+ui-options-aurora-controls-compact = 緊湊型相機控制
+ui-options-aurora-controls-compact-movement = 緊湊型運動控制器
+ui-options-aurora-controls-compact-movement-help = 控制窗口的移動標簽打開緊湊:移動按鈕和走路,跑步和飛行。 其標題欄按鈕在緊湊和全部之間切換,并設置這一點。
+poser-face-position-drag = 拖動以每像素 0.1 mm 移動接頭,或點按以鍵入位置。
+build-layout-clicks = 點擊對象
+build-ui-floaters-shift-click = Shift + 按一下
+build-ui-floaters-ctrl-click = Ctrl + 按一下
+build-ui-floaters-click-object = 添加或移除對象
+build-ui-floaters-click-face = 選擇面孔
+build-ui-floaters-clicks-hint = 使用編輯工具,在對齊之外,Ctrl + Shift + 單擊添加或刪除點擊的面。
+build-ui-floaters-ctrl-right-click = Ctrl + 右鍵單擊
+build-ui-floaters-right-click-menu = 打開菜單
+build-ui-floaters-right-click-edit = 編輯對象
+build-ui-floaters-double-click-linked = 雙擊prim:切換“編輯鏈接部分”
+blender-live-tab-place = 位置
+blender-live-tab-avatar = 化身
+blender-live-more = 更多
+blender-live-place = 位置
+blender-live-linked-prims = 顯示或隱藏鏈接的prim
+blender-live-tag-rigged = 已綁定骨架
+blender-live-card-rigged =
+    { $triangles ->
+        [one] 三角形: { $triangles }
+       *[other] 三角形: { $triangles }
+    }
+blender-live-card-static =
+    靜態 · { $triangles ->
+        [one] 三角形: { $triangles }
+       *[other] 三角形: { $triangles }
+    }
+blender-live-card-linkset =
+    靜態 · { $prims ->
+        [one] 基本體: { $prims }
+       *[other] 基本體: { $prims }
+    } · { $triangles ->
+        [one] 三角形: { $triangles }
+       *[other] 三角形: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] 三角形: { $triangles }
+       *[other] 三角形: { $triangles }
+    }
+blender-live-place-help = 所選靜態網格的位置。 被操縱的網格總是跟隨你的頭像。
+blender-live-place-none = 選擇靜態對象以放置它。
+blender-live-where = 哪里
+blender-live-transform = 位置、旋轉和大小
+blender-live-from = 從
+blender-live-plugins-help = Aurora 在每個Blender中安裝匹配的插件,保留前一個插件的備份并且永遠不會安裝舊版本。
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count }分鐘
+blender-live-ago-hours = { $count } h
+blender-live-show-all = 全部顯示
+blender-live-hide-all = 隱藏所有
+blender-live-bend-section = 檢查重量
+blender-live-elbows = 肘部
+blender-live-knees = 膝蓋
+blender-live-bend-hold = 保持這個姿勢,而不是我的動畫
+blender-live-bend-note = 只有你在你的頭像上看到彎曲,你的動畫、其他居民的視圖和導入不會改變。
+blender-live-levels = 詳細程度
+blender-live-quick-look-tip = 快速查看:查看此對象更大
+blender-live-quick-look-drag = 拖動旋轉它,雙擊再次面對它。
+blender-live-quick-look-bend = 彎曲如在頭像選項卡:肘部 { $elbows }°，膝蓋 { $knees }°.
+blender-live-undo = 復原
+blender-live-undo-drop = 把{ $name }扔到地上
+blender-live-undo-attach = 已將 { $name } 移至 { $point }
+parcel-environment-apply-save = 僅套用給自己並為此地塊儲存
+parcel-environment-save = 保存這個環境的包裹:它會回來,每當你在這里
+parcel-environment-forget = 忘記為此包裹保存的環境
+parcel-environment-not-saved = 該包尚未被識別,因此其環境沒有保存。 稍后再試。
+parcel-environment-left = 您在環境能夠保存之前離開了包,因此它沒有被保存。
+parcel-environment-title = 為包保存的環境
+parcel-environment-help = 您可以為地塊儲存個人環境。進入地塊時會取代您目前的本機環境，離開後恢復原有環境。只有您看得到。可從環境視窗或物品欄中環境物品的選單儲存。
+parcel-environment-empty = 沒有保存環境
+parcel-environment-remove-all = 刪除所有
+parcel-environment-remove-all-title = 刪除為包裹保存的每個環境?
+parcel-environment-remove-all-text = 您為目前網格的地塊儲存的環境將被刪除。其他網格的紀錄會保留。此操作無法復原。
+
+### Updated release translations
+
+anim-edit-shortcut-play = 播放或暫停
+area-search-scope-heading = 哪里
+area-search-scope-parcel = 地塊
+area-search-scope-region = 區域
+area-search-scope-neighbours = 鄰居
+area-search-objects-heading = 哪些物體
+inventory-copy-selection-count =
+    { $count ->
+        [one] 復制1項
+       *[other] 復制{ $count }項
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] 鏈接 1項
+       *[other] 鏈接 { $count }個條目
+    }
+inventory-drop-move-here = 搬到這里來
+inventory-drop-copy-here = 復制到這里
+inventory-drop-link-here = 在這里創建鏈接
+inventory-sort-description = 描述
+inventory-sort-reversed = { $order }(逆轉)
+inventory-column-creator = 創造者
+inventory-column-count = 項目
+inventory-columns-fit = 調整所有列的大小以適合
+inventory-columns-reset-widths = 重置列寬度
+inventory-back = 返回
+inventory-forward = 向前
+inventory-up = 上升一個級別
+keybinds-inventory-root = 返回頂部
+keybinds-inventory-search = 搜索庫存
+keybinds-inventory-filter = 過濾文件夾
+keybinds-inventory-preview = 顯示預覽窗格
+keybinds-inventory-view-large = 大型圖片
+keybinds-inventory-view-medium = 媒體圖片
+keybinds-inventory-view-small = 小圖片
+keybinds-inventory-view-compact = 精簡檢視
+keybinds-inventory-view-details = 詳細信息視圖
+keybinds-inventory-view-tiles = 瓷磚視圖
+keybinds-inventory-toggle = 選擇或取消選擇焦點中的行
+keybinds-inventory-menu = 打開所選項的菜單
+keybinds-inventory-purge = 從垃圾桶中清理
+keybinds-inventory-refused = { $keys } 仍然是庫存列表自己的密鑰:選擇另一個。
+inventory-path-edit = 鍵入路徑
+inventory-path-subfolders = 子文件夾
+inventory-copy-path = 復制路徑
+inventory-show-in-folder = 在資料夾中顯示
+inventory-pin = 快速訪問
+inventory-unpin = 從快速訪問取消固定
+inventory-quick-access = 快速訪問
+inventory-quick-access-drop = 在此處拖放文件夾以固定它
+inventory-invert-selection = 反轉選擇
+inventory-undo = 復原
+inventory-redo = 重做
+inventory-undo-step = 撤銷{ $what }
+inventory-redo-step = 重做{ $what }
+inventory-history-move =
+    { $count ->
+        [one] 移動1個項目
+       *[other] 移動{ $count }個項目
+    }
+inventory-history-delete =
+    { $count ->
+        [one] 刪除1個項目
+       *[other] 刪除{ $count }個項目
+    }
+inventory-history-rename = 重命名
+inventory-history-new-folder = 新建文件夾
+inventory-history-copy =
+    { $count ->
+        [one] 1件物品的副本
+       *[other] { $count }項的副本
+    }
+inventory-history-link =
+    { $count ->
+        [one] 鏈接到1項
+       *[other] 鏈接到{ $count }個項目
+    }
+inventory-undo-nothing = 沒有任何東西可以撤銷:這些項目已經移動或消失。
+inventory-redo-nothing = 無需重做:這些項目已移動或消失。
+inventory-undo-empty = 沒有什么可撤銷的。
+inventory-redo-empty = 沒有什么要重做的。
+inventory-undo-dropped = 最后一步的項目已經移動或消失:它已被丟棄。 再次撤銷之前的一步。
+inventory-redo-dropped = 下一步的項目已經移動或消失:它被丟棄了。 再次重復以后的步驟。
+inventory-undo-folder-not-empty = 這個新文件夾包含了從以下時間開始放在那里的項目:首先將它們移出,或者自行刪除該文件夾。
+inventory-undo-kept-out = 這些物品現在在當前裝備或市場列表中:在那里更改它們。
+inventory-restore-to = 返回上一頁{ $folder }”
+inventory-restore-to-origins = 恢復到他們的文件夾
+inventory-purge-no-undo = 撤銷不能將它們帶回來。
+inventory-new-tab = 新標簽
+inventory-close-tab = 關閉選項卡
+inventory-next-tab = 下一個選項卡
+inventory-previous-tab = 上一頁
+inventory-open-in-new-tab = 在新標簽中打開
+inventory-tabs-limit = 最多{ $count }個標簽。
+inventory-copy-to-other-pane = 復制到其他窗格
+inventory-move-to-other-pane = 移動到其他窗格
+inventory-resize-columns = 拖移以調整列的大小: 連按兩次以將左側列調整到其內容。
+inventory-resize-columns-first = 拖移以調整列的大小。 連按兩次以將第一列設為正常寬度。
+inventory-sort-by-column = 點按以按此列排序,再次點按可反轉順序。 拖移以移動列。
+inventory-filter-hint = 過濾此文件夾
+inventory-filter-close = 關閉過濾器(Esc)
+inventory-filter-nothing = 這里沒有任何內容與過濾器匹配
+inventory-view-compact = 精簡檢視
+inventory-view-tiles = 瓷磚視圖
+inventory-view-per-folder = 記住每個文件夾的視圖
+inventory-group-by = 按類別分列
+inventory-group-none = 無
+inventory-group-folders = 資料夾
+inventory-group-unknown-creator = 創建者未知
+inventory-group-today = 今天
+inventory-group-yesterday = 昨天
+inventory-group-this-week = 過去7天
+inventory-group-this-month = 過去30天內
+inventory-group-this-year = 今年初
+inventory-group-earlier = 很久以前
+inventory-group-no-date = 無日期
+cmdline-mod-zoffset-usage = 設置你的頭像的懸停高度(用法: /zoffset value 或 +delta ) 。
+dev-toolbox-n4 = 庫存裝載
+dev-toolbox-what-n4 = 文件夾讀取,失敗并離開,加載程序在飛行和重試中讀取;沒有名稱
+ui-context-inspect-avatar = 檢查頭像
+inspect-window = 檢查
+inspect-tab-objects = 物件
+inspect-objects-title =
+    { $count ->
+        [one] 小行星{ $count }
+       *[other] 小行星{ $count }
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count }個條目
+       *[other] { $count }項
+    }
+inspect-open-profile = 打開個人資料
+inspect-over-limit = 超過您的限制
+inspect-limit-tip = 您的復雜度限制:{ $limit }
+inspect-search = 搜索物品或創建者
+inspect-outlined = { $name }在世界上概述
+inspect-area-head = 頭
+inspect-area-body = 身體部位
+inspect-area-arms = 手臂和手
+inspect-area-legs = 腿和腳
+inspect-area-hud = HUD
+inspect-area-other = 其他
+inspect-area-world = 物件
+inspect-own-eyes = 系統眼
+inspect-own-body = 系統機構
+inspect-own-description = 頭像本身的一部分,而不是附件
+inspect-own-maker = 化身 · Second Life
+inspect-own-place = 化身
+inspect-thousands = { $n }k
+inspect-megabytes = { $n }兆字節
+inspect-section-complexity = { $value }複雜度
+inspect-no-match = 沒有找到匹配“{ $query }”的內容。
+inspect-spoken-worn = { $name }, 穿著 { $point }復雜性 { $complexity }由下列國家提出 { $creator }
+inspect-spoken-object = { $name }, 擁有 { $owner }復雜性 { $complexity }由下列國家提出 { $creator }
+inspect-look-at-tip = 移動相機到它
+inspect-profile-tip = 打開創作者的個人資料
+inspect-made-by = 制造商
+inspect-owned-by = 擁有者
+inspect-worn-on = 穿戴位置
+inspect-prims-count =
+    { $count ->
+        [one] 小行星{ $count }
+       *[other] { $count }質數
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = 紋理記憶體
+inspect-tile-vram = 圖形記憶體
+inspect-tile-prims = 基本體
+board-close = 關閉{ $title }
+board-grow = 放大 { $title }
+board-remove = 刪除{ $name }
+board-more = 和{ $count }更多
+board-more-short = +{ $count }
+board-some-of = { $shown } 2013年1月1日至 { $all }
+board-of-all = 第{ $all }段
+stage-turn-left = 左轉
+stage-turn-right = 右轉
+stage-higher = 從高處看
+stage-lower = 從下面看
+stage-nearer = 更近
+stage-further = 更遠
+stage-reset = 回到開頭
+stage-hint = 拖動旋轉,右鍵拖動移動
+stage-light = 光背景
+stage-dark = 暗色背景
+stage-playing = AO
+stage-paused = 已暫停
+stage-pause-tip = 暫停他們的動畫
+stage-play-tip = 播放他們的動畫
+stage-loading = 準備3D視圖
+stage-nothing = 還沒有什么要展示的3D。
+stage-refused = 3D視圖關閉,而RLVa限制了您可能看到的內容。
+inspect-your-limit = 您的限額: { $limit }
+inspect-without-it = { $value } 沒有它
+inspect-you = 您
+inspect-person = 人物
+inspect-difference = 差異
+inspect-drawn-in-full = 全額提款
+inspect-nobody = 沒有人的復雜性尚未被發現。
+inspect-aside-count = { $count } 留存
+inspect-is-aside = 留存
+inspect-set-aside = 留出
+inspect-set-aside-tip = 只有在這個窗口中:世界上沒有什么變化,你只能看到它的復雜性。
+inspect-put-back = 把它放回去
+inspect-put-back-tip = 重新計算此項目
+inspect-complexity-spoken = 復雜性 { $value }數目 { $rank } 2013年1月1日至 { $count } 這里的人
+inspect-stage-outfit = 衣服
+inspect-stage-objects = 對象
+inspect-stage-back = 返回頂部
+inspect-place-made-by = { $place } · 由 { $name }
+inspect-owned-by-name = 由{ $name }擁有
+inspect-tile-items = 項目
+inspect-tile-figures = 圖表
+inspect-col-item = 名稱
+inspect-point = 點
+inspect-look-at = 看向
+inspect-selected-count = { $count }選定
+inspect-worn-count = 小行星{ $count }
+inspect-creators-word = 創造者
+inspect-areas-word = 身體部位
+inspect-owners-word = 業主
+inspect-triangles-word = 三角面
+inspect-made-of = { $count } 2013年1月1日至 { $all } 項目
+inspect-kilobytes = { $n }千字節
+inspect-linkset-order = { $count },在左側順序
+inspect-reset-columns = 重設欄
+inspect-by-creators =
+    { $count ->
+        [one] { $items } 由一個創建者
+       *[other] { $items } 由 { $count } 創造者
+    }
+inspect-owner-button = 業主簡介
+inspect-group-button = 群組檔案
+inspect-creator-button = 創作者簡介
+inspect-land-others = 其他{ $n }
+inspect-land-these = 這些{ $n }
+inspect-land-free = 免費 { $n }
+inspect-land-unknown = 包裹的房間顯示當物品都在你所在的包裹上。
+ui-login-unencrypted = 未加密登入
+ui-login-unencrypted-body = { $server } 的登入位址以 http:// 開頭，而非 https://，登入資訊將不會加密。能查看您網路流量的人，例如在公共 Wi-Fi、共用網路上或通往網格的途中，可能讀取您的密碼並使用您的帳號。目前尚未傳送任何資訊。您可以向網格索取 https:// 登入位址。此選擇將為這個伺服器儲存。
+ui-login-unencrypted-accept = 不加密並登入
+world-appearance-clothing-layers-full = 所有60層衣服都在使用中。 在穿上這件物品之前取下一層衣物。
+ui-options-ray-tracing = 光線追蹤
+ui-options-ray-traced-shadows = 光線追蹤太陽影
+ui-options-ray-traced-shadows-help = 太陽和月亮的陰影按照光線逐一追蹤,而不是從陰影圖中讀取:確切地了解物體在任何距離上的接觸點。 需要陰影和具有光線跟蹤功能的顯卡,顯卡成本更高
+ui-options-ray-traced-lights = 局部光影
+ui-options-ray-traced-lights-help = 來自周圍點燈(燈、蠟燭)的陰影,在其他情況下它們不會投射影像,當投影機陰影開啟時,來自投影儀的陰暗,而不是其陰影圖。 最昂貴的光線跟蹤選項:集成顯卡上最好不使用
+ui-options-rt-quality = 光線跟蹤質量
+ui-options-rt-quality-help = 每個跟蹤效果都保持開啟:較低的級別會在粗糙的網格上追蹤較少的樣本和間接光線,以便在較小的圖形卡上每秒獲得更多幀數。 高級是 Deluxe (RT) 的完整圖像。 選擇級別還可以設置投影陰影的燈光
+ui-options-rt-sun-softness = 日影柔軟度
+ui-options-rt-sun-softness-help = 太陽影子邊緣的柔軟程度:1是真正的太陽,0是尖銳的邊緣,更多是模糊的太陽
+ui-options-rt-lamp-softness = 局部光影柔度
+ui-options-rt-lamp-softness-help = 燈具追蹤影子的邊緣有多柔和:1 跟隨每個燈具的大小,0 銳利的邊界
+ui-options-rt-shadow-lamps = 投影的光
+ui-options-rt-shadow-lamps-help = 最近的燈具中有多少投射了痕跡影子;其他燈具仍然亮著,沒有影子。 顯卡成本更低
+ui-options-ray-traced-indirect = 間接光
+ui-options-ray-traced-indirect-help = 由周圍表面反射的光線,在屏幕顯示之外追蹤,取代 GTAO 的間接光線
+ui-options-gi-probes = 全局照明探頭
+ui-options-gi-probes-help = 探頭在場景中傳播,保持光線的幾個反彈和他們看到的天空:封閉的房間仍然黑暗,光線繞過角落。 大約0.8 ms的圖形卡
+ui-options-ray-traced-reflections = 光線追蹤反射
+ui-options-ray-traced-reflections-help = 屏幕不顯示的反射,而不是必須在屏幕空間反射
+ui-options-ray-tracing-unsupported = 此顯卡或其驅動程序沒有光線跟蹤
+ui-options-ray-tracing-vr = 在為 VR 啟動的會話中不可用
+ui-options-tab-ray-tracing = 光線追蹤
+ui-options-deluxe-rt-warning-title = 打開豪華版(RT)?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) 是高級模式,影子和間接光線由圖形卡追蹤。 它需要具有硬件光線跟蹤的顯卡(NVIDIA RTX、AMD Radeon RX 6000 或更高版本、Intel Arc)和最新驅動程序,并且成本遠高于 High:在中端顯卡上,幀速率可能會在繁忙場所下降很多。 Ray Tracing 仍在測試中:如果圖像看起來不對或者查看器速度減慢,請返回到 High。
+ui-options-deluxe-rt-warning-turn-on = 打開
+ui-options-ray-tracing-needs-shadows = 需要影子
+ui-options-ray-tracing-needs-ssr = 需要屏幕空間反射
+ui-options-preset-deluxe = 豪華房(RT)
+ui-options-normal-precision = 反射精度
+ui-options-normal-precision-help = 每個表面的反射方向保留的精度。 標準可以顯示光滑曲線表面(如汽車油漆)反射中的步驟;高級會刪除這些步驟并使用更多視頻內存。 自動使用高級與光線跟蹤反射,在這里步驟顯示最多,否則使用標準
+ui-options-normal-precision-automatic = 自動
+ui-options-normal-precision-standard = 標準
+ui-options-normal-precision-high = 高
+ui-options-private-point-at-help = 隱藏您正在編輯的對象,保持編輯臂下降,并隱藏編輯光束。
+common-window-outside = 移出查看器窗口
+common-window-inside = 返回到查看者窗口
+common-window-rename-name = 雙擊以重命名
+common-carry-hint = 點擊放到這里,Esc放開它
+common-window-paused-photo = 照片模式打開時暫停
+common-window-paused-director = 導演播放時暫停
+common-window-paused-interface = 當接口關閉時暫停
+ui-options-warn-live-preview = 無法預覽紋理或材料時警告
+ui-options-warn-live-preview-help = 在構建窗口的選擇器中,單擊不復制項目將不應用任何內容,直到 OK: say so。
+ui-texture-picker-live-preview-texture = 我們無法顯示此紋理的預覽,因為它是非復制的。
+ui-texture-picker-live-preview-material = 我們無法顯示此材料的預覽,因為它是非復制。
+fetch-invalid-url = 無效的URL
+ui-chat-close-all-ims = 關閉所有 IM 對話
+ui-chat-close-all-ims-question = 關閉所有 IM 對話并結束活動呼叫?
+ui-chat-confirm-close-all-ims = 關閉所有 IM 對話前確認
+ui-chat-confirm-close-all-ims-help = 當有一個活動的語音呼叫時,在關閉所有 IM 對話之前詢問。
+ui-options-aurora-controls-compact-help = Controls 窗口在相機上以緊湊的方式打開,包括操縱桿、縮放和滾動。 其標題欄按鈕可在緊湊和完整之間切換,并設置這一點。 使用 Classic 窗戶時,相機會在 Legacy Viewer 的小型相機窗口中打開。
+rlva-restart-hint = RLVa 在您登錄時啟動。 一旦運行,打開或關閉它將在下次啟動查看器時生效:限制對象持有保留到那時為止。
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa 將在您重新啟動后啟用。
+rlva-toggle-disabled-restart = 重新啟動后,RLVa 將被禁用。
+livemesh-import-connect = 連接帶有插件 0.11.0 或更高版本的 Blender,或帶有嵌入式插件0.2.0 的 Maya,以準備導入 LOD。
+livemesh-import-preparing = 在Blender或Maya中準備對象及其LOD . .
+livemesh-import-ready = 收到LOD，準備進入導入器
+livemesh-import-failed = 導入準備失敗:{ $error }
+livemesh-import-timeout = Blender 或 Maya 未完成導入準備工作。 檢查連接(在 Blender 中,使用對象模式)并重試。
+livemesh-shape-apply-tooltip = 選中修改權限,然后調整在 Blender 或 Maya 中選擇的骨架及其綁定網格(對于 MayaStar 設備,通過 MayaStar) 選擇本地兼容 Second Life 的骨骼。
+livemesh-shape-update-apply = 將 Blender 插件更新到 0.10.0 或更高版本,或將 Maya 插品更新至 04.0或更高,然后重新連接。
+livemesh-shape-applied = 應用到選定骨架的形狀。
+livemesh-shape-tooltip = 檢查磨損形狀的修改權限,并在 Blender 或 Maya 中創建新的操縱參考體。
+livemesh-shape-connect = 首先在Blender或Maya中連接Aurora插件。
+livemesh-shape-update-plugin = 將 Blender 插件更新到 0.9.0 或更高版本,或將 Maya 插品更新至 0,3.0或更高,然后重新連接。
+livemesh-shape-timeout = Blender 或 Maya 未確認導入,請重試(在 Blender 中切換到物件模式 ) 。
+livemesh-shape-success = 形狀作為新的裝配式參考體導入。
+blender-live-maya-version = Aurora 適用于 Maya 的 LiveMesh { $version }
+blender-live-maya-instructions = 保存 ZIP 文件并將其解壓,然后將 install.mel 拖動到 Maya 視窗中。 從 Aurora 架子上打開 LiveMesh,添加網格并單擊 Connect。
+blender-live-save-maya = 保存 Maya 插件
+blender-live-maya-saved = 插件已保存。 解壓 ZIP 文件并將 install.mel 拖入 Maya 視窗。
+livemesh-plugin-connected = 插件連接
+livemesh-token-refused = 某個程序試圖在沒有此預覽密鑰的情況下進行連接。 只有 Blender 或 Maya 中的 Aurora 插件可以連接.
+livemesh-waiting-plugin = 等待Blender或Maya . .
+blender-live-objects-help = Blender 或 Maya 發送的網格。 選擇一個放置它,或從菜單導入它。
+blender-live-size-note = Size 乘以插件發送的內容,因此后來在 Blender 或 Maya 中進行編輯時保留它。
+blender-live-avatar-help = 對于裝飾網格:將形狀發送到 Blender 或 Maya 以在其上建模。
+livemesh-shape-section = 在Blender或Maya中創建你的形狀
+blender-live-import-help = 凍結正常導入的對象快照:審查、價格,然后確認。 之后在 Blender 或 Maya 中進行編輯時不會更改它。
+blender-live-changed-tip = 自 Blender 或 Maya 最后一次更改此對象以來的時間
+fit-lab-section = 健身室
+fit-lab-help = 穿著您所穿的衣服的模特站在您面前,展示這件衣服如何適合不同的身材。 只有您可以看到它們:不會發送或保存任何信息。
+fit-lab-body-me = 我
+fit-lab-body-slim = 瘦
+fit-lab-body-curvy = 曲線
+fit-lab-body-full = 完整數字
+fit-lab-body-athletic = 運動
+fit-lab-body-tall = 高
+fit-lab-body-petite = 小型
+fit-lab-motion = 動態
+fit-lab-motion-stand = 站起
+fit-lab-motion-walk = 行走
+fit-lab-motion-sit = 坐下
+fit-lab-motion-range = 運動范圍
+fit-lab-pose = 姿勢
+fit-lab-pose-all = 所有,反過來
+fit-lab-pose-arms-up = 舉起手臂
+fit-lab-pose-reach = 向前邁進
+fit-lab-pose-hug = 手臂交叉
+fit-lab-pose-squat = 蹲姿
+fit-lab-pose-kneel = 跪
+fit-lab-pose-knee-up = 膝蓋抬起
+fit-lab-pose-twist = 扭轉
+fit-lab-pose-bend = 向前彎曲
+fit-lab-motion-like-me = 像我一樣
+fit-lab-show = 顯示模特
+fit-lab-place = 把他們帶到這里
+fit-lab-remove = 移除模型
+fit-lab-choose = 至少選擇一個身體。
+fit-lab-clip = 顯示身體穿過的位置
+fit-lab-clip-note = 紅色:身體從衣服中出來。 琥珀色:在你的頭像和模特上,從攝像機的角度看,身體和衣服相遇。 所有其他裝扮的衣物都算作身體:取下外套或穿在衣服上的頭發。
+blender-live-levels-pending = 當您點擊"導入"時,Blender 或 Maya 會準備詳細級別。
+blender-live-levels-note = 在 Blender 或 Maya 中從每個對象的 LiveMesh 設置中準備。
+blender-live-quick-look-changed = { $ago }年前在Blender或Maya中更改。
+blender-live-warning-textures = 跳過紋理,顯示純色
+blender-live-warning-not-sent = 未在預覽中
+blender-live-undo-derez = 德雷茲澤德 { $name } 還在插件列表中
+blender-live-undo-detach = 分離式 { $name } · 仍在插件列表中
+inventory-open-current = 開啟
+inventory-folder-back = 返回
+inventory-folder-forward = 向前
+inventory-folder-up = 向上移動一個級別
+area-search-metres = { $n } m
+area-search-band-reach = 在可及范圍內
+area-search-band-close = 近距離
+area-search-band-around = 你周圍
+area-search-band-further = 進一步
+area-search-band-far = 遠
+area-search-band = 面積
+area-search-within = { $distance }年之內
+area-search-within-across = 內部{ $distance }橫向
+area-search-between = { $from }–{ $to }
+area-search-any-distance = 顯示每個距離
+area-search-from = 距離
+area-search-to = 距離
+area-search-bar-tip =
+    { $count ->
+        [one] 一個物體， { $from } 至 { $to }
+       *[other] { $count } 物體， { $from } 至 { $to }
+    }
+area-search-of-objects = { $total }個物體
+area-search-li = 小行星{ $value }
+area-search-li-count = { $value }地球撞擊
+area-search-owner-count =
+    { $count ->
+        [one] 一個所有人
+       *[other] { $count }號車主
+    }
+area-search-object-count =
+    { $count ->
+        [one] 一個物體
+       *[other] 小行星{ $count }
+    }
+area-search-objects-word = 物件
+area-search-in-reach = 這里
+area-search-tab-objects = 物件
+area-search-tab-owners = 所有者
+area-search-hint-wide = 對象、所有者、創建者或 UUID
+area-search-kind-heading = 物體類型
+area-search-kind-tip = 點擊:只有這些。 再次:隱藏。
+area-search-kind-any = 任何
+area-search-kind-only = 只有這些
+area-search-kind-hidden = 隱藏
+area-search-kind-attached = 連生
+area-search-kind-probes = 探測器
+area-search-click-all = 全部
+area-search-click-any-short = 任何
+area-search-permissions = 權限
+area-search-price-heading = 銷售價格,對于出售的物品
+area-search-price-to = 至
+area-search-price-tip = 首先選擇“出售”
+area-search-linked = 連結質數
+area-search-one-field = 在一個字段中搜索
+area-search-regex-switch = 正則表達式
+area-search-regex-invalid = 正則表達式的定義
+area-search-reset-filters-tip = 恢復每個過濾器;搜索文本保留
+area-search-save-defaults-tip = 從現在開始使用這些過濾器打開
+area-search-reset-search = 重置搜索文本
+area-search-reset-filters = 重置過濾選項
+area-search-reset-ranges = 重置距離和價格
+area-search-reset-all = 重置一切
+area-search-more = 更多
+area-search-several = 選擇幾個
+area-search-several-tip = 點擊將添加到選擇(也可以使用 Ctrl 或 Shift + 點按,Ctrl+A)
+area-search-actions = 行動
+area-search-nothing = 尚未收到任何物品。
+area-search-nothing-for-sale = 這里沒有什么可賣的。
+area-search-not-for-sale = 不出售
+area-search-from-price = 從{ $price }起
+area-search-nearest = 最近的第一
+area-search-heaviest = 最重的先
+area-search-order-tip = 更改順序:最近或最重的首先
+area-search-rank = #{ $rank } 2013年1月1日至 { $all }
+area-search-rank-here = #{ $rank } 這里
+area-search-card-more = 顯示每個圖形
+area-search-card-less = 收起
+area-search-open-group = 打開群組
+area-search-spoken = { $name }, { $distance }土地影響 { $li }, 擁有 { $owner }
+area-search-owner-spoken = { $name }, { $count } 物體，地面撞擊 { $li }
+area-search-stage-line = { $distance } 離開 · { $li } 土地影響 · { $owner }
+area-search-tile-3d = 三維視圖
+area-search-on = { $count }年起
+area-search-on-word = 關于
+area-search-more-on =
+    { $count ->
+        [one] 再添加一個過濾器
+       *[other] { $count } 更多篩選器
+    }
+ui-options-legacy-lists = 從傳統查看器導入列表
+ui-options-legacy-lists-help = 添加此帳戶的傳送歷史記錄、資產黑名單、媒體過濾列表和聯系人集合。 Legacy Viewer 的文件僅限讀取。
+ui-options-legacy-lists-button = 從傳統檢視器匯入…
+ui-options-legacy-lists-no-account = 登錄以導入此帳戶的列表。
+ui-options-legacy-lists-title = 從傳統查看器導入
+ui-options-legacy-lists-text = 所有內容都會被添加到此帳戶的列表中,這里沒有任何內容被刪除。 資產黑名單中的名稱立即從世界中移除。
+ui-options-legacy-lists-searching = 尋找傳統查看器的文件夾 . .
+ui-options-legacy-lists-none = 此帳戶沒有帶有列表的 Legacy Viewer 文件夾。
+ui-options-legacy-lists-teleports = 電傳歷史({ $count })
+ui-options-legacy-lists-derender = 資產黑名單({ $count })
+ui-options-legacy-lists-media = 媒體過濾器列表({ $count })
+ui-options-legacy-lists-contact-set-entries = 觸點集成條目({ $count })
+ui-options-legacy-lists-confirm = 匯入
+ui-options-legacy-lists-added = 添加或更新。 傳送歷史: { $teleports }資產黑名單: { $derender }媒體過濾器: { $media }, 聯系人設置條目: { $sets }.
+ui-options-legacy-lists-nothing = 沒有什么新的:這個帳戶已經有這些列表。
+ui-options-legacy-lists-failed = 無法讀取: { $files }.
+ui-options-legacy-lists-unsaved = 無法保存,留下來,因為它是:{ $files }。
+ui-options-legacy-lists-other-grid = 在這個網格上,一個同名的文件夾可以屬于另一個網格:檢查它是否正確。
+ui-options-build-show-beams-hint = 在編輯、抓取或給予時顯示您的選擇光束和其他頭像的選選光束。 這只控制顯示;使用隱私 > 隱藏編輯光束 以停止本地和網絡上的編輯照射。
+teleport-failed-title = 傳送失敗
+teleport-error-invalid-tport = 每分鐘的傳送嘗試限制為6次,如果遇到問題,請等待一分鐘再試一次。 如果問題仍然存在,請退出并重新登錄。
+teleport-error-invalid-region-handoff = 處理您的區域跨越遇到問題,您可能需要重新登錄才能跨越區域。 如果繼續收到此消息,請聯系支持。
+teleport-error-blocked-tport = 對不起,您訪問的頁面暫時無法顯示,請稍后再試。 如果仍然無法瀏覽,請退出并重新登錄以解決問題。
+teleport-error-nolandmark-tport = 抱歉,系統無法找到地標目的地。
+teleport-error-timeout-tport = 抱歉,系統無法完成傳送連接,稍后再試。
+teleport-error-no-help-island = 您不能傳送回歡迎島。
+teleport-error-noaccess-tport = 抱歉,您沒有權限訪問該傳送目標。
+teleport-error-missing-attach-tport = 您的附件尚未到達。 嘗試等待幾秒鐘或退出并重新登錄,然后再嘗試傳送。
+teleport-error-too-many-uploads-tport = 此區域的資產隊列目前已堵塞,因此您的傳輸請求將無法及時成功。 請在幾分鐘后重試或前往較少人流的區域。
+teleport-error-expired-tport = 抱歉,系統無法及時完成您的傳送請求。 請在幾分鐘后重試。
+teleport-error-expired-region-handoff = 抱歉,系統無法及時完成您的區域過境。 請在幾分鐘后重試。
+teleport-error-preexisting-tport = 對不起,系統無法啟動您的電傳,請稍后再試。
+teleport-error-no-host = 無法找到傳送目標。 目標可能暫時不可用或不再存在,請在幾分鐘后重試。
+teleport-error-no-inventory-host = 庫存系統目前無法使用。
+teleport-error-must-get-age-region = 您必須年滿18歲才能進入本區域。
+teleport-error-special-usage-blocked = 無法找到頁面{ $region }' 是技能游戲區域,您必須滿足某些條件才能進入。 有關詳細信息,請查看技能玩家常見問題: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = 無法進入區域。 這是一個技能游戲區域,您必須滿足某些條件才能進入。 詳情請參閱技能玩家常見問題:https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = 您的家庭網絡拒絕了您的返回,這通常意味著它的 Hypergrid 地址設置與其他網絡使用的地址不匹配。 聯系您家庭電網的運營商;同時再次登錄將帶您回家。
+teleport-hint-hypergrid-unreachable = 您訪問的頁面不存在,可能已被刪除、重命名或暫時不可用。
+teleport-hint-hypergrid-visitors-refused = 那個網格只允許某些網格的居民進入。
+teleport-hint-hypergrid-destination-gone = 目標區域不再存在或已移動。 地標和其他網格鏈接可能過時。
+toolbar-edit = 自定義按鈕和菜單
+toolbar-title = 按鈕和菜單
+toolbar-interface-locked = 接口鎖定
+toolbar-help = 將按鈕或菜單條目拖動到頂部、底部或側邊欄,然后在此處放回按鈕以移除它。 右鍵點擊任何按鈕可更改其外觀。
+toolbar-help-classic = 將按鈕或菜單條目拖動到頂部、底部或側邊欄,然后在此處放回按鈕以移除它。 右鍵點擊任何按鈕可更改其外觀。
+toolbar-help-modes = 為每個按鈕選擇圖標、標簽、兩者或欄默認值。 在Aurora菜單中拖動條目以重新排列它。
+import-menu-textures = 紋理
+import-menu-animations = 動畫
+import-menu-sounds = 聲音
+import-menu-materials = 材質
+import-menu-meshes = 網格模型
+import-menu-options = 導入選項
+import-upload-payment-title = 上傳
+import-upload-payment = 你付了L${ $cost }上傳。
+import-quick-textures =
+    { $count ->
+        [one] 匯入 · 紋理: 1 · L${ $cost }?
+       *[other] 匯入 · 紋理: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] 匯入 · 材質: 1 · L${ $cost }?
+       *[other] 匯入 · 材質: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] 匯入 · 聲音: 1 · L${ $cost }?
+       *[other] 匯入 · 聲音: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] 請選擇匯入尺寸。符合條件的紋理可按 2048 × 2048 匯入：
+       *[other] ({ $count }) 請選擇匯入尺寸。符合條件的紋理可按 2048 × 2048 匯入：
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] 請選擇匯入尺寸。材質中符合條件的圖片可按 2048 × 2048 匯入：
+       *[other] ({ $count }) 請選擇匯入尺寸。材質中符合條件的圖片可按 2048 × 2048 匯入：
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = 直接按 2048 × 2048 上傳免費圖片，無須詢問
+import-quick-free-full-size-help = "Import textures"和"Import materials"只在上傳費用為 L$ 時才詢問 1024 或 2048。
+ui-bars-customize-bars = 自定義界面
+build-tool-in-use = 使用中
+build-create-options-toggle = 顯示/隱藏選項
+build-create-keep-creating = 繼續創造
+build-create-center-on-prim = 中心在prim
+build-create-copy-prim-rotation = 復制原始旋轉
+build-create-align-to-surface = 對齊到曲面
+build-capture-shape-button = 復制一個prim的形狀:點擊這個,然后在世界上一個prim
+build-capture-shape-armed = 點擊一個prim復制它的形狀(Escape取消)
+build-capture-shape-full = 保留20個形狀。 刪除一個來復制另一個
+build-capture-shape-remove = 刪除此形狀
+build-capture-shape-tooltip = 復制形狀({ $kind })
+build-capture-shape-not-a-prim = 只能復制prim的形狀
+build-capture-shape-mesh-or-sculpt = 網格或雕刻原型的形狀不能復制
+build-capture-shape-no-modify = 您需要權限來修改此prim復制其形狀
+import-other-options = 其他選擇
+toolbar-button-icons = 僅圖標
+toolbar-button-text = 僅標簽
+toolbar-button-icons-text = 圖標和標簽
+toolbar-icon-default = 恢復默認圖標
+toolbar-icon-choose = 選擇一個圖標
+toolbar-icon-change = 更改圖標
+toolbar-presets = 預設
+toolbar-interfaces = 接口
+toolbar-interfaces-shown = 顯示在接口塊中
+toolbar-interfaces-hidden = 從接口塊隱藏
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = 小行星Aurora
+toolbar-preset-photographer = 小行星Aurora
+toolbar-preset-legacy = 舊版
+toolbar-import-textures = 導入紋理
+toolbar-import-sounds = 導入聲音
+toolbar-import-animations = 導入動畫
+toolbar-import-materials = 進口材料
+toolbar-import-meshes = 導入網格
+toolbar-import-local = 本地檔案
+toolbar-import-advanced = 高級導入
+toolbar-import-settings = 匯入設定
+toolbar-import-bar = 進口欄
+toolbar-icon-search = 查找圖標
+toolbar-in-top = 在頂部工具欄中
+toolbar-bar-top = 頂部工具欄
+toolbar-drop-here = 拖放到此處
+toolbar-separator = 分隔線
+toolbar-interface-edit = 自定義界面
+toolbar-edit-done = 完成
+toolbar-edit-top = 頂部
+toolbar-edit-bottom = 底部
+toolbar-edit-left = 向左
+toolbar-edit-right = 右
+toolbar-edit-help = 單擊項目以選擇它,拖動以移動它,或右鍵單擊以獲取編輯選項。 關閉此窗口以完成操作。
+toolbar-edit-locked = 酒吧是鎖定的,解鎖他們下面改變界面。
+toolbar-edit-move = 移到
+toolbar-edit-split-before = 分割前
+toolbar-edit-split-after = 分割后
+toolbar-edit-merge-before = 與上一個塊合并
+toolbar-edit-merge-after = 與下一個塊合并
+toolbar-edit-merge-groups = 合并這些塊
+toolbar-drawer = 抽屜
+toolbar-drawer-default-mode = 按鈕的默認顯示
+toolbar-drawer-closes = 點擊按鈕后關閉
+toolbar-block-shortcut = 快捷方式：
+toolbar-drawer-hides-needs-shortcut = 需要快捷方式
+toolbar-floating-close-button = 添加關閉按鈕
+toolbar-block-name = 區塊名稱:
+toolbar-block-button-mode = 塊按鈕顯示
+toolbar-button-inherited = 繼承
+toolbar-drawer-hides-button = 浮動時隱藏按鈕
+toolbar-floating-new = 浮動塊
+toolbar-floating-orientation = 方向
+toolbar-floating-horizontal = 水平
+toolbar-floating-vertical = 垂直
+toolbar-floating-empty = 在這里放置按鈕
+toolbar-shortcut-title = 快速鍵
+toolbar-shortcut-block-name = 分組：{ $name }
+toolbar-shortcut-none = 沒有捷徑
+toolbar-shortcut-press-key = 按某個鍵
+toolbar-shortcut-esc = Esc 取消
+toolbar-shortcut-clear = 移除
+toolbar-shortcut-overrides = Takes over { $name }: 此快捷方式運行工具欄,而不是其默認使用。
+toolbar-shortcut-used = 已經{ $names }的快捷方式。
+toolbar-shortcut-replace = 替換
+toolbar-shortcut-add = 新增
+toolbar-shortcut-save = 儲存
+toolbar-shortcut-choose-key = 選擇一個鍵
+toolbar-shortcut-help = 打開或關閉 Ctrl、Alt 和 Shift,然后點擊鍵盤上的按鍵來更改它。 除了 F1 到 F24 之外,Ctrl 或 Alt 是必需的。
+toolbar-shortcut-inactive = 此按鈕不在任何欄中:它的快捷方式一旦重新放置就會工作。
+toolbar-shortcut-refused-keyboard = 只有鍵盤鍵才能成為快捷方式。
+toolbar-shortcut-refused-modifier = 單獨的修飾鍵不能成為快捷鍵。
+toolbar-shortcut-refused-needs-modifier = 添加 Ctrl 或 Alt:單獨或與 Shift 鍵一起在文本字段中鍵入。
+toolbar-shortcut-refused-altgr = Ctrl+Alt與此鍵是AltGr,它在許多鍵盤上輸入字符。
+toolbar-shortcut-refused-editing = 文本字段使用此快捷鍵(全部選擇、復制、剪切、粘貼、撤銷、重做 ) 。
+toolbar-shortcut-refused-navigation = 使用此鍵移動和刪除文本字段。
+toolbar-shortcut-refused-typing = 聊天和對話框使用此鍵。
+toolbar-shortcut-refused-system = 系統會保留此快捷方式。
+toolbar-shortcut-refused-window = 此快捷鍵關閉或切換窗口。
+toolbar-shortcut-refused-zoom = 此快捷方式縮放界面。
+toolbar-spacer = 塊間距
+toolbar-add-spacer = 添加塊間距
+toolbar-button-settings = 按鈕設置
+toolbar-button-edit = 編輯按鈕
+toolbar-button-edit-title = 編輯按鈕
+toolbar-button-name = 按鈕名稱:
+toolbar-button-display = 按鈕顯示
+toolbar-shortcut-fixed-block-help = 固定塊的快捷方式顯示和隱藏它;當界面被編輯時,它保持顯示。
+toolbar-block-settings = 塊設置
+toolbar-parent-block-settings = 父塊設置
+toolbar-block-edit = 編輯塊
+toolbar-block-edit-title = 編輯塊
+toolbar-block-alignment = 調整
+toolbar-block-sizing = 按鈕尺寸
+toolbar-block-fixed-options = 固定模式選項
+toolbar-block-floating-options = 浮動模式選項
+toolbar-block-kind-fixed = 固定塊
+toolbar-block-kind-drawer = 抽屜
+toolbar-block-kind-floating = 浮動塊
+toolbar-block-remove = 移除封鎖
+toolbar-move-block = 拖動以移動整個方塊
+toolbar-remove-block = 移除封鎖
+toolbar-drawer-empty = 這個抽屜是空的。
+toolbar-drawer-drop = 拖動按鈕到此處以添加或重新排序它們。
+toolbar-separator-settings = 塊間距設置
+toolbar-separator-size = 大小/最小(px)
+toolbar-separator-stretch = 填充可用空間
+toolbar-separator-help = 靈活間隙共享方塊留下的空間。 大小是它們的最小寬度,或側邊欄中的高度。
+toolbar-block-navigation = 導航和SLURL
+toolbar-block-account = 賬戶和余額
+toolbar-block-system = 時鐘、指示燈和音頻
+toolbar-block-status = 可用性狀況
+toolbar-block-balance = 餘額
+toolbar-block-clock = 時鐘
+toolbar-block-ping = 區域延遲
+toolbar-block-fps = 幀率(FPS)
+toolbar-block-network = 網絡流量
+toolbar-block-media = 地塊媒體
+toolbar-block-music = 地塊音樂
+toolbar-block-volume = 數量
+toolbar-block-notifications = 通知
+toolbar-block-conversations = 對話圖標
+toolbar-block-chat = 附近聊天輸入
+toolbar-category-all = 所有類別
+toolbar-section-main = 主要
+toolbar-section-advanced = 進階
+toolbar-search-all = 搜索包括高級命令。
+toolbar-category-avatar = 頭像和運動
+toolbar-category-communication = 通訊
+toolbar-category-world = 世界和旅行
+toolbar-category-creation = 創建和內容
+toolbar-category-interface = 界面和攝像頭
+toolbar-category-advanced = 高級工具
+toolbar-category-help = 說明
+toolbar-category-custom = 自定義命令
+toolbar-bar-settings = 工具欄設置
+toolbar-menu-group = 選單: { $name }
+toolbar-location-bar = SLURL地址欄
+toolbar-command-build-tool-focus = 構建 - 攝像頭
+toolbar-command-build-tool-grab = 建設 - 移動
+toolbar-command-build-tool-edit = 構建 - 編輯
+toolbar-command-build-tool-create = 構建 - 創建
+toolbar-command-build-tool-land = 建筑-土地
+bug-copy-version = 復制查看器版本
+toolbar-notecard-save = 保存到筆記本電腦
+toolbar-notecard-load = 從一個notecard加載
+toolbar-notecard-name = Aurora接口
+toolbar-notecard-help = 工具欄、按鈕、抽屜式導航欄和菜單的布局和外觀。
+toolbar-notecard-saved = 界面布局保存在您的庫存中。
+toolbar-notecard-invalid = 此筆記卡不包含兼容的界面布局。
+toolbar-notecard-unavailable = 您訪問的頁面不存在或已被刪除
+toolbar-notecard-layout-changed = 在加載卡片時,界面發生了變化。 重新加載它以應用其布局。
+toolbar-notecard-demo-valid = 攝影師界面
+toolbar-notecard-demo-invalid = 其他筆記卡
+toolbar-notecard-too-large = 此接口配置對于 notecard 來說太大。
+toolbar-saved-interfaces = 保存的接口
+toolbar-saved-interfaces-empty = 還沒有保存的接口。
+toolbar-notecard-destination = 資料夾: { $path }
+toolbar-notecard-folder-error = 無法加載模塊:Public到這里去看看!
+toolbar-current-preset = 選擇的接口:{ $name }
+toolbar-preset-custom = 自定義界面
+toolbar-preset-unsaved = 未儲存的變更
+toolbar-preset-save-title = 保存界面
+toolbar-preset-save-name = 接口名稱
+toolbar-preset-save-new = 新的個人界面
+toolbar-preset-save-replace = 替換此個人界面
+toolbar-preset-save-unavailable = 無法在此處保存該接口。 請選擇其他名稱或可用的可編輯個人接口
+toolbar-interface-delete-unavailable = 此個人界面無法刪除。
+toolbar-interface-delete-confirm = 要將個人介面「{ $name }」移入資源回收筒嗎？
+
+### Weather, graphics, chat and contacts refresh
+
+director-motion-blur = 運動模糊
+director-motion-blur-hint = Director 攝像頭有自己的快門,當這個窗口打開時,移動的物體和鏡頭轉動會造成運動模糊,包括在現場影片中。 渲染采樣每幀多個瞬間以模擬真實的快門速度,因此需要比例更長的時間。
+director-shutter = 快門
+director-shutter-tip = 依影片影格率計算的快門角度。電影通常使用 180°。角度越小，移動的物件越清晰。超過 360° 時，動態殘影會持續超過一個影格。
+ui-options-sun-rays = 太陽和月亮的光線
+ui-options-sun-rays-help = 當您朝向圖像時,日光和夜間月光在圖像上形成條紋,由前面的物體切割:樹木、建筑物、云彩。 無可見霧氣。 與傳統查看器不同
+ui-options-sun-rays-strength = 強度
+ui-options-sun-rays-strength-help = 光線是多么明亮
+ui-options-show-recent-emojis-legacy-places-hint = 使用傳統聊天樣式:最近使用的表情符號作為對話字段下方和聊天欄上方的一行。 默認關閉,因為傳統查看器保持其行關閉。
+ui-options-chat-lines-direction = 附近聊天線路的位置
+ui-options-chat-lines-direction-hint = 疊加在場景上的附近聊天文字會跟隨聊天列。自動模式下，文字通常顯示在聊天列上方，下方空間較大時則顯示在下方。
+ui-options-chat-lines-direction-auto = 自動
+ui-options-chat-lines-direction-up = 聊天欄上方
+ui-options-chat-lines-direction-down = 聊天欄下方
+ui-chat-recent-emojis-show = 顯示最近使用的表情
+ui-chat-recent-emojis-hide = 隱藏最近的表情符號
+ui-options-motion-blur = 運動模糊
+ui-options-motion-blur-enable = 運動模糊
+ui-options-motion-blur-enable-help = 涂抹什么移動,和整個視圖時,相機轉動,就像一個相機的快門;Aurora自己的,默認關閉。
+ui-options-motion-blur-strength = 強度
+ui-options-motion-blur-strength-help = 快門開啟的時間，以 1/60 秒為基準的百分比表示，與影格率無關。預設值為 50%，相當於 180° 快門角度。
+common-window-reset = 重置位置和大小
+people-contact-sheet-collapse = 折疊聯系方式
+people-contact-sheet-expand = 展開聯系方式
+people-contact-sheet-no-room = 窗格太窄,無法在列表旁邊顯示聯系人詳細信息
+people-group-sheet-collapse = 折疊群組詳細信息
+people-group-sheet-expand = 展開群組詳細信息
+people-group-sheet-no-room = 窗格太窄,無法在列表旁邊顯示組詳細信息
+ui-weather-fog = 霧
+ui-weather-fog-on-tip = 在低處聚集的霧,隨著風而漂移并在燈光周圍發光。 僅供您觀看
+ui-weather-fog-look = 霧效模式
+ui-weather-fog-look-tip = 高度霧幾乎不影響效能。體積霧可以呈現霧中的陽光和陰影。加入光源後，也能看到燈具與霓虹招牌透過霧發出的光。
+ui-weather-fog-look-height = 高度霧
+ui-weather-fog-look-volume = 體積霧
+ui-weather-fog-look-lights = 體積霧與光源
+ui-weather-fog-density = 霧密度
+ui-weather-fog-density-tip = 霧有多厚:左邊是輕微的霧,右邊是無法透過的霧
+ui-weather-fog-mist = 霧
+ui-weather-fog-light = 微霧
+ui-weather-fog-thick = 濃霧
+ui-weather-fog-dense = 極濃霧
+ui-weather-fog-height = 高度
+ui-weather-fog-height-tip = 霧在稀釋之前從地面上升到多高
+ui-weather-fog-low = 低到地面
+ui-weather-fog-high = 達到更高水平
+ui-weather-fog-drift = 隨風移動
+ui-weather-fog-drift-tip = 設置霧跟隨風速的多少。 啟用時使用Aurora天氣風,否則使用區域風。
+ui-weather-fog-still = 靜止霧
+ui-weather-fog-windblown = 隨風而動
+ui-weather-fog-glow = 發光燈周圍
+ui-weather-fog-glow-tip = 控制光線在霧中散射的方式。 左端均勻地散射光線,右端集中太陽和每個燈光周圍的光芒。
+ui-weather-fog-glow-soft = 均勻光散射
+ui-weather-fog-glow-tight = 集中
+ui-weather-fog-from-sky = 在霧氣籠罩的天空下更厚
+ui-weather-fog-from-sky-tip = 該區域的天空霧氣會影響霧密度。 霧氣使霧更密,晴空使霧變薄。
+ui-weather-fog-follow-sky = 使用天空光色
+ui-weather-fog-follow-sky-tip = 啟用時,霧從天空的光線中獲取顏色,就像霧一樣。 禁用時則使用自己的顏色。
+ui-weather-fog-colour-tip = 霧的本身顏色

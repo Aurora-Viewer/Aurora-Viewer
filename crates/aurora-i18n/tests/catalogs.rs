@@ -356,6 +356,15 @@ fn japanese_dates_and_numbers_follow_japanese_conventions() {
 }
 
 #[test]
+fn korean_is_available_by_choice_and_system_locale() {
+    let codes: Vec<_> = SOURCES.iter().map(|&(code, _)| code).collect();
+    assert!(aurora_i18n::available_languages().any(|language| language == ("ko", "한국어")));
+    assert_eq!(resolve_language("default", "ko-KR", &codes), "ko");
+    assert_eq!(resolve_language("ko", "en-US", &codes), "ko");
+    assert_eq!(aurora_i18n::text_in("ko_KR", "ui-options-proxy"), "프록시");
+}
+
+#[test]
 fn japanese_falls_back_to_english_only_for_unknown_keys() {
     assert_ne!(
         aurora_i18n::text_in("ja", "language-system"),

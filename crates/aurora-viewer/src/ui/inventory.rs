@@ -2157,14 +2157,97 @@ fn folder_response(
 }
 
 pub(crate) fn folder_name(inv: &Inventory, id: Uuid) -> String {
+    folder_name_with(inv, id, aurora_i18n::text)
+}
+
+fn folder_name_with(inv: &Inventory, id: Uuid, translate: impl Fn(&'static str) -> &'static str) -> String {
     if id == inv.root {
-        aurora_i18n::tr!("common-my-inventory").to_owned()
-    } else if id == inv.lib_root {
-        aurora_i18n::tr!("common-library").to_owned()
-    } else if inv.folders.get(&id).is_some_and(|f| f.info.type_default == 50) {
-        aurora_i18n::tr!("received-marketplace-folder").to_owned()
-    } else {
-        rules::name(inv, id)
+        return translate("common-my-inventory").to_owned();
+    }
+    if id == inv.lib_root {
+        return translate("common-library").to_owned();
+    }
+    if let Some(folder) = inv.folders.get(&id) {
+        let kind = folder.info.type_default;
+        if kind == 50 {
+            return translate("received-marketplace-folder").to_owned();
+        }
+        // Recognize stock folders by their type under the inventory root.
+        // Other folders, including outfits and marketplace listing folders,
+        // can have resident-chosen names.
+        if folder.info.parent == inv.root {
+            use category::Category;
+            let key = match category::Category::of_folder(kind) {
+                Some(Category::Textures) => Some("common-textures"),
+                Some(Category::Sounds) => Some("common-sounds"),
+                Some(Category::CallingCards) => Some("ui-inventory-view-calling-cards"),
+                Some(Category::Landmarks) => Some("common-landmarks"),
+                Some(Category::Clothing) => Some("common-clothing"),
+                Some(Category::Objects) => Some("common-objects"),
+                Some(Category::Notecards) => Some("texture-library-notecards"),
+                Some(Category::Scripts) => Some("common-scripts"),
+                Some(Category::BodyParts) => Some("content-perms-body-parts"),
+                Some(Category::PhotoAlbum) => Some("demo-photo-album"),
+                Some(Category::LostAndFound) => Some("common-lost-and-found"),
+                Some(Category::Animations) => Some("common-animations"),
+                Some(Category::Gestures) => Some("ui-inventory-view-gestures"),
+                Some(Category::Favorites) => Some("common-favorites"),
+                Some(Category::CurrentOutfit) => Some("common-current-outfit"),
+                Some(Category::Outfits) if kind == crate::world::appearance::FT_MY_OUTFITS => Some("common-my-outfits"),
+                Some(Category::Meshes) => Some("ui-inventory-view-meshes"),
+                Some(Category::Marketplace) if kind == 53 => Some("common-marketplace-listings"),
+                Some(Category::Settings) => Some("content-perms-environment"),
+                Some(Category::Materials) => Some("ui-inventory-view-materials"),
+                None if kind == 14 => Some("common-trash"),
+                _ => None,
+            };
+            if let Some(key) = key {
+                return translate(key).to_owned();
+            }
+        }
+    }
+    rules::name(inv, id)
+}
+
+#[test]
+fn system_inventory_folder_labels_use_type_without_renaming_resident_folders() {
+    use aurora_net::inventory::InvFolder;
+
+    let mut inv = Inventory {
+        root: Uuid::from_u128(1),
+        ..Default::default()
+    };
+    let folders = [
+        (2, "Clothes", 5),
+        (3, "Body Parts", 13),
+        (4, "Clothes", -1),
+        (5, "Weekend Outfit", 47),
+        (6, "A listing's stock", 54),
+    ];
+    inv.created_folders(
+        folders
+            .iter()
+            .map(|&(id, name, type_default)| InvFolder {
+                id: Uuid::from_u128(id),
+                parent: inv.root,
+                name: name.to_owned(),
+                type_default,
+                ..Default::default()
+            })
+            .collect(),
+    );
+    let german = |key| aurora_i18n::text_in("de", key);
+    for (id, expected) in [
+        (2, "Kleidung"),
+        (3, "Körperteile"),
+        (4, "Clothes"),
+        (5, "Weekend Outfit"),
+        (6, "A listing's stock"),
+    ] {
+        assert_eq!(folder_name_with(&inv, Uuid::from_u128(id), german), expected);
+    }
+    for (id, original, _) in folders {
+        assert_eq!(rules::name(&inv, Uuid::from_u128(id)), original);
     }
 }
 

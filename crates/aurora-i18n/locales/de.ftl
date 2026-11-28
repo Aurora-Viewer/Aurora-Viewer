@@ -90,7 +90,6 @@ anim-timeline-keys-selected =
         [one] { $count } Keyframe ausgewählt. Ziehen zum Verschieben, Entf zum Entfernen, Rechtsklick oder Esc zum Aufheben der Auswahl.
        *[other] { $count } Keyframes ausgewählt. Ziehen Sie einen, um alle zu verschieben. Strg+C kopiert, Entf entfernt sie. Rechtsklick oder Esc hebt die Auswahl auf.
     }
-anim-edit-shortcut-play = Abspielen oder pausieren (Leertaste)
 anim-edit-shortcut-rewind = Zurückspulen zum Anfang (Home)
 anim-edit-shortcut-undo = Rückgängig machen (Strg+Z)
 anim-edit-shortcut-redo = Wiederherstellen (Strg+Y oder Strg+Umschalt+Z)
@@ -307,13 +306,8 @@ owned-land-area = { $actual } m² · { $billable } m² abrechnungsfähig
 owned-land-total = Gesamt: { $actual } m² · { $billable } m² abrechnungsfähig
 owned-land-contributions = Landbeiträge an Gruppen
 owned-land-contribution = { $area } m²
-toolbar-edit = Symbolleistenschaltflächen…
-toolbar-title = Schaltflächen in der Symbolleiste
 toolbar-remove = Diese Schaltfläche entfernen
 toolbar-locked-bars = Leisten sperren
-toolbar-help = Ziehen Sie eine Schaltfläche in das Dock oder in eine Seitenleiste. Legen Sie es hier zurück, um es zu entfernen. Klicken Sie mit der rechten Maustaste auf eine Leiste, um dieselben Einstellungen vorzunehmen.
-toolbar-help-classic = Ziehen Sie eine Schaltfläche in die untere Leiste oder in eine Seitenleiste. Legen Sie es hier zurück, um es zu entfernen. Klicken Sie mit der rechten Maustaste auf eine Leiste, um dieselben Einstellungen vorzunehmen.
-toolbar-help-modes = Abhängig von den Einstellungen der einzelnen Leisten werden die Schaltflächen wie hier gezeigt oder nur als Symbole angezeigt.
 toolbar-search = Einen Befehl finden ({ $count })
 toolbar-in-dock = Im Dock
 toolbar-in-bottom = In der unteren Leiste
@@ -1428,7 +1422,6 @@ inventory-column-both-rights = Sie → nächster Eigentümer
 inventory-columns = Spalten
 inventory-column-permissions = Berechtigungen
 inventory-columns-reset = Inventarlayout zurücksetzen
-inventory-resize-columns = Ziehen Sie, um die Spaltengröße zu ändern. Doppelklicken Sie, um ihre Breite zurückzusetzen.
 inventory-resize-sidebar = Ziehen Sie, um die Größe der Ordnerseitenleiste zu ändern. Doppelklicken Sie, um die Breite zurückzusetzen.
 inventory-resize-gallery = Ziehen Sie den Trenner zwischen Kacheln und Liste, um die Breite anzupassen. Ein Doppelklick setzt ihn zurück.
 inventory-view-menu = Ansicht
@@ -2171,9 +2164,7 @@ ui-options-chat-text-size-hint = Größe der Nachrichten im Chat in der Nähe un
 ui-options-chat-beyond-range = Helligkeit außerhalb der Chatreichweite
 ui-options-chat-beyond-range-hint = Nachrichten von Einwohnern und Objekten außerhalb der Chatreichweite (20 m), etwa Rufe, erscheinen mit dieser Helligkeit. Bei 1 bleiben sie so hell wie andere Nachrichten. Niedrigere Werte dimmen sie. Der Standardwert ist wie im Legacy Viewer 0,8.
 ui-options-chat-keep-focus = Chatfeld nach dem Senden aktiv lassen
-ui-options-chat-keep-focus-hint = Enter sendet die Nachricht und lässt das Feld für die nächste Eingabe aktiv. Drücken Sie Enter im leeren Feld oder klicken Sie daneben, um zur Bewegungssteuerung zurückzukehren. Das gilt nach dem Senden auch für das Feld des Chats in der Nähe im Unterhaltungsfenster.
 ui-options-chat-enter-toggles = Mit Enter die Eingabe in Unterhaltungen umschalten
-ui-options-chat-enter-toggles-hint = Enter im leeren Feld kehrt auch im Unterhaltungsfenster zur Bewegungssteuerung zurück, wie im Chatfeld. Das gilt für den Chat in der Nähe, IMs und Gruppenchats. Enter in der Welt startet die Eingabe wieder.
 ui-options-chat-enter-last-field = Enter wechselt zum zuletzt verwendeten Chatfeld
 ui-options-chat-enter-last-field-hint = Enter in der Welt wechselt zum zuletzt angeklickten oder verwendeten Feld, sofern dessen Fenster noch offen ist. Das gilt für den Chat in der Nähe, Gruppen und IMs. Bei deaktivierter Option oder geschlossenem Fenster wird das normale Chatfeld verwendet.
 ui-options-gesture-autocomplete = Gesten im Chat in der Nähe vervollständigen
@@ -5096,7 +5087,6 @@ ui-bars-immersive-hide-tags = Namensschilder ausblenden
 toolbar-use-name-tag-preferences = Namensschild-Einstellungen verwenden
 ui-bars-immersive-show-huds = HUDs anzeigen
 ui-bars-immersive-hide-huds = HUDs ausblenden
-ui-bars-customize-bars = Leisten anpassen…
 session-inventory-upload-the-clothing-upload-timed-out-reload-inventory-before-trying = Beim Hochladen der Kleidung ist eine Zeitüberschreitung aufgetreten. Laden Sie das Inventar neu, bevor Sie es erneut versuchen.
 session-inventory-upload-the-clothing-upload-was-interrupted = Der Kleidungs-Upload wurde unterbrochen.
 ui-place-details-could-not-find-the-region-s-location-it-may = Der Standort der Region konnte nicht gefunden werden. Möglicherweise ist sie vorübergehend nicht verfügbar oder wurde entfernt.
@@ -6258,7 +6248,6 @@ ui-options-preset-potato = Kartoffel
 ui-options-preset-low = Niedrig
 ui-options-preset-medium = Mittel
 ui-options-preset-high = Hoch
-ui-options-preset-deluxe = Deluxe (RT)
 ui-options-preset-custom = Benutzerdefiniert
 ui-options-preset-mac-mid-high = Mittelhoch (empfohlen für diesen Mac)
 graphics-saved-title = Gespeicherte Grafikprofile
@@ -6411,7 +6400,6 @@ ui-options-look-at-lines-help = Eine Linie von jedem Avatar bis zum Fadenkreuz, 
 ui-options-my-look-at = Mein Blickziel
 ui-options-private-look-at = Mein Ziel nicht an andere senden
 ui-options-private-point-at = Keine Hinweise auf mein Auswahlziel senden
-ui-options-private-point-at-help = Verbergen, welches Objekt Sie bearbeiten, Ihren Bearbeitungsarm gesenkt halten und den Bearbeitungsstrahl ausblenden.
 ui-options-private-edit-beam = Bearbeitungsstrahl ausblenden
 ui-options-private-edit-beam-help = Blendet den Strahl beim Bearbeiten oder Greifen von Objekten vollständig aus, sowohl bei Ihnen als auch bei anderen. Auswahlziel-Hinweise und Strahlen beim Geben oder Ablegen bleiben unverändert.
 ui-options-private-look-at-help = Andere sehen, dass Sie geradeaus schauen, statt wohin Sie schauen
@@ -8988,7 +8976,6 @@ common-for-sale = Zum Verkauf:
 ui-land-general-for-sale-to = Zum Verkauf an:
 ui-profile-coming-soon = Kommt bald
 ui-profile-aurora-my-profile = Mein Profil
-ui-profile-aurora-help = Das Profil eines Einwohners: wer er ist, was Sie mit ihm machen können, dann seine Lieblingsorte, Kleinanzeigen, 1. Leben, Webprofil und Ihre Notizen. Einstellungen › Aurora › Profile bringt das Fenster des Legacy Viewers zurück.
 ui-profile-aurora-conversation = Unterhaltung
 ui-profile-aurora-call = Anrufen
 ui-profile-aurora-add-friend = Als Freund hinzufügen
@@ -9020,7 +9007,6 @@ ui-profile-aurora-their-map = Diese Person auf der Karte finden
 ui-profile-aurora-their-objects = Objekte dieser Person bearbeiten, löschen oder nehmen
 ui-profile-aurora-received-tip = { $right }: { $state }
 ui-profile-aurora-tab-profile = Profil
-ui-profile-aurora-tab-picks = Lieblingsorte
 ui-profile-aurora-tab-classifieds = Kleinanzeigen
 ui-profile-aurora-tab-first-life = 1. Leben
 ui-profile-aurora-tab-web = Web
@@ -9054,13 +9040,7 @@ ui-profile-aurora-unsaved = Nicht gespeicherte Änderungen ({ $parts })
 ui-profile-aurora-part-bio = Bio
 ui-profile-aurora-part-first-life = 1. Leben
 ui-profile-aurora-part-notes = Notizen
-ui-profile-aurora-part-places =
-    { $count ->
-        [one] { $count } Ort
-       *[other] { $count } Orte
-    }
 ui-profile-aurora-part-classified = Anzeige
-ui-profile-aurora-snapshot = Bild vom Ort
 ui-profile-aurora-teleport = Teleportieren
 ui-profile-aurora-description = Beschreibung
 ui-profile-aurora-category = Kategorie
@@ -9076,11 +9056,6 @@ ui-profile-aurora-copy-slurl = SLURL kopieren
 ui-profile-aurora-here = Meine Position hier
 ui-profile-aurora-add-here = Den Ort hinzufügen, an dem ich bin
 ui-profile-aurora-picks-count = { $count } von { $limit } (Kontolimit)
-ui-profile-aurora-picks-empty = Noch kein Lieblingsort
-ui-profile-aurora-picks-empty-text = { $name } hat keinen Ort geteilt.
-ui-profile-aurora-picks-empty-own = Teilen Sie Ihre Lieblingsorte
-ui-profile-aurora-picks-empty-own-text = Andere Einwohner sehen sie in Ihrem Profil und teleportieren sich mit einem Klick dorthin.
-ui-profile-aurora-delete-pick = Den Ort „{ $name }“ löschen?
 ui-profile-aurora-classifieds-empty = Keine Kleinanzeigen
 ui-profile-aurora-classifieds-empty-text = { $name } hat keine Kleinanzeige veröffentlicht.
 ui-profile-aurora-classifieds-empty-own = Machen Sie einen Ort oder eine Dienstleistung bekannt
@@ -12350,7 +12325,7 @@ ui-group-notices-saved = Gespeichert
 ui-group-notices-attachment = Anhang
 ui-group-notices-subject = Betreff
 ui-group-notices-message = Nachricht…
-ui-group-notices-drop = Ziehen Sie ein Objekt aus dem Inventar hierher (Kopieren + Transferieren)
+ui-group-notices-drop = Ziehe einen Gegenstand oder eine Landmarke aus Inventar, Favoriten oder Orten hierher (Kopier- und Weitergaberechte erforderlich).
 ui-group-notices-not-attachable = Dieses Objekt kann nicht angehängt werden: Es muss kopierbar und transferierbar sein und darf nicht getragen werden.
 ui-group-notices-remove-attachment = Anhang entfernen
 ui-group-notices-send =
@@ -14645,7 +14620,6 @@ inventory-new-outfit = Neues Outfit
 inventory-listing-refresh = Eintrag aktualisieren
 inventory-recover-folder = In „Fundbüro“ verschieben
 inventory-show-main = In der Hauptansicht anzeigen
-inventory-open-current = In diesem Fenster öffnen
 inventory-copy-outfit-list = Outfitliste in die Zwischenablage kopieren
 appearance-outfit-copy-entry = { $item } - { $creator }
 appearance-outfit-copy-preparing = Outfitliste wird vorbereitet…
@@ -15399,7 +15373,6 @@ ui-options-build-editing = Bearbeiten
 ui-options-build-auto-material-tab = Die zur Auswahl passende Materialregisterkarte öffnen
 ui-options-build-auto-material-tab-hint = Wenn Sie ein Objekt auswählen, wird die Registerkarte „PBR“ geöffnet, wenn eine seiner Flächen ein PBR-Material aufweist, andernfalls Blinn-Phong. Aus: Die zuletzt ausgewählte Registerkarte bleibt erhalten.
 ui-options-build-show-beams = Auswahlstrahlen anzeigen
-ui-options-build-show-beams-hint = Zeigt Ihre Auswahlstrahlen und die anderer Avatare beim Bearbeiten, Greifen oder Geben. Diese Option steuert nur die Anzeige. Unter Datenschutz können Sie mit „Bearbeitungsstrahl ausblenden“ Ihren Strahl auch lokal und beim Senden unterdrücken.
 ui-options-build-beam-color = Strahlfarbe
 ui-options-build-beam-color-hint = Die Farbe Ihrer Strahlen, wie die anderen sie auch sehen.
 large-surface-title = Große Flächen
@@ -15651,3 +15624,1149 @@ game-control-action-boom-down = Kamera absenken ↓
 game-control-action-escape = Esc
 picker-local-newest = Neueste zuerst
 picker-local-name = Name A–Z
+
+### Release translations
+
+ui-options-planet-curvature = Planetenkrümmung
+ui-options-planet-curvature-help = Zeichnet die Welt auf einem runden Planeten: offenes Wasser fällt zu einem echten Horizont ab, anstatt auf Augenhöhe auszulaufen, mit dem Himmel darunter. Nur die Ansicht ändert sich: Regionen, Physik und was andere sehen bleiben flach. Auf der Erde ist der Tropfen innerhalb des Zeichenabstandes einige Zentimeter; es zeigt auf dem fernen Meer. Unterscheidet sich vom Legacy Viewer
+ui-options-planet-radius = Planetenradius
+ui-options-planet-radius-help = Der Radius des Planeten ist in Kilometern dargestellt, der der Erde beträgt 6.371 km: von 10 m Höhe aus endet das Meer etwa 11 km entfernt. Ein kleinerer Planet bringt den Horizont näher
+ui-options-camera-frame-while-posing = Rahmen Sie den Avatar während der Posierung ein
+ui-options-camera-frame-while-posing-tip = Das Öffnen des Posers bildet den Avatar ein, und das Klicken auf einen Joint bringt die Kamera näher an ihn heran.Das Ziehen eines Joints bewegt niemals die Kamera.
+ui-options-camera-still-while-posing = Halten Sie die Kamera beim Posieren ruhig
+ui-options-camera-still-while-posing-tip = Während Sie posieren, hört die Kamera auf, dem Avatar, seinem Fokus und seinen Körperteilen zu folgen. Durch Gehen wird sie nicht zurückgesetzt. Umlaufbahn, Zoom, Schwenk und Voreinstellungen funktionieren weiterhin.
+ui-options-group-emotes = Gruppe Emotes mit den Nachrichten des Absenders
+ui-options-group-emotes-hint = Im Aurora-Chatstil erscheint eine Aktion wie „/me waves“ unter derselben Kopfzeile wie die unmittelbar davor oder danach gesendeten Nachrichten derselben Person. Sie erhält keine eigene Kopfzeile.
+content-perms-nested = Objekte innerhalb von Objekten einschließen
+content-perms-nested-help = Bearbeitet auch den Inhalt verschachtelter Objekte, bis zu 5 Ebenen tief. Jedes Objekt wird 2 m über dem Prim, in dem es liegt, in der Welt gerezzt. Laufende Skripte werden angehalten, der Inhalt wird geändert, die Skripte werden wieder gestartet und das Objekt wird zurückgespeichert. Die Berechtigungen des zurückgespeicherten Objekts werden gesetzt und geprüft, bevor die temporäre Kopie in der Welt gelöscht wird. Objekte ohne Kopier-, Weitergabe- oder Änderungsrecht bleiben geschlossen. Am Rez-Ort brauchst du Baurechte.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } Objekt im Inhalt wird geöffnet, übersprungen: { $skipped }.
+       *[other] { $objects } Objekte im Inhalt werden geöffnet, übersprungen: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = Keine Kopie oder Übertragung
+content-perms-nested-skip-no-modify = Kann nicht geändert werden
+content-perms-nested-skip-depth = Mehr als 5 Ebenen tief
+content-perms-nested-rezzing = Platzieren des Objekts „{ $name }” in der Welt (Nesting-Ebene { $level })…
+content-perms-nested-stopping = Die Skripte von „{ $name }“ werden gestoppt…
+content-perms-nested-applying = Änderung der Inhalte von „{ $name }“…
+content-perms-nested-restoring = Die Skripte von „{ $name }“ werden erneut gestartet…
+content-perms-nested-saving = Das Objekt „{ $name }“ wird wieder in seinen Container gespeichert…
+content-perms-nested-deleting = Die temporäre Kopie in der Welt „{ $name }“ wird gelöscht…
+content-perms-nested-finished = Aktualisierte Elemente: { $count }. Verschachtelte Objekte: { $objects }. Übersprungen: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } neben dem Original gehalten: die Namen unterschieden sich.
+       *[other] { $kept } neben ihren Originalen gehalten: die Namen unterschieden sich.
+    }
+content-perms-nested-stopped = Stopped: Die temporären Kopien in der Welt wurden gelöscht, die Originalgegenstände blieben wie sie waren.
+content-perms-nested-stop-help = Bricht den Vorgang ab und löscht temporäre Kopien, die noch in der Welt stehen. Die Originale bleiben unverändert. Bereits zurückgespeicherte Objekte behalten ihre Änderungen.
+content-perms-nested-scripts-warning = Jedes Objekt wird in der Welt gerezzt. Daher werden die Rez-Aktionen seiner Skripte ausgeführt, etwa eine Explosion, ein Teleport oder das Übergeben eines Gegenstands, bevor die Skripte gestoppt werden können. Um das zu verhindern, aktiviere zuerst in einer von dir verwalteten Region unter Region / Anwesen die Option Skripte deaktivieren und schalte sie danach wieder aus.
+content-perms-nested-original-kept = „{ $name }“ wurde wieder gespeichert, aber sein ursprünglicher Eintrag konnte nicht entfernt werden: Beide sind im Inhalt.
+content-perms-nested-copy-left = Die temporäre Kopie in der Welt von „{ $name }“ konnte nicht gelöscht werden: Löschen Sie sie manuell.
+content-perms-nested-save-unconfirmed = Das Speichern zurück wurde nicht bestätigt
+content-perms-nested-saved-perms-unconfirmed = Stopped: Die Berechtigungen des Objekts konnten nicht überprüft werden. Die temporären Arbeitskopien in der Welt wurden beibehalten. Überprüfen Sie diese, bevor Sie sie entfernen.
+content-perms-nested-timeout = Der Simulator antwortete nicht rechtzeitig
+content-perms-nested-rez-refused = Stoppt: Der Simulator weigerte sich, in der Welt zu platzieren “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Stopped: „{ $name }“ ist nicht innerhalb von 15 Sekunden aufgetaucht.Wenn es später über dem primitiven Objekt erscheint, löschen Sie es.
+content-perms-nested-not-ours = Stopped: Das Objekt, das in der Welt für „{ $name }“ platziert wurde, stammt nicht von diesen Inhalten, es wurde in der World gelassen.
+content-perms-nested-unverified = Stopped: Das Objekt, das für „{ $name }“ erschienen ist, konnte aus diesen Inhalten nicht als in der Welt platziert überprüft werden und wurde daher in der World belassen.
+content-perms-nested-group-split = Stopped: „{ $name }“ (mehrere Objekte, die als eins gespeichert wurden) kam als einzelnes Objekt zurück. Seine in der Welt platzierten Teile blieben in der World bestehen. Wählen Sie sie alle aus und nehmen Sie sie mit, um die Gruppe erneut zu bilden.
+content-perms-nested-failed = “{ $name }” bleibt unverändert: { $reason }.
+content-perms-nested-original-gone = „{ $name }“ wird in der Welt aufbewahrt: Sein Speicherzurück wurde nicht bestätigt und sein ursprünglicher Gegenstand ist weg.
+content-perms-nested-gone = Das Objekt verließ die Welt
+content-perms-nested-land-denied = Stopped: Du kannst nicht über diesem primitiven Objekt bauen, wo die Objekte in der Welt platziert werden würden.
+content-perms-nested-parcel-full = Stopped: Das Paket hat keinen Platz mehr für die temporären Kopien in der Welt.
+content-perms-nested-rlva = Stopped: Das Platzieren von Objekten in der Welt ist eingeschränkt (RLVa).
+content-perms-nested-too-many = Zu viele Skripte
+content-perms-nested-unreadable = Der Inhalt konnte nicht gelesen werden
+content-perms-demo-chest = Aufbewahrungsbox
+content-perms-demo-notes = Notizen in der Aufbewahrungstruhe
+content-perms-demo-outer = Umkarton
+content-perms-demo-glow = Skript, das das Objekt leuchten lässt
+content-perms-demo-readme = Lesen Sie mich zuerst
+content-perms-demo-inner = Innerer Behälter
+content-perms-demo-inner-note = Hinweis in der inneren Box
+content-perms-demo-tiny = Sehr kleine Box
+content-perms-demo-spin = Skript, das das Objekt dreht
+content-perms-demo-heirloom = Familienerbstück
+content-perms-demo-sealed = Versiegelte Box
+content-perms-demo-linked = Gruppe von verbundenen Objekten
+content-perms-demo-pebble = Kleiner abgerundeter Stein
+content-perms-demo-stack = Kistenstapel
+dev-toolbox-o10 = Avatar Hitbox
+ui-appearance-date-newest-first = Datum: neueste zuerst
+ui-appearance-date-oldest-first = Datum: älteste zuerst
+ui-appearance-favorites-to-top = Zurück zum Seitenanfang
+ui-appearance-images-to-top = Zurück zum Seitenanfang
+ui-environment-sort-by-name = Alphabetisch sortieren
+ui-environment-sorted-by-name = Derzeit nach Namen sortiert. Klicken Sie hier, um die Reihenfolge aus Ihrem Inventar wiederherzustellen.
+ui-environment-in-inventory-order = In der Reihenfolge deines Inventars. Klicke, um sie zu sortieren A–Z.
+ui-chat-contacts-groups-sub = Gruppen · { $count }
+ui-options-soft-shadows = Weiche Schatten
+ui-options-soft-shadows-help = Sonnenschatten mit weicheren Rändern, je weiter das Objekt vom Schatten entfernt ist, wie im realen Leben: Der Schatten eines hohen Mastes verschwimmt zur Spitze hin, während ein Fuß scharf bleibt. Experimental, standardmäßig deaktiviert; kostet einen Bruchteil einer Millisekunde auf der Grafikkarte
+ui-options-shadow-softness = Schattenweichheit
+ui-options-shadow-softness-help = Die Größe des Lichts für die weichen Schatten: 1 ist ein Licht mit einem Durchmesser von 2,3 Grad, 2 ein größeres Licht, das die Schatten doppelt so weich macht (die echte Sonne hat einen Durchmeser von etwa 0,2), 0 ein Licht ohne Größe: die schatten sind wie vorher, die Projektoren eingeschlossen
+ui-options-shadow-softness-needs-soft = Schalten Sie Weiche Schatten ein, um dies zu verwenden
+ui-options-shadow-intensity = Schattenintensität
+ui-options-shadow-intensity-help = Wie dunkel die Sonnenschatten sind: 1 ist die normale Dunkelheit, niedriger lässt mehr Licht hinein
+ui-options-system-fonts-searching = Auf der Suche nach Schriften…
+demo-emotes-nova = /me stellt eine Bank am Brunnen auf
+demo-emotes-orion = Sieht toll aus von hier!
+demo-teleport-access-neighbour = Erwachsener Nachbar (demo)
+photo-light-shadow-softness = Schattenweichheit
+photo-light-shadow-intensity = Schattenintensität
+photo-light-shadow-reset = Zurück zum Wert von Präferenzen
+world-teleport-access-blocked-title = Teleport blockiert
+world-teleport-access-adults-only = Die Region, die Sie besuchen möchten, enthält { $rating } Inhalte, die nur für Erwachsene zugänglich sind.
+world-teleport-access-change-and-reteleport = Die Region, die du besuchen möchtest, enthält Inhalte der Einstufung { $rating }. Deine aktuellen Einstellungen schließen Inhalte der Einstufung { $rating } aus. Du kannst die Einstellungen ändern und den Teleport fortsetzen oder ihn abbrechen.
+world-teleport-access-change = Die Region, die du besuchen möchtest, enthält Inhalte der Einstufung { $rating }. Deine aktuellen Einstellungen schließen Inhalte der Einstufung { $rating } aus. Du kannst die Einstellungen ändern oder den Teleport abbrechen. Versuche den Teleport nach der Änderung erneut.
+world-teleport-access-out-of-sync = Wir haben technische Schwierigkeiten mit deinem Teleport, weil deine Einstellungen nicht mit dem Server synchron sind.
+world-teleport-access-rated = Der von Ihnen gewählte Standort wurde mit { $rating } bewertet.
+world-teleport-access-allow = Deine aktuellen Einstellungen lassen Inhalte der Einstufung { $rating } nicht zu. Wenn du sie zulässt, werden deine Einstellungen aktualisiert.
+world-teleport-access-allow-button = { $rating }-Inhalt zulassen
+world-teleport-access-not-on-account = Die Region, die Sie besuchen möchten, hat die Bewertung { $rating }, die für Ihren Kontotyp nicht verfügbar ist.
+world-teleport-access-change-and-continue = Ändern und fortsetzen
+world-teleport-access-change-preferences = Einstellungen ändern
+world-teleport-access-preference-changed-title = Inhaltsbewertung geändert
+world-teleport-access-preference-changed = Sie erhalten keine Benachrichtigungen mehr, dass Sie eine Region mit { $rating }-Inhalten besuchen werden.Sie können Ihre Inhaltseinstellungen in Zukunft unter Einstellungen › Datenschutz ändern.
+people-show-group-sheet = Gruppendetails anzeigen
+people-group-details-empty = Keine Gruppe zum Anzeigen
+ui-options-plate-click-own-help = Aktion eines Linksklicks auf jemandes Teller; der Cursor verwandelt sich in eine Hand.Auf deinem eigenen Teller öffnet ein Klick dein Profil oder dein Menü, wenn eines davon ausgewählt wird; Halten der Taste dort dreht immer noch deinen Avatar.
+ao-import-unfinished-retry = Ein unvollendeter Traum AO Import existiert bereits in #Aurora/{ $folder }. Verwenden Sie den Wiederherstellungshinweis im AO Fenster vor dem erneuten Versuch.
+ao-unfinished-import =
+    { $count ->
+        [one] Nicht abgeschlossener AO-Import in #Aurora/{ $folder }. Anzahl der Sätze: { $count }.
+       *[other] Nicht abgeschlossener AO-Import in #Aurora/{ $folder }. Anzahl der Sätze: { $count }.
+    }
+ao-finish-import = Import beenden
+ao-show-in-inventory = Im Inventar anzeigen
+ao-duplicate-native =
+    { $count ->
+        [one] Ein weiterer Ordner wurde gefunden: #Aurora/{ $folder }. Anzahl der Sätze: { $count }. Mit dem aktiven AO-Ordner zusammenführen?
+       *[other] Ein weiterer Ordner wurde gefunden: #Aurora/{ $folder }. Anzahl der Sätze: { $count }. Mit dem aktiven AO-Ordner zusammenführen?
+    }
+ao-native-already-exists = Ein integrierter Animations-Override mit diesem Namen existiert bereits
+rlva-tools-retained = Bis zum Login gespeichert
+rlva-read-at-login = Änderungen werden beim nächsten Login wirksam.
+rlva-debug-commands-chat = Jeder Befehl erhält auch eine Zeile im Chat in der Nähe, unter dem Namen des Objekts: was es ausführt, was fehlschlägt und warum, was auf die Anmeldung wartet.
+rlva-blocked-start-im = Nicht starten möglich IM Sitzung mit der { $recipient } aufgrund von RLV Beschränkungen
+rlva-blocked-start-conference = Konferenz nicht möglich. [RECIPIENT] aufgrund von RLV Beschränkungen
+rlva-anonym-waiting = (Laden...)
+rlva-anonym-unknown = (Unbekannt)
+rlva-blocked-teleport = Aufgrund von RLV-Einschränkungen kann der Teleport nicht eingeleitet werden
+rlva-blocked-permission-attach = Versuch, anzuhängen '{ $object }' wurde aufgrund von RLV Beschränkungen
+rlva-blocked-permission-teleport = '{ $object }' wurde die Erlaubnis verweigert, Sie aufgrund von RLV Beschränkungen
+rlva-blocked-view-notecard = Die Notecard kann aufgrund von RLVa-Einschränkungen nicht geöffnet werden.
+rlva-blocked-view-script = Das Skript kann aufgrund von RLVa-Einschränkungen nicht geöffnet werden.
+rlva-blocked-view-texture = Die Textur kann aufgrund von RLVa-Einschränkungen nicht geöffnet werden.
+rlva-debug-explicit-point = Anhängepunktnamen auf Inventarelementen und Ordnern ignorieren
+rlva-debug-explicit-point-hint = Während ein Anhängepunkt gesperrt ist, sendet Wear and Add ein Objekt an seinen Standardpunkt und nicht an den Punkt, der durch seinen Namen oder Ordnernamen angegeben wird (unvollständig).
+phototools-environment-settings = Umgebungseinstellungen
+phototools-quick-environments = Schnelle Umgebungen
+phototools-environment-presets = Voreinstellungen für Umgebung
+phototools-general-render = Allgemeine Rendereinstellungen
+phototools-render-options = Optionen zum Rendern
+ui-bars-clouds-paused = Wolken pausiert
+ui-bars-clouds-paused-tip = Die Wolken bleiben für diese Sitzung still. Klicken Sie, um sie wieder bewegen zu lassen.
+phototools-tab-dof-glow = Schärfentiefe und Leuchten
+phototools-lights-shadows = Einstellungen für Lichter und Schatten
+phototools-ambient-occlusion = Einstellungen für Umgebungsverdeckung
+phototools-dof = Einstellungen für Schärfentiefe
+phototools-tone-mapping = Einstellungen für HDR-Tone Mapping
+phototools-glow = Glow-Einstellungen
+phototools-photo-banner = Fotofenster geöffnet: Die Reihen, die das Fotofensters auch hat, ändern das Foto.Die Schärfentiefe wird für Ihre nächsten Fotos beibehalten; das Licht, die Belichtung, Schatten, Umgebungs-Okklusion und abgenutzte Lichter bleiben bis zum Schließen des Bildfensters.
+phototools-photo-boost = Fotoqualität wird erhöht: Die Grafikzeilen zeigen die erhöhten Werte an, und eine Änderung, die Sie dort vornehmen, wird als Ihre eigene beibehalten.
+phototools-photo-focus-help = Klick: der zuletzt angeklickte Punkt in der Welt. Zeiger: der Punkt unter dem Zeiger. Manuell: ein von Ihnen festgelegter Abstand.
+phototools-photo-distance-help = Die Entfernung, auf die das Objektiv im manuellen Fokus fokussiert.
+phototools-director-lens = Das Objektiv des Regisseurs wird angezeigt, wenn das Fenster geöffnet ist, über den Einstellungen unten.
+phototools-view-angle-viewfinder = Der Sucher besitzt den Blickwinkel: Ihr Blick kommt zurück, wenn er sich schließt.
+ui-options-dof-show-focus-point = Fokuspunkt anzeigen
+ui-options-dof-show-focus-point-help = Ein kleines Fadenkreuz auf dem Punkt, auf den die Linse fokussiert: gelb, wenn sie frei ist, rot, wenn es verriegelt ist.
+
+### Updated release translations
+
+render-features-menu = Funktionen zum Rendern
+render-features-ui = Oberfläche
+toolbar-command-ao-mini = Kleines AO-Fenster
+keybinds-ui-feature = Die gesamte Oberfläche ein- / ausblenden (Rendering Features › UI)
+import-image-size-limit = Maximale Bildgröße
+import-image-size-single = Maximale Bildgröße
+import-image-size-inherit = Globale Einstellung ({ $size } px)
+import-image-size-pixels = { $size } px
+import-image-size-inherit-help = Die globale Einstellung folgt der Grenze neben Import unten, deren aktueller Wert in Klammern angezeigt wird. Größere Bilder werden automatisch auf die gewählte Grenze verkleinert.
+import-image-size-global-help = Maximale Bildgröße für Importe. Individuelle Bild- und Materialauswahl hat Vorrang, größere Bilder werden automatisch verkleinert.
+ui-chat-applink-preferences-tip = Öffnen Sie diese Einstellung in den Voreinstellungen
+ui-options-bento-idle = Bento-Leerlaufanimation korrigieren
+ui-options-bento-idle-hint = Spielt eine Bento-Animation mit Priorität 0 unter allen anderen, sodass Hände, Mund, Flügel und Schwanz wieder in eine natürliche Pose zurückkehren, anstatt nach einer Animation stecken zu bleiben; andere sehen es auch
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] Objekt UUID kopiert
+       *[other] Objekt UUIDs kopiert
+    }
+ui-appearance-batch-choose-folder = Outfits zum Fotografieren in { $folder }
+ui-appearance-batch-all = Alle Outfits
+ui-appearance-batch-chosen = { $chosen } von { $total }
+ui-appearance-batch-select-missing = Ohne Bild
+ui-inventory-dialogs-detach-and-delete = Ablegen und löschen
+ui-inventory-dialogs-detach-and-delete-body = Dein Avatar trägt einige dieser Gegenstände. Sie werden zuerst abgelegt und dann in den Papierkorb verschoben.
+ui-inventory-delete-detach-cannot = Die getragenen Gegenstände können nicht mehr abgelegt und gelöscht werden.
+ui-inventory-delete-detach-refused = Dieser Artikel kann nicht ausgezogen und gelöscht werden.
+ui-inventory-delete-detach-busy = Eine weitere Inventaränderung ist im Gange. Versuchen Sie es erneut, sobald sie abgeschlossen ist.
+ui-inventory-delete-detach-timeout = Die getragenen Gegenstände konnten nicht abgelegt werden und wurden daher nicht gelöscht.
+common-modify = Bearbeiten
+build-ui-contents-filters = Filter für Inhalte
+build-ui-contents-next-owner-permissions = Berechtigungen des nächsten Eigentümers
+ui-options-voice-output = Sprachausgabe
+ui-options-voice-output-used-for-voice-chat = Verwendet für Voice-Chat; Welt Sound, Musik und Medien verwenden Audioausgang
+ui-options-same-as-audio-output = Gleiches wie Audioausgang
+ui-options-copy-setting-link = Link zur Einstellung kopieren
+ui-options-setting-unavailable = Diese Einstellung ist nicht verfügbar.
+ui-context-show-in-inventory-none = Kein Objekt in deinem Inventar hat genau den Namen dieses Objekts.
+ui-profile-aurora-help = Das Profil eines Bewohners: wer er ist, was du mit ihm machen kannst, dann seine Auswahl, Kleinanzeigen, Erstes Leben, Webprofil und deine Einstellungen › Aurora › Profile bringt das Fenster des Legacy Viewers zurück.
+ui-profile-aurora-tab-picks = Empfehlungen
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] Empfehlungen: { $count }
+       *[other] Empfehlungen: { $count }
+    }
+ui-profile-aurora-snapshot = Bild
+ui-profile-aurora-picks-empty = Noch keine Auswahlen
+ui-profile-aurora-picks-empty-text = { $name } hat noch keine Picks geteilt.
+ui-profile-aurora-picks-empty-own = Teilen Sie, was Ihnen wichtig ist
+ui-profile-aurora-picks-empty-own-text = Verwenden Sie Picks, um Orte, Menschen und Dinge hervorzuheben, die Ihnen wichtig sind.
+ui-profile-aurora-delete-pick = Die Auswahl "{ $name }" löschen?
+script-search-whole-words = Ganze Wörter
+ao-mini-title = Kleines AO-Fenster
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: Keine Animation ausgewählt
+ao-quick-pin = Mini AO Fenster öffnen
+build-layout-button-icon = Symbol
+build-layout-button-label = Bezeichnung
+build-layout-button-both = Symbol und Etikett
+build-detach-shown = In seinem eigenen Fenster: Klicken Sie, um es auszublenden.Ziehen Sie das Fenster an seinem Titel auf das Build-Fenster, um sie wieder einzufügen.
+build-detach-hidden = In einem eigenen Fenster, versteckt: Klicken Sie, um es anzuzeigen.
+build-material-save-as = Material speichern unter
+build-material-save-name = Name des neuen Materials in deinem Inventar:
+build-material-new-material = Das neue Material
+build-material-save-not-allowed = Das Speichern erfordert ein PBR-Material auf jeder ausgewählten Fläche, Kopier- und Änderungseigenschaften für das Objekt und eine Kopie des Materials in Ihrem Inventar mit Kopier und Änderungsrechten.
+build-material-saved = Material "{ $name }" wurde in deinem Inventar gespeichert.
+build-material-save-failed = Das Material konnte nicht in Ihrem Inventar gespeichert werden.
+toolbar-add-from-menu = Zur Symbolleiste hinzufügen
+toolbar-remove-from-menu = Von der Symbolleiste entfernen
+toolbar-command-build-edit = Objekte bearbeiten
+toolbar-command-build-create = Prims erstellen
+toolbar-command-build-land = Land bearbeiten
+
+### Updated release translations
+
+inventory-search-no-copy = kopiergeschützt
+inventory-search-no-modify = Kann nicht geändert werden
+inventory-search-no-transfer = kein Transferieren
+ui-options-chat-keep-focus-hint = Enter sendet die Nachricht. Die Chatleiste bleibt für die nächste Nachricht aktiv, auch wenn du bei leerer Leiste Enter drückst. Mit Esc oder einem Klick in die Welt steuerst du wieder die Bewegung.
+ui-options-chat-enter-toggles-hint = Enter in einem leeren Feld des Unterhaltungsfensters schaltet zurück zur Bewegung, im Nahchat, in Direktnachrichten und in Gruppenchats. Mit Enter aus der Welt beginnst du wieder zu schreiben.
+build-ui-features-physics-none-root-hint = Nur die untergeordneten Prims eines Linksets können die physikalische Form None verwenden: Die Wurzelprim oder eine Prim für sich alleine behält Prim oder Convex Hull.
+controls-position-tip = Kameraposition: Stellen Sie ein, wo die Kamera hinter dem Avatar liegt, genau
+camera-position-hint = In Metern vom Avatar entfernt: X vorwärts, Y links, Z oben. Strg + Rad hebt die Kamera an, Umschalt + Rad den Fokuspunkt.
+camera-position-save = Speichern als Kameraposition…
+photo-looks-replace = Ersetzen
+photo-looks-empty = Zeigen Sie auf einen Filter unten, um ihn auszuprobieren, und klicken Sie dann darauf oder ziehen Sie ihn hierher.
+photo-looks-active = Aktiv
+photo-looks-count = { $count } von { $max }
+photo-looks-expand-all = Alle ausklappen
+photo-looks-collapse-all = Alles einklappen
+photo-looks-hint = Ziehen Sie eine Karte, um sie neu anzuordnen, oder drücken Sie Alt + ↑ ↓ auf der Karte. Klicken Sie mit der rechten Maustaste auf eine Karte und ziehen Sie sie heraus.
+photo-looks-right-click-out = Rechtsklick: Aus den aktiven Effekten entfernen
+photo-looks-drop = Ziehen Sie einen Effekt hierher oder klicken Sie auf einen unten
+photo-looks-full = { $max } von { $max }: Entfernen Sie einen oder aktivieren Sie Ersetzen, um einen zu tauschen.
+photo-looks-catalogue = Effektkatalog
+photo-looks-catalogue-tip = Zeigen Sie auf einen Effekt, um ihn im Foto auszuprobieren; klicken Sie darauf, um den Effekt hinzuzufügen, oder ziehen Sie ihn zwischen die aktiven Effekte.
+photo-looks-catalogue-fold = Katalog ein- oder ausblenden
+photo-looks-replace-tip = Ersetzen: Ein Klick im Katalog tauscht die gewählte Karte aus, anstatt eine neue hinzuzufügen
+photo-looks-replacing = Ein Klick tauscht { $name }
+photo-looks-done = Fertig
+photo-looks-take-out-zone = Hier fallen lassen, um es herauszunehmen
+photo-looks-hide = Ausblenden { $name } (behält seinen Platz)
+photo-looks-show = { $name } einblenden
+photo-looks-more = Weitere Aktionen
+photo-looks-move-up = Nach oben verschieben
+photo-looks-move-down = Nach unten verschieben
+photo-looks-replace-one = Ersetzen…
+photo-looks-take-out = Entfernen
+photo-looks-not-in-360-tag = Nicht in 360°
+photo-looks-all = Alle
+photo-looks-favorites = Favoriten: alle Effekte, die Sie gespielt haben
+photo-looks-favorites-empty = Zeigen Sie auf einen Effekt und klicken Sie auf seinen Stern: Er wird als erstes in der Liste angezeigt, und hier.
+photo-looks-favorite = Zu Favoriten hinzufügen
+photo-looks-unfavorite = Aus Favoriten entfernen
+photo-looks-card = { $name }, { $place } von { $count }. Alt + Pfeiltasten verschieben Sie es.
+photo-looks-legacy-note = Legacy Viewer-Filter haben keine zusätzlichen Einstellungen.
+photo-knob-toning = Tonung
+photo-knob-local-contrast = Lokaler Kontrast
+build-face-button = Gesicht { $number }: Wählen Sie es auf jedem ausgewählten Prim. Shift+click: Hinzufügen oder Entfernen.
+build-face-invert = Ausgewählte Flächen umkehren
+build-face-all = Jedes Gesicht auswählen
+ui-options-aurora-controls-compact = Kompakte Kamerasteuerung
+ui-options-aurora-controls-compact-movement = Kompakte Bewegungssteuerungen
+ui-options-aurora-controls-compact-movement-help = Die Bewegungs-Registerkarte des Steuerfensters wird kompakt geöffnet: die Bewegungstasten und Gehen, Laufen und Fliegen.Die Titelleisten-Taste wechselt zwischen kompakt und voll und stellt dies ebenfalls ein.
+poser-face-position-drag = Ziehen Sie, um die Verbindung um 0,1 mm pro Pixel zu verschieben, oder klicken Sie auf, um eine Position einzugeben.
+build-layout-clicks = Klicks auf Objekte
+build-ui-floaters-shift-click = Umschalt + Klick
+build-ui-floaters-ctrl-click = Strg + Klick
+build-ui-floaters-click-object = Objekt hinzufügen oder entfernen
+build-ui-floaters-click-face = Wählen Sie das Gesicht aus
+build-ui-floaters-clicks-hint = Mit dem Bearbeiten-Werkzeug außerhalb von Ausrichten fügt Strg + Umschalt + Klicken die angeklickte Fläche hinzu oder entfernt sie.
+build-ui-floaters-ctrl-right-click = Strg + Rechtsklick
+build-ui-floaters-right-click-menu = Öffnen Sie das Menü
+build-ui-floaters-right-click-edit = Das Objekt bearbeiten
+build-ui-floaters-double-click-linked = Doppelklick auf eine Prim: Schalter „Verlinkte Teile bearbeiten“
+blender-live-tab-place = Position
+blender-live-tab-avatar = Avatar
+blender-live-more = Mehr
+blender-live-place = Position
+blender-live-linked-prims = Verknüpfte Prims ein- oder ausblenden
+blender-live-tag-rigged = Mit Skelett
+blender-live-card-rigged =
+    { $triangles ->
+        [one] Dreiecke: { $triangles }
+       *[other] Dreiecke: { $triangles }
+    }
+blender-live-card-static =
+    Statisch · { $triangles ->
+        [one] Dreiecke: { $triangles }
+       *[other] Dreiecke: { $triangles }
+    }
+blender-live-card-linkset =
+    Statisch · { $prims ->
+        [one] Prims: { $prims }
+       *[other] Prims: { $prims }
+    } · { $triangles ->
+        [one] Dreiecke: { $triangles }
+       *[other] Dreiecke: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] Dreiecke: { $triangles }
+       *[other] Dreiecke: { $triangles }
+    }
+blender-live-place-help = Wo sich das ausgewählte statische Netz befindet. Rigged Meshes folgen immer deinem Avatar.
+blender-live-place-none = Wählen Sie ein statisches Objekt zum Platzieren aus.
+blender-live-where = Position
+blender-live-transform = Position, Rotation und Größe
+blender-live-from = Von
+blender-live-plugins-help = Aurora installiert das passende Plug-in in jedem Blender, behält ein Backup des vorherigen und installiert niemals eine ältere Version.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-show-all = Alle anzeigen
+blender-live-hide-all = Alle ausblenden
+blender-live-bend-section = Überprüfen Sie die Gewichte
+blender-live-elbows = Ellenbogen
+blender-live-knees = Knie
+blender-live-bend-hold = Halten Sie diese Pose anstelle meiner Animationen
+blender-live-bend-note = Nur du siehst die Biegung auf deinem Avatar, deine Animationen, die Ansicht anderer Bewohner und der Import bleiben unverändert.
+blender-live-levels = Detaillierungsstufen
+blender-live-quick-look-tip = Schnellansicht: Dieses Objekt größer sehen
+blender-live-quick-look-drag = Ziehen Sie, um es zu drehen, Doppelklick, um wieder zu sehen.
+blender-live-quick-look-bend = Gebogen wie im Avatar Tab: Ellbogen { $elbows }°, Knie { $knees }°.
+blender-live-undo = Rückgängig machen
+blender-live-undo-drop = { $name } auf den Boden geworfen
+blender-live-undo-attach = { $name } wurde an { $point } verschoben
+parcel-environment-apply-save = Bewerben Sie sich nur für mich, für dieses Paket
+parcel-environment-save = Speichern Sie diese Umgebung für dieses Paket: es kommt zurück, wann immer Sie hier sind
+parcel-environment-forget = Vergessen Sie die Umgebung für dieses Paket gespeichert
+parcel-environment-not-saved = Dieses Paket war noch nicht bekannt, daher wurde seine Umgebung nicht gespeichert. Versuchen Sie es in einem Moment erneut.
+parcel-environment-left = Ihr habt das Paket verlassen, bevor seine Umgebung gespeichert werden konnte, also wurde es nicht gespeichert.
+parcel-environment-title = Umgebungen für Pakete gespeichert
+parcel-environment-help = Deine eigene Umgebung für ein Päckchen: es ersetzt deine lokale Umwelt, während du dort stehst, und das, was du vorher hattest, kommt zurück, wenn du es verlässt. Nur du siehst es. Speichere eine aus dem Fenster "Umgebung" oder dem Menü eines Umgehungsgegenstandes in deinem Inventar.
+parcel-environment-empty = Keine Umgebungen gespeichert
+parcel-environment-remove-all = Alles entfernen
+parcel-environment-remove-all-title = Jede für ein Paket gespeicherte Umgebung entfernen?
+parcel-environment-remove-all-text = Deine für Parzellen auf diesem Grid gespeicherten Umgebungen werden entfernt. Andere Grids bleiben unverändert. Dieser Vorgang lässt sich nicht rückgängig machen.
+
+### Updated release translations
+
+anim-edit-shortcut-play = Wiedergabe oder Pause
+area-search-scope-heading = Position
+area-search-scope-parcel = Parzelle
+area-search-scope-region = Aktuelle Region
+area-search-scope-neighbours = Benachbarte Regionen
+area-search-objects-heading = Welche Objekte sind
+inventory-copy-selection-count =
+    { $count ->
+        [one] Kopieren 1 Artikel
+       *[other] Kopieren { $count } Artikel
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Link 1 Artikel
+       *[other] Link { $count } Artikel
+    }
+inventory-drop-move-here = Hierher verschieben
+inventory-drop-copy-here = Hierher kopieren
+inventory-drop-link-here = Hier Verknüpfungen erstellen
+inventory-sort-description = Beschreibung
+inventory-sort-reversed = { $order } (umgekehrte Reihenfolge)
+inventory-column-creator = Ersteller
+inventory-column-count = Elemente
+inventory-columns-fit = Alle Spaltenbreiten an den Inhalt anpassen
+inventory-columns-reset-widths = Spaltenbreiten zurücksetzen
+inventory-back = Zurück
+inventory-forward = Vorwärts
+inventory-up = Eine Ebene nach oben
+keybinds-inventory-root = Zum Seitenanfang
+keybinds-inventory-search = Durchsuchen Sie das Inventar
+keybinds-inventory-filter = Filtern Sie den Ordner
+keybinds-inventory-preview = Vorschaufenster anzeigen
+keybinds-inventory-view-large = Die großen Bilder
+keybinds-inventory-view-medium = Medium Bilder
+keybinds-inventory-view-small = Die kleinen Bilder
+keybinds-inventory-view-compact = Kompakte Inventaransicht
+keybinds-inventory-view-details = Details ansehen »
+keybinds-inventory-view-tiles = Kachelansicht
+keybinds-inventory-toggle = Auswählen oder Aufheben der Auswahl der Zeile im Fokus
+keybinds-inventory-menu = Öffnen Sie das Menü der Auswahl
+keybinds-inventory-purge = Aus dem Papierkorb entfernen
+keybinds-inventory-refused = { $keys } bleibt der eigene Schlüssel der Inventarliste: Wählen Sie einen anderen.
+inventory-path-edit = Pfad eingeben
+inventory-path-subfolders = Unterordner
+inventory-copy-path = Pfad kopieren
+inventory-show-in-folder = Im Ordner anzeigen
+inventory-pin = An Schnellzugriff anheften
+inventory-unpin = Aus dem Schnellzugriff lösen
+inventory-quick-access = Schnellzugriff
+inventory-quick-access-drop = Ordner hierher ziehen, um ihn anzuheften
+inventory-invert-selection = Auswahl umkehren
+inventory-undo = Rückgängig
+inventory-redo = Wiederholen
+inventory-undo-step = Rückgängig: { $what }
+inventory-redo-step = Wiederholen: { $what }
+inventory-history-move =
+    { $count ->
+        [one] 1 - 1 von 1 Artikel
+       *[other] 1 - 8 von { $count } Artikeln
+    }
+inventory-history-delete =
+    { $count ->
+        [one] 1 - 1 von 1 Artikeln
+       *[other] Zeige 1 - 8 von { $count } Artikeln
+    }
+inventory-history-rename = umbenennen
+inventory-history-new-folder = Neuen Ordner erstellen
+inventory-history-copy =
+    { $count ->
+        [one] Kopie von 1 Artikel
+       *[other] Kopie von { $count } Artikeln
+    }
+inventory-history-link =
+    { $count ->
+        [one] Link zu 1 Artikel
+       *[other] Links zu { $count } Artikeln
+    }
+inventory-undo-nothing = Es gibt nichts mehr rückgängig zu machen. Die Elemente wurden verschoben oder sind nicht mehr vorhanden.
+inventory-redo-nothing = Es gibt nichts mehr zu wiederholen. Die Elemente wurden verschoben oder sind nicht mehr vorhanden.
+inventory-undo-empty = Nichts rückgängig zu machen.
+inventory-redo-empty = Nichts zu wiederholen.
+inventory-undo-dropped = Die Elemente des letzten Schritts wurden verschoben oder sind nicht mehr vorhanden. Der Schritt wurde übersprungen. Wähle erneut Rückgängig, um den vorherigen Schritt rückgängig zu machen.
+inventory-redo-dropped = Die Elemente des nächsten Schritts wurden verschoben oder sind nicht mehr vorhanden. Der Schritt wurde übersprungen. Wähle erneut Wiederholen, um den darauffolgenden Schritt zu wiederholen.
+inventory-undo-folder-not-empty = Der neue Ordner enthält Elemente, die später hinzugefügt wurden. Verschiebe sie zuerst aus dem Ordner oder lösche den Ordner selbst.
+inventory-undo-kept-out = Diese Elemente befinden sich jetzt im aktuellen Outfit oder in den Marketplace-Angeboten. Bearbeite sie dort.
+inventory-restore-to = In „{ $folder }“ wiederherstellen
+inventory-restore-to-origins = In den ursprünglichen Ordnern wiederherstellen
+inventory-purge-no-undo = Beim endgültigen Löschen lassen sich diese Elemente nicht wiederherstellen.
+inventory-new-tab = Neuer Tab
+inventory-close-tab = Tab schließen
+inventory-next-tab = Nächster Tab
+inventory-previous-tab = Vorheriger Tab
+inventory-open-in-new-tab = In neuem Tab öffnen
+inventory-tabs-limit = Höchstens { $count } Tabs.
+inventory-copy-to-other-pane = In den anderen Bereich kopieren
+inventory-move-to-other-pane = In den anderen Bereich verschieben
+inventory-resize-columns = Doppelklicken Sie auf die Spalte links, um sie an ihren Inhalt anzupassen, und ziehen Sie dann den Mauszeiger nach unten.
+inventory-resize-columns-first = Ziehen Sie, um die Größe der Spalten zu ändern. Doppelklicken Sie, damit die erste Spalte ihre übliche Breite erhält.
+inventory-sort-by-column = Klicken Sie, um nach dieser Spalte zu sortieren, und erneut, um die Reihenfolge umzukehren.Ziehen Sie die Spalte, um sie zu verschieben.
+inventory-filter-hint = Diesen Ordner filtern…
+inventory-filter-close = Filter schließen (Esc)
+inventory-filter-nothing = Keine Elemente entsprechen dem Filter.
+inventory-view-compact = Kompakte Ansicht
+inventory-view-tiles = Kachelansicht
+inventory-view-per-folder = Ansicht für jeden Ordner speichern
+inventory-group-by = Gruppen nach Kategorie
+inventory-group-none = Keine
+inventory-group-folders = Ordner
+inventory-group-unknown-creator = Ersteller noch nicht bekannt
+inventory-group-today = Heute
+inventory-group-yesterday = Gestern
+inventory-group-this-week = In den letzten 7 Tagen
+inventory-group-this-month = In den letzten 30 Tagen
+inventory-group-this-year = Anfang dieses Jahres
+inventory-group-earlier = Vor langer Zeit
+inventory-group-no-date = Kein Datum
+cmdline-mod-zoffset-usage = Stellen Sie die Hover-Höhe Ihres Avatars ein (Verwendung: /zoffset value oder +delta).
+dev-toolbox-n4 = Inventarbeladung
+dev-toolbox-what-n4 = Ordner gelesen, fehlgeschlagen und verlassen, der Lader liest im Flug und versucht es erneut; keine Namen
+ui-context-inspect-avatar = Avatar inspizieren
+inspect-window = Untersuchen
+inspect-tab-objects = Objekte
+inspect-objects-title =
+    { $count ->
+        [one] Objekt { $count }
+       *[other] { $count } Objekte
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } Artikel
+       *[other] { $count } Artikel
+    }
+inspect-open-profile = Das Profil öffnen
+inspect-over-limit = Über deinem Limit
+inspect-limit-tip = Ihre Komplexitätsgrenze: { $limit }
+inspect-search = Suche nach Objekten oder Erstellern
+inspect-outlined = { $name } wird in der Welt beschrieben
+inspect-area-head = Kopf
+inspect-area-body = Körper
+inspect-area-arms = Arme und Hände
+inspect-area-legs = Beine und Füße
+inspect-area-hud = HUD
+inspect-area-other = Andere
+inspect-area-world = Objekte
+inspect-own-eyes = Systemaugen
+inspect-own-body = Systemkörper
+inspect-own-description = Teil des Avatars selbst, kein Anhang
+inspect-own-maker = Avatar · Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = { $value } Komplexität
+inspect-no-match = Nichts stimmt mit „{ $query }“ überein.
+inspect-spoken-worn = { $name }, getragen auf { $point }, Komplexität { $complexity }, hergestellt von { $creator }
+inspect-spoken-object = { $name }, im Besitz von { $owner }, Komplexität { $complexity }, hergestellt von { $creator }
+inspect-look-at-tip = Bewegen Sie die Kamera darauf
+inspect-profile-tip = Das Profil des Erstellers öffnen
+inspect-made-by = Hergestellt von
+inspect-owned-by = Im Besitz von
+inspect-worn-on = Getragen an
+inspect-prims-count =
+    { $count ->
+        [one] Prims: { $count }
+       *[other] Prims: { $count }
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Texturspeicher
+inspect-tile-vram = VRAM
+inspect-tile-prims = Prims
+board-close = Schließen { $title }
+board-grow = Vergrößern { $title }
+board-remove = Entfernen Sie { $name }
+board-more = und { $count } mehr
+board-more-short = +{ $count }
+board-some-of = { $shown } von { $all }
+board-of-all = von { $all }
+stage-turn-left = Links drehen
+stage-turn-right = Rechts drehen
+stage-higher = Blick von höher
+stage-lower = Blick von unten
+stage-nearer = Näher
+stage-further = Noch weiter weg
+stage-reset = Zurück zum Anfang
+stage-hint = Ziehen Sie zum Drehen, rechts-ziehen, um zu bewegen
+stage-light = Heller Hintergrund
+stage-dark = Dunkler Hintergrund
+stage-playing = AO
+stage-paused = Angehalten
+stage-pause-tip = Pausieren Sie ihre Animation
+stage-play-tip = Spielen Sie ihre Animation
+stage-loading = Vorbereitung der 3D-Ansicht…
+stage-nothing = Noch nichts in 3D zu zeigen.
+stage-refused = Die 3D-Ansicht ist ausgeschaltet, während RLVa begrenzt, was Sie sehen können.
+inspect-your-limit = Ihr Limit: { $limit }
+inspect-without-it = { $value } ohne sie
+inspect-you = Sie
+inspect-person = Einwohner
+inspect-difference = Differenz
+inspect-drawn-in-full = Gezeichnet in voller Länge
+inspect-nobody = Niemands Komplexität ist noch bekannt.
+inspect-aside-count = { $count } Stilllegung
+inspect-is-aside = Rückstellung
+inspect-set-aside = Zur Seite legen
+inspect-set-aside-tip = Sehen Sie die Komplexität ohne diesen Gegenstand, nur in diesem Fenster: Nichts ändert sich in der Welt.
+inspect-put-back = Zurücksetzen
+inspect-put-back-tip = Diesen Artikel erneut zählen
+inspect-complexity-spoken = Komplexität { $value }, Zahl { $rank } von { $count } Menschen hier finden
+inspect-stage-outfit = Das Outfit der Woche
+inspect-stage-objects = Die Objekte im Überblick
+inspect-stage-back = Zurück zu allen Seiten
+inspect-place-made-by = { $place } · hergestellt von { $name }
+inspect-owned-by-name = Im Besitz von { $name }
+inspect-tile-items = Anzahl der Artikel
+inspect-tile-figures = Abbildungen
+inspect-col-item = Element
+inspect-point = Punkt
+inspect-look-at = Anschauen
+inspect-selected-count = { $count } ausgewählt
+inspect-worn-count = { $count } getragen
+inspect-creators-word = Schöpfer
+inspect-areas-word = Körperbereiche
+inspect-owners-word = Eigentümer
+inspect-triangles-word = Dreiecke
+inspect-made-of = { $count } von { $all } Artikel
+inspect-kilobytes = { $n } KB
+inspect-linkset-order = { $count }, in linksgesetzter Reihenfolge
+inspect-reset-columns = Spalten zurücksetzen
+inspect-by-creators =
+    { $count ->
+        [one] { $items } von einem Schöpfer
+       *[other] { $items } von { $count } Schöpfer
+    }
+inspect-owner-button = Eigentümerprofil
+inspect-group-button = Gruppenprofil
+inspect-creator-button = Profil des Schöpfers
+inspect-land-others = Sonstiges { $n }
+inspect-land-these = Diese Objekte: { $n }
+inspect-land-free = Frei: { $n }
+inspect-land-unknown = Der Raum des Pakets zeigt an, wenn alle Gegenstände auf dem Paket sind, auf dem Sie sich befinden.
+ui-login-unencrypted = Unverschlüsselte Anmeldung
+ui-login-unencrypted-body = Die Anmeldeadresse von { $server } beginnt mit http:// statt https://. Die Anmeldung wäre unverschlüsselt. Wer deinen Netzwerkverkehr sehen kann, etwa im öffentlichen WLAN, in einem gemeinsam genutzten Netz oder auf dem Weg zum Grid, könnte dein Passwort lesen und dein Konto benutzen. Es wurde noch nichts gesendet. Du kannst den Grid-Betreiber um eine https://-Anmeldeadresse bitten. Die Auswahl wird für diesen Server gespeichert.
+ui-login-unencrypted-accept = Ohne Verschlüsselung anmelden
+world-appearance-clothing-layers-full = Alle 60 Kleidungsschichten werden verwendet. Entferne eine Schicht, bevor du diesen Artikel trägst.
+ui-options-ray-tracing = Grafik-Rendering mit Raytracing
+ui-options-ray-traced-shadows = Raytraced Sonnenschatten
+ui-options-ray-traced-shadows-help = Die Sonnen- und Mondschatten werden Strahl für Strahl nachgezeichnet, anstatt aus den Schattenkarten gelesen zu werden: Genau dort, wo sich Dinge berühren und in jeder Entfernung. Benötigt die Schatten und eine Grafikkarte mit Raytracing, kostet mehr auf der Grafikkarte
+ui-options-ray-traced-lights = Lokale Lichtschatten
+ui-options-ray-traced-lights-help = Schatten von Punktlichtern (Lampen, Kerzen), die sonst nicht geworfen werden, und von Projektoren, wenn Projector shadows eingeschaltet ist, anstelle ihrer Schattenmappen. Die teuerste der Raytracing-Optionen: am besten auf integrierten Grafikkarten weglassen
+ui-options-rt-quality = Raytracing-Qualität
+ui-options-rt-quality-help = Jeder nachverfolgte Effekt bleibt eingeschaltet: Niedrigere Stufen verfolgen weniger Samples und das indirekte Licht auf einem gröberen Raster, um mehr Bilder pro Sekunde auf einer kleineren Grafikkarte zu erzielen. High ist das volle Bild von Deluxe (RT). Die Auswahl einer Stufe legt auch die Lichter fest, die Schatten werfen
+ui-options-rt-sun-softness = Sonnenschatten-Weichheit
+ui-options-rt-sun-softness-help = Wie weich die Kanten der Sonnenschatten sind: 1 ist die echte Sonne, 0 scharfe Kanten, mehr für eine nebelige Sonne
+ui-options-rt-lamp-softness = Lokale Lichtschattenweichheit
+ui-options-rt-lamp-softness-help = Wie weich die Kanten der Lampenschatten sind: 1 folgt der Größe jeder Lampe, 0 scharfen Kanten
+ui-options-rt-shadow-lamps = Lichter, die Schatten werfen
+ui-options-rt-shadow-lamps-help = Wie viele der am nächsten gelegenen Leuchten werfen Schatten, die anderen leuchten ohne Schatten. Weniger kostet weniger auf der Grafikkarte
+ui-options-ray-traced-indirect = Raytraced indirektes Licht
+ui-options-ray-traced-indirect-help = Licht, das von den umgebenden Oberflächen reflektiert wird und über das hinausgeht, was der Bildschirm zeigt, anstelle des indirekten Lichts von GTAO
+ui-options-gi-probes = Globale Beleuchtungssonden
+ui-options-gi-probes-help = Sonden verteilen sich durch die Szene, die das Licht von mehreren Bouncen und den Himmel, den sie sehen, aufnehmen: Geschlossene Räume bleiben dunkel, Licht geht um Ecken herum.
+ui-options-ray-traced-reflections = Raytracing
+ui-options-ray-traced-reflections-help = Reflexionen dessen, was der Bildschirm nicht zeigt, anstelle der Bildschirmbraum-Reflexionen, die auf
+ui-options-ray-tracing-unsupported = Diese Grafikkarte oder ihr Treiber verfügt nicht über Raytracing
+ui-options-ray-tracing-vr = Nicht verfügbar in einer für VR gestarteten Sitzung
+ui-options-tab-ray-tracing = Raytracing-Einstellungen
+ui-options-deluxe-rt-warning-title = Deluxe (RT) einschalten?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) ist High mit den Schatten und dem indirekten Licht, das von der Grafikkarte nachgezeichnet wird. Es benötigt eine Karte mit Hardware-Raytracing (NVIDIA RTX, AMD Radeon RX 6000 oder höher, Intel Arc) und einen aktuellen Treiber, und kostet viel mehr als High: auf einer Mittelklassekarte kann die Framerate an belebten Orten stark sinken. Raytracing wird noch getestet: Wenn das Bild falsch aussieht oder der Betrachter langsamer wird, wechseln Sie zurück zu High. Der Ray-Tracing-Tab behält seine Einstellungen bei.
+ui-options-deluxe-rt-warning-turn-on = Schalten Sie ein
+ui-options-ray-tracing-needs-shadows = Braucht die Schatten
+ui-options-ray-tracing-needs-ssr = Benötigt die Bildschirm-Raum Reflexionen
+ui-options-preset-deluxe = Deluxe Zimmer (RT)
+ui-options-normal-precision = Reflexionsgenauigkeit
+ui-options-normal-precision-help = Bestimmt, wie genau die Ausrichtung von Oberflächen für Reflexionen gespeichert wird. Standard kann auf glatten, gewölbten Flächen wie Autolack sichtbare Abstufungen erzeugen. Hoch entfernt die Abstufungen und benötigt mehr Videospeicher. Automatisch wählt Hoch für Raytracing-Reflexionen und sonst Standard.
+ui-options-normal-precision-automatic = Automatisch
+ui-options-normal-precision-standard = Standard
+ui-options-normal-precision-high = Hoch
+ui-options-private-point-at-help = Verbergen Sie das Objekt, das Sie bearbeiten, halten Sie Ihren Bearbeitungsarm abgesenkt und verbergen Sie den Bearbeitungstrahl.
+common-window-outside = Verschieben außerhalb des Viewerfensters
+common-window-inside = Zurück in das Viewer-Fenster bringen
+common-window-rename-name = Doppelklicken zum Umbenennen
+common-carry-hint = Klicken Sie, um es hier abzulegen, Esc zum Loslassen
+common-window-paused-photo = Angehalten, während der Fotomodus geöffnet ist
+common-window-paused-director = Angehalten, während der Regisseur spielt
+common-window-paused-interface = Angehalten, während die Schnittstelle ausgeschaltet ist
+ui-options-warn-live-preview = Warnung, wenn eine Textur oder ein Material nicht in der Vorschau angezeigt werden kann
+ui-options-warn-live-preview-help = Wenn Sie in der Auswahl des Build-Fensters auf ein nicht kopierbares Element klicken, wird nichts angewendet, bis OK: so sagen.
+ui-texture-picker-live-preview-texture = Wir können keine Vorschau dieser Textur anzeigen, da sie keine Kopie ist.
+ui-texture-picker-live-preview-material = Wir können keine Vorschau dieses Materials anzeigen, da es nicht kopiert werden kann.
+fetch-invalid-url = Ungültige URL
+ui-chat-close-all-ims = Schließen Sie alle IM Gespräche
+ui-chat-close-all-ims-question = Schließen Sie alle IM Gespräche und beenden Sie den aktiven Anruf?
+ui-chat-confirm-close-all-ims = Bestätigen Sie, bevor Sie alle IM Konversationen schließen
+ui-chat-confirm-close-all-ims-help = Fragen Sie vor dem Schließen aller IM Gespräche, wenn man einen aktiven Sprachanruf hat.
+ui-options-aurora-controls-compact-help = Das Controls-Fenster öffnet sich kompakt auf der Kamera: seine Joysticks, Zoom und Rolle. Seine Titelleisten-Taste schaltet zwischen kompakt und voll und stellt dies auch ein. Bei Classic-Fenstern wird die Kamera stattdessen im kleinen Kamerafenster des Legacy Viewers geöffnet.
+rlva-restart-hint = RLVa wird beim Anmelden gestartet. Wenn es bereits läuft, wird eine Änderung erst beim nächsten Start des Viewers wirksam. Bis dahin gelten die von Objekten gesetzten Einschränkungen weiter.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa wird nach dem Neustart aktiviert.
+rlva-toggle-disabled-restart = RLVa wird nach dem Neustart deaktiviert.
+livemesh-import-connect = Verbinden Sie Blender mit dem Plug-in 0.11.0 oder höher oder Maya mit dem Plugin 02.0, um die Import-LODs vorzubereiten.
+livemesh-import-preparing = Das Objekt und seine LODs in Blender oder Maya vorbereiten…
+livemesh-import-ready = LODs erhalten. Bereit im Importer.
+livemesh-import-failed = Importvorbereitung fehlgeschlagen: { $error }
+livemesh-import-timeout = Blender oder Maya haben die Vorbereitung des Imports nicht abgeschlossen, überprüfen Sie die Verbindung (in Blender den Objektmodus verwenden) und versuchen Sie es erneut.
+livemesh-shape-apply-tooltip = Aktivieren Sie das Kontrollkästchen Modifizieren von Rechten, und passen Sie dann das in Blender oder Maya ausgewählte Skelett und seine gebundenen Netze an (über MayaStar für ein MayaStar-Rig).Wählen Sie ein lokales Second Life-kompatibles Skelett aus.
+livemesh-shape-update-apply = Aktualisieren Sie das Blender-Plug-in auf Version 0.10.0 oder höher, oder das Maya-Plugin auf 0,4.0 bzw. höher und verbinden Sie es anschließend erneut.
+livemesh-shape-applied = Form, die auf das ausgewählte Skelett angewendet wird.
+livemesh-shape-tooltip = Überprüfen Sie die Modifizierungsrechte der abgenutzten Form und erstellen Sie in Blender oder Maya einen neuen Referenzkörper.
+livemesh-shape-connect = Verbinden Sie zuerst das Aurora Plug-in in Blender oder Maya.
+livemesh-shape-update-plugin = Aktualisieren Sie das Blender-Plug-in auf Version 0.9.0 oder höher, oder das Maya-Plugin auf 0,3.0 bzw. höher und verbinden Sie es anschließend erneut.
+livemesh-shape-timeout = Blender oder Maya haben den Import nicht bestätigt. Versuchen Sie es erneut (in Blender in den Objektmodus wechseln).
+livemesh-shape-success = Shape importiert als neuer rigged Referenzkörper.
+blender-live-maya-version = Aurora LiveMesh für Maya { $version }
+blender-live-maya-instructions = Speichern Sie die ZIP-Datei, entpacken Sie sie und ziehen Sie install.mel in ein Maya Viewport. Öffnen Sie LiveMesh aus dem Aurora Regal. Fügen Sie Ihre Meshes hinzu und klicken Sie auf Connect.
+blender-live-save-maya = Maya Plug-in speichern…
+blender-live-maya-saved = Plug-in gespeichert. Entpacken Sie die ZIP-Datei und ziehen Sie install.mel in einen Maya-Viewport.
+livemesh-plugin-connected = Plug-in angeschlossen
+livemesh-token-refused = Ein Programm versuchte, ohne den Schlüssel dieser Vorschau eine Verbindung herzustellen.Nur das Aurora-Plugin in Blender oder Maya kann eine Ver bindung herstellen.
+livemesh-waiting-plugin = Warten auf Blender oder Maya…
+blender-live-objects-help = Die Meshes, die von Blender oder Maya gesendet werden: Wählen Sie eines aus, um es zu platzieren, oder importieren Sie es aus dem Menü.
+blender-live-size-note = Größe multipliziert, was das Plug-in sendet, so dass spätere Bearbeitungen in Blender oder Maya es behalten.
+blender-live-avatar-help = Für Rigged Meshes: Senden Sie Ihre Form an Blender oder Maya, um sie zu modellieren.
+livemesh-shape-section = Deine Form in Blender oder Maya
+blender-live-import-help = Friert einen Schnappschuss des Objekts für den normalen Import ein: Überprüfung, Preis, dann Bestätigung.Spätere Bearbeitungen in Blender oder Maya ändern ihn nicht.
+blender-live-changed-tip = Zeit seit der letzten Änderung dieses Objekts durch Blender oder Maya
+fit-lab-section = Bekleidungsanpassung Lab
+fit-lab-help = Mannequins, gekleidet in das, was Sie tragen, jedes mit einem anderen Körper, stehen vor Ihnen und zeigen, wie das Kleidungsstück zu verschiedenen Formen passt.Nur Sie sehen sie: Nichts wird gesendet oder gespeichert.
+fit-lab-body-me = Ich
+fit-lab-body-slim = Schlank Körperform
+fit-lab-body-curvy = Kurvenreiche Körperform
+fit-lab-body-full = Vollfigur
+fit-lab-body-athletic = Athletisch
+fit-lab-body-tall = Groß
+fit-lab-body-petite = Zierliche Körperform
+fit-lab-motion = Bewegung
+fit-lab-motion-stand = Aufstehen
+fit-lab-motion-walk = Gehen
+fit-lab-motion-sit = Sitzen
+fit-lab-motion-range = Bewegungsbereich
+fit-lab-pose = Körperhaltung
+fit-lab-pose-all = Alle, wiederum
+fit-lab-pose-arms-up = Arme hoch.
+fit-lab-pose-reach = Greifen Sie nach vorne
+fit-lab-pose-hug = Arme gekreuzt
+fit-lab-pose-squat = Hocke
+fit-lab-pose-kneel = Knien
+fit-lab-pose-knee-up = Knie erhoben
+fit-lab-pose-twist = Torsion
+fit-lab-pose-bend = Vorwärts beugen
+fit-lab-motion-like-me = So wie ich
+fit-lab-show = Zeigen Sie die Schaufensterpuppen
+fit-lab-place = Bring sie hierher
+fit-lab-remove = Entfernen Sie die Mannequins
+fit-lab-choose = Wählen Sie mindestens einen Körper.
+fit-lab-clip = Zeigen Sie, wo der Körper durchkommt
+fit-lab-clip-note = Rot: Der Körper kommt aus dem Kleidungsstück heraus. Gelb: Körper und Kleidingsstück treffen sich. Auf deinem Avatar und den Schaufensterpuppen, wie sie von der Kamera gesehen werden. Alles andere, was du trägst, zählt als Körper: Ziehe eine Jacke oder Haare ab, die über dem Kleiderstück getragen werden.
+blender-live-levels-pending = Blender oder Maya bereiten die Detailstufen vor, wenn Sie auf Importieren klicken.
+blender-live-levels-note = In Blender oder Maya aus den LiveMesh-Einstellungen jedes Objekts vorbereitet.
+blender-live-quick-look-changed = Geändert in Blender oder Maya vor { $ago }.
+blender-live-warning-textures = Texturen übersprungen, Einfarbig dargestellt
+blender-live-warning-not-sent = Nicht in der Vorschau
+blender-live-undo-derez = Derezzed { $name } · noch in der Plug-in-Liste
+blender-live-undo-detach = Detached { $name } · noch in der Plug-in-Liste
+inventory-open-current = Öffnen
+inventory-folder-back = Zurück
+inventory-folder-forward = Vorwärts
+inventory-folder-up = Eine Ebene nach oben
+area-search-metres = { $n } m
+area-search-band-reach = In Reichweite
+area-search-band-close = In der Nähe
+area-search-band-around = Um dich herum
+area-search-band-further = Noch weiter entfernt
+area-search-band-far = Weit
+area-search-band = Bereich
+area-search-within = Innerhalb von { $distance }
+area-search-within-across = Innerhalb { $distance } über
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Jede Entfernung anzeigen
+area-search-from = Entfernung von der Stadt
+area-search-to = Entfernung zum Zentrum
+area-search-bar-tip =
+    { $count ->
+        [one] Objekte: 1 · { $from } – { $to }
+       *[other] Objekte: { $count } · { $from } – { $to }
+    }
+area-search-of-objects = von { $total } Objekten
+area-search-li = { $value } LI
+area-search-li-count = { $value } Landauswirkungen
+area-search-owner-count =
+    { $count ->
+        [one] Nur ein Eigentümer
+       *[other] { $count } Besitzer
+    }
+area-search-object-count =
+    { $count ->
+        [one] Nur ein Objekt
+       *[other] { $count } Objekte
+    }
+area-search-objects-word = Objekte
+area-search-in-reach = Hier
+area-search-tab-objects = Objekte
+area-search-tab-owners = Eigentümer
+area-search-hint-wide = Objekte, Besitzer, Ersteller oder UUIDs
+area-search-kind-heading = Art des Objekts
+area-search-kind-tip = Klick: nur diese. Wieder: versteckt.
+area-search-kind-any = irgendein
+area-search-kind-only = Nur diese sind
+area-search-kind-hidden = Ausgeblendet
+area-search-kind-attached = Angewachsen
+area-search-kind-probes = Reflexionssonden
+area-search-click-all = Alle
+area-search-click-any-short = Jede Klick-Aktion
+area-search-permissions = Berechtigungen
+area-search-price-heading = Verkaufspreis, für Objekte zum Verkauf
+area-search-price-to = bis zu
+area-search-price-tip = Wählen Sie zuerst „Zu verkaufen“
+area-search-linked = Verknüpfte primitive Formen
+area-search-one-field = Suche in einem Feld
+area-search-regex-switch = Reguläre Ausdrücke
+area-search-regex-invalid = Kein gültiger regulärer Ausdruck
+area-search-reset-filters-tip = Alle Filter wiederherstellen; der Suchtext bleibt erhalten
+area-search-save-defaults-tip = Öffnen Sie ab sofort mit diesen Filtern
+area-search-reset-search = Die Suchtexte zurücksetzen
+area-search-reset-filters = Filteroptionen zurücksetzen
+area-search-reset-ranges = Entfernung und Preis zurücksetzen
+area-search-reset-all = Alles zurücksetzen
+area-search-more = Mehr
+area-search-several = Wählen Sie mehrere aus
+area-search-several-tip = Klicks werden zur Auswahl hinzugefügt (auch Strg oder Umschalt + Klick, Ctrl+A)
+area-search-actions = Aktionen
+area-search-nothing = Noch keine Objekte erhalten.
+area-search-nothing-for-sale = Hier gibt es nichts zu verkaufen.
+area-search-not-for-sale = Nicht zum Verkauf
+area-search-from-price = von { $price }
+area-search-nearest = Nächste zuerst
+area-search-heaviest = Schwersten zuerst
+area-search-order-tip = Ändern Sie die Reihenfolge: Nächstes oder Schwerstes zuerst
+area-search-rank = #{ $rank } von { $all }
+area-search-rank-here = #{ $rank } hier
+area-search-card-more = Jede Figur anzeigen
+area-search-card-less = Weniger anzeigen
+area-search-open-group = Die Gruppe öffnen
+area-search-spoken = { $name }, { $distance }, Landauswirkung { $li }, im Besitz von { $owner }
+area-search-owner-spoken = { $name }, { $count } Objekte, Landauswirkung { $li }
+area-search-stage-line = { $distance } 1 Stunde weg · { $li } Landauswirkungen · { $owner }
+area-search-tile-3d = 3D-Ansicht
+area-search-on = Aktiviert: { $count }
+area-search-on-word = Aktiviert
+area-search-more-on =
+    { $count ->
+        [one] Einen weiteren Filter anlegen
+       *[other] { $count } weitere Filter auf
+    }
+ui-options-legacy-lists = Importieren von Listen aus dem Legacy Viewer
+ui-options-legacy-lists-help = Fügt den Teleportverlauf, die schwarze Liste der Assets, die Medienfilterliste und die Kontaktsätze dieses Kontos hinzu.
+ui-options-legacy-lists-button = Aus dem Legacy Viewer importieren…
+ui-options-legacy-lists-no-account = Melden Sie sich an, um die Listen dieses Kontos zu importieren.
+ui-options-legacy-lists-title = Import aus dem Legacy Viewer
+ui-options-legacy-lists-text = Alles wird zu den Listen dieses Accounts hinzugefügt und nichts hier entfernt. Was auf der schwarzen Liste steht, verlässt sofort die Welt. Beim erneuten Importieren wird das wiederhergestellt, was Sie hier erfolgreich entfernten.
+ui-options-legacy-lists-searching = Suche nach den Ordnern des Legacy Viewers…
+ui-options-legacy-lists-none = Für dieses Konto wurde kein Legacy Viewer-Ordner mit Listen gefunden.
+ui-options-legacy-lists-teleports = Teleport-Geschichte ({ $count })
+ui-options-legacy-lists-derender = Asset-Schwarzliste ({ $count })
+ui-options-legacy-lists-media = Medienfilterliste ({ $count })
+ui-options-legacy-lists-contact-set-entries = Kontaktsatzeinträge ({ $count })
+ui-options-legacy-lists-confirm = Importieren
+ui-options-legacy-lists-added = Hinzugefügt oder aktualisiert. Teleport-Verlauf: { $teleports }, Asset-Schwarzliste: { $derender }, Medienfilter: { $media }, Kontaktsatzeinträge: { $sets }.
+ui-options-legacy-lists-nothing = Nichts Neues: Dieser Account hat diese Listen bereits.
+ui-options-legacy-lists-failed = Fehler beim Lesen: { $files }.
+ui-options-legacy-lists-unsaved = Konnte nicht speichern, blieb wie es war: { $files }.
+ui-options-legacy-lists-other-grid = Auf diesem Raster kann ein Ordner mit demselben Namen zu einem anderen Raster gehören: Überprüfen Sie, ob es sich um das richtige Raster handelt.
+ui-options-build-show-beams-hint = Zeigen Sie Ihre Auswahlstrahlen und die von anderen Avataren beim Bearbeiten, Greifen oder Geben an. Dies steuert nur die Anzeige. Verwenden Sie Datenschutz > Bearbeitungsstrahl ausblenden, um den Bearbeitungstrahl lokal und über das Netzwerk zu stoppen.
+teleport-failed-title = Der Teleport ist fehlgeschlagen.
+teleport-error-invalid-tport = Die Teleportversuche sind auf 6 pro Minute begrenzt. Wenn Sie Probleme haben, warten Sie eine Minute und versuchen Sie erneut zu teleportieren. Wenn das Problem weiterhin besteht, melden Sie sich ab und melden sich erneut an.
+teleport-error-invalid-region-handoff = Es ist ein Problem bei der Verarbeitung Ihres Regionenüberschreitens aufgetreten. Möglicherweise müssen Sie sich erneut anmelden, bevor Sie Regionen überschreiten können.Wenn diese Meldung weiterhin angezeigt wird, wenden Sie sich bitte an den Support.
+teleport-error-blocked-tport = Wenn Sie sich immer noch nicht teleportieren können, melden Sie sich bitte ab und melden sich dann wieder an, um das Problem zu beheben.
+teleport-error-nolandmark-tport = Entschuldigung, aber das System konnte das Landmark-Ziel nicht finden.
+teleport-error-timeout-tport = Es tut uns leid, aber das System konnte die Teleportverbindung nicht abschließen. Bitte versuchen Sie es in einem Moment erneut.
+teleport-error-no-help-island = Ihr könnt Euch nicht zurück auf die Willkommensinsel teleportieren.
+teleport-error-noaccess-tport = Entschuldigung, du hast keinen Zugang zu diesem Teleportziel.
+teleport-error-missing-attach-tport = Deine Anhänge sind noch nicht angekommen, warte noch ein paar Sekunden oder melde dich ab und wieder an, bevor du versuchst zu teleportieren.
+teleport-error-too-many-uploads-tport = Die Asset-Warteschlange in dieser Region ist derzeit verstopft, sodass Ihre Teleport-Anfrage nicht rechtzeitig erfolgreich sein kann.Bitte versuchen Sie es in einigen Minuten erneut oder gehen Sie zu einem weniger belebten Bereich.
+teleport-error-expired-tport = Es tut uns leid, aber das System konnte Ihre Teleport-Anfrage nicht rechtzeitig abschließen. Bitte versuchen Sie es in einigen Minuten erneut.
+teleport-error-expired-region-handoff = Es tut uns leid, aber das System konnte Ihre Regionsüberquerung nicht rechtzeitig abschließen.Bitte versuchen Sie es in einigen Minuten erneut.
+teleport-error-preexisting-tport = Es tut uns leid, aber das System konnte Ihren Teleport nicht starten. Bitte versuchen Sie es in ein paar Minuten erneut.
+teleport-error-no-host = Das Ziel kann nicht gefunden werden. Das Ziel ist möglicherweise vorübergehend nicht verfügbar oder existiert nicht mehr. Bitte versuchen Sie es in einigen Minuten erneut.
+teleport-error-no-inventory-host = Das Inventarsystem ist derzeit nicht verfügbar.
+teleport-error-must-get-age-region = Sie müssen mindestens 18 Jahre alt sein, um diese Region zu betreten.
+teleport-error-special-usage-blocked = Die Region kann nicht eingegeben werden. '{ $region }' ist eine Skill-Gaming-Region, und du musst bestimmte Kriterien erfüllen, um teilnehmen zu können.Für Details lesen Sie bitte die Skill Gaming FAQ: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Es ist eine Skill-Gaming-Region, und Sie müssen bestimmte Kriterien erfüllen, um teilnehmen zu können. Weitere Informationen finden Sie in den häufig gestellten Fragen zu Skill-Games: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Dein Heimnetz hat deine Rückgabe abgelehnt, was normalerweise bedeutet, dass die Hypergrid-Adresse nicht mit der Adresse übereinstimmt, die andere Netze für sie verwenden. Kontaktiere die Betreiber deines Heimnetzes; ein neues Einloggen bringt dich in der Zwischenzeit nach Hause.
+teleport-hint-hypergrid-unreachable = Das andere Raster konnte nicht erreicht werden, weil es offline ist oder der Link auf eine alte Adresse verweist.
+teleport-hint-hypergrid-visitors-refused = Dieses Gitter lässt nur Bewohner einiger Gitter herein.
+teleport-hint-hypergrid-destination-gone = Die Zielregion existiert nicht mehr oder wurde verschoben, Orientierungspunkte und Links zu anderen Grids können veraltet sein.
+toolbar-edit = Schaltflächen und Menüs anpassen…
+toolbar-title = Schaltflächen und Menüs
+toolbar-interface-locked = Oberfläche gesperrt
+toolbar-help = Ziehe Schaltflächen oder Menüeinträge an den oberen, unteren oder seitlichen Rand. Ziehe eine Schaltfläche hierher zurück, um sie zu entfernen. Mit einem Rechtsklick änderst du ihr Aussehen.
+toolbar-help-classic = Ziehe Schaltflächen oder Menüeinträge in die untere oder seitliche Leiste. Ziehe eine Schaltfläche hierher zurück, um sie zu entfernen. Mit einem Rechtsklick änderst du ihr Aussehen.
+toolbar-help-modes = Wähle pro Schaltfläche Symbol, Beschriftung, beides oder die Vorgabe der Leiste. Ziehe Einträge im Aurora-Menü, um sie neu anzuordnen.
+import-menu-textures = Texturen
+import-menu-animations = Animationen
+import-menu-sounds = Töne
+import-menu-materials = Materialien
+import-menu-meshes = Meshes
+import-menu-options = Importoptionen
+import-upload-payment-title = Importieren
+import-upload-payment = Sie haben L${ $cost } bezahlt, um hochzuladen.
+import-quick-textures =
+    { $count ->
+        [one] Importieren · Texturen: 1 · L${ $cost }?
+       *[other] Importieren · Texturen: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Importieren · Materialien: 1 · L${ $cost }?
+       *[other] Importieren · Materialien: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Importieren · Sounds: 1 · L${ $cost }?
+       *[other] Importieren · Sounds: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Wähle die Importgröße. Geeignete Texturen lassen sich in 2048 × 2048 importieren:
+       *[other] ({ $count }) Wähle die Importgröße. Geeignete Texturen lassen sich in 2048 × 2048 importieren:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Wähle die Importgröße. Geeignete Bilder der Materialien lassen sich in 2048 × 2048 importieren:
+       *[other] ({ $count }) Wähle die Importgröße. Geeignete Bilder der Materialien lassen sich in 2048 × 2048 importieren:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Kostenlose Bilder ohne Rückfrage mit 2048 × 2048 Pixeln hochladen
+import-quick-free-full-size-help = „Texturen importieren“ und „Materialien importieren“ fragen nur dann nach 1024 oder 2048 Pixeln, wenn der Upload L$ kostet.
+ui-bars-customize-bars = Schnittstelle anpassen
+build-tool-in-use = Im Einsatz
+build-create-options-toggle = Optionen anzeigen / ausblenden
+build-create-keep-creating = Machen Sie weiter kreieren
+build-create-center-on-prim = Zentrieren Sie auf prim
+build-create-copy-prim-rotation = Kopieren prim Rotation
+build-create-align-to-surface = An Oberfläche ausrichten
+build-capture-shape-button = Kopiere die Form eines Prims: Klicke hier, dann einen Prim in der Welt
+build-capture-shape-armed = Klicken Sie auf einen Prim, um seine Form zu kopieren (Escape bricht ab)
+build-capture-shape-full = 20 Formen bleiben erhalten. Entfernen Sie eine, um eine andere zu kopieren
+build-capture-shape-remove = Diese Form entfernen
+build-capture-shape-tooltip = Kopierte Form ({ $kind })
+build-capture-shape-not-a-prim = Nur die Form eines Prims kann kopiert werden
+build-capture-shape-mesh-or-sculpt = Die Form eines Meshes oder einer skulpturalen Prim kann nicht kopiert werden
+build-capture-shape-no-modify = Sie benötigen die Berechtigung, diese Prim zu ändern, um ihre Form zu kopieren
+import-other-options = Weitere Optionen
+toolbar-button-icons = Nur Symbol
+toolbar-button-text = Nur das Label
+toolbar-button-icons-text = Symbol und Etikett
+toolbar-icon-default = Standardsymbol wiederherstellen
+toolbar-icon-choose = Wählen Sie ein Symbol
+toolbar-icon-change = Symbol ändern
+toolbar-presets = Voreinstellungen
+toolbar-interfaces = Oberflächen
+toolbar-interfaces-shown = Im Schnittstellenblock angezeigt
+toolbar-interfaces-hidden = Aus dem Schnittstellenblock ausgeblendet
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora OldSchool
+toolbar-preset-photographer = Aurora Fotograf
+toolbar-preset-legacy = Legacy
+toolbar-import-textures = Texturen importieren
+toolbar-import-sounds = Importieren von Sounds
+toolbar-import-animations = Importieren von Animationen
+toolbar-import-materials = Import von Materialien
+toolbar-import-meshes = Importieren von Netzen
+toolbar-import-local = Lokale Dateien
+toolbar-import-advanced = Erweiterter Import
+toolbar-import-settings = Einstellungen importieren
+toolbar-import-bar = Importleiste
+toolbar-icon-search = Finden Sie ein Symbol…
+toolbar-in-top = In der oberen Symbolleiste
+toolbar-bar-top = Symbolleiste oben
+toolbar-drop-here = Hier ablegen
+toolbar-separator = Trennlinie
+toolbar-interface-edit = Schnittstelle anpassen
+toolbar-edit-done = Fertig
+toolbar-edit-top = Oben
+toolbar-edit-bottom = Unten
+toolbar-edit-left = Links
+toolbar-edit-right = Rechts
+toolbar-edit-help = Klicken Sie auf ein Element, um es auszuwählen, ziehen Sie es mit der Maus zum Verschieben oder klicken Sie mit der rechten Maustaste, um Bearbeitungsoptionen zu erhalten.
+toolbar-edit-locked = Die Balken sind gesperrt. Entsperren Sie sie unten, um die Oberfläche zu ändern.
+toolbar-edit-move = Verschieben nach
+toolbar-edit-split-before = Split vor der Trennung
+toolbar-edit-split-after = Nach diesem Eintrag teilen
+toolbar-edit-merge-before = Mit vorherigen Block zusammenführen
+toolbar-edit-merge-after = Mit nächstem Block zusammenführen
+toolbar-edit-merge-groups = Diese Blöcke zusammenführen
+toolbar-drawer = Ausklappbereich
+toolbar-drawer-default-mode = Standardanzeige der Schaltflächen
+toolbar-drawer-closes = Schließen nach einem Klick auf eine Schaltfläche
+toolbar-block-shortcut = Tastenkürzel:
+toolbar-drawer-hides-needs-shortcut = Erfordert eine Verknüpfung
+toolbar-floating-close-button = Eine Schließen-Schaltfläche hinzufügen
+toolbar-block-name = Name des Blocks:
+toolbar-block-button-mode = Block-Tastenanzeige
+toolbar-button-inherited = Übernommen
+toolbar-drawer-hides-button = Schaltfläche beim Schweben ausblenden
+toolbar-floating-new = Schwimmender Block
+toolbar-floating-orientation = Orientierung
+toolbar-floating-horizontal = Horizontal
+toolbar-floating-vertical = Vertikal
+toolbar-floating-empty = Schaltflächen hier ablegen
+toolbar-shortcut-title = Tastenkürzel
+toolbar-shortcut-block-name = Block: { $name }
+toolbar-shortcut-none = Keine Abkürzung
+toolbar-shortcut-press-key = Drücken einer Taste
+toolbar-shortcut-esc = Esc zum Abbrechen
+toolbar-shortcut-clear = Entfernen
+toolbar-shortcut-overrides = Takes over { $name }: Diese Verknüpfung führt die Symbolleiste anstelle der Standardverwendung aus.
+toolbar-shortcut-used = Bereits die Abkürzung von { $names }.
+toolbar-shortcut-replace = Ersetzen
+toolbar-shortcut-add = Hinzufügen
+toolbar-shortcut-save = Speichern
+toolbar-shortcut-choose-key = Wählen Sie einen Schlüssel
+toolbar-shortcut-help = Aktivieren oder deaktivieren Sie Strg, Alt und Umschalttaste und klicken Sie dann auf die Taste, um sie zu ändern.Strg oder Alt ist erforderlich, außer bei F1 bis F24.
+toolbar-shortcut-inactive = Diese Schaltfläche befindet sich in keiner Leiste: Ihre Verknüpfung funktioniert, sobald sie wieder platziert wird.
+toolbar-shortcut-refused-keyboard = Nur Tastatur-Tasten können eine Verknüpfung sein.
+toolbar-shortcut-refused-modifier = Eine Modifikationstaste alleine kann keine Verknüpfung sein.
+toolbar-shortcut-refused-needs-modifier = Fügen Sie Strg oder Alt hinzu: eine Taste alleine oder mit nur Umschalttaste, geben Sie in Textfeldern ein.
+toolbar-shortcut-refused-altgr = Ctrl+Alt mit dieser Taste ist AltGr, die Zeichen auf vielen Tastaturen eingibt.
+toolbar-shortcut-refused-editing = Textfelder verwenden diese Tastenkombination (Alles auswählen, Kopieren, Ausschneiden, Einfügen, Rückgängig machen, Wiederherstellen).
+toolbar-shortcut-refused-navigation = Textfelder werden mit dieser Taste verschoben und gelöscht.
+toolbar-shortcut-refused-typing = Der Chat und die Dialoge verwenden diese Taste.
+toolbar-shortcut-refused-system = Das System behält diese Verknüpfung bei.
+toolbar-shortcut-refused-window = Diese Tastenkombination schließt oder wechselt Fenster.
+toolbar-shortcut-refused-zoom = Mit dieser Tastenkombination wird die Oberfläche vergrößert.
+toolbar-spacer = Abstand zwischen Blöcken
+toolbar-add-spacer = Blockabstand hinzufügen
+toolbar-button-settings = Einstellungen für Schaltflächen
+toolbar-button-edit = Schaltfläche Bearbeiten…
+toolbar-button-edit-title = Schaltfläche Bearbeiten
+toolbar-button-name = Name der Schaltfläche:
+toolbar-button-display = Tastenanzeige
+toolbar-shortcut-fixed-block-help = Die Verknüpfung eines festen Blocks zeigt und verbirgt ihn; während die Schnittstelle bearbeitet wird, bleibt sie angezeigt.
+toolbar-block-settings = Blockeinstellungen
+toolbar-parent-block-settings = Parent Block Einstellungen
+toolbar-block-edit = Block bearbeiten …
+toolbar-block-edit-title = Block bearbeiten
+toolbar-block-alignment = Ausrichtung
+toolbar-block-sizing = Größe der Taste
+toolbar-block-fixed-options = Feste Modusoptionen
+toolbar-block-floating-options = Optionen für den Floating-Modus
+toolbar-block-kind-fixed = Fester Block
+toolbar-block-kind-drawer = Ausklappbarer Block
+toolbar-block-kind-floating = Schwimmender Block
+toolbar-block-remove = Block entfernen
+toolbar-move-block = Ziehen, um den gesamten Block zu verschieben
+toolbar-remove-block = Block entfernen
+toolbar-drawer-empty = Diese Schublade ist leer.
+toolbar-drawer-drop = Ziehen Sie Schaltflächen hierher, um sie hinzuzufügen oder neu anzuordnen.
+toolbar-separator-settings = Blockabstandseinstellungen
+toolbar-separator-size = Größe / Minimum (px)
+toolbar-separator-stretch = Verfügbaren Speicherplatz füllen
+toolbar-separator-help = Flexible Lücken teilen sich den von den Blöcken verlassenen Raum.Größe ist ihre minimale Breite oder Höhe in einer Seitenleiste.
+toolbar-block-navigation = Navigation und SLURL
+toolbar-block-account = Konto und Saldo
+toolbar-block-system = Uhr, Anzeigen und Audio
+toolbar-block-status = Status der Verfügbarkeit
+toolbar-block-balance = Kontostand
+toolbar-block-clock = Uhr
+toolbar-block-ping = Regionslatenz
+toolbar-block-fps = Bildrate (FPS)
+toolbar-block-network = Netzwerkverkehr
+toolbar-block-media = Parzellenmedien
+toolbar-block-music = Parzellenmusik
+toolbar-block-volume = Lautstärke
+toolbar-block-notifications = Benachrichtigungen
+toolbar-block-conversations = Kostenlose Unterhaltung Ikonen
+toolbar-block-chat = In der Nähe Chat-Eingabe
+toolbar-category-all = Alle Kategorien
+toolbar-section-main = Gesamt
+toolbar-section-advanced = Erweitert
+toolbar-search-all = Die Suche enthält erweiterte Befehle.
+toolbar-category-avatar = Avatar und Bewegung
+toolbar-category-communication = Kommunikation
+toolbar-category-world = Welt und Reisen
+toolbar-category-creation = Erstellung und Inhalt
+toolbar-category-interface = Schnittstelle und Kamera
+toolbar-category-advanced = Erweiterte Tools
+toolbar-category-help = Hilfe
+toolbar-category-custom = Benutzerdefinierte Befehle
+toolbar-bar-settings = Symbolleisten-Einstellungen
+toolbar-menu-group = Menü: { $name }
+toolbar-location-bar = SLURL-Adressleiste
+toolbar-command-build-tool-focus = Build - Kamera aufbauen
+toolbar-command-build-tool-grab = Bauen - bewegen
+toolbar-command-build-tool-edit = Build - Bearbeiten
+toolbar-command-build-tool-create = Bauen - erstellen
+toolbar-command-build-tool-land = Bauen - Grundstück kaufen
+bug-copy-version = Kopieren Viewer-Version
+toolbar-notecard-save = Speichern Sie auf einer Notecard…
+toolbar-notecard-load = Von einer Notecard laden…
+toolbar-notecard-name = Aurora-Oberfläche
+toolbar-notecard-help = Layout und Aussehen von Symbolleisten, Schaltflächen, Schubladen und Menüs.
+toolbar-notecard-saved = Das Interface-Layout wird in deinem Inventar gespeichert.
+toolbar-notecard-invalid = Diese Notecard enthält kein kompatibles Interface-Layout.
+toolbar-notecard-unavailable = Diese Notizkarte ist nicht mehr verfügbar oder kann nicht kopiert werden.
+toolbar-notecard-layout-changed = Die Benutzeroberfläche änderte sich, während die Notizkarte geladen wurde. Laden Sie sie erneut, um ihr Layout anzuwenden.
+toolbar-notecard-demo-valid = Schnittstelle für Fotografen
+toolbar-notecard-demo-invalid = Sonstige Notecard
+toolbar-notecard-too-large = Diese Schnittstellenkonfiguration ist für eine Notecard zu groß.
+toolbar-saved-interfaces = Gespeicherte Schnittstellen
+toolbar-saved-interfaces-empty = Noch keine gespeicherten Schnittstellen.
+toolbar-notecard-destination = Ordner: { $path }
+toolbar-notecard-folder-error = Der Ordner interfaces konnte nicht geladen oder erstellt werden. Bitte versuchen Sie es erneut.
+toolbar-current-preset = Ausgewählte Schnittstelle: { $name }
+toolbar-preset-custom = Benutzerdefinierte Schnittstelle
+toolbar-preset-unsaved = Nicht gespeicherte Änderungen
+toolbar-preset-save-title = Schnittstelle speichern
+toolbar-preset-save-name = Name der Schnittstelle
+toolbar-preset-save-new = Neue persönliche Oberfläche
+toolbar-preset-save-replace = Diese persönliche Schnittstelle ersetzen
+toolbar-preset-save-unavailable = Diese Schnittstelle kann hier nicht gespeichert werden. Wählen Sie einen anderen Namen oder eine verfügbare, editierbare persönliche Schnittestelle.
+toolbar-interface-delete-unavailable = Diese persönliche Schnittstelle kann nicht gelöscht werden.
+toolbar-interface-delete-confirm = Die persönliche Oberfläche „{ $name }“ in den Papierkorb verschieben?
+
+### Weather, graphics, chat and contacts refresh
+
+director-motion-blur = Bewegungsunschärfe
+director-motion-blur-hint = Die Director-Kamera verfügt über einen eigenen Verschluss. Bewegende Objekte und Kameradrehungen erzeugen Bewegungsunschärfe, während dieses Fenster geöffnet ist, auch bei Live-Filmen. Beim Rendern werden mehrere Momente pro Bild abgetastet, um einen echten Verschluss zu simulieren, sodass es proportional länger dauert.
+director-shutter = Kameraverschluss
+director-shutter-tip = Verschlusswinkel bei der Filmbildrate. 180° ist im Kino Standard. Ein kleinerer Winkel macht bewegte Objekte schärfer. Oberhalb von 360° dauern Bewegungsspuren länger als ein Bild.
+ui-options-sun-rays = Sonne und Mondstrahlen
+ui-options-sun-rays-help = Streift das Licht der Sonne und des Mondes in der Nacht über das Bild, wenn Sie darauf schauen, durchschnitten von dem, was vor Ihnen steht: Bäume, Gebäude, Wolken. Kein sichtbarer Nebel. Unterscheidet sich vom Legacy Viewer
+ui-options-sun-rays-strength = Stärke
+ui-options-sun-rays-strength-help = Wie hell die Strahlen sind
+ui-options-show-recent-emojis-legacy-places-hint = Mit dem Legacy-Chatstil: Ihre zuletzt verwendeten Emojis als Zeile unter dem Feld „Unterhaltungen“ und über der Chatleiste. Standardmäßig deaktiviert, da der Legacy Viewer seine Zeile geschlossen hält.
+ui-options-chat-lines-direction = Position von nahegelegenen Chat-Leitungen
+ui-options-chat-lines-direction-hint = Chat-Linien in der Nähe, die über die Welt angezeigt werden, folgen der Chat-Leiste.Im automatischen Modus gehen die Linien über die Chat-Bar oder unter sie, wenn mehr Platz darunter ist.
+ui-options-chat-lines-direction-auto = Automatisch
+ui-options-chat-lines-direction-up = Über der Chatleiste
+ui-options-chat-lines-direction-down = Unter der Chatleiste
+ui-chat-recent-emojis-show = Zuletzt verwendete Emojis anzeigen
+ui-chat-recent-emojis-hide = Kürzlich verwendete Emojis ausblenden
+ui-options-motion-blur = Bewegungsunschärfe
+ui-options-motion-blur-enable = Bewegungsunschärfe
+ui-options-motion-blur-enable-help = Verschmiert, was sich bewegt, und die ganze Ansicht, wenn die Kamera dreht, wie eine Kamera-Verschluss; Aurora eigene, standardmäßig ausgeschaltet.
+ui-options-motion-blur-strength = Stärke
+ui-options-motion-blur-strength-help = Wie lange der Verschluss geöffnet bleibt, gemessen als Prozentsatz von einer Sechzigstelsekunde bei jeder Bildrate.Der Standardwert ist 50 Prozent, was einem 180°-Verschluss entspricht.
+common-window-reset = Position und Größe zurücksetzen
+people-contact-sheet-collapse = Kontaktdaten einblenden
+people-contact-sheet-expand = Erweitern Sie die Kontaktdaten
+people-contact-sheet-no-room = Der Bereich ist zu schmal, um die Kontaktdetails neben der Liste anzuzeigen
+people-group-sheet-collapse = Gruppendetails einblenden
+people-group-sheet-expand = Erweitern Sie die Gruppendetails
+people-group-sheet-no-room = Der Bereich ist zu schmal, um die Gruppendetails neben der Liste anzuzeigen
+ui-weather-fog = Nebel
+ui-weather-fog-on-tip = Nebel, der sich an den niedrigen Stellen sammelt, mit dem Wind treibt und um die Lichter herum leuchtet.
+ui-weather-fog-look = Nebelmodus
+ui-weather-fog-look-tip = Höhennebel hat sehr geringe Leistungskosten. Volumetrischer Nebel zeigt Sonnenlicht und Schatten im Nebel, der Modus mit Licht lässt auch Lampen und Neonschilder durch den Nebel leuchten.
+ui-weather-fog-look-height = Höhennebel
+ui-weather-fog-look-volume = Volumetrischer Nebel
+ui-weather-fog-look-lights = Volumetrischer Nebel mit Lichtquellen
+ui-weather-fog-density = Nebeldichte
+ui-weather-fog-density-tip = Wie dicht der Nebel ist: ein leichter Nebel auf der linken Seite, ein Nebel, den man nicht durchsehen kann auf der rechten Seite
+ui-weather-fog-mist = Nebel
+ui-weather-fog-light = Leichter Nebel
+ui-weather-fog-thick = Dichter Nebel
+ui-weather-fog-dense = Sehr dichter Nebel
+ui-weather-fog-height = Höhe
+ui-weather-fog-height-tip = Wie hoch der Nebel über dem Boden liegt, bevor er sich ausdünnt
+ui-weather-fog-low = Tief bis zum Boden
+ui-weather-fog-high = Reicht höher hinaus
+ui-weather-fog-drift = Bewegung mit Wind
+ui-weather-fog-drift-tip = Legt fest, wie viel der Windgeschwindigkeit der Nebel folgt. Er verwendet Aurora Wetterwind, wenn aktiviert, sonst den Regionswind.
+ui-weather-fog-still = Standnebel
+ui-weather-fog-windblown = Bewegt sich mit Wind
+ui-weather-fog-glow = Glühen um Lichter
+ui-weather-fog-glow-tip = Steuert die Lichtstreuung im Nebel. Das linke Ende streut das Licht gleichmäßig, das rechte konzentriert das Leuchten um die Sonne und jedes Licht.
+ui-weather-fog-glow-soft = Gleichmäßige Lichtstreuung
+ui-weather-fog-glow-tight = Konzentriert
+ui-weather-fog-from-sky = Dicker unter einem nebligen Himmel
+ui-weather-fog-from-sky-tip = Der Himmelsschwaden der Region beeinflusst die Nebeldichte: Ein nebliger Himmel macht den Nebel dichter, ein klarer Himmel macht ihn dünner.
+ui-weather-fog-follow-sky = Verwenden Sie Himmelslichtfarbe
+ui-weather-fog-follow-sky-tip = Wenn aktiviert, nimmt der Nebel seine Farbe vom Himmelslicht, wie der Dunst.Wenn deaktiviert, verwendet der Nevel seine eigene Farbe.
+ui-weather-fog-colour-tip = Die Nebel-eigene Farbe

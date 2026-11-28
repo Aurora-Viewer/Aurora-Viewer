@@ -89,7 +89,6 @@ anim-timeline-keys-selected = { $count ->
     [one] { $count } anahtar seçildi: taşımak için sürükleyin, Delete siler, sağ tıklama veya Esc seçimi bırakır
    *[other] { $count } anahtar seçildi: hepsini taşımak için birini sürükleyin, Ctrl+C kopyalar, Delete siler, sağ tıklama veya Esc seçimi bırakır
     }
-anim-edit-shortcut-play = Oynat veya duraklat (Space)
 anim-edit-shortcut-rewind = Başa sar (Home)
 anim-edit-shortcut-undo = Geri Al (Ctrl+Z)
 anim-edit-shortcut-redo = Yeniden Yap (Ctrl+Y veya Ctrl+Shift+Z)
@@ -306,13 +305,8 @@ owned-land-area = { $actual } m² · { $billable } m² ücretlendirilen
 owned-land-total = Toplam: { $actual } m² · { $billable } m² ücretlendirilen
 owned-land-contributions = Gruplara arazi katkıları
 owned-land-contribution = { $area } m²
-toolbar-edit = Araç çubuğu düğmeleri…
-toolbar-title = Araç çubuğu düğmeleri
 toolbar-remove = Bu düğmeyi kaldır
 toolbar-locked-bars = Çubukları kilitle
-toolbar-help = Bir düğmeyi rıhtıma veya bir yan çubuğa sürükleyin; kaldırmak için buraya geri bırakın. Aynı ayarlar için bir çubuğa sağ tıklayın.
-toolbar-help-classic = Bir düğmeyi alt çubuğa veya bir yan çubuğa sürükleyin; kaldırmak için buraya geri bırakın. Aynı ayarlar için bir çubuğa sağ tıklayın.
-toolbar-help-modes = Düğmeler, her çubuğun ayarlarına göre burada gösterildiği gibi ya da yalnızca simge olarak görünür.
 toolbar-search = Bir komutu bul ({ $count })
 toolbar-in-dock = Rıhtımda
 toolbar-in-bottom = Alt çubukta
@@ -1414,7 +1408,6 @@ inventory-column-both-rights = Siz → sonraki sahip
 inventory-columns = Sütunlar
 inventory-column-permissions = İzinler
 inventory-columns-reset = Envanter düzenini sıfırla
-inventory-resize-columns = Sütunları yeniden boyutlandırmak için sürükleyin. Genişliklerini sıfırlamak için çift tıklayın.
 inventory-resize-sidebar = Klasör kenar çubuğunu yeniden boyutlandırmak için sürükleyin. Genişliğini sıfırlamak için çift tıklayın.
 inventory-resize-gallery = Alanı kutucuklar ve liste arasında paylaştırmak için sürükleyin. Sıfırlamak için çift tıklayın.
 inventory-view-menu = Görünüm
@@ -2147,9 +2140,7 @@ ui-options-chat-text-size-hint = Yakındaki sohbet ve sohbetlerdeki iletilerin v
 ui-options-chat-beyond-range = Sohbet menzili dışında parlaklık
 ui-options-chat-beyond-range-hint = Sohbet menzilinden (20 m) uzaktaki sakinlerden ve nesnelerden gelen, örneğin bağırarak duyulan satırlar bu parlaklıkta çizilir: 1 onları diğerleri kadar parlak tutar, düşük değerler daha çok soldurur. Legacy Viewer'daki gibi varsayılan 0,8.
 ui-options-chat-keep-focus = Gönderdikten sonra sohbet çubuğunu etkin tut
-ui-options-chat-keep-focus-hint = Enter gönderir ve çubuk sonraki ileti için hazır kalır; boş çubukta Enter veya başka bir yere tıklama harekete döner. Bir iletiden sonra Sohbetler penceresinin yakındaki sohbeti de buna uyar.
 ui-options-chat-enter-toggles = Enter sohbetlerde yazmayı açar/kapatır
-ui-options-chat-enter-toggles-hint = Sohbet çubuğunda olduğu gibi Sohbetler penceresinde de (yakındaki sohbet, Aİ'ler ve grup sohbetleri) boş bir alanda Enter harekete döner; dünyadan Enter yeniden yazmaya başlatır.
 ui-options-chat-enter-last-field = Enter son kullanılan sohbet alanına döner
 ui-options-chat-enter-last-field-hint = Dünyadan Enter, her zaman sohbet çubuğu yerine, penceresi açıksa en son kullandığınız (tıkladığınız veya yazdığınız) sohbet alanına döner: yakındaki sohbet, bir grup veya bir Aİ. Kapalıyken veya o pencere kapalıysa Enter sohbet çubuğunu kullanır.
 ui-options-gesture-autocomplete = Yakındaki sohbette mimikleri tamamla
@@ -5053,7 +5044,6 @@ ui-bars-immersive-hide-tags = Ad etiketlerini gizle
 toolbar-use-name-tag-preferences = Ad etiketi tercihlerini kullan
 ui-bars-immersive-show-huds = BÜG'leri göster
 ui-bars-immersive-hide-huds = BÜG'leri gizle
-ui-bars-customize-bars = Çubukları özelleştir…
 session-inventory-upload-the-clothing-upload-timed-out-reload-inventory-before-trying = Giysinin karşıya yüklenmesi zaman aşımına uğradı. Yeniden denemeden önce envanteri yeniden yükleyin.
 session-inventory-upload-the-clothing-upload-was-interrupted = Giysinin karşıya yüklenmesi kesildi.
 ui-place-details-could-not-find-the-region-s-location-it-may = Bölgenin konumu bulunamadı. Geçici olarak kullanılamıyor veya kaldırılmış olabilir.
@@ -6213,7 +6203,6 @@ ui-options-preset-potato = Patates
 ui-options-preset-low = Düşük
 ui-options-preset-medium = Orta
 ui-options-preset-high = Yüksek
-ui-options-preset-deluxe = Deluxe (RT)
 ui-options-preset-custom = Özel
 ui-options-preset-mac-mid-high = Orta-Yüksek (bu Mac için önerilir)
 graphics-saved-title = Kayıtlı grafik profilleri
@@ -6362,7 +6351,6 @@ ui-options-look-at-lines-help = Her avatardan baktığı yerdeki artı işaretin
 ui-options-my-look-at = Bakış hedefim
 ui-options-private-look-at = Hedefimi başkalarına gönderme
 ui-options-private-point-at = Seçim hedefi ipuçlarımı gönderme
-ui-options-private-point-at-help = Düzenlediğiniz nesneyi gizler, düzenleme kolunuzu aşağıda tutar ve düzenleme ışınını gizler.
 ui-options-private-edit-beam = Düzenleme ışınını gizle
 ui-options-private-edit-beam-help = Nesneleri düzenlerken veya tutarken ışını hem kendi ekranınızda hem de başkaları için tamamen gizler. Seçim hedefi ipuçlarını ve verme/bırakma ışınlarını etkilemez.
 ui-options-private-look-at-help = Başkaları sizi baktığınız yer yerine dümdüz ileri bakarken görür
@@ -8931,7 +8919,6 @@ common-for-sale = Satılık:
 ui-land-general-for-sale-to = Şu kişiye satılık:
 ui-profile-coming-soon = Yakında
 ui-profile-aurora-my-profile = Profilim
-ui-profile-aurora-help = Bir sakinin profili: kim olduğu, onunla neler yapabileceğiniz, ardından favori yerleri, ilanları, ilk hayatı, web profili ve notlarınız. Tercihler › Aurora › Profiller, Legacy Viewer'ın penceresini geri getirir.
 ui-profile-aurora-conversation = Sohbet
 ui-profile-aurora-call = Ara
 ui-profile-aurora-add-friend = Arkadaş olarak ekle
@@ -8962,7 +8949,6 @@ ui-profile-aurora-their-map = Haritada bulabilir
 ui-profile-aurora-their-objects = Nesnelerini değiştirebilir, silebilir veya alabilir
 ui-profile-aurora-received-tip = { $right }: { $state }
 ui-profile-aurora-tab-profile = Profil
-ui-profile-aurora-tab-picks = Favori yerler
 ui-profile-aurora-tab-classifieds = İlanlar
 ui-profile-aurora-tab-first-life = İlk hayat
 ui-profile-aurora-tab-web = Web
@@ -8995,12 +8981,7 @@ ui-profile-aurora-unsaved = Kaydedilmemiş değişiklikler ({ $parts })
 ui-profile-aurora-part-bio = biyo
 ui-profile-aurora-part-first-life = ilk hayat
 ui-profile-aurora-part-notes = notlar
-ui-profile-aurora-part-places = { $count ->
-    [one] { $count } yer
-   *[other] { $count } yer
-    }
 ui-profile-aurora-part-classified = ilan
-ui-profile-aurora-snapshot = Yerin resmi
 ui-profile-aurora-teleport = Işınla
 ui-profile-aurora-description = Açıklama
 ui-profile-aurora-category = Kategori
@@ -9016,11 +8997,6 @@ ui-profile-aurora-copy-slurl = SLURL'yi kopyala
 ui-profile-aurora-here = Buradaki konumum
 ui-profile-aurora-add-here = Bulunduğum yeri ekle
 ui-profile-aurora-picks-count = { $count } / { $limit } (hesap sınırı)
-ui-profile-aurora-picks-empty = Henüz favori yer yok
-ui-profile-aurora-picks-empty-text = { $name } hiçbir yer paylaşmadı.
-ui-profile-aurora-picks-empty-own = Favori yerlerinizi paylaşın
-ui-profile-aurora-picks-empty-own-text = Diğer sakinler onları profilinizde görür ve tek tıklamayla oraya ışınlanır.
-ui-profile-aurora-delete-pick = “{ $name }” yeri silinsin mi?
 ui-profile-aurora-classifieds-empty = İlan yok
 ui-profile-aurora-classifieds-empty-text = { $name } yayınlanmış bir ilana sahip değil.
 ui-profile-aurora-classifieds-empty-own = Bir yeri veya hizmeti tanıt
@@ -12226,7 +12202,7 @@ ui-group-notices-saved = Kaydedildi
 ui-group-notices-attachment = Ek
 ui-group-notices-subject = Konu
 ui-group-notices-message = İleti…
-ui-group-notices-drop = Envanterden bir öğe sürükleyin (kopyalama + aktarma)
+ui-group-notices-drop = Envanter, Favoriler veya Yerler bölümünden bir öğeyi ya da yer işaretini sürükleyin (kopyalama ve aktarma izni gerekir).
 ui-group-notices-not-attachable = Bu öğe eklenemez: kopyalanabilir ve aktarılabilir olmalı, giyili olmamalıdır.
 ui-group-notices-remove-attachment = Eki kaldır
 ui-group-notices-send = { $count ->
@@ -14505,7 +14481,6 @@ inventory-new-outfit = Yeni dış görünüm
 inventory-listing-refresh = Listeyi Yenile
 inventory-recover-folder = Kaybedip Bulduklarım'a taşı
 inventory-show-main = Ana görüntüde göster
-inventory-open-current = Bu pencerede aç
 inventory-copy-outfit-list = Dış görünüm listesini panoya kopyala
 appearance-outfit-copy-entry = { $item } - { $creator }
 appearance-outfit-copy-preparing = Dış görünüm listesi hazırlanıyor…
@@ -15259,7 +15234,6 @@ ui-options-build-editing = Düzenleme
 ui-options-build-auto-material-tab = Seçime uygun malzeme sekmesini aç
 ui-options-build-auto-material-tab-hint = Bir nesne seçmek, yüzlerinden biri PBR malzemesi gösteriyorsa PBR sekmesini, aksi halde Blinn-Phong sekmesini açar. Kapalı: son seçilen sekme kalır.
 ui-options-build-show-beams = Seçim ışınlarını göster
-ui-options-build-show-beams-hint = Düzenleme, tutma veya verme sırasında sizin ve diğer avatarların seçim ışınlarını gösterir. Bu ayar yalnızca görünümü denetler; Gizlilik bölümündeki «Düzenleme ışınını gizle» ışının yerel görünümünü ve gönderimini de kapatır.
 ui-options-build-beam-color = Işın rengi
 ui-options-build-beam-color-hint = Işınlarınızın rengi, diğerlerinin de gördüğü şekliyle.
 large-surface-title = Büyük yüzeyler
@@ -15511,3 +15485,1149 @@ game-control-action-boom-down = Vinç ↓
 game-control-action-escape = ESC
 picker-local-newest = Önce en yeni
 picker-local-name = Ad A–Z
+
+### Release translations
+
+ui-options-planet-curvature = Gezegen eğriliği
+ui-options-planet-curvature-help = Dünyayı yuvarlak bir gezegen üzerinde çizer: açık su göz seviyesine doğru akmak yerine gerçek ufuğa düşer, gökyüzü alttadır. Sadece görüntü değişir: bölgeler, fizik ve diğerlerinin gördükleri düz kalır. Dünya' da çizilecek mesafe içindeki damla birkaç santimetredir; uzak denizde gösterilir. Legacy Viewer' dan farklı
+ui-options-planet-radius = Gezegen yarıçapı
+ui-options-planet-radius-help = Gezegenin kilometrelerce çizilmiş yarıçapı. Dünya' nın yarıçası 6371 km: 10 m yükseklikte, denizin sonu yaklaşık 11 km uzaklıktadır. Daha küçük bir gezegen ufuğu daha yakın getirir
+ui-options-camera-frame-while-posing = Poze ederken avatarı çerçeveleme
+ui-options-camera-frame-while-posing-tip = Pozer'ı açmak Avatar'ı çerçeveler ve bir birleşmeye tıklayarak kamerayı ona yaklaştırır. Bir birleşmeyi çekmek kamerayı hiçbir zaman hareket ettirmemektedir.
+ui-options-camera-still-while-posing = Poz verirken kamerayı hareketsiz tut
+ui-options-camera-still-while-posing-tip = Poze ederken, kamera avatar'ı takip etmeyi bırakır, odaklanır ve vücut parçalarını izler. Yürümek onu geri yüklemez. Yörünge, zoom, panoramik ve önceden ayarlanmışlar hala çalışır.
+ui-options-group-emotes = Göndericinin mesajlarıyla grup emojileri
+ui-options-group-emotes-hint = Aurora sohbet stilinde, “/me waves” gibi bir eylem, aynı kişinin hemen önce veya sonra gönderdiği mesajlarla aynı başlık altında gösterilir. Eyleme ayrı bir başlık açılmaz.
+content-perms-nested = Nesneleri nesnelerin içine dahil et
+content-perms-nested-help = İç içe nesnelerin içeriğini de 5 düzeye kadar değiştirir. Her nesne, onu içeren primin 2 m üstünde dünyaya yerleştirilir. Çalışan komut dosyaları durdurulur, içerik değiştirilir, dosyalar yeniden başlatılır ve nesne yerine kaydedilir. Dünyadaki geçici kopya silinmeden önce geri kaydedilen nesnenin izinleri ayarlanır ve denetlenir. Kopyalayamadığınız, devredemediğiniz veya değiştiremediğiniz nesneler açılmaz. Nesnelerin yerleştirildiği yerde inşa izni gerekir.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } içerikteki nesne açılacak, atlatılacaktır: { $skipped }.
+       *[other] { $objects } içerikteki nesneler açılacak, atlatılacaktır: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = kopyalama veya aktarma yok
+content-perms-nested-skip-no-modify = değiştirilemez
+content-perms-nested-skip-depth = 5 seviyeden daha derin
+content-perms-nested-rezzing = Nesne yerleştiriliyor{ $name }Dünyada (üreme seviyesi) { $level })…
+content-perms-nested-stopping = "{ $name }" senaryosu durduruluyor...
+content-perms-nested-applying = "{ $name }"ün içeriği değiştiriliyor...
+content-perms-nested-restoring = "{ $name }"ün senaryoları yeniden başlatılıyor...
+content-perms-nested-saving = Nesne “{ $name }” konteynerine geri kaydedildi…
+content-perms-nested-deleting = "{ $name }"ün dünyadaki geçici kopyası siliniyor...
+content-perms-nested-finished = Güncellenen öğeler: { $count }. İç içe nesneler: { $objects }. Atlananlar: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } orijinalinin yanında kaldı: isimler farklıydı.
+       *[other] { $kept } orijinallerinin yanında kaldı: isimler farklıydı.
+    }
+content-perms-nested-stopped = Durduruldu: Dünyadaki geçici kopyalar silindi, orijinal parçalar olduğu gibi bırakıldı.
+content-perms-nested-stop-help = İşlemi durdurur ve dünyada kalan geçici kopyaları siler. Özgün öğeler olduğu gibi kalır. Geri kaydedilmiş nesneler değişikliklerini korur.
+content-perms-nested-scripts-warning = Her nesne dünyada oluşturulur (rez). Bu yüzden komut dosyalarının oluşum sırasında çalıştırdığı patlama, ışınlanma veya eşya verme gibi işlemler, dosyalar durdurulmadan önce gerçekleşir. Bunu önlemek için yönettiğiniz bir bölgede önce Bölge / Mülk ayarlarından Komut dosyalarını devre dışı bırak seçeneğini açın ve işiniz bitince kapatın.
+content-perms-nested-original-kept = "{ $name }" geri kaydedildi, ancak orijinal maddesi kaldırılamadı: her ikisi de içeriktedir.
+content-perms-nested-copy-left = Dünyadaki "{ $name }"'ün geçici kopyası silinmedi: onu elle sil.
+content-perms-nested-save-unconfirmed = Geri kaydetme doğrulanmadı
+content-perms-nested-saved-perms-unconfirmed = Durduruldu: Nesnenin konteynerine geri kaydedilen izinleri doğrulanamadı. Dünyadaki geçici çalışma kopyaları korunmuştur; onları silmeden önce kontrol edin.
+content-perms-nested-timeout = Simülasyon zamanında cevap vermedi
+content-perms-nested-rez-refused = Durduruldu: simülasyon dünyaya yerleşmeyi reddetti "{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Durduruldu: "{ $name }" 15 saniye içinde görünmedi. Eğer daha sonra ilkel nesnenin üzerinde görünürse, onu sil.
+content-perms-nested-not-ours = Durduruldu: “{ $name }” için dünyaya konulan nesne bu içeriklerden gelmemektedir, dünyada bırakılmıştır.
+content-perms-nested-unverified = Durduruldu: "{ $name }" için görünen nesne bu içeriklerden dünyaya konulmuş olarak kontrol edilemedi, bu yüzden dünyada bırakıldı.
+content-perms-nested-group-split = Durduruldu: "{ $name }" (birçok nesne tek olarak kaydedilmiştir) tek bir nesnenin geri döndüğünü gösterdi. Dünyaya yerleştirilen parçaları dünyada kaldı: hepsini seçin ve grubu yeniden oluşturmak için onları alın.
+content-perms-nested-failed = “{ $name }” değişmeden bırakıldı: { $reason }.
+content-perms-nested-original-gone = "{ $name }" dünyada tutulur: geri kaydetme onaylanmamıştır ve orijinal maddesi gitmiştir.
+content-perms-nested-gone = Nesne dünyayı terk etti.
+content-perms-nested-land-denied = Durduruldu: bu ilkel nesnenin üzerinde inşa edemezsiniz, nesnelerin dünyaya konacağı yer.
+content-perms-nested-parcel-full = Durduruldu: Paketin dünyadaki geçici kopyalar için geriye hiçbir yer kalmadı.
+content-perms-nested-rlva = Durduruldu: Dünyada nesneler koymak kısıtlıdır (RLVa).
+content-perms-nested-too-many = çok fazla script
+content-perms-nested-unreadable = içeriği okunamamıştır
+content-perms-demo-chest = Depolama sandıkları
+content-perms-demo-notes = Depodaki notlar.
+content-perms-demo-outer = Dış kutu
+content-perms-demo-glow = Nesneyi parlatmaya yarayan bir script
+content-perms-demo-readme = Önce beni oku.
+content-perms-demo-inner = İç konteyner
+content-perms-demo-inner-note = İç kutunun içindeki not
+content-perms-demo-tiny = Çok küçük bir kutu
+content-perms-demo-spin = Nesneyi döndüren script
+content-perms-demo-heirloom = Aile mirasçısı
+content-perms-demo-sealed = Mühürlenmiş kutu
+content-perms-demo-linked = Birleştirilmiş nesnelerin grubu
+content-perms-demo-pebble = Küçük yuvarlak taş
+content-perms-demo-stack = Sandık yığını
+dev-toolbox-o10 = Avatar isabet kutuları
+ui-appearance-date-newest-first = Tarih: en yeni önce
+ui-appearance-date-oldest-first = Tarih: en eski önce
+ui-appearance-favorites-to-top = Tepeye git
+ui-appearance-images-to-top = Resimler
+ui-environment-sort-by-name = Alfabe olarak sırala
+ui-environment-sorted-by-name = Şu anda isimlere göre sıralanmıştır. Envanterinizdeki düzeni geri getirmek için tıklayınız.
+ui-environment-in-inventory-order = Envanterinizin sırasına göre. Düzenlemek için tıklayın A–Z.
+ui-chat-contacts-groups-sub = Gruplar · { $count }
+ui-options-soft-shadows = Yumuşak gölgeler
+ui-options-soft-shadows-help = Güneş gölgeleri, nesne gölgelediği şeyden uzaklaştıkça daha yumuşak kenarlarla görünür, gerçek hayatta olduğu gibi: yüksek bir dalın gölgesi ucuna doğru bulanıklaşır ama ayak keskin kalır. Deneysel, varsayılan olarak kapalı; grafik kartı için mili saniyenin bir parçası kadar maliyetli
+ui-options-shadow-softness = Gölge yumuşaklığı
+ui-options-shadow-softness-help = Yumuşak gölgeler için ışığın büyüklüğü: 1 2. 3 derece çapında bir ışık, 2 gölgeleri iki kat yumuşatmış olan daha büyük bir ısı (gerçek güneş yaklaşık 0. 2' dir), 0 boyutu olmayan ışıktır: projeksiyonlar dahil olmak üzere gölgelerin önceki hali
+ui-options-shadow-softness-needs-soft = Bunu kullanmak için Yumuşak Gölgeleri etkinleştir
+ui-options-shadow-intensity = Gölge yoğunluğu
+ui-options-shadow-intensity-help = Güneşin gölgelerinin ne kadar karanlık olduğu: 1 normal karanlık, daha düşük onlar için daha fazla ışık bırakır
+ui-options-system-fonts-searching = Yazı tipleri aranıyor...
+demo-emotes-nova = /me, çeşmenin yanında bir bank kuruyor.
+demo-emotes-orion = Buradan harika görünüyor!
+demo-teleport-access-neighbour = Yetişkin komşu (demo)
+photo-light-shadow-softness = Gölge yumuşaklığı
+photo-light-shadow-intensity = Gölge yoğunluğu
+photo-light-shadow-reset = Seçeneklerin değerine geri dön
+world-teleport-access-blocked-title = Teleport engellendi.
+world-teleport-access-adults-only = Ziyaret etmeye çalıştığınız bölgede sadece yetişkinler için erişilebilir olan { $rating } içerik bulunuyor.
+world-teleport-access-change-and-reteleport = Ziyaret etmeye çalıştığınız bölgede { $rating } dereceli içerik var. Mevcut tercihleriniz { $rating } dereceli içeriğe izin vermiyor. Tercihlerinizi değiştirip ışınlanmaya devam edebilir veya ışınlanmayı iptal edebilirsiniz.
+world-teleport-access-change = Ziyaret etmeye çalıştığınız bölgede { $rating } dereceli içerik var. Mevcut tercihleriniz { $rating } dereceli içeriğe izin vermiyor. Tercihlerinizi değiştirebilir veya ışınlanmayı iptal edebilirsiniz. Tercihleri değiştirdikten sonra tekrar ışınlanmayı deneyin.
+world-teleport-access-out-of-sync = Teleportasyonunuzla ilgili teknik bir sorunumuz var çünkü tercihleriniz sunucu ile senkronize değil.
+world-teleport-access-rated = Seçtiğin yer { $rating } puanına sahip.
+world-teleport-access-allow = Mevcut tercihleriniz { $rating } dereceli içeriğe izin vermiyor. İzin verirseniz tercihleriniz güncellenir.
+world-teleport-access-allow-button = { $rating } içeriğine izin ver
+world-teleport-access-not-on-account = Ziyaret etmeye çalıştığınız bölgenin derecesi { $rating }'dür ve bu değer hesabınızda mevcut değildir.
+world-teleport-access-change-and-continue = Değiştir ve devam et
+world-teleport-access-change-preferences = Seçenekleri değiştir
+world-teleport-access-preference-changed-title = İçerik derecelendirmesi değiştirildi
+world-teleport-access-preference-changed = { $rating } içeriği olan bir bölgeyi ziyaret etmek üzere olduğunuz hakkında daha fazla bildirim almayacaksınız. Gelecekte içerik tercihlerinizi Seçenekler › Mahremiyet'te değiştirebilirsiniz.
+people-show-group-sheet = Grup ayrıntılarını göster
+people-group-details-empty = Gösterilecek grup yok
+ui-options-plate-click-own-help = Bir başkasının masası üzerinde sol tıklamanın etkisi; işaretçi el haline dönüşür. Kendi masanızda, bir tıklama profilinizi veya menünüzi açabilir, bunlardan biri seçildiğinde; düğmeyi tutmanız hala avatarınızı döndürür.
+ao-import-unfinished-retry = Bitmemiş bir şey. AO import zaten mevcuttur #Aurora/{ $folder }- İade bildirimini kullanın. AO Yeniden denemeden önce pencereyi kapatın.
+ao-unfinished-import =
+    { $count ->
+        [one] #Aurora/{ $folder } konumundaki AO içe aktarma işlemi tamamlanmadı. Set sayısı: { $count }.
+       *[other] #Aurora/{ $folder } konumundaki AO içe aktarma işlemi tamamlanmadı. Set sayısı: { $count }.
+    }
+ao-finish-import = İthalatı tamamla
+ao-show-in-inventory = Envanterde göster
+ao-duplicate-native =
+    { $count ->
+        [one] Başka bir klasör bulundu: #Aurora/{ $folder }. Set sayısı: { $count }. Etkin AO klasörüyle birleştirilsin mi?
+       *[other] Başka bir klasör bulundu: #Aurora/{ $folder }. Set sayısı: { $count }. Etkin AO klasörüyle birleştirilsin mi?
+    }
+ao-native-already-exists = Bu isimle bir iç animasyon üstatma zaten mevcuttur
+rlva-tools-retained = Girişe kadar saklanır
+rlva-read-at-login = Değişiklikler bir sonraki girişte geçerli olur.
+rlva-debug-commands-chat = Her komut, nesnenin adının altında yakındaki sohbette bir satır alır: neyi gerçekleştirir, ne başarısız olur ve neden, giriş için bekleyen nedir.
+rlva-blocked-start-im = Başlatılamadı IM ile oturum { $recipient } sebebiyle RLV kısıtlamalar
+rlva-blocked-start-conference = Konferans başlatılamadı [RECIPIENT] sebebiyle RLV kısıtlamalar
+rlva-anonym-waiting = (Yükleniyor...)
+rlva-anonym-unknown = (Bilinmiyor)
+rlva-blocked-teleport = RLV kısıtlamalarından dolayı teleport başlatılamadı
+rlva-blocked-permission-attach = Bağlantı denedi '{ $object }'Reddedildi. RLV kısıtlamalar
+rlva-blocked-permission-teleport = '{ $object }'Sizi teleport etme izni reddedildi. RLV kısıtlamalar
+rlva-blocked-view-notecard = RLVa kısıtlamalarından dolayı notcard açılamadı.
+rlva-blocked-view-script = RLVa kısıtlamalarından dolayı script açılamadı.
+rlva-blocked-view-texture = RLVa kısıtlamalarından dolayı doku açılamadı.
+rlva-debug-explicit-point = Envanter nesneleri ve dizinler üzerindeki bağlantı noktası isimlerini görmezden gel
+rlva-debug-explicit-point-hint = Bir bağlantı noktası kilitlendiğinde, Wear and Add bir nesneyi adının veya dosya adı verdiği nokta yerine varsayılan noktasına gönderir (eksik).
+phototools-environment-settings = Ortam ayarları
+phototools-quick-environments = Hızlı ortamlar
+phototools-environment-presets = Çevre önayarları
+phototools-general-render = Genel görüntüleme ayarları
+phototools-render-options = Render seçenekleri
+ui-bars-clouds-paused = Bulutlar durduruldu
+ui-bars-clouds-paused-tip = Bulutlar bu oturum için hareketsiz tutuldu. Yeniden hareket etmeleri için tıklayınız.
+phototools-tab-dof-glow = Alan derinliği ve parıltı
+phototools-lights-shadows = Işık ve gölge ayarları
+phototools-ambient-occlusion = Ortam perdeleme ayarları
+phototools-dof = Alan derinliği ayarları
+phototools-tone-mapping = HDR ton haritalama ayarları
+phototools-glow = Parıltı ayarları
+phototools-photo-banner = Fotoğraf penceresi açık: fotoğraf penceresinin satırları da fotoğrafı değiştirir. Alan derinliği bir sonraki fotoğraflarınız için korunur; ışık, mesafe, gölgeler, çevresel kapama ve kullanılmış ışıklar fotoğraf penceresinde kapanana kadar devam eder.
+phototools-photo-boost = Fotoğraf kalitesi yükseltilmiştir: grafik satırları yükseltilmiş değerleri gösterir ve burada yaptığınız bir değişiklik sizin gibi tutulur.
+phototools-photo-focus-help = Tıkla: Dünya' da son tıklandığı nokta. İzleyici: İzleyicinin altındaki nokta. El: Belirlediğiniz bir mesafe.
+phototools-photo-distance-help = Lensin manuel fokusta odaklanan mesafe.
+phototools-director-lens = Yönetmenin lensi, penceresi açıkken aşağıda yer alan ayarların üzerinde gösterilir.
+phototools-view-angle-viewfinder = Gözlemci görüş açısına sahiptir: kapandığında sizinki geri gelir.
+ui-options-dof-show-focus-point = Odak noktasını göster
+ui-options-dof-show-focus-point-help = Lensin odaklandığı noktada küçük bir haç: serbest olduğunda sarı, kilitlendiği zaman kırmızıdır.
+
+### Updated release translations
+
+render-features-menu = Görüntüleme özellikleri
+render-features-ui = Arayüz
+toolbar-command-ao-mini = Mini AO penceresi
+keybinds-ui-feature = Tüm arayüzü göster / sakla (Renderleme özellikleri › UI)
+import-image-size-limit = Maksimum resim boyutu
+import-image-size-single = Maksimum resim boyutu
+import-image-size-inherit = Genel ayar ({ $size } piksel)
+import-image-size-pixels = { $size } piksel
+import-image-size-inherit-help = Küresel ayar, alttaki İthalat'ın yanındaki sınırı takip eder. Güncel değeri parantez içinde görüntülenir. Daha büyük resimler otomatik olarak seçilen sınıra küçültülür.
+import-image-size-global-help = İthalat için en büyük resim boyutu. Bireysel resim ve malzeme seçimleri önceliklidir. Daha büyük resimler otomatik olarak küçültülür.
+ui-chat-applink-preferences-tip = Bu ayarları Seçenekler'de aç
+ui-options-bento-idle = Bento'nun boşluk animasyonunu düzelt
+ui-options-bento-idle-hint = Bento animasyonunu diğerlerinin altında öncelikli 0 olarak oynatır, böylece el, ağız, kanat ve kuyruk bir animasyondan sonra sıkışmak yerine doğal bir pozisyona döner; diğerleri de bunu görür
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] Nesne UUID kopyalandı.
+       *[other] Nesne UUID'leri kopyalandı
+    }
+ui-appearance-batch-choose-folder = { $folder }'de fotoğraf çekilecek kıyafetler
+ui-appearance-batch-all = Tüm dış görünümler
+ui-appearance-batch-chosen = { $chosen } ya da { $total }
+ui-appearance-batch-select-missing = Resimsiz
+ui-inventory-dialogs-detach-and-delete = Çıkar ve sil
+ui-inventory-dialogs-detach-and-delete-body = Avatarınız bu öğelerden bazılarını takıyor. Öğeler önce çıkarılır, ardından Çöp Kutusu’na taşınır.
+ui-inventory-delete-detach-cannot = Avatarın taktığı öğeler artık çıkarılıp silinemiyor.
+ui-inventory-delete-detach-refused = Bu öğe kaldırılamaz ve silinmez.
+ui-inventory-delete-detach-busy = Başka bir stok değişikliği devam ediyor. Bittiğinde tekrar deneyin.
+ui-inventory-delete-detach-timeout = Takılı öğeler çıkarılamadığı için silinmedi.
+common-modify = Değiştir
+build-ui-contents-filters = İçerik filtreleri
+build-ui-contents-next-owner-permissions = Bir sonraki sahibin izinleri
+ui-options-voice-output = Ses çıkışı
+ui-options-voice-output-used-for-voice-chat = Sesli sohbet için kullanılır; dünya sesleri, müzik ve medya kullanır Audio output
+ui-options-same-as-audio-output = Ses çıkışı ile aynı
+ui-options-copy-setting-link = Ayarlara bağlantıyı kopyala
+ui-options-setting-unavailable = Bu ayar kullanılamaz.
+ui-context-show-in-inventory-none = Envanterinizdeki hiçbir nesne tam olarak bu nesnenin adını taşımıyor.
+ui-profile-aurora-help = Bir sakinin profili: kimler, onlarla ne yapabilirsin, sonra seçimleri, ilanları, ilk hayatı, web profili ve notlarınız. Seçenekler › Aurora › Profiller Legacy Viewer penceresini geri getirir.
+ui-profile-aurora-tab-picks = Öne çıkarılanlar
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] Öne çıkarılanlar: { $count }
+       *[other] Öne çıkarılanlar: { $count }
+    }
+ui-profile-aurora-snapshot = Resim
+ui-profile-aurora-picks-empty = Henüz seçim yapılmadı
+ui-profile-aurora-picks-empty-text = { $name } hiçbir seçim paylaşmadı.
+ui-profile-aurora-picks-empty-own = Senin için önemli olan şeyleri paylaş
+ui-profile-aurora-picks-empty-own-text = Yerleri, insanları ve önemsediğiniz şeyleri vurgulamak için seçicileri kullanın.
+ui-profile-aurora-delete-pick = "{ $name }" seçimini siliyor musun?
+script-search-whole-words = Tüm kelimeler
+ao-mini-title = Mini AO penceresi
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: Animasyon seçilmedi
+ao-quick-pin = Mini AO penceresini aç
+build-layout-button-icon = İkon
+build-layout-button-label = Etiket
+build-layout-button-both = İkon ve etiket
+build-detach-shown = Kendi penceresinde: gizlemek için tıklayın. Geri koymak için bu pencereyi başlığından inşa penceresine çekin.
+build-detach-hidden = Kendi penceresinde, gizli: göstermek için tıklayın.
+build-material-save-as = Maddeyi Aynı Adla Kaydet
+build-material-save-name = Envanterinizdeki yeni maddenin adı:
+build-material-new-material = Yeni Madde
+build-material-save-not-allowed = Kaydetme, seçilen her yüz üzerinde bir PBR malzemesine, nesne üzerinde kopyalama ve değiştirme hakkına, ve envanterinizdeki materyalin kopyalanmasına ihtiyaç duyar. kopyalama, değiştirme hakkı ile.
+build-material-saved = "{ $name }" maddesi envanterine kaydedildi.
+build-material-save-failed = Madde envanterine kaydedilemedi.
+toolbar-add-from-menu = Araç çubuğuna ekle
+toolbar-remove-from-menu = Araç çubuğundan kaldır
+toolbar-command-build-edit = Nesneleri Düzenle
+toolbar-command-build-create = Primler oluştur
+toolbar-command-build-land = Araziyi Düzenle
+
+### Updated release translations
+
+inventory-search-no-copy = kopya yok
+inventory-search-no-modify = değiştirilemez
+inventory-search-no-transfer = aktarma yok
+ui-options-chat-keep-focus-hint = Enter mesajı gönderir ve sohbet çubuğunu sonraki mesaj için etkin tutar. Çubuk boşken Enter'a basmak da bunu değiştirmez. Hareket etmeye dönmek için Esc'ye basın veya dünyaya tıklayın.
+ui-options-chat-enter-toggles-hint = Konuşmalar penceresinde boş alanda Enter'a basmak, yakındaki sohbetten, özel mesajlardan ve grup sohbetinden hareket denetimine döndürür. Dünyadayken Enter'a basarak yeniden yazmaya başlayabilirsiniz.
+build-ui-features-physics-none-root-hint = Sadece bir bağlantı kümesinin çocuk primleri fizik şekli None'u kullanabilir: kök prim, ya da kendi başına bir prim, Prim veya Convex kabuğunu tutar.
+controls-position-tip = Kamera konumu: kameranın avatarın arkasında tam olarak nerede durduğunu belirler
+camera-position-hint = Avatar'dan metrelerce uzaklıkta: X ileri, Y sola, Z yukarı. Ctrl + tekerlek kamerayı kaldırır, Shift+tekerlek odak noktasını belirler.
+camera-position-save = Kamera konumu olarak kaydet...
+photo-looks-replace = Değiştir
+photo-looks-empty = Henüz etki yok. Denemek için aşağıda bir filtreyi işaretleyin, sonra ona tıklayın veya buraya çekin.
+photo-looks-active = Etkin
+photo-looks-count = { $count } ya da { $max }
+photo-looks-expand-all = Tümünü genişlet
+photo-looks-collapse-all = Tümünü daralt
+photo-looks-hint = Yukarıdan aşağıya uygulanır. Bir kartı yeniden düzenlemek için çekin veya Alt + ↑ ↓ tuşuna basın. Kartı çıkarmak için sağ tıklayın.
+photo-looks-right-click-out = Sağ tıklama: etkin efektlerden çıkar
+photo-looks-drop = Bir etkiyi buraya çekin ya da aşağıda birine tıklayın
+photo-looks-full = { $max } ya da { $max }: birini çıkarın, ya da değiştirmek için Değiştir' i açın.
+photo-looks-catalogue = Efekt kataloğu
+photo-looks-catalogue-tip = Fotoğrafta denemek için bir etkiyi işaretleyin; eklemek için ona tıklayın ya da etkin olanların arasına çekin
+photo-looks-catalogue-fold = Kataloğu göster veya gizle
+photo-looks-replace-tip = Değiştir: katalogda tıkladığınızda yeni bir kart eklemek yerine seçilen kartı değiştirir
+photo-looks-replacing = Bir tıklama { $name }'ü değiştirir.
+photo-looks-done = Bitti
+photo-looks-take-out-zone = Buradan çıkarmak için buraya bırakın.
+photo-looks-hide = Gizle { $name } (yerinde kalır)
+photo-looks-show = Göster { $name }
+photo-looks-more = Daha fazla eylem
+photo-looks-move-up = Yukarı taşı
+photo-looks-move-down = Aşağı taşı
+photo-looks-replace-one = Değiştir...
+photo-looks-take-out = Çıkar.
+photo-looks-not-in-360-tag = 360 derecede değil.
+photo-looks-all = Tümü
+photo-looks-favorites = Favoriler: Başrolünü oynadığınız her efekt
+photo-looks-favorites-empty = Henüz favori yok. Bir etkiyi işaretle ve yıldızına tıkla: listede ilk gösteriliyor, burada da.
+photo-looks-favorite = Favorilere Ekle
+photo-looks-unfavorite = Favorilerden sil
+photo-looks-card = { $name }, { $place } ya da { $count }Alt + ok tuşları hareket ettirir.
+photo-looks-legacy-note = Legacy Viewer filtrelerinin ek ayarları yoktur.
+photo-knob-toning = Tonlama
+photo-knob-local-contrast = Yerel kontrast
+build-face-button = Yüz { $number }: seçilen her prim üzerinde seç. Shift+click: ekle veya çıkar.
+build-face-invert = Seçilen yüzleri tersine çevir
+build-face-all = Tüm yüzleri seç
+ui-options-aurora-controls-compact = Kompakt kamera kontrolleri
+ui-options-aurora-controls-compact-movement = Kompakt hareket kontrolleri
+ui-options-aurora-controls-compact-movement-help = Kontrol penceresinin Hareket sekmesi kompakt olarak açılır: hareket düğmeleri ve yürü, koş ve uç. Başlık çubuğu düğmesi kompakt ve tam arasında geçiş yapar ve bunu da ayarlar.
+poser-face-position-drag = Eklentiyi piksel başına 0,1 mm hareket ettirmek için çekin veya bir konum yazmak için tıklayınız.
+build-layout-clicks = Nesnelere tıkla
+build-ui-floaters-shift-click = Shift + tıklama
+build-ui-floaters-ctrl-click = Ctrl + tıklama
+build-ui-floaters-click-object = Nesneyi ekle veya kaldır
+build-ui-floaters-click-face = Yüzü seç
+build-ui-floaters-clicks-hint = Düzenleme aracı ile, Doğrulama'nın dışında. Ctrl + Shift + tıkla tıklanmış yüzeyi ekler veya çıkarır.
+build-ui-floaters-ctrl-right-click = Ctrl + sağ tıkla
+build-ui-floaters-right-click-menu = Menüyü aç
+build-ui-floaters-right-click-edit = Nesneyi Düzenle
+build-ui-floaters-double-click-linked = Bir prim'e çift tıklayın: "Bağlantılı parçaları düzenley" tuşu
+blender-live-tab-place = Yer
+blender-live-tab-avatar = Avatar
+blender-live-more = Daha fazla
+blender-live-place = Yer
+blender-live-linked-prims = Bağlantılı primleri göster veya gizle
+blender-live-tag-rigged = İskeletli
+blender-live-card-rigged =
+    { $triangles ->
+        [one] Üçgenler: { $triangles }
+       *[other] Üçgenler: { $triangles }
+    }
+blender-live-card-static =
+    Statik · { $triangles ->
+        [one] Üçgenler: { $triangles }
+       *[other] Üçgenler: { $triangles }
+    }
+blender-live-card-linkset =
+    Statik · { $prims ->
+        [one] Primler: { $prims }
+       *[other] Primler: { $prims }
+    } · { $triangles ->
+        [one] Üçgenler: { $triangles }
+       *[other] Üçgenler: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] Üçgenler: { $triangles }
+       *[other] Üçgenler: { $triangles }
+    }
+blender-live-place-help = Seçilmiş statik ağın nerede olduğu. Yapıştırılmış ağlar her zaman avatarınızı takip eder.
+blender-live-place-none = Yerleştirmek için statik bir nesneyi seç.
+blender-live-where = Nerede
+blender-live-transform = Konum, dönme ve boyut
+blender-live-from = Başlangıç
+blender-live-plugins-help = Aurora, her Blender'da eşleşen plug-ini yükler, önceki versiyonun bir kopyasını tutar ve asla eski bir sürümü yüklemez.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } dakika
+blender-live-ago-hours = { $count } h
+blender-live-show-all = Hepsini göster
+blender-live-hide-all = Hepsini Gizle
+blender-live-bend-section = Ağırlıkları kontrol et.
+blender-live-elbows = Dirsekler.
+blender-live-knees = Diz.
+blender-live-bend-hold = Animasyonum yerine bu pozunu tut.
+blender-live-bend-note = Animasyonlarınız, diğer sakinlerin görüşleri ve giriş değişmez.
+blender-live-levels = Detay seviyesi
+blender-live-quick-look-tip = Hızlı bak: bu nesneyi daha büyük görün
+blender-live-quick-look-drag = Çevirmek için çek, tekrar yüzüne bakmak için çift tıkla.
+blender-live-quick-look-bend = Avatar sekmesi gibi eğilmiş: dirsekler { $elbows }°, dizleri { $knees }°.
+blender-live-undo = Geri Al
+blender-live-undo-drop = { $name }'ü yere bıraktım.
+blender-live-undo-attach = { $name } nesnesi { $point } noktasına taşındı
+parcel-environment-apply-save = Bu paket için sadece kendime başvuruyorum.
+parcel-environment-save = Bu ortamı bu paket için sakla. Ne zaman buraya gelsen geri gelir.
+parcel-environment-forget = Bu paket için kaydedilen ortamı unut
+parcel-environment-not-saved = Bu paket henüz bilinmiyordu, bu yüzden çevresi kaydedilmedi. Bir an sonra tekrar deneyin.
+parcel-environment-left = Paketi çevresi kurtarılmadan bıraktınız, bu yüzden de kurtarılamadı.
+parcel-environment-title = Paketler için kaydedilen ortamlar
+parcel-environment-help = Bir paket için kendi çevreniz: orada dururken yerel çevrenin yerine geçer, ve ayrıldığınızda önceden sahip olduğunuz geri gelir. Sadece siz görürsünüz. Çevre penceresinden veya envanterinizdeki bir çevre öğesi menüsinden biri kaydedin.
+parcel-environment-empty = Çevre kaydedilmedi
+parcel-environment-remove-all = Hepsini sil
+parcel-environment-remove-all-title = Paket için kaydedilen her ortamı silmek ister misiniz?
+parcel-environment-remove-all-text = Bu griddeki parseller için kaydettiğiniz ortamlar kaldırılır. Diğer gridlerdeki ortamlar korunur. Bu işlem geri alınamaz.
+
+### Updated release translations
+
+anim-edit-shortcut-play = Oynat veya durdur
+area-search-scope-heading = Nerede
+area-search-scope-parcel = Parsel
+area-search-scope-region = Bölge
+area-search-scope-neighbours = Komşular.
+area-search-objects-heading = Hangi nesneler
+inventory-copy-selection-count =
+    { $count ->
+        [one] 1 nesneyi kopyala
+       *[other] { $count } maddeyi kopyala
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Bağlantı
+       *[other] Link { $count } madde
+    }
+inventory-drop-move-here = Buraya gel.
+inventory-drop-copy-here = Buraya kopyala.
+inventory-drop-link-here = Burada bağlantılar oluştur
+inventory-sort-description = Açıklama
+inventory-sort-reversed = { $order } (ters)
+inventory-column-creator = Oluşturan
+inventory-column-count = Elementler
+inventory-columns-fit = Tüm sütunların boyutlarını uyumlu hale getir
+inventory-columns-reset-widths = Sütunun genişliğini geri ayarla
+inventory-back = Geri
+inventory-forward = İleri
+inventory-up = Bir seviye yukarı
+keybinds-inventory-root = Tepeye git
+keybinds-inventory-search = Envanteri ara
+keybinds-inventory-filter = Dizin filtresi
+keybinds-inventory-preview = Önizleme panelini göster
+keybinds-inventory-view-large = Büyük resimler
+keybinds-inventory-view-medium = Orta büyüklükteki resimler
+keybinds-inventory-view-small = Küçük resimler
+keybinds-inventory-view-compact = Kompakt görünüm
+keybinds-inventory-view-details = Ayrıntılar görüntüsü
+keybinds-inventory-view-tiles = Taş görünümü
+keybinds-inventory-toggle = Odaklanan satırı seç veya seçme işlemini kaldır
+keybinds-inventory-menu = Seçim menüsünü aç
+keybinds-inventory-purge = Çöpten temizle
+keybinds-inventory-refused = { $keys } envanter listesinin kendi anahtarı olarak kalır: başkasını seçin.
+inventory-path-edit = Bir yol yazın
+inventory-path-subfolders = Alt Dizinler
+inventory-copy-path = Yolu kopyala
+inventory-show-in-folder = Klasörde göster
+inventory-pin = Hızlı erişime yapıştır
+inventory-unpin = Hızlı Erişim'den Çıkar
+inventory-quick-access = Hızlı erişim
+inventory-quick-access-drop = Bir dizini sabitlemek için buraya bırak
+inventory-invert-selection = Seçimi ters çevir
+inventory-undo = Geri Al
+inventory-redo = Yeniden Yap
+inventory-undo-step = Geri Al { $what }
+inventory-redo-step = Tekrarla { $what }
+inventory-history-move =
+    { $count ->
+        [one] 1 parça hareketi
+       *[other] { $count } öğenin hareketi
+    }
+inventory-history-delete =
+    { $count ->
+        [one] % 1' den % 2' ye
+       *[other] { $count } öğeden %s'yi sil
+    }
+inventory-history-rename = yeniden adlandır
+inventory-history-new-folder = yeni dizin
+inventory-history-copy =
+    { $count ->
+        [one] 1 maddenin kopyası
+       *[other] { $count } maddenin kopyaları
+    }
+inventory-history-link =
+    { $count ->
+        [one] 1 maddeye bağlantı
+       *[other] { $count } maddeye bağlantılar
+    }
+inventory-undo-nothing = Geri alınması gereken hiçbir şey kalmadı: bu öğeler hareket etti veya kayboldu.
+inventory-redo-nothing = Yeniden yapılacak hiçbir şey kalmadı: bu parçalar ya taşındı ya da yok oldu.
+inventory-undo-empty = Geri alacak bir şey yok.
+inventory-redo-empty = Yeniden yapacak bir şey yok.
+inventory-undo-dropped = Son adımdaki öğeler hareket etti veya kayboldu: bırakıldı. Önceki adım için tekrar geri al.
+inventory-redo-dropped = Bir sonraki adımdaki öğeler hareket etti ya da kayboldu: bırakıldı. Sonraki adımda tekrarla.
+inventory-undo-folder-not-empty = Bu yeni dizin, oraya koyduğunuz şeyleri içerir: önce onları dışarı taşıyın ya da dizini kendiniz siliniz.
+inventory-undo-kept-out = Bu eşyalar şu anda mevcut kıyafet ya da Marketplace listelerinde bulunuyor. Onları orada değiştirin.
+inventory-restore-to = "{ $folder }" e geri dön
+inventory-restore-to-origins = Dizinlerine geri dön
+inventory-purge-no-undo = Geri alma onları geri getiremez.
+inventory-new-tab = Yeni sekme
+inventory-close-tab = Sekmeyi Kapat
+inventory-next-tab = Sonraki sekme
+inventory-previous-tab = Önceki sekme
+inventory-open-in-new-tab = Yeni sekmede aç
+inventory-tabs-limit = En fazla { $count } tab.
+inventory-copy-to-other-pane = Diğer panele kopyala
+inventory-move-to-other-pane = Diğer panele taşı
+inventory-resize-columns = Sütunun boyutunu değiştirmek için çekin. Soldaki sütun içeriğine uygun hale getirmek için çift tıklayın.
+inventory-resize-columns-first = Sütunların boyutlarını değiştirmek için çekin. İlk sütuna normal genişliğini vermek için çift tıklayın.
+inventory-sort-by-column = Bu sütunla sıralamak için tıklayın, sırayı tersine çevirmek için tekrar tıklayınız. Sütunu hareket ettirmek için çekin.
+inventory-filter-hint = Bu dizini filtreleme...
+inventory-filter-close = Filtreyi kapat (Esc)
+inventory-filter-nothing = Burada filtreye uyan hiçbir şey yok.
+inventory-view-compact = Kompakt görünüm
+inventory-view-tiles = Taş görünümü
+inventory-view-per-folder = Her bir dizin görüntüsünü hatırla
+inventory-group-by = Grupla
+inventory-group-none = Hiçbiri
+inventory-group-folders = Klasörler
+inventory-group-unknown-creator = Yaratıcı henüz bilinmiyor
+inventory-group-today = Bugün
+inventory-group-yesterday = Dün
+inventory-group-this-week = Son 7 günde
+inventory-group-this-month = Son 30 günde
+inventory-group-this-year = Bu yılın başlarında
+inventory-group-earlier = Uzun zaman önce.
+inventory-group-no-date = Tarih yok
+cmdline-mod-zoffset-usage = Avatarınızın geçiş yüksekliğini ayarlayınız (kullanımı: /zoffset değeri veya +delta).
+dev-toolbox-n4 = Envanter yükleniyor
+dev-toolbox-what-n4 = Dizinler okundu, başarısız oldu ve bırakıldı, yükleyici uçuşta okudu ve tekrar denedi; isim yok
+ui-context-inspect-avatar = Avatar'ı incele
+inspect-window = İncele
+inspect-tab-objects = Nesneler
+inspect-objects-title =
+    { $count ->
+        [one] { $count } cisim
+       *[other] { $count } nesne
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } madde
+       *[other] { $count } madde
+    }
+inspect-open-profile = Profili Aç
+inspect-over-limit = Limitin üstünde.
+inspect-limit-tip = Karmaşıklık limitiniz: { $limit }
+inspect-search = Araç veya yaratıcıları ara
+inspect-outlined = { $name } dünyanın her yerinde var.
+inspect-area-head = Baş
+inspect-area-body = Vücut
+inspect-area-arms = Kol ve eller.
+inspect-area-legs = Bacaklar ve ayaklar
+inspect-area-hud = HUD
+inspect-area-other = Diğer
+inspect-area-world = Nesneler
+inspect-own-eyes = Sistem gözleri
+inspect-own-body = Sistem bedeni
+inspect-own-description = Avatar'ın kendisi, bir bağlantı değil
+inspect-own-maker = Avatar · Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = { $value } karmaşıklığı
+inspect-no-match = "{ $query }" ile eşleşen bir şey yok.
+inspect-spoken-worn = Nesne: { $name }Bağlantı noktası: { $point }Karmaşıklık: { $complexity }Yaratıcı: { $creator }.
+inspect-spoken-object = Nesne: { $name }Sahibi: { $owner }Karmaşıklık: { $complexity }Yaratıcı: { $creator }.
+inspect-look-at-tip = Kamerayı ona doğru çek.
+inspect-profile-tip = Yazarın profilini aç
+inspect-made-by = Yapımcı
+inspect-owned-by = Sahibi
+inspect-worn-on = Giyildiği yer
+inspect-prims-count =
+    { $count ->
+        [one] { $count } ilk
+       *[other] { $count } asal sayı
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Doku belleği
+inspect-tile-vram = VRAM
+inspect-tile-prims = Primler
+board-close = Kapat { $title }
+board-grow = Büyüt { $title }
+board-remove = { $name }'ü kaldır.
+board-more = ve { $count } daha fazlası.
+board-more-short = +{ $count }
+board-some-of = { $shown } ya da { $all }
+board-of-all = ya da { $all }
+stage-turn-left = Sola dön
+stage-turn-right = Sağa dön
+stage-higher = Daha yukarıdan bak.
+stage-lower = Aşağıdan bak.
+stage-nearer = Yaklaş
+stage-further = Daha uzakta
+stage-reset = Başa dön
+stage-hint = Dönmek için çek, hareket etmek için sağa çek
+stage-light = Aydınlık arkaplan
+stage-dark = Koyu arkaplan
+stage-playing = AO
+stage-paused = Duraklatıldı
+stage-pause-tip = Animasyonlarını durdur
+stage-play-tip = Animasyonlarını oynat
+stage-loading = 3D görüntü hazırlanıyor...
+stage-nothing = Henüz 3D'de gösterilecek bir şey yok.
+stage-refused = 3D görüntü kapalı iken RLVa ne görebileceğinizi sınırlıyor.
+inspect-your-limit = Limitiniz: { $limit }
+inspect-without-it = { $value } o olmadan
+inspect-you = Siz
+inspect-person = Kişi
+inspect-difference = Fark
+inspect-drawn-in-full = Tam olarak çekildi.
+inspect-nobody = Kimsenin karmaşıklığı henüz bilinmiyor.
+inspect-aside-count = { $count }'ü bir kenara bırak.
+inspect-is-aside = Bir kenara bırak.
+inspect-set-aside = Bir kenara koy.
+inspect-set-aside-tip = Bu madde olmadan karmaşıklığı göremezsin. Sadece bu pencerede: Dünyada hiçbir şey değişmez.
+inspect-put-back = Geri koy.
+inspect-put-back-tip = Bu nesneyi tekrar say
+inspect-complexity-spoken = Karmaşıklık { $value }, numara { $rank } ya da { $count } Buradaki insanlar
+inspect-stage-outfit = Elbise.
+inspect-stage-objects = Nesneler
+inspect-stage-back = Her şeye geri dön.
+inspect-place-made-by = { $place } Yapımcı: { $name }
+inspect-owned-by-name = Sahibi { $name }.
+inspect-tile-items = Elementler
+inspect-tile-figures = Sayılar
+inspect-col-item = Ad
+inspect-point = Nokta
+inspect-look-at = Bak
+inspect-selected-count = { $count } seçildi
+inspect-worn-count = { $count } kullanılmış
+inspect-creators-word = yaratıcılar
+inspect-areas-word = vücut alanları
+inspect-owners-word = sahipleri
+inspect-triangles-word = üçgen
+inspect-made-of = { $count } ya da { $all } maddeler
+inspect-kilobytes = { $n } KB
+inspect-linkset-order = { $count }, soldaset order
+inspect-reset-columns = Sütunları sıfırla
+inspect-by-creators =
+    { $count ->
+        [one] { $items } bir yaratıcı tarafından
+       *[other] { $items } tarafından { $count } yaratıcılar
+    }
+inspect-owner-button = Özel profil
+inspect-group-button = Grup profili
+inspect-creator-button = Yazarın profili
+inspect-land-others = Diğerleri { $n }
+inspect-land-these = Bu { $n }.
+inspect-land-free = Bedava { $n }
+inspect-land-unknown = Paketin odası, nesnelerin hepsi sizin üzerinde olduğunuz pakette olduğu zaman gösterir.
+ui-login-unencrypted = Şifrelenmemiş giriş
+ui-login-unencrypted-body = { $server } giriş adresi https:// yerine http:// ile başlıyor, bu yüzden giriş şifrelenmeyecek. Halka açık Wi-Fi'de, paylaşılan ağda veya gride giden yolda trafiği görebilen biri parolanızı okuyup hesabınızı kullanabilir. Henüz hiçbir şey gönderilmedi. Gridden https:// giriş adresi isteyebilirsiniz. Seçim bu sunucu için hatırlanır.
+ui-login-unencrypted-accept = Şifreleme olmadan giriş yap
+world-appearance-clothing-layers-full = Tüm 60 kıyafet katmanı kullanılıyor. Bu parçayı giymeden önce bir katmanı çıkarın.
+ui-options-ray-tracing = Ray Tracing ile grafik gösterme
+ui-options-ray-traced-shadows = Ray- traced güneş gölgeleri
+ui-options-ray-traced-shadows-help = Güneş ve Ay' ın gölgeleri gölge haritalarından okumak yerine ışık ışığı olarak izleniyor: her şeyin nerede dokunduğunu ve herhangi bir mesafede tam olarak. Gölgelere ve ışın izleme özelliğine sahip grafik kartına ihtiyaç duyuluyor, grafik kartının maliyeti daha fazla
+ui-options-ray-traced-lights = Yerel ışık gölgeleri
+ui-options-ray-traced-lights-help = Etrafındaki nokta ışıklarından (lampalar, mumlardan) gelen gölgeler, başka bir şekilde hiçbir şey bırakmazlar ve Projeksiyon Gölgeleri ayarlandığında projeksiyonlardan gelen gölgeler, gölge haritalarının yerine. Ray Tracing seçeneklerinin en pahalı olanı: entegre grafiklerde en iyi bırakılır
+ui-options-rt-quality = Ray Tracing kalitesi
+ui-options-rt-quality-help = Her izlenmiş efekt açık kalır: daha düşük seviyeler daha az örnek ve dolaylı ışığı daha kalın bir gride izler, küçük grafik kartında saniyede daha fazla kare için. Yüksek Deluxe (RT)'nin tam görüntüsüdür. Bir seviye seçmek gölgeleri yayan ışıkları da belirler
+ui-options-rt-sun-softness = Güneş gölgesinin yumuşaklığı
+ui-options-rt-sun-softness-help = Güneş' in izlediği gölgelerin kenarlarının ne kadar yumuşak olduğu: 1 gerçek güneş, 0 keskin kenar, daha bulutlu bir güneşe göre daha fazla
+ui-options-rt-lamp-softness = Yerel ışık gölge yumuşaklığı
+ui-options-rt-lamp-softness-help = Lambaların izlediği gölgelerin kenarlarının ne kadar yumuşak olduğu: 1 her lambanın büyüklüğünü takip eder, 0 keskin kenarları
+ui-options-rt-shadow-lamps = Gölgeler atan ışıklar
+ui-options-rt-shadow-lamps-help = En yakın ışıkların kaç tanesi gölge bırakıyor; diğerleri hala aydınlık, gölge yok. Daha az grafik kartına daha az maliyet yapar
+ui-options-ray-traced-indirect = Ray-traced dolaylı ışık
+ui-options-ray-traced-indirect-help = Etrafındaki yüzeyler tarafından yansıyan ışık, ekranın gösterdiği şeyin ötesinde izleniyor, GTAO'nun dolaylı ışığı yerine.
+ui-options-gi-probes = Küresel aydınlatma sondaları
+ui-options-gi-probes-help = Birçok ışığı ve gökyüzünü izleyen sondalar sahne boyunca yayılmıştır. Kapalı odalar karanlıkta kalır, ışık köşelerde döner. Grafik kartında yaklaşık 0.8 ms.
+ui-options-ray-traced-reflections = Ray- traced yansımalar
+ui-options-ray-traced-reflections-help = Ekranın göstermediği şeylerin yansımaları, ekran-uzay yansımalarının yerine, bu yansımalar açık olmalı
+ui-options-ray-tracing-unsupported = Bu grafik kartı veya sürücüsü ray tracing'e sahip değil
+ui-options-ray-tracing-vr = VR için başlatılan bir oturumda kullanılamaz
+ui-options-tab-ray-tracing = Ray Tracing ayarları
+ui-options-deluxe-rt-warning-title = Deluxe'ı (RT) etkinleştirmek ister misiniz?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) grafik kartı tarafından takip edilen gölgeler ve dolaylı ışık ile Yüksektir. Bu, donanım ray izleme kartına (NVIDIA RTX, AMD Radeon RX 6000 veya daha sonraki, Intel Arc) ve güncel sürücüye ihtiyaç duyar ve Yükseğe göre çok daha pahalıdır: orta sınıf bir kartta çekim hızı yoğun yerlerde çok düşebilir. Ray izleme hala test ediliyor: eğer resim yanlış görünüyorsa ya da görüntüleyici yavaşlıyorsa, Yüksele dönün. Ray izleme sekmesi ayarlarını tutar.
+ui-options-deluxe-rt-warning-turn-on = Aç.
+ui-options-ray-tracing-needs-shadows = Gölgelere ihtiyacı var.
+ui-options-ray-tracing-needs-ssr = Ekran-uzay yansımalarına ihtiyacı var.
+ui-options-preset-deluxe = Deluxe (RT)
+ui-options-normal-precision = Yansıma doğruluğu
+ui-options-normal-precision-help = Yansımalar için her yüzeyin yönünün ne kadar hassas tutulduğunu belirtir. Standart, araba boyaları gibi düz, eğri yüzeylerde yansımalarda adım gösterebilir; Yüksek onları kaldırır ve daha fazla video belleği kullanır. Otomatik, adımların en çok görüldüğü ışık izli yansımalarla Yükseği kullanır, aksi takdirde Standart
+ui-options-normal-precision-automatic = Otomatik
+ui-options-normal-precision-standard = Standart
+ui-options-normal-precision-high = Yüksek
+ui-options-private-point-at-help = Düzenlediğiniz nesneyi gizle, düzenleme kolunu aşağıda tut ve düzenleme çubuğunu gizle.
+common-window-outside = Gösterici penceresinin dışına taşı
+common-window-inside = Gösterici penceresine geri getir
+common-window-rename-name = Adı değiştirmek için çift tıkla
+common-carry-hint = Buraya bırakmak için tıkla, bırakmak üzere Esc tuşuna basın
+common-window-paused-photo = Fotoğraf modu açıkken durduruldu
+common-window-paused-director = Yönetmen çalarken durduruldu
+common-window-paused-interface = Arayüz kapalı iken durduruldu
+ui-options-warn-live-preview = Bir doku ya da malzeme önizlenemediği zaman uyar
+ui-options-warn-live-preview-help = İnşa penceresinin seçicisinde, kopyalamayan bir öğeye tıklayarak OK: say so'ya kadar hiçbir şey uygulanmaz.
+ui-texture-picker-live-preview-texture = Bu dokusunun önizlemesini gösteremeyiz çünkü kopyalanmamış.
+ui-texture-picker-live-preview-material = Bu materyalin önizlemesini gösteremeyiz çünkü kopyalanmamış.
+fetch-invalid-url = Geçersiz URL
+ui-chat-close-all-ims = Tüm IM konuşmayı kapat
+ui-chat-close-all-ims-question = Tüm IM konuşmaları kapatıp aktif çağrıyı sonlandır?
+ui-chat-confirm-close-all-ims = Tüm IM konuşmayı kapatmadan önce doğrula
+ui-chat-confirm-close-all-ims-help = Birisi aktif bir sesli çağrı yaptığında tüm IM konuşmaları kapatmadan önce sor.
+ui-options-aurora-controls-compact-help = Kontroller penceresi kamerada kompakt olarak açılır: joystickleri, zoom ve dönme. Başlık çubuğu düğmesi kompakt ve tam arasında geçiş yapar ve bunu da ayarlar. Klasik pencerelerde kamera yerine Legacy Viewer'ın küçük kamera penceresinde açılır.
+rlva-restart-hint = RLVa giriş yaptığınızda başlar. Bir kez çalıştığında, açma veya kapatma işlemi görüntüleyicinin bir sonraki başlatılmasında etkin olur: kısıtlama nesneleri o zamana kadar tutulur.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa yeniden başlattıktan sonra etkinleştirilecek.
+rlva-toggle-disabled-restart = Yeniden başlattıktan sonra RLVa etkisiz hale gelecek.
+livemesh-import-connect = İthalat LOD'larını hazırlamak için Blender'ı 0.11.0 veya daha sonraki bir eklenti ile, ya da Maya'yı 02.0 ya da daha yeni bir eklendiyle bağlayın.
+livemesh-import-preparing = Nesne ve LOD'ları Blender veya Maya'da hazırlanıyor...
+livemesh-import-ready = LOD'ları aldık, ithalatçı hazır.
+livemesh-import-failed = İthalat hazırlığı başarısız oldu: { $error }
+livemesh-import-timeout = Blender veya Maya, ithalat hazırlığını tamamlamadı. Bağlantıyı kontrol edin (Blender'da Nesne Modu kullanın) ve tekrar deneyin.
+livemesh-shape-apply-tooltip = Değiştirme haklarını işaretleyin, sonra Blender veya Maya'da seçilen iskeleti ve bağlantılı ağlarını (MayaStar rig için MayaStar aracılığıyla) uyarlayın. Yerel Second Life uyumlu bir iskeleti seçin.
+livemesh-shape-update-apply = Blender eklentisini 0.10.0 veya daha sonraya, ya da Maya eklentisi 0,4.0 ya da daha sonrasına güncelleyin ve ardından tekrar bağlantın.
+livemesh-shape-applied = Seçilen iskelete şekil uygulandı.
+livemesh-shape-tooltip = Kullanılmış biçimin Değiştirme haklarını kontrol edin ve Blender veya Maya'da yeni bir düzensiz referans bedeni oluşturun.
+livemesh-shape-connect = Önce Blender veya Maya'da Aurora eklentisini bağlayın.
+livemesh-shape-update-plugin = Blender eklentisini 0.9.0 veya daha sonraya, ya da Maya eklentisi 03.0 ya da daha sonrasına güncelleyin ve ardından tekrar bağlantın.
+livemesh-shape-timeout = Blender veya Maya ithalat doğrulamadı. Tekrar deneyin (Blender'da Nesne Modu'na geçin).
+livemesh-shape-success = Şekil, yeni bir düzensiz referans vücut olarak ithal edildi.
+blender-live-maya-version = Aurora Maya için LiveMesh { $version }
+blender-live-maya-instructions = ZIP dosyasını kaydedin ve çıkarın, sonra install.mel'i Maya görüntü penceresine çekin. Aurora rafından LiveMesh'i açın, ağlarınızı ekleyin ve Bağlan butonuna basın.
+blender-live-save-maya = Maya eklentisini kaydet...
+blender-live-maya-saved = Eklenti kaydedildi. ZIP dosyasını çıkarın ve install.mel'i Maya görüntü penceresine çekin.
+livemesh-plugin-connected = Eklenti bağlandı
+livemesh-token-refused = Bir program bu önizleme anahtarı olmadan bağlanmaya çalıştı. Sadece Blender veya Maya'daki Aurora eklentisi bağlanabilir.
+livemesh-waiting-plugin = Blender veya Maya'yı bekliyorum...
+blender-live-objects-help = Blender veya Maya'nın gönderdiği ağlar. Birini yerleştirmek için seçin, ya da menüden ithal edin.
+blender-live-size-note = Boyut, plug-in'in ne gönderdiğini çarpar, böylece Blender veya Maya'daki daha sonraki düzenlemeler onu tutar.
+blender-live-avatar-help = Rigged ağlar için: şekilinizi Blender veya Maya'ya modellemek için gönderin.
+livemesh-shape-section = Blender ya da Maya'daki şekliniz
+blender-live-import-help = Normal ithalat için nesnenin bir snapshot'unu dondurur: inceleme, fiyat, sonra onay. Blender veya Maya'da daha sonraki düzenlemeler bunu değiştirmez.
+blender-live-changed-tip = Blender veya Maya'nın bu nesneyi son değiştirmesinden beri geçen zaman
+fit-lab-section = Elbise takma laboratuvarı
+fit-lab-help = Giydiğin kıyafetlerle giyinen, her biri başka bir bedene sahip olan manekenler, elbisenin nasıl farklı şekillere uyum sağladığını göstermek için önünde duruyorlar. Sadece sen onları görüyorsun: Hiçbir şey gönderilmiyor ya da saklanmıyor.
+fit-lab-body-me = Ben
+fit-lab-body-slim = Sağlam vücut şekli
+fit-lab-body-curvy = Eğri.
+fit-lab-body-full = Tam sayı.
+fit-lab-body-athletic = Atletizm
+fit-lab-body-tall = Uzun
+fit-lab-body-petite = Küçük
+fit-lab-motion = Hareket
+fit-lab-motion-stand = Ayağa kalk
+fit-lab-motion-walk = Yürü
+fit-lab-motion-sit = Otur
+fit-lab-motion-range = Hareket alanı
+fit-lab-pose = Poz
+fit-lab-pose-all = Herkes sırayla.
+fit-lab-pose-arms-up = Kollarını kaldır.
+fit-lab-pose-reach = Öne doğru uzan.
+fit-lab-pose-hug = Kolları çarpıştır.
+fit-lab-pose-squat = Çeneni kaldır.
+fit-lab-pose-kneel = Diz çök!
+fit-lab-pose-knee-up = Dizlerini kaldır.
+fit-lab-pose-twist = Bük
+fit-lab-pose-bend = Öne doğru eğil.
+fit-lab-motion-like-me = Benim gibi.
+fit-lab-show = Mankenleri göster.
+fit-lab-place = Onları buraya getirin.
+fit-lab-remove = Mankenleri çıkarın.
+fit-lab-choose = En azından bir ceset seç.
+fit-lab-clip = Cesedin nereden geldiğini göster.
+fit-lab-clip-note = Kırmızı: beden giysiden dışarı çıkıyor. Amber: beden ve giysi birbirleriyle buluşuyor. Avatarınızda ve kameradan görülen mannequin' lerde. Giydiğiniz diğer her şey vücut olarak sayılır: ceket veya giysi üzerinde giyilen saç çıkarın.
+blender-live-levels-pending = Blender veya Maya, İhraç'a tıkladığınızda detay seviyelerini hazırlar.
+blender-live-levels-note = Her nesnenin LiveMesh ayarlarından Blender veya Maya'da hazırlanmıştır.
+blender-live-quick-look-changed = Blender veya Maya'da { $ago } yıl önce değiştirildi.
+blender-live-warning-textures = Dokumalar atlandı, sıradan renk gösterildi
+blender-live-warning-not-sent = Önizlemede değil
+blender-live-undo-derez = Derezzed { $name } · hala eklenti listesinde
+blender-live-undo-detach = Detached { $name } · hala eklenti listesinde
+inventory-open-current = Aç
+inventory-folder-back = Geri
+inventory-folder-forward = İleri
+inventory-folder-up = Bir seviyeye yüksel
+area-search-metres = { $n } m
+area-search-band-reach = Ulaşılabilir.
+area-search-band-close = Yakında.
+area-search-band-around = Etrafında
+area-search-band-further = Daha fazla
+area-search-band-far = Uzak
+area-search-band = Alan
+area-search-within = { $distance }'ün içinde.
+area-search-within-across = { $distance }'ün içinde.
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Her mesafeyi göster
+area-search-from = Uzaklık
+area-search-to = Uzaklık
+area-search-bar-tip =
+    { $count ->
+        [one] Bir nesne, { $from } iki { $to }
+       *[other] { $count } Nesneler, { $from } iki { $to }
+    }
+area-search-of-objects = { $total } nesneden
+area-search-li = { $value } LI
+area-search-li-count = { $value } kara çarpması.
+area-search-owner-count =
+    { $count ->
+        [one] tek sahibi
+       *[other] { $count } sahipleri
+    }
+area-search-object-count =
+    { $count ->
+        [one] bir nesne
+       *[other] { $count } nesne
+    }
+area-search-objects-word = nesne
+area-search-in-reach = İşte.
+area-search-tab-objects = Nesneler
+area-search-tab-owners = Sahipler
+area-search-hint-wide = Nesneler, sahipleri, yaratıcıları veya UUID'leri
+area-search-kind-heading = Nesne türü
+area-search-kind-tip = Tıkla: sadece bunlar. Tekrar: gizli.
+area-search-kind-any = herhangi biri
+area-search-kind-only = Sadece bunlar.
+area-search-kind-hidden = Gizli
+area-search-kind-attached = Bitişik
+area-search-kind-probes = Denemeler
+area-search-click-all = Tümü
+area-search-click-any-short = Herhangi biri
+area-search-permissions = İzinler
+area-search-price-heading = Satış fiyatı, satılan nesneler için
+area-search-price-to = iki
+area-search-price-tip = Önce "Satış için"i seçin
+area-search-linked = Bağlantılı birinciler
+area-search-one-field = Tek bir alanda ara
+area-search-regex-switch = Düzenli ifadeler
+area-search-regex-invalid = Geçerli düzenli ifade değil
+area-search-reset-filters-tip = Tüm filtreleri geri yükle; arama metni kalacaktır
+area-search-save-defaults-tip = Şimdiden bu filtrelerle aç
+area-search-reset-search = Arama metinlerini geri yükle
+area-search-reset-filters = Filtre seçeneklerini geri yükle
+area-search-reset-ranges = Mesafe ve fiyatı geri yükle
+area-search-reset-all = Her şeyi geri yükle
+area-search-more = Daha fazla
+area-search-several = Birden Fazla Seç
+area-search-several-tip = Tıklamalar seçime eklenir (Ctrl veya Shift + tıklama da, Ctrl+A)
+area-search-actions = Etkinlikler
+area-search-nothing = Henüz nesne alınmadı.
+area-search-nothing-for-sale = Burada satılık bir şey yok.
+area-search-not-for-sale = Satılık değil
+area-search-from-price = { $price }'den
+area-search-nearest = En yakın ilk
+area-search-heaviest = En ağır önce
+area-search-order-tip = Sırayı değiştir: önce en yakın ya da en ağır
+area-search-rank = #{ $rank } ya da { $all }
+area-search-rank-here = #{ $rank } burada
+area-search-card-more = Tüm resimleri göster
+area-search-card-less = Daha az göster
+area-search-open-group = Grubu aç
+area-search-spoken = { $name }, { $distance }, toprak çarpması { $li }, sahibi { $owner }
+area-search-owner-spoken = { $name }, { $count } Nesneler, toprak çarpması { $li }
+area-search-stage-line = { $distance } uzakta · { $li } Toprak etkisi · { $owner }
+area-search-tile-3d = 3D görüntüsü
+area-search-on = { $count }'de.
+area-search-on-word = Aç
+area-search-more-on =
+    { $count ->
+        [one] Bir filtre daha
+       *[other] { $count } daha fazla filtre
+    }
+ui-options-legacy-lists = Eski Görüntüleyici' den listeleri ithal et
+ui-options-legacy-lists-help = Bu hesabın teleport geçmişini, varlık kara listesini, medya filtre listesini ve kişi setlerini ekler. Legacy Viewer'ın dosyaları sadece okunur.
+ui-options-legacy-lists-button = Legacy Viewer'dan İçeri Aktar…
+ui-options-legacy-lists-no-account = Bu hesabın listelerini ihraç etmek için giriş yapın.
+ui-options-legacy-lists-title = Geleneksel Görüntüleyiciden İhraç Et
+ui-options-legacy-lists-text = Her şey bu hesabın listelerine ekleniyor ve burada hiçbir şey kaldırılmıyor. Kara listedeki varlıkların adları dünyayı bir anda terk ediyor. Yeniden ithalat, burada kaldırdığınız şeyleri geri getiriyor.
+ui-options-legacy-lists-searching = Legacy Viewer'ın dizinleri aranıyor...
+ui-options-legacy-lists-none = Bu hesap için listeli Legacy Viewer dizini bulunamamıştır.
+ui-options-legacy-lists-teleports = Teleport tarihi ({ $count })
+ui-options-legacy-lists-derender = Varlık kara listesi ({ $count })
+ui-options-legacy-lists-media = Medya filtre listesi ({ $count })
+ui-options-legacy-lists-contact-set-entries = İlişki set girişleri ({ $count })
+ui-options-legacy-lists-confirm = İçeri Aktar
+ui-options-legacy-lists-added = Girişler eklendi veya güncellendi. Teleport tarihi: { $teleports }Gizli nesneler: { $derender }. Medya filtresi: { $media }Bağlantı grupları: { $sets }.
+ui-options-legacy-lists-nothing = Yeni bir şey yok: bu hesapta listeler zaten var.
+ui-options-legacy-lists-failed = Okunamadı: { $files }.
+ui-options-legacy-lists-unsaved = Kaydedilemedi, olduğu gibi bırakıldı: { $files }.
+ui-options-legacy-lists-other-grid = Bu ağ üzerinde aynı isimli bir dizin başka bir ağ' a ait olabilir: doğru olanını kontrol edin.
+ui-options-build-show-beams-hint = Düzenleme, yakalama veya verme sırasında seçme ışınlarınızı ve diğer avatarlarınkileri göster. Bu sadece görüntüyü kontrol eder; düzenleme ışığını yerel olarak ve ağ üzerinden durdurmak için Mahremiyet > Düzenleyici ışığı Gizle'yi kullanın.
+teleport-failed-title = Teleport başarısız oldu.
+teleport-error-invalid-tport = Teleport girişimleri dakikada 6 ile sınırlıdır. Eğer sorun yaşıyorsanız, bir dakika bekleyin ve teleport etmeyi tekrar deneyin. Sorun devam ederse, çıkıp yeniden giriş yapın.
+teleport-error-invalid-region-handoff = Bölge geçişi işleme sırasında bir sorun çıktı. Bölgeleri geçmeden önce tekrar giriş yapmanız gerekebilir. Bu mesaja devam ederseniz, lütfen destekle iletişime geçiniz.
+teleport-error-blocked-tport = Üzgünüm, teleport şu anda engellenmiştir. Bir dakika sonra tekrar deneyin. Eğer hala teleport yapamıyorsanız sorunu çözmek için lütfen çıkıp tekrar giriş yapın.
+teleport-error-nolandmark-tport = Üzgünüm, ama sistemin hedef noktayı tespit edemediği için.
+teleport-error-timeout-tport = Üzgünüm, sistem teleport bağlantısını tamamlayamadı. Lütfen kısa bir süre sonra tekrar deneyin.
+teleport-error-no-help-island = Welcome Adası'na geri teleport edemezsin.
+teleport-error-noaccess-tport = Üzgünüm, bu teleport hedefine erişiminiz yok.
+teleport-error-missing-attach-tport = Eklentileriniz henüz gelmedi. Birkaç saniye daha bekleyin ya da teleport yapmaya çalışmadan önce çıkıp tekrar giriş yapın.
+teleport-error-too-many-uploads-tport = Bu bölgedeki varlık kuyruğu şu anda tıkanmış durumda, bu yüzden teleport talepiniz zamanında başarılı olamayacaktır. Lütfen birkaç dakika sonra tekrar deneyin veya daha az meşgul bir alana gidin.
+teleport-error-expired-tport = Üzgünüz, ancak sistem teleport talepinizi zamanında tamamlayamadı. Lütfen birkaç dakika içinde tekrar deneyin.
+teleport-error-expired-region-handoff = Üzgünüz, ama sistem bölge geçişinizi zamanında tamamlayamadı. Lütfen birkaç dakika içinde tekrar deneyin.
+teleport-error-preexisting-tport = Üzgünüm, sistem teleportunuzu başlatamadı. Lütfen birkaç dakika sonra tekrar deneyin.
+teleport-error-no-host = Teleport hedefi bulunamadı. Hedef geçici olarak kullanılamaz ya da artık mevcut değildir. Lütfen birkaç dakika içinde tekrar deneyin.
+teleport-error-no-inventory-host = Envanter sistemi şu anda kullanılamıyor.
+teleport-error-must-get-age-region = Bu bölgeye girebilmek için 18 yaşını doldurmuş olmanız gerekiyor.
+teleport-error-special-usage-blocked = Bölgeye giremedim.{ $region }' bir beceri oyunları bölgesidir ve katılmak için belli kriterleri karşılamanız gerekir. Detaylar için lütfen beceri oyunu FAQ' larını inceleyin: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Bölgeye girilemedi. Bu bir beceri oyunları bölgesi ve girmeniz için belli kriterleri karşılamanız gerekiyor. Detaylar için lütfen beceri oyunu FAQ' larını inceleyin: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Ana ağınız geri dönüşünüzü reddetti. Bu genellikle Hypergrid adresinin diğer ağların kullandığı adreslerle uyumlu olmadığı anlamına gelir. Ana ağınızın operatörleriyle iletişime geçin; bu sırada tekrar giriş yapmanız sizi eve götürür.
+teleport-hint-hypergrid-unreachable = Diğer gride ulaşılamadı. Ya çevrimdışı olabilir ya da bağlantı eski bir adrese işaret edebilir.
+teleport-hint-hypergrid-visitors-refused = Bu ağ sadece bazı ağların sakinlerine izin veriyor.
+teleport-hint-hypergrid-destination-gone = Hedef bölge artık mevcut değildir veya taşınmıştır. Yerler ve diğer ağlara bağlantılar eskimiş olabilir.
+toolbar-edit = Düğmeleri ve menüleri özelleştir...
+toolbar-title = Düğmeler ve menüler
+toolbar-interface-locked = Arayüz kilitlendi
+toolbar-help = Düğmeleri veya menü girdilerini üst, alt veya yan çubuklara çekin. Bir düğmeyi kaldırmak için buraya bırakın. Görünümünü değiştirmek için herhangi bir düğmeye sağ tıklayın.
+toolbar-help-classic = Düğmeleri veya menü girdilerini üst, alt veya yan çubuklara çekin. Bir düğmeyi kaldırmak için buraya bırakın. Görünümünü değiştirmek için herhangi bir düğmeye sağ tıklayın.
+toolbar-help-modes = Her düğme için simgeler, etiketler, her ikisini de veya varsayılan çubuğu seçin. Aurora menüsünün içindeki girdileri yeniden düzenlemek için çekin.
+import-menu-textures = Dokular
+import-menu-animations = Animasyonlar
+import-menu-sounds = Sesler
+import-menu-materials = Malzemeler
+import-menu-meshes = Örgüler
+import-menu-options = İthalat seçenekleri
+import-upload-payment-title = Yükle
+import-upload-payment = L$ ödedin.{ $cost } yüklemek için.
+import-quick-textures =
+    { $count ->
+        [one] İçeri Aktar · Dokular: 1 · L${ $cost }?
+       *[other] İçeri Aktar · Dokular: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] İçeri Aktar · Malzemeler: 1 · L${ $cost }?
+       *[other] İçeri Aktar · Malzemeler: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] İçeri Aktar · Sesler: 1 · L${ $cost }?
+       *[other] İçeri Aktar · Sesler: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] İçe aktarma boyutunu seçin. Uygun dokular 2048 × 2048 boyutunda içe aktarılabilir:
+       *[other] ({ $count }) İçe aktarma boyutunu seçin. Uygun dokular 2048 × 2048 boyutunda içe aktarılabilir:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] İçe aktarma boyutunu seçin. Uygun malzeme görüntüleri 2048 × 2048 boyutunda içe aktarılabilir:
+       *[other] ({ $count }) İçe aktarma boyutunu seçin. Uygun malzeme görüntüleri 2048 × 2048 boyutunda içe aktarılabilir:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Ücretsiz görüntüleri sormadan 2048 × 2048 boyutunda yükle
+import-quick-free-full-size-help = "Import textures" ve "Imported materials" sonra yükleme L$ maliyeti olduğunda sadece 1024 veya 2048 sorar.
+ui-bars-customize-bars = Arayüzü özelleştir
+build-tool-in-use = Kullanıyor
+build-create-options-toggle = Opsiyonları göster / gizle
+build-create-keep-creating = Yaratmaya devam et.
+build-create-center-on-prim = Birincil üzerinde merkez
+build-create-copy-prim-rotation = Prim dönüşünü kopyala
+build-create-align-to-surface = Yüzeye Doğrula
+build-capture-shape-button = Bir prim şekli kopyala: buna tıkla, sonra dünyadaki bir prim
+build-capture-shape-armed = Şeklini kopyalamak için bir prim'e tıkla (Esc iptal eder)
+build-capture-shape-full = 20 şekil tutuldu. Bir başkasını kopyalamak için birini sil
+build-capture-shape-remove = Bu şekli sil
+build-capture-shape-tooltip = Kopyalanmış şekil ({ $kind })
+build-capture-shape-not-a-prim = Sadece bir prim'in şekli kopyalanabilir
+build-capture-shape-mesh-or-sculpt = Bir ağ ya da heykelcik şekli kopyalanamaz
+build-capture-shape-no-modify = Bu prim' i şekilini kopyalamak için değiştirmek için izine ihtiyacınız var
+import-other-options = Diğer seçenekler
+toolbar-button-icons = Sadece simgeler
+toolbar-button-text = Sadece etiket
+toolbar-button-icons-text = İkon ve etiket
+toolbar-icon-default = Varsayılan simgeyi geri yükle
+toolbar-icon-choose = Bir simge seç
+toolbar-icon-change = Simgeyi Değiştir
+toolbar-presets = Ön ayarlar
+toolbar-interfaces = Arayüzler
+toolbar-interfaces-shown = Arayüzler bloğunda gösterilir
+toolbar-interfaces-hidden = Arayüzler bloğundan gizlenmiş
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora OldSchool
+toolbar-preset-photographer = Aurora Fotoğrafçı
+toolbar-preset-legacy = Legacy
+toolbar-import-textures = Dokuları İhraç Et
+toolbar-import-sounds = Sesi İhraç Et
+toolbar-import-animations = Animasyonları İhraç Et
+toolbar-import-materials = Maddeleri İthalat Et
+toolbar-import-meshes = Ağı İhraç Et
+toolbar-import-local = Yerel dosyalar
+toolbar-import-advanced = Gelişmiş ithalat
+toolbar-import-settings = İçeri aktarma ayarları
+toolbar-import-bar = İthalat çubuğu
+toolbar-icon-search = Bir simge bul...
+toolbar-in-top = Üst araç çubuğunda
+toolbar-bar-top = Üst araç çubuğu
+toolbar-drop-here = Buraya bırakın
+toolbar-separator = Ayırıcı
+toolbar-interface-edit = Arayüzü özelleştir
+toolbar-edit-done = Bitti
+toolbar-edit-top = Üst
+toolbar-edit-bottom = Alt
+toolbar-edit-left = Sol
+toolbar-edit-right = Sağ
+toolbar-edit-help = Seçmek için bir nesneye tıklayın, taşımak için çekin veya düzenleme seçenekleri için sağ tıklayınız. Bitirmek için bu pencereyi kapatın.
+toolbar-edit-locked = Barlar kilitlenmiş. Arayüzü değiştirmek için alttakileri aç.
+toolbar-edit-move = Şuraya taşı
+toolbar-edit-split-before = Önce bölün
+toolbar-edit-split-after = Ardından bölün
+toolbar-edit-merge-before = Önceki blokla birleştir
+toolbar-edit-merge-after = Bir sonraki blokla birleştir
+toolbar-edit-merge-groups = Bu blokları birleştir
+toolbar-drawer = Sertifikalar
+toolbar-drawer-default-mode = Düğmelerin varsayılan görüntüsü
+toolbar-drawer-closes = Bir düğmeye tıklandıktan sonra kapa
+toolbar-block-shortcut = Kısayol:
+toolbar-drawer-hides-needs-shortcut = Kısayol gerektirir
+toolbar-floating-close-button = Kapat düğmesini ekle
+toolbar-block-name = Blok adı:
+toolbar-block-button-mode = Blok düğmesini göster
+toolbar-button-inherited = Kalıtsal
+toolbar-drawer-hides-button = Düğmeyi yüzerken gizle
+toolbar-floating-new = Yüzen blok
+toolbar-floating-orientation = Yönlendirme
+toolbar-floating-horizontal = Yatay
+toolbar-floating-vertical = Dikey
+toolbar-floating-empty = Düğmeleri buraya bırak.
+toolbar-shortcut-title = Kısayol
+toolbar-shortcut-block-name = Blok: { $name }
+toolbar-shortcut-none = Kısayol yok
+toolbar-shortcut-press-key = Bir tuşa basın
+toolbar-shortcut-esc = İptal etmek için Esc
+toolbar-shortcut-clear = Kaldır
+toolbar-shortcut-overrides = Takes over { $name }: bu kısayol, varsayılan kullanım yerine araç çubuğunu çalıştırıyor.
+toolbar-shortcut-used = { $names }'ün kısayolunu aldım bile.
+toolbar-shortcut-replace = Değiştir
+toolbar-shortcut-add = Ekle
+toolbar-shortcut-save = Kaydet
+toolbar-shortcut-choose-key = Bir anahtar seçin
+toolbar-shortcut-help = Ctrl, Alt ve Shift tuşlarını etkin veya devre dışı bırakın, sonra değiştirmek için tuşa tıklayın. F1'den F24'e kadarkiler hariç Ctrl veya Alt gereklidir.
+toolbar-shortcut-inactive = Bu düğme herhangi bir çubukta bulunmuyor: kısayolu tekrar konulduğunda çalışır.
+toolbar-shortcut-refused-keyboard = Sadece klavye tuşları kısayol olabilir.
+toolbar-shortcut-refused-modifier = Sadece bir değiştirici tuş kısayol olamaz.
+toolbar-shortcut-refused-needs-modifier = Ctrl veya Alt ekleyebilirsiniz: tek başına bir tuş, ya da sadece Shift ile, metin alanlarında yazın.
+toolbar-shortcut-refused-altgr = Bu tuşa sahip Ctrl+Alt, AltGr'dir ve birçok klavyede karakterleri yazıyor.
+toolbar-shortcut-refused-editing = Metin alanları bu kısayolu kullanır (herşeyi seç, kopyala, kes, yapıştır, geri al, tekrar et).
+toolbar-shortcut-refused-navigation = Metin alanları bu tuşla hareket ettirilerek silinir.
+toolbar-shortcut-refused-typing = Sohbet ve diyaloglar bu tuşu kullanır.
+toolbar-shortcut-refused-system = Sistem bu kısayolu saklıyor.
+toolbar-shortcut-refused-window = Bu kısayol pencereleri kapatır veya değiştirir.
+toolbar-shortcut-refused-zoom = Bu kısayol arayüzü büyütüyor.
+toolbar-spacer = Blok aralığı
+toolbar-add-spacer = Blok aralığı ekle
+toolbar-button-settings = Düğme ayarları
+toolbar-button-edit = Düzenle düğmesi...
+toolbar-button-edit-title = Düzenle düğmesi
+toolbar-button-name = Düğme adı:
+toolbar-button-display = Düğme göstergesi
+toolbar-shortcut-fixed-block-help = Bir sabit blok kısayolunu gösterir ve gizler; arayüz düzenlenirken, gösterilmeye devam eder.
+toolbar-block-settings = Blok ayarları
+toolbar-parent-block-settings = Ana blok ayarları
+toolbar-block-edit = Bloku Düzenle...
+toolbar-block-edit-title = Bloku Düzenle
+toolbar-block-alignment = Doğrulama
+toolbar-block-sizing = Düğme büyüklüğü
+toolbar-block-fixed-options = Sabit modu seçenekleri
+toolbar-block-floating-options = Yüzen modu seçenekleri
+toolbar-block-kind-fixed = Sabit blok
+toolbar-block-kind-drawer = Sertifikalar
+toolbar-block-kind-floating = Yüzen blok
+toolbar-block-remove = Bloku kaldır
+toolbar-move-block = Tüm bloku hareket ettirmek için çek
+toolbar-remove-block = Bloku kaldır
+toolbar-drawer-empty = Bu çekmece boş.
+toolbar-drawer-drop = Düğmeleri eklemek veya sıralarını değiştirmek için buraya çekin.
+toolbar-separator-settings = Blok boşluk ayarları
+toolbar-separator-size = Boyut / minimum (px)
+toolbar-separator-stretch = Varolan alanı doldur
+toolbar-separator-help = Esnek boşluklar blokların bıraktığı alanı paylaşırlar. Boyut, blokların minimum genişliği veya yan çubuğunda yüksekliğidir.
+toolbar-block-navigation = Navigasyon ve SLURL
+toolbar-block-account = Hesap ve denge
+toolbar-block-system = Saat, göstergeler ve ses
+toolbar-block-status = Ulaşılabilirlik durumu
+toolbar-block-balance = Bakiye
+toolbar-block-clock = Saat
+toolbar-block-ping = Bölge gecikmesi
+toolbar-block-fps = Çerçeve oranı (FPS)
+toolbar-block-network = Ağ trafiği
+toolbar-block-media = Parsel medyası
+toolbar-block-music = Parsel müziği
+toolbar-block-volume = Ses
+toolbar-block-notifications = Bildirimler
+toolbar-block-conversations = Konuşma simgeleri
+toolbar-block-chat = Yakındaki sohbet girişi
+toolbar-category-all = Tüm kategoriler
+toolbar-section-main = Ana
+toolbar-section-advanced = Gelişmiş
+toolbar-search-all = Arama gelişmiş komutları içerir.
+toolbar-category-avatar = Avatar ve hareket
+toolbar-category-communication = İletişim
+toolbar-category-world = Dünya ve seyahat
+toolbar-category-creation = Yaratma ve içerik
+toolbar-category-interface = Arayüz ve kamera
+toolbar-category-advanced = Gelişmiş Araçlar
+toolbar-category-help = Yardım
+toolbar-category-custom = Özel komutları
+toolbar-bar-settings = Araç çubuğu ayarları
+toolbar-menu-group = Menu: { $name }
+toolbar-location-bar = SLURL adres çubuğu
+toolbar-command-build-tool-focus = İnşa Et - Kamera
+toolbar-command-build-tool-grab = İnşa Et - Taşı
+toolbar-command-build-tool-edit = İnşa Et - Düzenle
+toolbar-command-build-tool-create = İnşa Et - Yarat
+toolbar-command-build-tool-land = İnşaat - Arazi
+bug-copy-version = Gösterici sürümünü kopyala
+toolbar-notecard-save = Bir not kartına kaydet...
+toolbar-notecard-load = Bir not kartından yükle...
+toolbar-notecard-name = Aurora arayüzü
+toolbar-notecard-help = Araç çubukları, düğmeler, çekmeceler ve menülerin düzeni ve görünümü.
+toolbar-notecard-saved = Arayüz tasarımı envanterinizde kaydedildi.
+toolbar-notecard-invalid = Bu notcard uyumlu bir arayüz düzeni içermez.
+toolbar-notecard-unavailable = Bu notcard artık mevcut değildir veya kopyalanamaz.
+toolbar-notecard-layout-changed = Not kartının yüklenmesi sırasında arayüz değişti. Yapılandırmasını uygulamak için tekrar yükleyin.
+toolbar-notecard-demo-valid = Fotoğrafçı arayüzü
+toolbar-notecard-demo-invalid = Diğer notcard
+toolbar-notecard-too-large = Bu arayüz yapılandırması bir not kartı için çok büyük.
+toolbar-saved-interfaces = Kaydedilmiş arayüzler
+toolbar-saved-interfaces-empty = Henüz kaydedilmiş arayüz yok.
+toolbar-notecard-destination = Klasör: { $path }
+toolbar-notecard-folder-error = Arayüzler dizini yüklenemedi veya oluşturulamadı. Lütfen tekrar deneyin.
+toolbar-current-preset = Seçilmiş arayüz: { $name }
+toolbar-preset-custom = Özel arayüz
+toolbar-preset-unsaved = Kaydedilmemiş değişiklikler
+toolbar-preset-save-title = Arayüz kaydet
+toolbar-preset-save-name = Arayüz adı
+toolbar-preset-save-new = Yeni kişisel arayüz
+toolbar-preset-save-replace = Bu kişisel arayüzü değiştir
+toolbar-preset-save-unavailable = Bu arayüz burada kaydedilemez. Lütfen başka bir isim veya mevcut, düzenleyici kişisel bir arayüzü seçin.
+toolbar-interface-delete-unavailable = Bu kişisel arayüz silinmez.
+toolbar-interface-delete-confirm = “{ $name }” kişisel arayüzü Çöp Kutusu’na taşınsın mı?
+
+### Weather, graphics, chat and contacts refresh
+
+director-motion-blur = Hareket belirsizlik
+director-motion-blur-hint = Yönetmen kamerası kendi kapanışına sahiptir. Hareket eden nesneler ve kameranın dönmeleri bu pencere açıkken, canlı filmlerde de dahil olmak üzere hareket belirsizliği yaratır. Renderleme gerçek bir kapanışı simüle etmek için çerçeve başına birden fazla an örnekler, bu yüzden orantılı olarak daha uzun sürer.
+director-shutter = Kamera kapağı
+director-shutter-tip = Film çerçeve hızında kapama açısı. 180° sinema için standarttır. Daha küçük bir açı hareket eden nesneleri daha keskin yapacaktır. 360°'ın üzerinde, hareket izleri bir çerçeveden daha uzun sürer.
+ui-options-sun-rays = Güneş ve Ay ışıkları
+ui-options-sun-rays-help = Geceleri görüntüye baktığınızda, önünüzde duran şeyler tarafından kesilmiş olan güneş ve ay ışığını resimde çizgilerle gösterir: ağaçlar, binalar, bulutlar. Görünen bir sis yok. Legacy Viewer' dan farklıdır
+ui-options-sun-rays-strength = Şiddet
+ui-options-sun-rays-strength-help = Ne kadar parlak ışıklar
+ui-options-show-recent-emojis-legacy-places-hint = Legacy sohbet tarzı ile: son kullandığınız emojiler Konuşma alanının altında ve sohbet çubuğunun üstünde bir satır olarak. Legacy Gözlemcisi satırı kapalı tutarak varsayılan olarak kapalıdır.
+ui-options-chat-lines-direction = Yakınlardaki sohbet hatlarının konumu
+ui-options-chat-lines-direction-hint = Dünya üzerinde görüntülenen yakın sohbet çizgileri sohbet barını takip eder. Otomatik modunda, çizgiler sohbet barının üzerine veya altında daha fazla yer olduğunda altına gider.
+ui-options-chat-lines-direction-auto = Otomatik
+ui-options-chat-lines-direction-up = Sohbet çubuğunun üstünde
+ui-options-chat-lines-direction-down = Sohbet çubuğunun altında
+ui-chat-recent-emojis-show = Son emojileri göster
+ui-chat-recent-emojis-hide = Son emojileri gizle
+ui-options-motion-blur = Hareket belirsizlik
+ui-options-motion-blur-enable = Hareket belirsizlik
+ui-options-motion-blur-enable-help = Kamera döndüğünde hareket eden her şeyi ve tüm görüntüyü siler, kameranın perdesi gibi. Aurora'ün kendisi varsayılan olarak kapalı.
+ui-options-motion-blur-strength = Şiddet
+ui-options-motion-blur-strength-help = Belirli bir çerçeve hızında, saniyenin altmıştan birinin yüzdesi olarak ölçülen kapanışın ne kadar süre açık kalacağı. Öntanımlı değer 180°'lık bir kapanışa eşdeğer olan yüzde 50'dir.
+common-window-reset = Konum ve boyutları geri yükle
+people-contact-sheet-collapse = İlişki detaylarını küçült
+people-contact-sheet-expand = İlişki detaylarını genişlet
+people-contact-sheet-no-room = Panel, kişinin ayrıntılarını listenin yanında göstermek için çok dar
+people-group-sheet-collapse = Grup ayrıntılarını küçült
+people-group-sheet-expand = Grup ayrıntılarını genişlet
+people-group-sheet-no-room = Panel, grubun ayrıntılarını listenin yanında göstermek için çok dar
+ui-weather-fog = Sis
+ui-weather-fog-on-tip = Alçak yerlerde toplanan, rüzgarla akıp giden ve ışıkların etrafında parıldayan bir sis. Sadece senin gözün için çizilmiştir.
+ui-weather-fog-look = Sis gösterme modu
+ui-weather-fog-look-tip = Yükseklik sisin performans maliyeti çok düşüktür. Boyutlu sis güneş ışığı ve sis içindeki gölgeleri gösterir. Işıklarla mod ayrıca lambaları ve neon işaretlerini sisin içinden parıldatıyor.
+ui-weather-fog-look-height = Yükseklik Sis
+ui-weather-fog-look-volume = Volumetrik sis
+ui-weather-fog-look-lights = Işıklarla volumetrik sisweather condition
+ui-weather-fog-density = Sis yoğunluğu
+ui-weather-fog-density-tip = Sisin ne kadar kalın olduğu: sol tarafta hafif bir sis, sağ tarafta ise göremediğiniz bir sis
+ui-weather-fog-mist = Sis.
+ui-weather-fog-light = Hafif sisweather condition
+ui-weather-fog-thick = Yoğun sisweather condition
+ui-weather-fog-dense = Çok yoğun sisweather condition
+ui-weather-fog-height = Yükseklik
+ui-weather-fog-height-tip = Sis, yere düşmeden önce yerden ne kadar yüksekte olduğuna dair bir ölçümdür.
+ui-weather-fog-low = Yere in.
+ui-weather-fog-high = Daha yükseklere ulaşıyor.
+ui-weather-fog-drift = Rüzgarla hareket
+ui-weather-fog-drift-tip = Sis'in ne kadar rüzgar hızını takip ettiğini belirler. Etkinleştirildiğinde Aurora Hava Rüzgarı kullanılır, aksi takdirde bölge rüzgarı.
+ui-weather-fog-still = Durumlu Sis
+ui-weather-fog-windblown = Rüzgarla hareket eder.
+ui-weather-fog-glow = Işıkların etrafında parılda.
+ui-weather-fog-glow-tip = Sis içinde ışığın nasıl saçıldığını kontrol eder. Sol taraf ışığı eşit olarak saçar. Sağ taraf güneş ve her bir ışık etrafındaki parlamayı yoğunlaştırır.
+ui-weather-fog-glow-soft = Işık saçılması
+ui-weather-fog-glow-tight = Konsantrasyonlu ışık
+ui-weather-fog-from-sky = Sisli gökyüzünün altında daha kalın
+ui-weather-fog-from-sky-tip = Bölgenin gökyüzündeki bulut, sis yoğunluğunu etkiler. Bulutlu bir gökyüzü sisti daha yoğun yapar ve açık bir gök ise sisti ince yapar.
+ui-weather-fog-follow-sky = Gökyüzünün aydınlık rengini kullan
+ui-weather-fog-follow-sky-tip = Bu özellik etkinleştirildiğinde, sis rengini gökyüzünün ışığından alır. Devre dışı bırakıldığında ise, sis kendi rengini kullanır.
+ui-weather-fog-colour-tip = Sisin kendi rengi

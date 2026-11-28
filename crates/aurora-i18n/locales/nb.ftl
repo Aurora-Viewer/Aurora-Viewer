@@ -89,7 +89,6 @@ anim-timeline-keys-selected = { $count ->
     [one] { $count } nøkkel valgt: dra den for å flytte den, Delete fjerner den, høyreklikk eller Esc forkaster den
    *[other] { $count } nøkler valgt: dra én for å flytte alle, Ctrl+C kopierer dem, Delete fjerner dem, høyreklikk eller Esc forkaster dem
     }
-anim-edit-shortcut-play = Spill av eller pause (mellomrom)
 anim-edit-shortcut-rewind = Spol tilbake til starten (Home)
 anim-edit-shortcut-undo = Angre (Ctrl+Z)
 anim-edit-shortcut-redo = Gjør om (Ctrl+Y eller Ctrl+Shift+Z)
@@ -306,13 +305,8 @@ owned-land-area = { $actual } m² · { $billable } m² fakturerbart
 owned-land-total = Totalt: { $actual } m² · { $billable } m² fakturerbart
 owned-land-contributions = Landbidrag til grupper
 owned-land-contribution = { $area } m²
-toolbar-edit = Verktøylinjeknapper…
-toolbar-title = Verktøylinjeknapper
 toolbar-remove = Fjern denne knappen
 toolbar-locked-bars = Lås linjene
-toolbar-help = Dra en knapp til dokken eller til en sidelinje; slipp den tilbake her for å fjerne den. Høyreklikk på en linje for de samme innstillingene.
-toolbar-help-classic = Dra en knapp til den nederste linjen eller til en sidelinje; slipp den tilbake her for å fjerne den. Høyreklikk på en linje for de samme innstillingene.
-toolbar-help-modes = Knappene vises slik de vises her, eller bare som ikoner, avhengig av innstillingene for hver linje.
 toolbar-search = Finn en kommando ({ $count })
 toolbar-in-dock = I dokken
 toolbar-in-bottom = I den nederste linjen
@@ -1413,7 +1407,6 @@ inventory-column-both-rights = Du → neste eier
 inventory-columns = Kolonner
 inventory-column-permissions = Tillatelser
 inventory-columns-reset = Tilbakestill oppsettet for beholdningen
-inventory-resize-columns = Dra for å endre størrelsen på kolonnene. Dobbeltklikk for å tilbakestille breddene.
 inventory-resize-sidebar = Dra for å endre størrelsen på mappesidelinjen. Dobbeltklikk for å tilbakestille bredden.
 inventory-resize-gallery = Dra for å fordele plassen mellom flisene og listen. Dobbeltklikk for å tilbakestille.
 inventory-view-menu = Vis
@@ -2146,9 +2139,7 @@ ui-options-chat-text-size-hint = Størrelsen på meldingene i chat i nærheten o
 ui-options-chat-beyond-range = Lysstyrke utenfor chatrekkevidden
 ui-options-chat-beyond-range-hint = Linjer fra beboere og objekter lenger unna enn chatrekkevidden (20 m), for eksempel hørt gjennom et rop, tegnes med denne lysstyrken: 1 gjør dem like lyse som de andre, lavere verdier demper dem mer. 0,8 som standard, som i Legacy Viewer.
 ui-options-chat-keep-focus = Hold chatlinjen aktiv etter sending
-ui-options-chat-keep-focus-hint = Enter sender, og linjen er klar for neste melding; Enter på en tom linje eller et klikk et annet sted går tilbake til bevegelse. Etter en melding følger også chat i nærheten i Samtaler-vinduet etter.
 ui-options-chat-enter-toggles = Enter slår skriving av og på i samtaler
-ui-options-chat-enter-toggles-hint = Enter i et tomt felt går tilbake til bevegelse også i Samtaler-vinduet (chat i nærheten, IM-er og gruppechatter), slik som i chatlinjen; Enter fra verden begynner å skrive igjen.
 ui-options-chat-enter-last-field = Enter går tilbake til det sist brukte chatfeltet
 ui-options-chat-enter-last-field-hint = Fra verden går Enter tilbake til chatfeltet du brukte sist (klikket i eller snakket i), i nærheten, i en gruppe eller i en IM, når vinduet er åpent, i stedet for alltid chatlinjen. Når dette er av, eller vinduet er lukket, bruker Enter chatlinjen.
 ui-options-gesture-autocomplete = Fullfør gester i chat i nærheten
@@ -5052,7 +5043,6 @@ ui-bars-immersive-hide-tags = Skjul navneskilt
 toolbar-use-name-tag-preferences = Bruk innstillingene for navneskilt
 ui-bars-immersive-show-huds = Vis HUD-er
 ui-bars-immersive-hide-huds = Skjul HUD-er
-ui-bars-customize-bars = Tilpass verktøylinjene…
 session-inventory-upload-the-clothing-upload-timed-out-reload-inventory-before-trying = Tidsavbrudd under opplasting av klærne. Last inn beholdningen på nytt før du prøver igjen.
 session-inventory-upload-the-clothing-upload-was-interrupted = Opplastingen av klærne ble avbrutt.
 ui-place-details-could-not-find-the-region-s-location-it-may = Fant ikke plasseringen til regionen. Den kan være midlertidig utilgjengelig eller ha blitt fjernet.
@@ -6205,7 +6195,6 @@ ui-options-preset-potato = Potet
 ui-options-preset-low = Lav
 ui-options-preset-medium = Middels
 ui-options-preset-high = Høy
-ui-options-preset-deluxe = Deluxe (RT)
 ui-options-preset-custom = Egendefinert
 ui-options-preset-mac-mid-high = Middels-høy (anbefalt for denne Mac-en)
 graphics-saved-title = Lagrede grafikkprofiler
@@ -6354,7 +6343,6 @@ ui-options-look-at-lines-help = En linje fra hver avatar til trådkorset der den
 ui-options-my-look-at = Mitt blikkmål
 ui-options-private-look-at = Ikke send blikkmålet mitt til andre
 ui-options-private-point-at = Ikke send hint om valgmålet mitt
-ui-options-private-point-at-help = Skjul objektet du redigerer, hold redigeringsarmen senket, og skjul redigeringsstrålen.
 ui-options-private-edit-beam = Skjul redigeringsstråle
 ui-options-private-edit-beam-help = Skjuler strålen helt mens du redigerer eller griper objekter, både på din skjerm og for andre. Valgmålhint og stråler ved overlevering eller slipp påvirkes ikke.
 ui-options-private-look-at-help = Andre ser at du ser rett frem i stedet for dit du ser
@@ -8917,7 +8905,6 @@ common-for-sale = Til salgs:
 ui-land-general-for-sale-to = Til salgs til:
 ui-profile-coming-soon = Kommer snart
 ui-profile-aurora-my-profile = Min profil
-ui-profile-aurora-help = Profilen til en beboer: hvem vedkommende er, hva du kan gjøre sammen med vedkommende, deretter utvalgte steder, annonser, første liv, nettprofil og notatene dine. Innstillinger › Aurora › Profiler henter tilbake vinduet fra Legacy Viewer.
 ui-profile-aurora-conversation = Samtale
 ui-profile-aurora-call = Ring
 ui-profile-aurora-add-friend = Legg til som venn
@@ -8948,7 +8935,6 @@ ui-profile-aurora-their-map = Finn vedkommende på kartet
 ui-profile-aurora-their-objects = Endre, slette eller ta objektene til vedkommende
 ui-profile-aurora-received-tip = { $right }: { $state }
 ui-profile-aurora-tab-profile = Profil
-ui-profile-aurora-tab-picks = Utvalgte steder
 ui-profile-aurora-tab-classifieds = Annonser
 ui-profile-aurora-tab-first-life = Første liv
 ui-profile-aurora-tab-web = Nett
@@ -8981,12 +8967,7 @@ ui-profile-aurora-unsaved = Ulagrede endringer ({ $parts })
 ui-profile-aurora-part-bio = biografi
 ui-profile-aurora-part-first-life = første liv
 ui-profile-aurora-part-notes = notater
-ui-profile-aurora-part-places = { $count ->
-    [one] { $count } sted
-   *[other] { $count } steder
-    }
 ui-profile-aurora-part-classified = annonse
-ui-profile-aurora-snapshot = Bilde av stedet
 ui-profile-aurora-teleport = Teleporter
 ui-profile-aurora-description = Beskrivelse
 ui-profile-aurora-category = Kategori
@@ -9002,11 +8983,6 @@ ui-profile-aurora-copy-slurl = Kopier SLURL-en
 ui-profile-aurora-here = Min posisjon her
 ui-profile-aurora-add-here = Legg til stedet der jeg er
 ui-profile-aurora-picks-count = { $count } av { $limit } (grensen for kontoen)
-ui-profile-aurora-picks-empty = Ingen utvalgte steder ennå
-ui-profile-aurora-picks-empty-text = { $name } har ikke delt noen steder.
-ui-profile-aurora-picks-empty-own = Del de utvalgte stedene dine
-ui-profile-aurora-picks-empty-own-text = Andre beboere ser dem på profilen din og teleporterer dit med ett klikk.
-ui-profile-aurora-delete-pick = Slette stedet «{ $name }»?
 ui-profile-aurora-classifieds-empty = Ingen annonser
 ui-profile-aurora-classifieds-empty-text = { $name } har ingen publiserte annonser.
 ui-profile-aurora-classifieds-empty-own = Gjør et sted eller en tjeneste kjent
@@ -12212,7 +12188,7 @@ ui-group-notices-saved = Lagret
 ui-group-notices-attachment = Vedlegg
 ui-group-notices-subject = Emne
 ui-group-notices-message = Melding…
-ui-group-notices-drop = Dra en gjenstand fra beholdningen (kopiering + overføring)
+ui-group-notices-drop = Dra en gjenstand eller et landemerke fra Inventar, Favoritter eller Steder (krever tillatelse til å kopiere og overføre).
 ui-group-notices-not-attachable = Denne gjenstanden kan ikke legges ved: den må kunne kopieres og overføres, og ikke være på deg.
 ui-group-notices-remove-attachment = Fjern vedlegget
 ui-group-notices-send = { $count ->
@@ -14489,7 +14465,6 @@ inventory-new-outfit = Nytt antrekk
 inventory-listing-refresh = Oppdater oppføringen
 inventory-recover-folder = Flytt til Hittegods
 inventory-show-main = Vis i hovedvisningen
-inventory-open-current = Åpne i dette vinduet
 inventory-copy-outfit-list = Kopier antrekkslisten til utklippstavlen
 appearance-outfit-copy-entry = { $item } - { $creator }
 appearance-outfit-copy-preparing = Forbereder antrekkslisten…
@@ -15242,7 +15217,6 @@ ui-options-build-editing = Redigering
 ui-options-build-auto-material-tab = Åpne materialfanen som passer til utvalget
 ui-options-build-auto-material-tab-hint = Når du velger et objekt, åpnes PBR-fanen hvis en av flatene viser et PBR-materiale, ellers Blinn-Phong. Av: den sist valgte fanen blir stående.
 ui-options-build-show-beams = Vis valgstråler
-ui-options-build-show-beams-hint = Viser dine og andre avatarers valgstråler ved redigering, grep eller overlevering. Denne innstillingen styrer bare visningen; under Personvern kan «Skjul redigeringsstråle» hindre både lokal visning og sending.
 ui-options-build-beam-color = Strålefarge
 ui-options-build-beam-color-hint = Fargen på strålene dine, slik også de andre ser dem.
 large-surface-title = Store overflater
@@ -15494,3 +15468,1149 @@ game-control-action-boom-down = Bom ↓
 game-control-action-escape = ESC
 picker-local-newest = Nyeste først
 picker-local-name = Navn A–Å
+
+### Release translations
+
+ui-options-planet-curvature = Planetkrumning
+ui-options-planet-curvature-help = Tegner verden på en rund planet: åpent vann faller bort til en ekte horisont i stedet for å renne ut i øyehøyde, med himmelen under det. Bare visningen endres: regioner, fysikk og hva andre ser blir flate. På Jorda er fallet innenfor tegneavstanden noen få centimeter; det vises på havet langt borte. Forskjellig fra Legacy Viewer
+ui-options-planet-radius = Planetens radius
+ui-options-planet-radius-help = Planetens radius tegnet i kilometer. Jordens er 6371 km: fra 10 m oppe, slutter havet ca. 11 km unna. En mindre planet bringer horisonten nærmere
+ui-options-camera-frame-while-posing = Ramme inn avataren mens du poserer
+ui-options-camera-frame-while-posing-tip = Når du åpner poseren, rammes avataren inn, og når du klikker på en leddbånd, flyttes kameraet nærmere den.
+ui-options-camera-still-while-posing = Hold kameraet stille mens du poserer
+ui-options-camera-still-while-posing-tip = Når du poserer, slutter kameraet å følge avataren, fokuset og kroppsdelene, og det tilbakestilles ikke når du går.Bane, zoom, panorering og forhåndsinnstillinger fungerer fortsatt.
+ui-options-group-emotes = Gruppeemotes med avsenderens meldinger
+ui-options-group-emotes-hint = I chatstilen Aurora vises en emote som «/me waves» under samme overskrift som meldinger fra samme avsender rett før eller etter. Den får ingen egen overskrift.
+content-perms-nested = Ta med objekter i objekter
+content-perms-nested-help = Endrer også innholdet i nøstede objekter, opptil 5 nivåer. Hvert objekt plasseres i verden 2 m over primen som inneholder det. Skript som kjører, stoppes, innholdet endres, skriptene startes igjen, og objektet lagres tilbake. Tillatelsene på det lagrede objektet settes og kontrolleres før den midlertidige kopien i verden slettes. Objekter du ikke kan kopiere, overføre eller endre, blir ikke åpnet. Du må ha byggerettigheter der objektene plasseres.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } objekt i innholdet vil bli åpnet, hoppet over: { $skipped }.
+       *[other] { $objects } Objekter i innholdet vil bli åpnet, hoppet over: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = Ingen kopiering eller overføring
+content-perms-nested-skip-no-modify = kan ikke endres
+content-perms-nested-skip-depth = Mer enn 5 nivåer dypt
+content-perms-nested-rezzing = Plassere objektet “{ $name }” i verden (nesting nivå { $level })…
+content-perms-nested-stopping = Stopper skriptene til “{ $name }” …
+content-perms-nested-applying = Endre innholdet i «{ $name }» …
+content-perms-nested-restoring = Starter skriptene til “{ $name }” igjen …
+content-perms-nested-saving = Lagrer objektet «{ $name }» tilbake i beholderen …
+content-perms-nested-deleting = Sletter den midlertidige kopien i verden av «{ $name }» …
+content-perms-nested-finished = Oppdaterte elementer: { $count }. Nøstede objekter: { $objects }. Hoppet over: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } holdt ved siden av sin opprinnelige: navnene var forskjellige.
+       *[other] { $kept } holdt ved siden av sine originaler: navnene var forskjellige.
+    }
+content-perms-nested-stopped = Stoppet: De midlertidige kopiene i verden ble slettet, de originale elementene ble igjen som de var.
+content-perms-nested-stop-help = Stopper operasjonen og sletter midlertidige kopier som fortsatt er i verden. Originalene forblir uendret. Objekter som allerede er lagret tilbake, beholder endringene.
+content-perms-nested-scripts-warning = Hvert objekt rezzes i verden. Dermed kjøres skriptenes handlinger ved rezzing, som en eksplosjon, teleportering eller overlevering av en gjenstand, før skriptene kan stoppes. For å hindre dette må du først slå på Deaktiver skript under Region / Eiendom i en region du administrerer, og slå det av igjen etterpå.
+content-perms-nested-original-kept = «{ $name }» ble lagret tilbake, men det opprinnelige elementet kunne ikke fjernes: begge er i innholdet.
+content-perms-nested-copy-left = Den midlertidige kopien i verden av "{ $name }" kunne ikke slettes: slett den for hånd.
+content-perms-nested-save-unconfirmed = lagring tilbake ble ikke bekreftet
+content-perms-nested-saved-perms-unconfirmed = Stoppet: Rettighetene til objektet som ble lagret tilbake i beholderen kunne ikke bekreftes. De midlertidige arbeidskopiene i verden har blitt beholdt; sjekk dem før du fjerner dem.
+content-perms-nested-timeout = simulatoren svarte ikke i tide
+content-perms-nested-rez-refused = Stoppet: simulatoren nektet å plassere i verden “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Stoppet: «{ $name }» dukket ikke opp innen 15 sekunder. Hvis det vises senere over primitive objektet, slett det.
+content-perms-nested-not-ours = Stoppet: objektet plassert i verden for "{ $name }" kommer ikke fra dette innholdet, det ble igjen i verden.
+content-perms-nested-unverified = Stoppet: Objektet som dukket opp for "{ $name }" kunne ikke sjekkes som plassert i verden fra dette innholdet, så det ble igjen i verden.
+content-perms-nested-group-split = Stoppet: “{ $name }” (flere objekter lagret som ett) kom tilbake som et enkelt objekt.Dets plassert i verden deler ble holdt i verden: velg dem alle og ta dem for å lage gruppen igjen.
+content-perms-nested-failed = “{ $name }” forble uendret: { $reason }.
+content-perms-nested-original-gone = "{ $name }" holdes i verden: dens spare tilbake ble ikke bekreftet, og det opprinnelige elementet er borte.
+content-perms-nested-gone = Objektet forlot verden
+content-perms-nested-land-denied = Stoppet: du kan ikke bygge over dette primitive objektet, hvor objektene ville bli plassert i verden.
+content-perms-nested-parcel-full = Stoppet: pakken har ikke plass igjen for de midlertidige kopiene i verden.
+content-perms-nested-rlva = Stoppet: plassering av objekter i verden er begrenset (RLVa).
+content-perms-nested-too-many = for mange skript
+content-perms-nested-unreadable = Innholdet kunne ikke leses
+content-perms-demo-chest = Oppbevaringsboks
+content-perms-demo-notes = Merknader inne i oppbevaringskisten
+content-perms-demo-outer = Ytre boks
+content-perms-demo-glow = Skript som får objektet til å gløde
+content-perms-demo-readme = Les meg først
+content-perms-demo-inner = Indre beholder
+content-perms-demo-inner-note = Merk inne i den indre boksen
+content-perms-demo-tiny = Veldig liten boks
+content-perms-demo-spin = Skript som roterer objektet
+content-perms-demo-heirloom = Familie arvestykke
+content-perms-demo-sealed = Forseglet boks
+content-perms-demo-linked = Gruppe av sammenslåtte objekter
+content-perms-demo-pebble = Liten avrundet stein
+content-perms-demo-stack = Kassestabel
+dev-toolbox-o10 = Avatartreffbokser
+ui-appearance-date-newest-first = Dato: nyeste først
+ui-appearance-date-oldest-first = Dato: eldste først
+ui-appearance-favorites-to-top = Tilbake til toppen
+ui-appearance-images-to-top = Tilbake til toppen
+ui-environment-sort-by-name = Sorter alfabetisk
+ui-environment-sorted-by-name = For øyeblikket sortert etter navn. Klikk for å gjenopprette rekkefølgen fra lageret ditt.
+ui-environment-in-inventory-order = I beholdningens rekkefølge. Klikk for å sortere dem A–Z.
+ui-chat-contacts-groups-sub = Grupper · { $count }
+ui-options-soft-shadows = Myke skygger
+ui-options-soft-shadows-help = Solskygger med mykere kanter jo lenger unna objektet er fra det den skygger, akkurat som i virkeligheten: skyggen av en høy stolpe blir uskarpere mot spissen mens en fot forblir skarp. Eksperimentell, av som standard; koster en brøkdel av et millisekund på skjermkortet
+ui-options-shadow-softness = Skyggemykhet
+ui-options-shadow-softness-help = Størrelsen på lyset for de myke skyggene: 1 er et lys 2,3 grader gjennom, 2 en større som myker skygger dobbelt så mye (den virkelige solen er ca 0,2), 0 et lys uten størrelse: skyggen er som de var før, projektor's inkludert
+ui-options-shadow-softness-needs-soft = Slå på Myke skygger for å bruke dette
+ui-options-shadow-intensity = Skyggeintensitet
+ui-options-shadow-intensity-help = Hvor mørke solens skygger er: 1 er det normale mørket, lavere slipper mer lys inn i dem
+ui-options-system-fonts-searching = Ser etter skrifter …
+demo-emotes-nova = /me setter en benk ned ved fontenen
+demo-emotes-orion = Ser flott ut herfra!
+demo-teleport-access-neighbour = Voksne nabo (demo)
+photo-light-shadow-softness = Skyggemykhet
+photo-light-shadow-intensity = Skyggeintensitet
+photo-light-shadow-reset = Tilbake til verdien av preferanser
+world-teleport-access-blocked-title = Teleport blokkert
+world-teleport-access-adults-only = Regionen du prøver å besøke inneholder { $rating } innhold, som kun er tilgjengelig for voksne.
+world-teleport-access-change-and-reteleport = Regionen du prøver å besøke, har innhold med klassifiseringen { $rating }. De gjeldende innstillingene dine utelukker innhold med klassifiseringen { $rating }. Du kan endre innstillingene og fortsette teleporteringen eller avbryte den.
+world-teleport-access-change = Regionen du prøver å besøke, har innhold med klassifiseringen { $rating }. De gjeldende innstillingene dine utelukker innhold med klassifiseringen { $rating }. Du kan endre innstillingene eller avbryte teleporteringen. Etter endringen må du prøve å teleportere på nytt.
+world-teleport-access-out-of-sync = Vi har tekniske problemer med teleporteringen din fordi preferansene dine ikke er synkronisert med serveren.
+world-teleport-access-rated = Stedet du har valgt er vurdert { $rating }.
+world-teleport-access-allow = De gjeldende innstillingene dine utelukker innhold med klassifiseringen { $rating }. Hvis du tillater det, oppdateres innstillingene.
+world-teleport-access-allow-button = Tillat { $rating }- innhold
+world-teleport-access-not-on-account = Regionen du prøver å besøke er rangert { $rating }, som ikke er tilgjengelig på kontotypen din.
+world-teleport-access-change-and-continue = Endre og fortsett
+world-teleport-access-change-preferences = Endre innstillinger
+world-teleport-access-preference-changed-title = Innholdsvurdering endret
+world-teleport-access-preference-changed = Du vil ikke lenger motta varsler om at du er i ferd med å besøke en region med { $rating }-innhold.Du kan endre innholdspreferansene dine i fremtiden under Innstillinger › Personvern.
+people-show-group-sheet = Vis gruppedetaljer
+people-group-details-empty = Ingen gruppe å vise
+ui-options-plate-click-own-help = Venstreklikk på noen andres tallerken; markøren blir til en hånd. På din egen tallerken åpner et klikk profilen din eller menyen din når en av dem er valgt. Hvis du holder knappen der, snur du fortsatt avataren din.
+ao-import-unfinished-retry = En uferdig AO import finnes allerede i #Aurora/{ $folder }. Bruk gjenopprettingsmeldingen i AO Lukk vinduet før du prøver på nytt.
+ao-unfinished-import =
+    { $count ->
+        [one] Ufullført AO-import i #Aurora/{ $folder }. Antall sett: { $count }.
+       *[other] Ufullført AO-import i #Aurora/{ $folder }. Antall sett: { $count }.
+    }
+ao-finish-import = Fullfør import
+ao-show-in-inventory = Vis i beholdningen
+ao-duplicate-native =
+    { $count ->
+        [one] En annen mappe ble funnet: #Aurora/{ $folder }. Antall sett: { $count }. Slå den sammen med den aktive AO-mappen?
+       *[other] En annen mappe ble funnet: #Aurora/{ $folder }. Antall sett: { $count }. Slå den sammen med den aktive AO-mappen?
+    }
+ao-native-already-exists = Det finnes allerede en innebygd animasjonsoverstyring med dette navnet
+rlva-tools-retained = Oppbevares til innlogging
+rlva-read-at-login = Endringer trer i kraft ved neste innlogging.
+rlva-debug-commands-chat = Hver kommando får også en linje i nærliggende chat, under objektets navn: hva det utfører, hva mislykkes og hvorfor, hva venter på innlogging.
+rlva-blocked-start-im = Kan ikke starte IM økt med { $recipient } på grunn av RLV restriksjoner
+rlva-blocked-start-conference = Kan ikke starte konferansen med [RECIPIENT] på grunn av RLV restriksjoner
+rlva-anonym-waiting = (Laster inn…)
+rlva-anonym-unknown = (Ukjent)
+rlva-blocked-teleport = Kan ikke starte teleport på grunn av RLV- restriksjoner
+rlva-blocked-permission-attach = Forsøk på å montere '{ $object }' ble nektet på grunn av RLV restriksjoner
+rlva-blocked-permission-teleport = '{ $object }' ble nektet tillatelse til å teleportere deg på grunn av RLV restriksjoner
+rlva-blocked-view-notecard = Kan ikke åpne notatkortet på grunn av RLVa- begrensninger.
+rlva-blocked-view-script = Kan ikke åpne skriptet på grunn av RLVa- begrensninger.
+rlva-blocked-view-texture = Kan ikke åpne teksturen på grunn av RLVa- begrensninger.
+rlva-debug-explicit-point = Ignorer vedleggspunktnavn på lagerelementer og mapper
+rlva-debug-explicit-point-hint = Mens et vedleggspunkt er låst, sender Wear og Add et objekt til standardpunktet i stedet for punktet navnet eller mappens navn gir (ufullstendig).
+phototools-environment-settings = Omgivelsesinnstillinger
+phototools-quick-environments = Hurtige miljøer
+phototools-environment-presets = Miljøforhåndsinnstillinger
+phototools-general-render = Generelle opptegningsinnstillinger
+phototools-render-options = Tegnevalg
+ui-bars-clouds-paused = Skyer stoppetweather condition
+ui-bars-clouds-paused-tip = Skyene holdes stille i denne økta. Trykk for å la dem bevege seg igjen.
+phototools-tab-dof-glow = Dybdeskarphet og glød
+phototools-lights-shadows = Innstillinger for lys og skygger
+phototools-ambient-occlusion = Innstillinger for omgivelsesokklusjon
+phototools-dof = Innstillinger for dybdeskarphet
+phototools-tone-mapping = Innstillinger for HDR-tonetilordning
+phototools-glow = Innstillinger for glød
+phototools-photo-banner = Bildevinduet åpnet: radene i bildevinduet endrer også bildet. Dybdeskarpheten beholdes for de neste bildene dine. Lys, eksponering, skygger, omgivelsesokklusion og slitt lys varer til fotovinduet er lukket.
+phototools-photo-boost = Bildekvaliteten er hevet: grafikkradene viser de hevede verdiene, og en endring du gjør der, beholdes som din egen.
+phototools-photo-focus-help = Klikk: det siste punktet i verden som ble klikket på. Peker: punktet under pekeren. Manuell: en avstand du velger.
+phototools-photo-distance-help = Avstanden objektivet fokuserer på i manuell fokusering.
+phototools-director-lens = Direktørens linse vises mens vinduet er åpent, over innstillingene nedenfor.
+phototools-view-angle-viewfinder = Søkeren eier synsvinkelen: Din kommer tilbake når den lukkes.
+ui-options-dof-show-focus-point = Vis fokuspunkt
+ui-options-dof-show-focus-point-help = Et lite trådkors på punktet linsen fokuserer på: gul når den er fri, rød når den låses.
+
+### Updated release translations
+
+render-features-menu = Gjengivelsesfunksjoner
+render-features-ui = Brukergrensesnitt
+toolbar-command-ao-mini = Lite AO-vindu
+keybinds-ui-feature = Vis / skjul hele grensesnittet (Gjengivelsesfunksjoner › UI)
+import-image-size-limit = Maksimal bildestørrelse
+import-image-size-single = Maksimal bildestørrelse
+import-image-size-inherit = Global innstilling ({ $size } px)
+import-image-size-pixels = { $size } px
+import-image-size-inherit-help = Global innstilling følger grensen ved Importer nederst. Den gjeldende verdien vises i parentes. Større bilder blir automatisk redusert til den valgte grensen.
+import-image-size-global-help = Maksimal bildestørrelse for import. Individuelle valg av bilder og materialer prioriteres. Større bilder reduseres automatisk.
+ui-chat-applink-preferences-tip = Åpne denne innstillingen i Innstillinger
+ui-options-bento-idle = Fix Bento inaktiv animasjon
+ui-options-bento-idle-hint = Spiller en prioritert 0 Bento animasjon under alle de andre, så hender, munn, vinger og hale går tilbake til en naturlig positur i stedet for å bli sittende fast etter en animasjon; andre ser det også
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] Objekt UUID kopiert
+       *[other] Objektets UUID kopiert
+    }
+ui-appearance-batch-choose-folder = Antrekk å fotografere i { $folder }
+ui-appearance-batch-all = Alle antrekk
+ui-appearance-batch-chosen = { $chosen } av { $total }
+ui-appearance-batch-select-missing = Uten bilde
+ui-inventory-dialogs-detach-and-delete = Ta av og slett
+ui-inventory-dialogs-detach-and-delete-body = Avataren din har på seg noen av disse gjenstandene. De tas av først og flyttes deretter til papirkurven.
+ui-inventory-delete-detach-cannot = Gjenstandene avataren har på seg, kan ikke lenger tas av og slettes.
+ui-inventory-delete-detach-refused = Dette elementet kan ikke tas av og slettes.
+ui-inventory-delete-detach-busy = En annen lagerendring er i gang. Prøv igjen når den er ferdig.
+ui-inventory-delete-detach-timeout = Gjenstandene som var på, ble ikke tatt av og ble derfor ikke slettet.
+common-modify = Endre
+build-ui-contents-filters = Innholdsfiltre
+build-ui-contents-next-owner-permissions = Neste eiers tillatelser
+ui-options-voice-output = Taleutgang
+ui-options-voice-output-used-for-voice-chat = Brukes for talechat; verden lyder, musikk og medier bruker Lydutgang
+ui-options-same-as-audio-output = Samme som lydutgang
+ui-options-copy-setting-link = Kopier lenke til innstilling
+ui-options-setting-unavailable = Denne innstillingen er ikke tilgjengelig.
+ui-context-show-in-inventory-none = Ingen objekt i inventaret ditt har nøyaktig dette objektets navn.
+ui-profile-aurora-help = En beboers profil: hvem de er, hva du kan gjøre med dem, så deres valg, rubrikkannonser, første liv, nettprofil og notater.Preferences › Aurora › Profiler bringer tilbake Legacy Viewer vinduet.
+ui-profile-aurora-tab-picks = Utvalgte
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] Utvalgte: { $count }
+       *[other] Utvalgte: { $count }
+    }
+ui-profile-aurora-snapshot = Bilde
+ui-profile-aurora-picks-empty = Ingen valg ennå
+ui-profile-aurora-picks-empty-text = { $name } har ikke delt noen valg.
+ui-profile-aurora-picks-empty-own = Del det som er viktig for deg
+ui-profile-aurora-picks-empty-own-text = Bruk utvalg til å markere steder, mennesker og ting du bryr deg om.
+ui-profile-aurora-delete-pick = Slette valget "{ $name }"?
+script-search-whole-words = Hele ord
+ao-mini-title = Lite AO-vindu
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: Ingen animasjon valgt
+ao-quick-pin = Åpne mini AO vinduet
+build-layout-button-icon = Ikon
+build-layout-button-label = Etikett
+build-layout-button-both = Ikon og etikett
+build-detach-shown = I sitt eget vindu: klikk for å skjule det. Dra vinduet ved tittelen til byggevinduet for å sette det tilbake.
+build-detach-hidden = I eget vindu, skjult: klikk for å vise det.
+build-material-save-as = Lagre materiale som
+build-material-save-name = Navn på det nye materialet i lageret ditt:
+build-material-new-material = Nytt materiale
+build-material-save-not-allowed = Lagring trenger et PBR-materiale på hvert valgt ansikt, kopiere og endre rettigheter på objektet, og en kopi av materialet i beholdningen med kopiering og modifikasjonsrettigheter.
+build-material-saved = Materialet "{ $name }" er lagret i lagerbeholdningen din.
+build-material-save-failed = Materialet kunne ikke lagres i lageret ditt.
+toolbar-add-from-menu = Legg til verktøylinje
+toolbar-remove-from-menu = Fjern fra verktøylinjen
+toolbar-command-build-edit = Rediger objekter
+toolbar-command-build-create = Opprett primtall
+toolbar-command-build-land = Rediger land
+
+### Updated release translations
+
+inventory-search-no-copy = kan ikke kopieres
+inventory-search-no-modify = kan ikke endres
+inventory-search-no-transfer = kan ikke overføres
+ui-options-chat-keep-focus-hint = Enter sender meldingen og lar chattefeltet være aktivt til neste melding, også når feltet er tomt. Trykk Esc eller klikk i verden for å gå tilbake til bevegelse.
+ui-options-chat-enter-toggles-hint = I Samtaler går Enter i et tomt felt tilbake til bevegelse, både i nærchat, direktemeldinger og gruppechat. Trykk Enter i verden for å begynne å skrive igjen.
+build-ui-features-physics-none-root-hint = Bare barn prims av en linkset kan bruke fysikk form Ingen: rot prim, eller en prim på egen hånd, holder Prim eller Convex hull.
+controls-position-tip = Kameraposisjon: sett hvor kameraet hviler bak avataren, nøyaktig
+camera-position-hint = I meter fra avataren: X fremover, Y venstre, Z opp. Ctrl + hjul hever kameraet, Shift + hjulet fokuspunktet.
+camera-position-save = Lagre som kameraposisjon…
+photo-looks-replace = Erstatt
+photo-looks-empty = Ingen effekt ennå. Pek på et filter nedenfor for å prøve det, og klikk eller dra det hit.
+photo-looks-active = Aktive
+photo-looks-count = { $count } av { $max }
+photo-looks-expand-all = Utvid alle
+photo-looks-collapse-all = Slå sammen alle
+photo-looks-hint = Brukes fra topp til bunn. Dra et kort for å endre rekkefølgen, eller trykk Alt + ↑ ↓ på det. Høyreklikk på et kart for å ta det ut.
+photo-looks-right-click-out = Høyreklikk: ta den ut av de aktive effektene
+photo-looks-drop = Dra en effekt her, eller klikk på en nedenfor
+photo-looks-full = { $max } av { $max }: ta ut en, eller slå på Erstatt for å bytte en.
+photo-looks-catalogue = Effektkatalog
+photo-looks-catalogue-tip = Pek på en effekt for å prøve den på bildet. Klikk på den for å legge til den, eller dra den blant de aktive
+photo-looks-catalogue-fold = Vis eller skjul katalogen
+photo-looks-replace-tip = Erstatt: et klikk i katalogen bytter det valgte kortet i stedet for å legge til et nytt
+photo-looks-replacing = Et klikk veksler { $name }
+photo-looks-done = Ferdig
+photo-looks-take-out-zone = Slipp her for å ta det ut
+photo-looks-hide = Skjul { $name } (det holder sin plass)
+photo-looks-show = Vis { $name }
+photo-looks-more = Flere handlinger
+photo-looks-move-up = Flytt opp
+photo-looks-move-down = Flytt ned
+photo-looks-replace-one = Erstatt …
+photo-looks-take-out = Ta ut
+photo-looks-not-in-360-tag = Ikke i 360°
+photo-looks-all = Alle
+photo-looks-favorites = Favoritter: hver effekt du spilte i
+photo-looks-favorites-empty = Peker du på en effekt og klikker på stjernen, vises den først i lista, og her.
+photo-looks-favorite = Legg til i favoritter
+photo-looks-unfavorite = Fjern fra favoritter
+photo-looks-card = { $name }, { $place } av { $count }. Alt + piltastene flytter den.
+photo-looks-legacy-note = Eldre Viewer-filtre har ingen ytterligere innstillinger.
+photo-knob-toning = Toning
+photo-knob-local-contrast = Lokal kontrast
+build-face-button = Ansikt { $number }: velg den på hver valgte prim. Shift+click: Legg til eller fjern den.
+build-face-invert = Inverter de valgte sidene
+build-face-all = Marker alle ansikter
+ui-options-aurora-controls-compact = Kompakt kamerakontroll
+ui-options-aurora-controls-compact-movement = Kompakt bevegelseskontroll
+ui-options-aurora-controls-compact-movement-help = Bevegelse-fanen i kontrollvinduet åpnes kompakt: bevegelsesknappene og gå, løpe og fly.Knappen på tittellinjen veksler mellom kompakt og full, og setter dette også.
+poser-face-position-drag = Dra for å flytte skjøten med 0,1 mm per piksel, eller klikk for å skrive inn en posisjon.
+build-layout-clicks = Klikk på objekter
+build-ui-floaters-shift-click = Shift + klikk
+build-ui-floaters-ctrl-click = Ctrl + klikk
+build-ui-floaters-click-object = Legge til eller fjerne objektet
+build-ui-floaters-click-face = Velg ansiktet
+build-ui-floaters-clicks-hint = Med redigeringsverktøyet, utenfor Juster.Ctrl + Skift + klikk legger til det klikkede ansiktet eller tar det ut.
+build-ui-floaters-ctrl-right-click = Ctrl + høyreklikk
+build-ui-floaters-right-click-menu = Åpne menyen
+build-ui-floaters-right-click-edit = Rediger objektet
+build-ui-floaters-double-click-linked = Dobbeltklikk på en prim: bryter “Rediger koblede deler”
+blender-live-tab-place = Plassering
+blender-live-tab-avatar = Avatar
+blender-live-more = Mer
+blender-live-place = Plassering
+blender-live-linked-prims = Vis eller skjul de koblede primtallene
+blender-live-tag-rigged = Med rigg
+blender-live-card-rigged =
+    { $triangles ->
+        [one] Trekanter: { $triangles }
+       *[other] Trekanter: { $triangles }
+    }
+blender-live-card-static =
+    Statisk · { $triangles ->
+        [one] Trekanter: { $triangles }
+       *[other] Trekanter: { $triangles }
+    }
+blender-live-card-linkset =
+    Statisk · { $prims ->
+        [one] Primdeler: { $prims }
+       *[other] Primdeler: { $prims }
+    } · { $triangles ->
+        [one] Trekanter: { $triangles }
+       *[other] Trekanter: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] Trekanter: { $triangles }
+       *[other] Trekanter: { $triangles }
+    }
+blender-live-place-help = Hvor det valgte statiske nettet er. Riggede nett følger alltid avataren din.
+blender-live-place-none = Velg et statisk objekt for å plassere det.
+blender-live-where = Hvor
+blender-live-transform = Plassering, rotasjon og størrelse
+blender-live-from = Fra
+blender-live-plugins-help = Aurora installerer den matchende plug-in i hver Blender, holder en sikkerhetskopi av den forrige og aldri installerer en eldre versjon.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-show-all = Vis alle
+blender-live-hide-all = Skjul alle
+blender-live-bend-section = Sjekk vektene
+blender-live-elbows = Albuer
+blender-live-knees = Knær
+blender-live-bend-hold = Hold denne posituren i stedet for animasjonene mine
+blender-live-bend-note = Bare du kan se bøyen på avataren din, dine animasjoner, andre innbyggeres syn og importen er uendret.
+blender-live-levels = Detaljnivåer
+blender-live-quick-look-tip = Hurtig titt: se dette objektet større
+blender-live-quick-look-drag = Dra for å snu den, dobbeltklikk for å møte det igjen.
+blender-live-quick-look-bend = Bøyd som i Avatar-fanen: albuer { $elbows }°, knær { $knees }°.
+blender-live-undo = Angre
+blender-live-undo-drop = Droppet { $name } til bakken
+blender-live-undo-attach = Flyttet { $name } til { $point }
+parcel-environment-apply-save = Påfør til meg selv bare, for denne pakken
+parcel-environment-save = Lagre dette miljøet for denne pakken: det kommer tilbake når du er her
+parcel-environment-forget = Glem miljøet lagret for denne pakken
+parcel-environment-not-saved = Denne pakken var ikke kjent ennå, så omgivelsene ble ikke lagret. Prøv igjen om et øyeblikk.
+parcel-environment-left = Du forlot pakken før miljøet kunne lagres, så den ble ikke lagret.
+parcel-environment-title = Miljøer lagret for pakker
+parcel-environment-help = Ditt eget miljø for en pakke: det erstatter ditt lokale miljø mens du står der, og det du hadde før kommer tilbake når du går ut. Bare du ser det. Lagre et fra Miljøvinduet eller en miljøgjenstands meny i inventaret ditt.
+parcel-environment-empty = Ingen miljøer lagret
+parcel-environment-remove-all = Fjern alle
+parcel-environment-remove-all-title = Fjern alle miljøer som er lagret for en pakke?
+parcel-environment-remove-all-text = Miljøene du har lagret for parseller på dette gridet fjernes. Miljøene på andre grid beholdes. Dette kan ikke angres.
+
+### Updated release translations
+
+anim-edit-shortcut-play = Spill av eller pause
+area-search-scope-heading = Hvor
+area-search-scope-parcel = Parsell
+area-search-scope-region = Gjeldende region
+area-search-scope-neighbours = Naboer
+area-search-objects-heading = Hvilke objekter
+inventory-copy-selection-count =
+    { $count ->
+        [one] Kopier 1 element
+       *[other] Kopier { $count } elementer
+    }
+inventory-link-selection-count =
+    { $count ->
+        [one] Link 1 element
+       *[other] Link { $count } artikler
+    }
+inventory-drop-move-here = Flytt hit
+inventory-drop-copy-here = Kopier her
+inventory-drop-link-here = Opprett lenker her
+inventory-sort-description = Beskrivelse
+inventory-sort-reversed = { $order } (omvendt)
+inventory-column-creator = Skaper
+inventory-column-count = Elementer
+inventory-columns-fit = Størrelse på alle kolonner slik at de passer
+inventory-columns-reset-widths = Tilbakestill kolonnebredder
+inventory-back = Tilbake
+inventory-forward = Fremover
+inventory-up = Opp ett nivå
+keybinds-inventory-root = Til toppen av siden
+keybinds-inventory-search = Søk i beholdningen
+keybinds-inventory-filter = Filtrer mappa
+keybinds-inventory-preview = Vis forhåndsvisningsruten
+keybinds-inventory-view-large = Store bilder
+keybinds-inventory-view-medium = Middels bilder
+keybinds-inventory-view-small = Små bilder
+keybinds-inventory-view-compact = Kompakt visning
+keybinds-inventory-view-details = Detaljvisning
+keybinds-inventory-view-tiles = Flisvisning
+keybinds-inventory-toggle = Merke eller fjerne merkingen av raden som er i fokus
+keybinds-inventory-menu = Åpne menyen for utvalget
+keybinds-inventory-purge = Tøm papirkurven
+keybinds-inventory-refused = { $keys } forblir lagerlistens egen nøkkel: velg en annen.
+inventory-path-edit = Skriv inn en bane
+inventory-path-subfolders = Undermapper
+inventory-copy-path = Kopier bane
+inventory-show-in-folder = Vis i mappe
+inventory-pin = Fest til hurtigtilgang
+inventory-unpin = Løsne fra hurtigtilgang
+inventory-quick-access = Hurtig tilgang
+inventory-quick-access-drop = Slipp en mappe her for å feste den
+inventory-invert-selection = Inverter utvalg
+inventory-undo = Angre
+inventory-redo = Gjør om
+inventory-undo-step = Angre { $what }
+inventory-redo-step = Gjør om { $what }
+inventory-history-move =
+    { $count ->
+        [one] Flytt av 1 element
+       *[other] Viser 1-8 av { $count } elementer
+    }
+inventory-history-delete =
+    { $count ->
+        [one] Viser 1 til 1 av 1 element
+       *[other] Viser 1-8 av { $count } elementer
+    }
+inventory-history-rename = endre navn
+inventory-history-new-folder = ny mappe
+inventory-history-copy =
+    { $count ->
+        [one] Kopi av 1 element
+       *[other] Kopi av { $count } elementer
+    }
+inventory-history-link =
+    { $count ->
+        [one] Kobling til 1 element
+       *[other] Koblinger til { $count } elementer
+    }
+inventory-undo-nothing = Ingenting igjen å angre: disse elementene har flyttet eller er borte.
+inventory-redo-nothing = Ingenting igjen å gjøre om: disse elementene har flyttet eller er borte.
+inventory-undo-empty = Ingenting å angre på.
+inventory-redo-empty = Ingenting å gjøre om.
+inventory-undo-dropped = Elementene i siste trinn er flyttet eller borte: det ble droppet. Angre igjen for steget før.
+inventory-redo-dropped = Neste trinns elementer har blitt flyttet eller er borte: det ble droppet. Gjør om igjen for neste trinn.
+inventory-undo-folder-not-empty = Den nye mappen inneholder elementer som er plassert der siden: Flytt dem ut først, eller slett mappen selv.
+inventory-undo-kept-out = Disse gjenstandene er i det nåværende antrekket eller markedsplassens oppføringer nå: endre dem der.
+inventory-restore-to = Gjenopprett til «{ $folder }»
+inventory-restore-to-origins = Gjenopprett til deres mapper
+inventory-purge-no-undo = Angre kan ikke bringe dem tilbake.
+inventory-new-tab = Ny fane
+inventory-close-tab = Lukk fane
+inventory-next-tab = Neste fane
+inventory-previous-tab = Forrige fane
+inventory-open-in-new-tab = Åpne i ny fane
+inventory-tabs-limit = Høyest { $count } faner.
+inventory-copy-to-other-pane = Kopier til den andre ruten
+inventory-move-to-other-pane = Flytt til den andre ruten
+inventory-resize-columns = Flytt for å endre størrelsen på kolonner. Dobbeltklikk for å tilpasse kolonnen til venstre til innholdet i den.
+inventory-resize-columns-first = Flytt for å endre størrelsen på kolonner. Dobbeltklikk for å gi den første kolonnen vanlig bredde.
+inventory-sort-by-column = Trykk for å sortere etter denne kolonnen, igjen for å snu rekkefølgen. Dra for å flytte kolonnen.
+inventory-filter-hint = Filtrer denne mappa & # 160; …
+inventory-filter-close = Lukk filteret (Esc)
+inventory-filter-nothing = Ingenting her samsvarer med filteret
+inventory-view-compact = Kompakt visning
+inventory-view-tiles = Flisvisning
+inventory-view-per-folder = Husk hver mappes visning
+inventory-group-by = Grupper etter
+inventory-group-none = Ingen
+inventory-group-folders = Mapper
+inventory-group-unknown-creator = Skaperen er ikke kjent ennå
+inventory-group-today = I dag
+inventory-group-yesterday = I går
+inventory-group-this-week = De siste 7 dagene
+inventory-group-this-month = I løpet av de siste 30 dagene
+inventory-group-this-year = Tidligere i år
+inventory-group-earlier = For lenge siden
+inventory-group-no-date = Ingen dato
+cmdline-mod-zoffset-usage = Sett avatarens hover høyde (bruk: / zoffset verdi eller + delta).
+dev-toolbox-n4 = Laster inn inventar
+dev-toolbox-what-n4 = Mapper lest, mislyktes og forlot, lasterens leser i flukt og forsøk; ingen navn
+ui-context-inspect-avatar = Inspiser avatar
+inspect-window = Inspiser
+inspect-tab-objects = Objekter
+inspect-objects-title =
+    { $count ->
+        [one] { $count } objekt
+       *[other] { $count } objekter
+    }
+inspect-summary-items =
+    { $count ->
+        [one] { $count } elementer
+       *[other] { $count } elementer
+    }
+inspect-open-profile = Åpne profilen
+inspect-over-limit = Over grensen din
+inspect-limit-tip = Din kompleksitetsgrense: { $limit }
+inspect-search = Søk elementer eller skapere
+inspect-outlined = { $name } er skissert i verden
+inspect-area-head = Hode
+inspect-area-body = Kropp
+inspect-area-arms = Armer og hender
+inspect-area-legs = Ben og føtter
+inspect-area-hud = HUD
+inspect-area-other = Annet
+inspect-area-world = Objekter
+inspect-own-eyes = Systemøyne
+inspect-own-body = Systemkropp
+inspect-own-description = En del av selve avataren, ikke et vedlegg
+inspect-own-maker = Avatar · Second Life
+inspect-own-place = Avatar
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = { $value } kompleksitet
+inspect-no-match = Ingenting samsvarer med «{ $query }».
+inspect-spoken-worn = { $name }, slitt på { $point }, kompleksitet { $complexity }, laget av { $creator }
+inspect-spoken-object = { $name }, eid av { $owner }, kompleksitet { $complexity }, laget av { $creator }
+inspect-look-at-tip = Flytt kameraet til den
+inspect-profile-tip = Åpne skaperens profil
+inspect-made-by = Laget av
+inspect-owned-by = Eiet av
+inspect-worn-on = Festet på
+inspect-prims-count =
+    { $count ->
+        [one] Primdeler: { $count }
+       *[other] Primdeler: { $count }
+    }
+inspect-percent = { $percent }%
+inspect-tile-tmem = Teksturminne
+inspect-tile-vram = VRAM
+inspect-tile-prims = Primdeler
+board-close = Lukk { $title }
+board-grow = Forstørr { $title }
+board-remove = Fjern { $name }
+board-more = og { $count } flere
+board-more-short = +{ $count }
+board-some-of = { $shown } av { $all }
+board-of-all = av { $all }
+stage-turn-left = Snu til venstre
+stage-turn-right = Snu til høyre
+stage-higher = Se fra høyere hold
+stage-lower = Se fra lavere
+stage-nearer = Nærmere
+stage-further = Lengre borte
+stage-reset = Tilbake til starten
+stage-hint = Dra for å snu, høyre- dra for å flytte
+stage-light = Lys bakgrunn
+stage-dark = Mørk bakgrunn
+stage-playing = AO
+stage-paused = På pause
+stage-pause-tip = Sett animasjonen på pause
+stage-play-tip = Spill av animasjonen deres
+stage-loading = Forbereder 3D-visningen …
+stage-nothing = Ingenting å vise i 3D ennå.
+stage-refused = 3D-visningen er av mens RLVa begrenser hva du kan se.
+inspect-your-limit = Din grense: { $limit }
+inspect-without-it = { $value } uten det
+inspect-you = Du
+inspect-person = Beboer
+inspect-difference = Forskjell
+inspect-drawn-in-full = Trekket i sin helhet
+inspect-nobody = Ingens kompleksitet er kjent ennå.
+inspect-aside-count = { $count } satt til side
+inspect-is-aside = sett til side
+inspect-set-aside = Sett til side
+inspect-set-aside-tip = Se kompleksiteten uten dette elementet. Bare i dette vinduet: ingenting endres i verden.
+inspect-put-back = Sett tilbake
+inspect-put-back-tip = Teller dette elementet på nytt
+inspect-complexity-spoken = Kompleksitet { $value }, nummer { $rank } av { $count } Flere mennesker her
+inspect-stage-outfit = Antrekket.
+inspect-stage-objects = Objektene
+inspect-stage-back = Tilbake til alt
+inspect-place-made-by = { $place } · laget av { $name }
+inspect-owned-by-name = Eies av { $name }
+inspect-tile-items = Elementer
+inspect-tile-figures = Figurer
+inspect-col-item = Navn
+inspect-point = Punkt
+inspect-look-at = Se på
+inspect-selected-count = { $count } valgt
+inspect-worn-count = { $count } brukt
+inspect-creators-word = skapere
+inspect-areas-word = kroppsområder
+inspect-owners-word = eiere
+inspect-triangles-word = trekanter
+inspect-made-of = { $count } av { $all } elementer
+inspect-kilobytes = { $n } KB
+inspect-linkset-order = { $count }, i lenkerset order
+inspect-reset-columns = Tilbakestill kolonner
+inspect-by-creators =
+    { $count ->
+        [one] { $items } av en skaper
+       *[other] { $items } av { $count } skapere
+    }
+inspect-owner-button = Eierprofil
+inspect-group-button = Gruppeprofil
+inspect-creator-button = Opphavsprofil
+inspect-land-others = Annet { $n }
+inspect-land-these = Disse { $n }
+inspect-land-free = Gratis { $n }
+inspect-land-unknown = Pakkens rom viser når objektene er alle på pakken du er på.
+ui-login-unencrypted = Ukryptert innlogging
+ui-login-unencrypted-body = Innloggingsadressen til { $server } begynner med http:// i stedet for https://, så innloggingen blir ikke kryptert. Alle som kan se nettverkstrafikken din, for eksempel på offentlig Wi-Fi, et delt nettverk eller på veien til gridet, kan lese passordet og bruke kontoen din. Ingenting er sendt ennå. Du kan be gridet om en https://-adresse. Valget huskes for denne serveren.
+ui-login-unencrypted-accept = Logg inn uten kryptering
+world-appearance-clothing-layers-full = Alle 60 klærlag er i bruk. Fjern et lag før du bruker denne varen.
+ui-options-ray-tracing = Strålesporing
+ui-options-ray-traced-shadows = Strålesporede solskygger
+ui-options-ray-traced-shadows-help = Solens og månens skygger spores stråle for stråle i stedet for å lese fra skyggekart: nøyaktig hvor ting berører hverandre og på hvilken som helst avstand.Trenger skyggene og et grafikkort med ray tracing, og koster mer på grafikkortet
+ui-options-ray-traced-lights = Lokale lysskygger
+ui-options-ray-traced-lights-help = Skygger fra punktlysene rundt (lamper, stearinlys), som ikke kaster skygger ellers, og fra projektorene når Projector shadows er på, i stedet for skyggekart. Det dyreste av strålesporingsalternativene: best å la være på integrert grafikk
+ui-options-rt-quality = Kvalitet på strålesporing
+ui-options-rt-quality-help = Alle sporede effekter forblir på: Lavere nivåer sporer færre prøver og indirekte lys på et grovere rutenett, slik at du får flere bilder per sekund på et mindre grafikkort. Høyt er det fullstendige bildet av Deluxe (RT).
+ui-options-rt-sun-softness = Solskygge mykhet
+ui-options-rt-sun-softness-help = Hvor myke kantene på solens skyggespor er: 1 er den virkelige solen, 0 skarpe kanter, mer for en tåkete sol
+ui-options-rt-lamp-softness = Lokal lys skygge mykhet
+ui-options-rt-lamp-softness-help = Hvor myke kantene på lampene er: 1 følger størrelsen på hver lampe, 0 skarpe kanter
+ui-options-rt-shadow-lamps = Lys som kaster skygger
+ui-options-rt-shadow-lamps-help = Hvor mange av de nærmeste lysene kaster sporskygger, mens de andre fortsatt lyser uten skygger. Færre koster mindre på skjermkortet
+ui-options-ray-traced-indirect = Ray-traced indirekte lys
+ui-options-ray-traced-indirect-help = Lys som reflekteres av overflatene rundt, sporet utover det skjermen viser, i stedet for indirekte lys fra GTAO
+ui-options-gi-probes = Globale belysningssonder
+ui-options-gi-probes-help = Prober spredt gjennom scenen som holder lyset fra flere spretter og himmelen de ser: lukkede rom forblir mørke, lys går rundt hjørner.Ca 0,8 ms på grafikkortet
+ui-options-ray-traced-reflections = Strålesporede refleksjoner
+ui-options-ray-traced-reflections-help = Refleksjoner av det skjermen ikke viser, i stedet for refleksjoner i skjermrom, som må være på
+ui-options-ray-tracing-unsupported = Dette skjermkortet eller driveren har ingen strålesporing
+ui-options-ray-tracing-vr = Ikke tilgjengelig i en økt startet for VR
+ui-options-tab-ray-tracing = Strålesporing
+ui-options-deluxe-rt-warning-title = Slå på Deluxe (RT)?
+ui-options-deluxe-rt-warning-text = Deluxe (RT) er Høy med skygger og indirekte lys som spores av grafikkortet. Det krever et kort med maskinvare- strålesporing (NVIDIA RTX, AMD Radeon RX 6000 eller nyere, Intel Arc) og en oppdatert driver, og det koster mye mer enn Høy: på et kort i mellomklassen kan bildefrekvensen falle kraftig på travle steder. Strålesporingen testes fremdeles: hvis bildet ser feil ut eller viseren går saktere, gå tilbake til Høy. Fanen Strålsporing inneholder innstillingene.
+ui-options-deluxe-rt-warning-turn-on = Slå på
+ui-options-ray-tracing-needs-shadows = Trenger skyggene
+ui-options-ray-tracing-needs-ssr = Trenger refleksjoner i skjermrommet
+ui-options-preset-deluxe = Deluxe (RT)
+ui-options-normal-precision = Refleksjonsnøyaktighet
+ui-options-normal-precision-help = Hvor fint retningen til hver overflate beholdes for refleksjoner. Standard kan vise trinn i refleksjonene av glatte, buede overflater som billakk; Høy fjerner dem og bruker mer videominne. Automatisk bruker Høy med strålesporede refleksjon, der trinnene viser mest, og Standard ellers
+ui-options-normal-precision-automatic = Automatisk
+ui-options-normal-precision-standard = Standard presisjon
+ui-options-normal-precision-high = Høy
+ui-options-private-point-at-help = Skjul hvilket objekt du redigerer, hold redigeringsarmen senket og skjul redigeringsstrålen.
+common-window-outside = Flytt utenfor visningsvinduet
+common-window-inside = Bring tilbake til visningsvinduet
+common-window-rename-name = Dobbeltklikk for å endre navn
+common-carry-hint = Klikk for å slippe den her, Esc for å gi slipp på den
+common-window-paused-photo = Pauset mens fotomodus er åpen
+common-window-paused-director = Pauset mens regissøren spiller
+common-window-paused-interface = Pauset mens grensesnittet er slått av
+ui-options-warn-live-preview = Advar når en tekstur eller et materiale ikke kan forhåndsvises
+ui-options-warn-live-preview-help = I byggevinduets velger, klikker du på et ikke-kopielement som ikke gjelder noe før OK: si det.
+ui-texture-picker-live-preview-texture = Vi kan ikke vise en forhåndsvisning av denne teksturen fordi den ikke er kopiert.
+ui-texture-picker-live-preview-material = Vi kan ikke vise en forhåndsvisning av dette materialet fordi det er ingen kopi.
+fetch-invalid-url = Ugyldig URL
+ui-chat-close-all-ims = Lukk alle IM samtaler
+ui-chat-close-all-ims-question = Lukke alle IM samtaler og avslutte den aktive samtalen?
+ui-chat-confirm-close-all-ims = Bekreft før du lukker alle IM samtaler
+ui-chat-confirm-close-all-ims-help = Spør før du lukker alle IM samtaler når man har en aktiv taleanrop.
+ui-options-aurora-controls-compact-help = Kontrollvinduet åpnes kompakt på kameraet: dets joysticker, zoom og rull. Dets tittellinjeknapp veksler mellom kompakt og full, og setter dette også. Med klassiske vinduer åpner kameraet i Legacy Viewers lille kameravindu i stedet.
+rlva-restart-hint = RLVa starter når du logger inn. Når den er kjørt, vil det å slå den på eller av få effekt ved neste oppstart av viseren: restriksjonsobjektene holder til da.
+rlva-toggle-title = RLVa
+rlva-toggle-enabled-restart = RLVa vil bli aktivert etter at du starter på nytt.
+rlva-toggle-disabled-restart = RLVa vil bli deaktivert etter at du starter på nytt.
+livemesh-import-connect = Koble til Blender med plug-in 0.11.0 eller nyere, eller Maya med plugin-modulen 0,2.0, for å forberede import LODs.
+livemesh-import-preparing = Klargjøre objektet og dets LOD-er i Blender eller Maya…
+livemesh-import-ready = LOD-er mottatt. Klar i importøren.
+livemesh-import-failed = Importforberedelse mislyktes: { $error }
+livemesh-import-timeout = Blender eller Maya er ikke ferdig med å forberede importen. Sjekk tilkoblingen (bruk objektmodus i Blender) og prøv igjen.
+livemesh-shape-apply-tooltip = Kryss av for Endre rettigheter, og tilpass deretter skjelettet som er valgt i Blender eller Maya og dets bundet nett (gjennom MayaStar for en MayaStar-rigg).Velg et lokalt Second Life-kompatibelt skjelett.
+livemesh-shape-update-apply = Oppdater Blender-programtillegget til versjon 0.10.0 eller nyere, eller Maya-programtillegget til 0,4.0, og koble det deretter til på nytt.
+livemesh-shape-applied = Figuren brukes på det valgte skjelettet.
+livemesh-shape-tooltip = Sjekk den slitte formen Modify rettigheter og lage en ny rigged referanse kropp i Blender eller Maya.
+livemesh-shape-connect = Koble Aurora plug-in i Blender eller Maya først.
+livemesh-shape-update-plugin = Oppdater Blender-programtillegget til versjon 0.9.0 eller nyere, eller Maya-programtillegget til 0,3.0, og koble det deretter til på nytt.
+livemesh-shape-timeout = Blender eller Maya bekreftet ikke importen. Prøv igjen (i Blender, bytt til objektmodus).
+livemesh-shape-success = Figur importert som en ny rigget referanse kropp.
+blender-live-maya-version = Aurora LiveMesh for Maya { $version }
+blender-live-maya-instructions = Åpne LiveMesh fra Aurora-hyllen, legg til maskene dine og klikk på Koble til for å lagre filen som en ZIP-fil.
+blender-live-save-maya = Lagre Maya- programtillegg…
+blender-live-maya-saved = Pakk ut ZIP-filen og dra install.mel inn i en Maya-visningsvindu.
+livemesh-plugin-connected = Programtillegg tilkoblet
+livemesh-token-refused = Et program prøvde å koble til uten denne forhåndsvisningens nøkkel. Bare Aurora- programtillegget i Blender eller Maya kan koble seg til.
+livemesh-waiting-plugin = Venter på Blender eller Maya...
+blender-live-objects-help = Maskene som Blender eller Maya sender. Velg en for å plassere den, eller importer den fra menyen.
+blender-live-size-note = Størrelsen multipliserer hva plugin-modulen sender, så senere redigeringer i Blender eller Maya beholder den.
+blender-live-avatar-help = For rigged netting: send formen til Blender eller Maya å modellere på den.
+livemesh-shape-section = Figuren din i Blender eller Maya
+blender-live-import-help = Fryser et øyeblikksbilde av objektet for normal import: gjennomgang, pris og deretter bekreftelse. Senere redigeringer i Blender eller Maya endrer det ikke.
+blender-live-changed-tip = Tid siden Blender eller Maya sist endret dette objektet
+fit-lab-section = Tilpass lab
+fit-lab-help = Dukker kledd i det du har på deg, hver med en annen kropp, står foran deg for å vise hvordan plagget passer flere former.Bare du ser dem: ingenting blir sendt eller lagret.
+fit-lab-body-me = Meg
+fit-lab-body-slim = Slank
+fit-lab-body-curvy = Kurvet
+fit-lab-body-full = Full figur
+fit-lab-body-athletic = Atletisk
+fit-lab-body-tall = Høy
+fit-lab-body-petite = Liten
+fit-lab-motion = Bevegelse
+fit-lab-motion-stand = Reis deg
+fit-lab-motion-walk = Gå
+fit-lab-motion-sit = Sitt
+fit-lab-motion-range = Omfang av bevegelse
+fit-lab-pose = Positur
+fit-lab-pose-all = Alle, i tur og orden
+fit-lab-pose-arms-up = Armene opp.
+fit-lab-pose-reach = Strekk deg fremover
+fit-lab-pose-hug = Armene krysset
+fit-lab-pose-squat = Knebøy
+fit-lab-pose-kneel = Knele.
+fit-lab-pose-knee-up = Kne hevet
+fit-lab-pose-twist = Vridning
+fit-lab-pose-bend = Bøy deg fremover
+fit-lab-motion-like-me = Som meg
+fit-lab-show = Vis dukkene
+fit-lab-place = Ta dem med hit.
+fit-lab-remove = Fjern dukkene
+fit-lab-choose = Velg minst én kropp.
+fit-lab-clip = Vis hvor kroppen kommer gjennom
+fit-lab-clip-note = Rødt: kroppen kommer ut av plagget. Ravnt: kropp og plagg møtes. På avataren din og dukkene, som sett fra kameraet. Alt annet rigget du har på deg teller som kropp: ta av en jakke eller hår som brukes over plagget
+blender-live-levels-pending = Blender eller Maya forbereder detaljnivåene når du klikker Importer.
+blender-live-levels-note = Forberedt i Blender eller Maya fra hvert objekts LiveMesh-innstillinger.
+blender-live-quick-look-changed = Endret i Blender eller Maya { $ago } siden.
+blender-live-warning-textures = Teksturer hoppet over, vanlig farge vist
+blender-live-warning-not-sent = Ikke i forhåndsvisningen
+blender-live-undo-derez = Derezzed { $name } · fremdeles i plugin-listen
+blender-live-undo-detach = Frittstående { $name } · fortsatt i plugin-modulens liste
+inventory-open-current = Åpne
+inventory-folder-back = Tilbake
+inventory-folder-forward = Fremover
+inventory-folder-up = Gå opp ett nivå
+area-search-metres = { $n } m
+area-search-band-reach = Innenfor rekkevidde
+area-search-band-close = I nærheten av
+area-search-band-around = Rundt deg
+area-search-band-further = Ytterligere
+area-search-band-far = Langt unna
+area-search-band = Areal
+area-search-within = Innenfor { $distance }
+area-search-within-across = Innenfor { $distance } over
+area-search-between = { $from }–{ $to }
+area-search-any-distance = Vis alle avstander
+area-search-from = Avstand fra
+area-search-to = Avstand til sentrum
+area-search-bar-tip =
+    { $count ->
+        [one] Objekter: 1 · { $from } – { $to }
+       *[other] Objekter: { $count } · { $from } – { $to }
+    }
+area-search-of-objects = Viser 1-20 av { $total } objekter
+area-search-li = { $value } LI
+area-search-li-count = { $value } landvirkning
+area-search-owner-count =
+    { $count ->
+        [one] én eier
+       *[other] { $count } eiere
+    }
+area-search-object-count =
+    { $count ->
+        [one] ett objekt
+       *[other] { $count } objekter
+    }
+area-search-objects-word = objekter
+area-search-in-reach = her
+area-search-tab-objects = Objekter
+area-search-tab-owners = Eiere
+area-search-hint-wide = Objekter, eiere, skapere eller UUID-er
+area-search-kind-heading = Type objekt
+area-search-kind-tip = Klikk: bare disse. Igjen: skjult.
+area-search-kind-any = noe
+area-search-kind-only = bare disse
+area-search-kind-hidden = Skjult
+area-search-kind-attached = Fastvokste
+area-search-kind-probes = Prober
+area-search-click-all = Alle
+area-search-click-any-short = Enhver
+area-search-permissions = Tillatelser
+area-search-price-heading = Salgspris, for objekter til salgs
+area-search-price-to = opptil
+area-search-price-tip = Velg "Til salgs" først
+area-search-linked = Koblede primtall
+area-search-one-field = Søk i ett felt
+area-search-regex-switch = Regulære uttrykk
+area-search-regex-invalid = Ikke et gyldig regulært uttrykk
+area-search-reset-filters-tip = Gjenopprett alle filtre; søketeksten blir værende
+area-search-save-defaults-tip = Åpne med disse filtrene fra nå av
+area-search-reset-search = Tilbakestill søketekstene
+area-search-reset-filters = Tilbakestill filteralternativene
+area-search-reset-ranges = Tilbakestill avstand og pris
+area-search-reset-all = Tilbakestill alt
+area-search-more = Mer
+area-search-several = Velg flere
+area-search-several-tip = Klikk legger til i utvalget (også Ctrl eller Shift + klikk, Ctrl+A)
+area-search-actions = Handlinger
+area-search-nothing = Ingen objekter mottatt ennå.
+area-search-nothing-for-sale = Ingenting til salgs her.
+area-search-not-for-sale = Ikke til salgs
+area-search-from-price = fra { $price }
+area-search-nearest = Nærmeste først
+area-search-heaviest = Tyngste først
+area-search-order-tip = Endre rekkefølgen: nærmeste eller tyngste først
+area-search-rank = #{ $rank } av { $all }
+area-search-rank-here = # { $rank } her
+area-search-card-more = Vis hver figur
+area-search-card-less = Vis mindre
+area-search-open-group = Åpne gruppen
+area-search-spoken = { $name }, { $distance }, landpåvirkning { $li }, eid av { $owner }
+area-search-owner-spoken = { $name }, { $count } Objekter, landpåvirkning { $li }
+area-search-stage-line = { $distance } Borte · { $li } Landpåvirkning · { $owner }
+area-search-tile-3d = 3D- visning
+area-search-on = { $count } på
+area-search-on-word = på
+area-search-more-on =
+    { $count ->
+        [one] Sett på ett filter til
+       *[other] { $count } flere filtre på
+    }
+ui-options-legacy-lists = Importere lister fra den eldre visningsprogrammet
+ui-options-legacy-lists-help = Legger til denne kontoens teleporteringshistorikk, svarteliste for ressurser, mediefilterliste og kontaktsett. Filene i Legacy Viewer er skrivebeskyttet.
+ui-options-legacy-lists-button = Importer fra Legacy Viewer…
+ui-options-legacy-lists-no-account = Logg inn for å importere denne kontoens lister.
+ui-options-legacy-lists-title = Importer fra eldre visningsprogram
+ui-options-legacy-lists-text = Alt blir lagt til i kontoens lister, og ingenting her blir fjernet. Navnene på svartelista forsvinner fra verden med en gang. Importerer du igjen får du tilbake det du fjernet her.
+ui-options-legacy-lists-searching = Ser etter mapper i Legacy Viewer...
+ui-options-legacy-lists-none = Ingen Legacy Viewer-mappe med lister ble funnet for denne kontoen.
+ui-options-legacy-lists-teleports = Teleport historie ({ $count })
+ui-options-legacy-lists-derender = Svartliste over eiendeler ({ $count })
+ui-options-legacy-lists-media = Mediefilterliste ({ $count })
+ui-options-legacy-lists-contact-set-entries = Kontakt sett oppføringer ({ $count })
+ui-options-legacy-lists-confirm = Importer
+ui-options-legacy-lists-added = Lagt til eller oppdatert. Teleport historie: { $teleports }, aktiv svarteliste: { $derender }, mediefilter: { $media }, kontakt sett oppføringer: { $sets }.
+ui-options-legacy-lists-nothing = Ingenting nytt: denne kontoen har allerede disse listene.
+ui-options-legacy-lists-failed = Kunne ikke lese: { $files }.
+ui-options-legacy-lists-unsaved = Kunne ikke lagre, igjen som det var: { $files }.
+ui-options-legacy-lists-other-grid = På dette rutenettet kan en mappe med samme navn tilhøre et annet rutenett: sjekk at det er riktig.
+ui-options-build-show-beams-hint = Vis dine utvalgsstråler og de til andre avatarer når du redigerer, griper eller gir. Dette styrer bare visningen; bruk Personvern > Skjul redigeringsstråle for å stoppe din redigering stråle lokalt og over nettverket.
+teleport-failed-title = Teleportering mislyktes.
+teleport-error-invalid-tport = Forsøk på teleportering er begrenset til 6 per minutt. Hvis du har problemer, vent ett minutt og prøv å teleportere igjen. Hvis problemet vedvarer, logg ut og logg inn igjen.
+teleport-error-invalid-region-handoff = Det oppsto et problem under behandling av regionkryssingen din. Du må kanskje logge inn igjen før du kan krysse regioner. Hvis du fortsetter å få denne meldingen, vennligst kontakt kundestøtte.
+teleport-error-blocked-tport = Beklager, teleportering er for øyeblikket blokkert. Prøv igjen om et øyeblick. Hvis du fremdeles ikke kan teleportere, logg ut og inn igjen for å løse problemet.
+teleport-error-nolandmark-tport = Beklager, men systemet klarte ikke å finne landemerkedestinasjonen.
+teleport-error-timeout-tport = Beklager, men systemet klarte ikke å fullføre teleporttilkoblingen. Prøv igjen om et øyeblikk.
+teleport-error-no-help-island = Du kan ikke teleportere tilbake til Welcome Island.
+teleport-error-noaccess-tport = Beklager, du har ikke tilgang til dette teleporteringsmålet.
+teleport-error-missing-attach-tport = Vedleggene dine har ikke kommet ennå. Prøv å vente noen sekunder til eller logg ut og inn igjen før du prøver å teleportere.
+teleport-error-too-many-uploads-tport = Ressurskøen i dette området er for øyeblikket tilstoppet, så teleporteringsforespørselen din vil ikke lykkes i tide. Prøv igjen om noen minutter eller gå til et mindre travelt område.
+teleport-error-expired-tport = Beklager, men systemet klarte ikke å fullføre teleporteringsforespørselen din i tide. Prøv igjen om noen minutter.
+teleport-error-expired-region-handoff = Beklager, men systemet klarte ikke å fullføre regionkryssingen din i tide. Prøv igjen om noen minutter.
+teleport-error-preexisting-tport = Beklager, men systemet klarte ikke å starte teleporteringen din. Prøv igjen om noen minutter.
+teleport-error-no-host = Finner ikke teleporteringsmålet. Målet kan være midlertidig utilgjengelig eller finnes ikke lenger. Prøv igjen om noen minutter.
+teleport-error-no-inventory-host = Beholdningssystemet er for øyeblikket utilgjengelig.
+teleport-error-must-get-age-region = Du må være 18 år eller eldre for å komme inn i denne regionen.
+teleport-error-special-usage-blocked = Kan ikke angi region. '{ $region }' er en ferdighetsspillregion, og du må oppfylle visse kriterier for å kunne delta.For detaljer, vennligst se Skill Gaming FAQ: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = Kan ikke angi region. Dette er en ferdighetsspillregion, og du må oppfylle visse kriterier for å kunne delta. For mer informasjon kan du se Vanlige spørsmål om ferdighets spill: https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-hint-hypergrid-home-refused = Ditt hjemmenett avslo din retur. Dette betyr vanligvis at Hypergrid- adresseinnstillingen ikke stemmer med adressen andre nett bruker for det. Kontakt operatørene til ditt hjemmenett; ved å logge inn igjen kommer du hjem i mellomtiden.
+teleport-hint-hypergrid-unreachable = Det andre rutenettet kunne ikke nås. Det kan være frakoblet, eller lenka kan peke til en gammel adresse.
+teleport-hint-hypergrid-visitors-refused = Det rutenettet slipper bare inn beboere fra noen rutenett.
+teleport-hint-hypergrid-destination-gone = Målregionen finnes ikke lenger eller er flyttet Landmerker og koblinger til andre rutenett kan bli utdatert.
+toolbar-edit = Tilpass knapper og menyer…
+toolbar-title = Knapper og menyer
+toolbar-interface-locked = Grensesnitt låst
+toolbar-help = Dra knapper eller menyoppføringer til topp -, bunn - eller sidestolpene. Slipp en knapp tilbake hit for å fjerne den. Høyreklikk på en knapp for å endre utseendet.
+toolbar-help-classic = Dra knapper eller menyoppføringer til topp -, bunn - eller sidestolpene. Slipp en knapp tilbake hit for å fjerne den. Høyreklikk på en knapp for å endre utseendet.
+toolbar-help-modes = Velg ikoner, etiketter, begge deler eller standardlinjen for hver knapp. Dra oppføringer i Aurora- menyen for å omorganisere den.
+import-menu-textures = Teksturer
+import-menu-animations = Animasjoner
+import-menu-sounds = Lyder
+import-menu-materials = Materialer
+import-menu-meshes = Mesh
+import-menu-options = Importvalg
+import-upload-payment-title = Last opp
+import-upload-payment = Du betalte L${ $cost } for å laste opp.
+import-quick-textures =
+    { $count ->
+        [one] Import · Teksturer: 1 · L${ $cost }?
+       *[other] Import · Teksturer: { $count } · L${ $cost }?
+    }
+import-quick-materials =
+    { $count ->
+        [one] Import · Materialer: 1 · L${ $cost }?
+       *[other] Import · Materialer: { $count } · L${ $cost }?
+    }
+import-quick-sounds =
+    { $count ->
+        [one] Import · Lyder: 1 · L${ $cost }?
+       *[other] Import · Lyder: { $count } · L${ $cost }?
+    }
+import-quick-textures-size =
+    { $count ->
+        [one] Velg importstørrelse. Teksturer som støtter det, kan importeres i størrelsen 2048 × 2048:
+       *[other] ({ $count }) Velg importstørrelse. Teksturer som støtter det, kan importeres i størrelsen 2048 × 2048:
+    }
+import-quick-materials-size =
+    { $count ->
+        [one] Velg importstørrelse. Materialbilder som støtter det, kan importeres i størrelsen 2048 × 2048:
+       *[other] ({ $count }) Velg importstørrelse. Materialbilder som støtter det, kan importeres i størrelsen 2048 × 2048:
+    }
+import-quick-size-choice = { $size } px · L${ $cost }
+import-quick-free-full-size = Last opp gratis bilder i størrelsen 2048 × 2048 uten å spørre
+import-quick-free-full-size-help = Importer teksturer og Importer materialer spør deretter bare om 1024 eller 2048 når opplastingen koster L$.
+ui-bars-customize-bars = Tilpass grensesnitt
+build-tool-in-use = I bruk
+build-create-options-toggle = Vis / skjul alternativene
+build-create-keep-creating = Fortsett å skape
+build-create-center-on-prim = Sentrer på prim
+build-create-copy-prim-rotation = Kopier prim- rotasjon
+build-create-align-to-surface = Juster til overflate
+build-capture-shape-button = Kopier en prims form: klikk på dette, deretter en prim i verden
+build-capture-shape-armed = Klikk på en prim for å kopiere dens form (Escape avbryter)
+build-capture-shape-full = 20 figurer beholdes. Fjern en for å kopiere en annen
+build-capture-shape-remove = Fjern denne figuren
+build-capture-shape-tooltip = Kopiert form ({ $kind })
+build-capture-shape-not-a-prim = Bare en prims form kan kopieres
+build-capture-shape-mesh-or-sculpt = Formen på et nett eller en skulpturert prim kan ikke kopieres
+build-capture-shape-no-modify = Du må ha tillatelse til å endre denne prim for å kopiere dens form
+import-other-options = Andre valgmuligheter
+toolbar-button-icons = Bare ikon
+toolbar-button-text = Bare etikett
+toolbar-button-icons-text = Ikon og etikett
+toolbar-icon-default = Gjenopprett standardikon
+toolbar-icon-choose = Velg et ikon
+toolbar-icon-change = Endre ikon
+toolbar-presets = Forhåndsvalg
+toolbar-interfaces = Grensesnitt
+toolbar-interfaces-shown = Vist i grensesnittblokken
+toolbar-interfaces-hidden = Skjult fra grensesnittblokken
+toolbar-preset-light = Aurora
+toolbar-preset-old-school = Aurora OldSchool
+toolbar-preset-photographer = Aurora Fotograf
+toolbar-preset-legacy = Legacy
+toolbar-import-textures = Importer teksturer
+toolbar-import-sounds = Importer lyder
+toolbar-import-animations = Importer animasjoner
+toolbar-import-materials = Importer materialer
+toolbar-import-meshes = Importer nett
+toolbar-import-local = Lokale filer
+toolbar-import-advanced = Avansert import
+toolbar-import-settings = Importinnstillinger
+toolbar-import-bar = Importer linje
+toolbar-icon-search = Finn et ikon…
+toolbar-in-top = I den øverste verktøylinjen
+toolbar-bar-top = Toppverktøylinje
+toolbar-drop-here = Slipp her
+toolbar-separator = Skillelinje
+toolbar-interface-edit = Tilpass grensesnitt
+toolbar-edit-done = Ferdig
+toolbar-edit-top = Topp
+toolbar-edit-bottom = Bunn
+toolbar-edit-left = Venstre
+toolbar-edit-right = Høyre
+toolbar-edit-help = Klikk på et element for å velge det, dra for å flytte det, eller høyreklikk for redigeringsalternativer. Lukk dette vinduet for å fullføre.
+toolbar-edit-locked = Stolpene er låst. Lås dem opp nedenfor for å endre grensesnittet.
+toolbar-edit-move = Flytt til
+toolbar-edit-split-before = Del opp før
+toolbar-edit-split-after = Del etter
+toolbar-edit-merge-before = Slå sammen med forrige blokk
+toolbar-edit-merge-after = Slå sammen med neste blokk
+toolbar-edit-merge-groups = Slå sammen disse blokkene
+toolbar-drawer = Skuff
+toolbar-drawer-default-mode = Standard visning av knapper
+toolbar-drawer-closes = Lukk etter et klikk på en knapp
+toolbar-block-shortcut = Snarvei:
+toolbar-drawer-hides-needs-shortcut = Krever en snarvei
+toolbar-floating-close-button = Legge til en lukkeknapp
+toolbar-block-name = Blokknavn:
+toolbar-block-button-mode = Vis blokkeringsknapp
+toolbar-button-inherited = Arvet
+toolbar-drawer-hides-button = Skjul knappen mens den flyter
+toolbar-floating-new = Flytende blokk
+toolbar-floating-orientation = Retning
+toolbar-floating-horizontal = Vannrett
+toolbar-floating-vertical = Loddrett
+toolbar-floating-empty = Slipp knapper her
+toolbar-shortcut-title = Snarvei
+toolbar-shortcut-block-name = Blokk: { $name }
+toolbar-shortcut-none = Ingen snarvei
+toolbar-shortcut-press-key = Trykk på en tast
+toolbar-shortcut-esc = Esc for å avbryte
+toolbar-shortcut-clear = Fjern
+toolbar-shortcut-overrides = Tar over { $name }: denne snarveien kjører verktøylinjen i stedet for standardbruken.
+toolbar-shortcut-used = Allerede snarveien til { $names }.
+toolbar-shortcut-replace = Erstatt
+toolbar-shortcut-add = Legg til
+toolbar-shortcut-save = Lagre
+toolbar-shortcut-choose-key = Velg en nøkkel
+toolbar-shortcut-help = Slå Ctrl, Alt og Skift på eller av, og klikk deretter på tasten for å endre den. Ctrl eller Alt er nødvendig, unntatt med F1 til F24.
+toolbar-shortcut-inactive = Denne knappen er i ingen bar: dens snarvei fungerer når den er plassert igjen.
+toolbar-shortcut-refused-keyboard = Bare tastaturtastene kan være en snarvei.
+toolbar-shortcut-refused-modifier = En valgtast alene kan ikke være en snarvei.
+toolbar-shortcut-refused-needs-modifier = Legg til Ctrl eller Alt: en tast alene, eller med Shift bare, skriver i tekstfelt.
+toolbar-shortcut-refused-altgr = Ctrl+Alt med denne tasten er AltGr, som skriver tegn på mange tastaturer.
+toolbar-shortcut-refused-editing = Tekstfelt bruker denne snarveien (velg alt, kopier, klipp ut, lim inn, angre, gjenta).
+toolbar-shortcut-refused-navigation = Tekstfelt flyttes og slettes med denne tasten.
+toolbar-shortcut-refused-typing = Chatten og dialogene bruker denne tasten.
+toolbar-shortcut-refused-system = Systemet beholder denne snarveien.
+toolbar-shortcut-refused-window = Denne snarveien lukker eller bytter vinduer.
+toolbar-shortcut-refused-zoom = Denne snarveien zoomer grensesnittet.
+toolbar-spacer = Blokkavstand
+toolbar-add-spacer = Legg til blokkavstand
+toolbar-button-settings = Knappeinnstillinger
+toolbar-button-edit = Rediger-knapp …
+toolbar-button-edit-title = Rediger-knapp
+toolbar-button-name = Knappnavn:
+toolbar-button-display = Knappvisning
+toolbar-shortcut-fixed-block-help = En fast blokks snarvei viser og skjuler den; mens grensesnittet er redigert, forblir det vist.
+toolbar-block-settings = Blokkinnstillinger
+toolbar-parent-block-settings = Innstillinger for overordnet blokk
+toolbar-block-edit = Rediger blokk & # 160; …
+toolbar-block-edit-title = Rediger blokk
+toolbar-block-alignment = Justering
+toolbar-block-sizing = Knappstørrelse
+toolbar-block-fixed-options = Alternativer for fast modus
+toolbar-block-floating-options = Alternativer for flytende modus
+toolbar-block-kind-fixed = Fast blokk
+toolbar-block-kind-drawer = Skuff
+toolbar-block-kind-floating = Flytende blokk
+toolbar-block-remove = Fjern blokk
+toolbar-move-block = Dra for å flytte hele blokken
+toolbar-remove-block = Fjern blokk
+toolbar-drawer-empty = Denne skuffen er tom.
+toolbar-drawer-drop = Dra knapper hit for å legge til eller endre rekkefølgen på dem.
+toolbar-separator-settings = Innstillinger for blokkavstand
+toolbar-separator-size = Størrelse / minimum (px)
+toolbar-separator-stretch = Fyll tilgjengelig plass
+toolbar-separator-help = Fleksible mellomrom deler plassen som blokkene etterlater seg.Størrelse er deres minste bredde, eller høyde i en sidestolpe.
+toolbar-block-navigation = Navigasjon og SLURL
+toolbar-block-account = Konto og saldo
+toolbar-block-system = Klokke, indikatorer og lyd
+toolbar-block-status = Tilgjengelighetsstatus
+toolbar-block-balance = Saldo
+toolbar-block-clock = Klokke
+toolbar-block-ping = Regionforsinkelse
+toolbar-block-fps = Bildefrekvens (FPS)
+toolbar-block-network = Nettverkstrafikk
+toolbar-block-media = Parsellmedier
+toolbar-block-music = Parsellmusikk
+toolbar-block-volume = Volum
+toolbar-block-notifications = Varsler
+toolbar-block-conversations = Samtaleikoner
+toolbar-block-chat = Nærliggende chat-inngang
+toolbar-category-all = Alle kategorier
+toolbar-section-main = Hoved
+toolbar-section-advanced = Avansert
+toolbar-search-all = Søk inneholder avanserte kommandoer.
+toolbar-category-avatar = Avatar og bevegelse
+toolbar-category-communication = Kommunikasjon
+toolbar-category-world = Verden og reise
+toolbar-category-creation = Opprettelse og innhold
+toolbar-category-interface = Grensesnitt og kamera
+toolbar-category-advanced = Avanserte verktøy
+toolbar-category-help = Hjelp
+toolbar-category-custom = Selvvalgte kommandoer
+toolbar-bar-settings = Verktøylinjeinnstillinger
+toolbar-menu-group = Menu: { $name }
+toolbar-location-bar = SLURL adresselinje
+toolbar-command-build-tool-focus = Bygg - Kamera
+toolbar-command-build-tool-grab = Bygg - Flytt
+toolbar-command-build-tool-edit = Bygg - Rediger
+toolbar-command-build-tool-create = Bygg - Opprett
+toolbar-command-build-tool-land = Bygg - land
+bug-copy-version = Kopier visningsversjon
+toolbar-notecard-save = Lagre til et notatkort …
+toolbar-notecard-load = Last inn fra et notatkort …
+toolbar-notecard-name = Aurora- grensesnitt
+toolbar-notecard-help = Oppsett og utseende på verktøylinjer, knapper, skuffer og menyer.
+toolbar-notecard-saved = Interface layout lagret i din beholdning.
+toolbar-notecard-invalid = Dette notatkortet inneholder ikke et kompatibelt grensesnittoppsett.
+toolbar-notecard-unavailable = Dette notatkortet er ikke lenger tilgjengelig eller kan ikke kopieres.
+toolbar-notecard-layout-changed = Grensesnittet ble endret mens notatkortet ble lastet inn. Last det inn på nytt for å bruke oppsettet.
+toolbar-notecard-demo-valid = Fotografgrensesnitt
+toolbar-notecard-demo-invalid = Annet notatkort
+toolbar-notecard-too-large = Denne grensesnittkonfigurasjonen er for stor for et notatkort.
+toolbar-saved-interfaces = Lagrede grensesnitt
+toolbar-saved-interfaces-empty = Ingen lagrede grensesnitt ennå.
+toolbar-notecard-destination = Mappe: { $path }
+toolbar-notecard-folder-error = Mappa for grensesnitt kunne ikke lastes inn eller opprettes. Prøv igjen.
+toolbar-current-preset = Valgt grensesnitt: { $name }
+toolbar-preset-custom = Selvvalgt grensesnitt
+toolbar-preset-unsaved = Ulagrede endringer
+toolbar-preset-save-title = Lagre grensesnitt
+toolbar-preset-save-name = Grensesnittnavn
+toolbar-preset-save-new = Nytt personlig grensesnitt
+toolbar-preset-save-replace = Erstatt dette personlige grensesnittet
+toolbar-preset-save-unavailable = Grensesnittet kan ikke lagres her. Velg et annet navn eller et tilgjengelig, redigerbart personlig grensesnitt.
+toolbar-interface-delete-unavailable = Dette personlige grensesnittet kan ikke slettes.
+toolbar-interface-delete-confirm = Flytte det personlige grensesnittet «{ $name }» til papirkurven?
+
+### Weather, graphics, chat and contacts refresh
+
+director-motion-blur = Bevegelsesuskarphet
+director-motion-blur-hint = Director-kameraet har sin egen lukker. Objekter i bevegelse og kamerasvingninger skaper bevegelsesuskarphet mens dette vinduet er åpent, inkludert i livefilmer. Rendering prøver flere øyeblikk per bilde for å simulere en ekte lukker, så det tar proporsjonalt lengre tid.
+director-shutter = Kameralukker
+director-shutter-tip = Lukkervinkel ved filmbildefrekvens. 180° er standard for kino. En mindre vinkel gjør bevegelige objekter skarpere. Over 360° varer bevegelsesspor lenger enn ett bilde.
+ui-options-sun-rays = Sol- og månestråler
+ui-options-sun-rays-help = Streker lyset fra solen, og månen om natten, over bildet når du ser mot det, avskåret av det som står foran: trær, bygninger, skyer. Ingen synlig tåke. Forskjellig fra Legacy Viewer
+ui-options-sun-rays-strength = Styrke
+ui-options-sun-rays-strength-help = Hvor lyse strålene er
+ui-options-show-recent-emojis-legacy-places-hint = Med den eldre chat-stilen: de sist brukte emojiene dine som en rad under Samtaler-feltet, og over chat-linjen. Av som standard, da den eldgamle viseren holder raden lukket.
+ui-options-chat-lines-direction = Posisjon av nærliggende chat linjer
+ui-options-chat-lines-direction-hint = I nærheten chat linjer som vises over hele verden følger chat bar.I automatisk modus, går linjene over chat bar, eller under det når det er mer plass nedenfor.
+ui-options-chat-lines-direction-auto = Automatisk
+ui-options-chat-lines-direction-up = Over chattefeltet
+ui-options-chat-lines-direction-down = Under chattefeltet
+ui-chat-recent-emojis-show = Vis nylige emojier
+ui-chat-recent-emojis-hide = Skjul nylige emojis
+ui-options-motion-blur = Bevegelsesuskarphet
+ui-options-motion-blur-enable = Bevegelsesuskarphet
+ui-options-motion-blur-enable-help = Smører det som beveger seg, og hele visningen når kameraet snur, som et kameras lukker; Aurora egen, av som standard.
+ui-options-motion-blur-strength = Styrke
+ui-options-motion-blur-strength-help = Hvor lenge lukkeren er åpen, målt som en prosentandel av en sekstidels sekund ved en hvilken som helst bildefrekvens. Standardverdien er 50 prosent, tilsvarende en 180° lukker.
+common-window-reset = Tilbakestill posisjon og størrelse
+people-contact-sheet-collapse = Skjul kontaktinformasjonen
+people-contact-sheet-expand = Utvid kontaktinformasjonen
+people-contact-sheet-no-room = Ruten er for smal til å vise kontaktinformasjonen ved siden av listen
+people-group-sheet-collapse = Skjul gruppedetaljer
+people-group-sheet-expand = Utvid gruppedetaljer
+people-group-sheet-no-room = Ruten er for smal til å vise gruppedetaljer ved siden av listen
+ui-weather-fog = Tåkeweather condition
+ui-weather-fog-on-tip = Tåke som samler seg på de lave stedene, driver med vinden og lyser opp rundt lysene.
+ui-weather-fog-look = Tåkegjengivelsesmodus
+ui-weather-fog-look-tip = Høyde tåke har svært lite ytelse kostnad. Volumetrisk tåke viser sollys og skygger inne i tåken.Modusen med lys gjør også lamper og neonskilt lyse gjennom tåken .
+ui-weather-fog-look-height = Høydetåkeweather condition
+ui-weather-fog-look-volume = Volumetrisk tåkeweather condition
+ui-weather-fog-look-lights = Volumetrisk tåke med lys
+ui-weather-fog-density = Tåketetthet
+ui-weather-fog-density-tip = Hvor tykk tåken er: en lett tåke til venstre, en tåke du ikke kan se gjennom til høyre
+ui-weather-fog-mist = Tåkeweather condition
+ui-weather-fog-light = Lett tåkeweather condition
+ui-weather-fog-thick = Tett tåkeweather condition
+ui-weather-fog-dense = Meget tett tåkeweather condition
+ui-weather-fog-height = Høyde
+ui-weather-fog-height-tip = Hvor høyt tåken når over bakken den ligger på før den tynnes ut
+ui-weather-fog-low = Lavt til bakken
+ui-weather-fog-high = Når høyere
+ui-weather-fog-drift = Bevegelse med vind
+ui-weather-fog-drift-tip = Velger hvor mye av vindhastigheten tåken følger. Den bruker Aurora Weather wind når dette er slått på, ellers regionvind.
+ui-weather-fog-still = Stillestående tåkeweather condition
+ui-weather-fog-windblown = Beveger seg med vinden
+ui-weather-fog-glow = Lys rundt lysene
+ui-weather-fog-glow-tip = Styrer hvordan lyset spres i tåken. Den venstre enden sprer lyset jevnt, den høyre enden konsentrerer gløden rundt solen og hvert lys.
+ui-weather-fog-glow-soft = Jevn lysspredning
+ui-weather-fog-glow-tight = Konsentrert glød
+ui-weather-fog-from-sky = Tykkere under en tåkete himmel
+ui-weather-fog-from-sky-tip = En tåkete himmel gjør tåken tettere, og en klar himmel fører til at tåken blir tynnere.
+ui-weather-fog-follow-sky = Bruk himmellysfarge
+ui-weather-fog-follow-sky-tip = Når dette er slått på, tar tåken fargen fra himmellyset, akkurat som dis. Når det ikke er skrudd på, bruker tåken sin egen farge.
+ui-weather-fog-colour-tip = Tåkens egen farge
