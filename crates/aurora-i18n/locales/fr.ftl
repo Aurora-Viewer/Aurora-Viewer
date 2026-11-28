@@ -1290,6 +1290,7 @@ import-done = Importé
 import-cancelled = Annulé
 import-permissions = Permissions des imports
 inventory-default-permissions = Permissions par défaut
+build-default-object-permissions-failed = Problème lors de l’enregistrement des droits d’objet par défaut : { $reason }. Réessayez de définir les droits par défaut ultérieurement.
 inventory-default-permissions-help = Modifier, Copier et Transférer concernent le prochain propriétaire. Ces réglages s’appliquent aux nouveaux éléments et sont enregistrés automatiquement.
 inventory-default-permissions-creations = Créations dans Second Life
 inventory-default-permissions-type = Type d’élément

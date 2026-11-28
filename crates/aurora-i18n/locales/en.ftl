@@ -1290,6 +1290,7 @@ import-done = Imported
 import-cancelled = Canceled
 import-permissions = Upload permissions
 inventory-default-permissions = Default permissions
+build-default-object-permissions-failed = There was a problem saving the default object permissions: { $reason }. Please try setting the default permissions later.
 inventory-default-permissions-help = Modify, Copy and Transfer apply to the next owner. These defaults affect new items only and are saved automatically.
 inventory-default-permissions-creations = Created in Second Life
 inventory-default-permissions-type = Item type

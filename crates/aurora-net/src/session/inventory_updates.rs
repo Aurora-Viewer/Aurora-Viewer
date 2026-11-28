@@ -372,6 +372,7 @@ mod tests {
         let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         let sim = Sim::new(address, 10);
         let mut session = Session {
+            default_perms: Default::default(),
             asset_imports: Default::default(),
             sh: &sh,
             sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock.clone())),

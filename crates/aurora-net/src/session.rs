@@ -308,6 +308,14 @@ async fn post_appearance_request(http: &reqwest::Client, request: appearance_que
     }
 }
 
+/// LLFloaterPermsDefault's session state (sCapSent and the masks to post).
+#[derive(Default)]
+struct DefaultPerms {
+    masks: Option<caps::ObjectPermMasks>,
+    /// A post succeeded: shared with the post's task, which sets it.
+    sent: Arc<std::sync::atomic::AtomicBool>,
+}
+
 struct Session<'a> {
     sh: &'a Shared,
     sock: Arc<CircuitSocket>,
@@ -347,6 +355,9 @@ struct Session<'a> {
     fov: f32,
     /// The interest list mode asked of the regions (LLAgent::mInterestListMode).
     interest_list: InterestListMode,
+    /// LLFloaterPermsDefault for this session: the default object
+    /// permissions to post, and whether a post succeeded (sCapSent).
+    default_perms: DefaultPerms,
     logout_started: Option<Instant>,
     finished: bool,
     agent_moved: bool,
@@ -594,6 +605,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         refuse_neighbours: false,
         fov: DEFAULT_FOV,
         interest_list: InterestListMode::Default,
+        default_perms: DefaultPerms::default(),
         logout_started: None,
         finished: false,
         agent_moved: false,
@@ -1112,6 +1124,11 @@ impl Session<'_> {
         }
         if self.main == Some(addr) {
             self.update_agent_language();
+            // LLViewerRegion::setCapabilitiesReceived: sendInitialPerms,
+            // until one post has succeeded this session
+            if self.default_perms.masks.is_some() && !self.default_perms.sent.load(Ordering::Relaxed) {
+                self.post_default_perms();
+            }
             // LLEnvironment::onRegionChange -> requestRegion once caps arrive
             self.request_environment(None);
             // LLAgent::capabilityReceivedCallback: the 360° snapshot's mode
@@ -1772,6 +1789,12 @@ impl Session<'_> {
         match c {
             NetCommand::UpdateAgentLanguage => self.update_agent_language(),
             NetCommand::SetHoverHeight { region, request, value } => self.set_hover_height(region, request, value),
+            NetCommand::SetDefaultObjectPerms { masks, initial } => {
+                self.default_perms.masks = Some(masks);
+                if !initial || !self.default_perms.sent.load(Ordering::Relaxed) {
+                    self.post_default_perms();
+                }
+            }
             NetCommand::SetMaturityPreference(maturity) => self.set_maturity_preference(maturity),
             NetCommand::SetHomeLocation { position, look_at } => self.set_home_location(position, look_at),
             NetCommand::RequestUserInfo => self.request_user_info(),
@@ -3935,6 +3958,53 @@ impl Session<'_> {
                 log::warn!("Could not update avatar hover height");
             }
             let _ = events.send(NetEvent::HoverHeightUpdated { region, request, success });
+        });
+    }
+
+    /// LLFloaterPermsDefault::updateCap / updateCapCoro: the masks to the
+    /// agent region's AgentPreferences, tried MAX_HTTP_RETRIES (5) times,
+    /// RETRY_TIMEOUT (5 s) apart. Without the capability yet, the region's
+    /// capabilities post them when they arrive (`on_caps`). One difference
+    /// on purpose: once a post has succeeded (sCapSent), updateCapCoro shows
+    /// the DefaultObjectPermissions alert at each new failure reason during
+    /// the retries; here the failure is told once, with the last reason,
+    /// after the fifth try, so a passing outage shows one alert, not five.
+    fn post_default_perms(&self) {
+        let Some(masks) = self.default_perms.masks else {
+            return;
+        };
+        let Some(url) = self
+            .main
+            .and_then(|address| self.sims.get(&address))
+            .and_then(|sim| sim.caps.get("AgentPreferences"))
+            .cloned()
+        else {
+            log::debug!("default object permissions: AgentPreferences not available yet");
+            return;
+        };
+        let body = caps::default_object_perms_body(masks);
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        let sent = self.default_perms.sent.clone();
+        tokio::spawn(async move {
+            let mut reason = String::new();
+            for attempt in 1..=5 {
+                match tokio::time::timeout(Duration::from_secs(20), caps::post_llsd(&http, &url, &body)).await {
+                    Ok(Ok(_)) => {
+                        sent.store(true, Ordering::Relaxed);
+                        log::info!("default object permissions sent to the simulator");
+                        let _ = events.send(NetEvent::DefaultObjectPermsSent { result: Ok(()) });
+                        return;
+                    }
+                    Ok(Err(e)) => reason = e.to_string(),
+                    Err(_) => reason = "timeout".into(),
+                }
+                if attempt < 5 {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
+            log::warn!("Unable to send default permissions ({reason}), giving up for now");
+            let _ = events.send(NetEvent::DefaultObjectPermsSent { result: Err(reason) });
         });
     }
 
@@ -7190,6 +7260,7 @@ mod event_queue_tests {
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
             interest_list: InterestListMode::Default,
+            default_perms: DefaultPerms::default(),
             logout_started: None,
             finished: false,
             agent_moved: false,
@@ -7572,6 +7643,7 @@ mod script_dialog_tests {
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
             interest_list: InterestListMode::Default,
+            default_perms: DefaultPerms::default(),
             logout_started: None,
             finished: false,
             agent_moved: false,

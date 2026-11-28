@@ -143,6 +143,26 @@ struct SpinnerDrag {
     changed: bool,
 }
 
+/// Reads a Build number field like LLLineEditor::evaluateFloat
+/// (indra/llui/lllineeditor.cpp): a plain number first, in the interface's
+/// decimal separator, else the text as an LLCalc expression (`1.5+0.25`,
+/// `10/3`, `2*PI`), through the port of the `calc` command. `None` leaves
+/// the value as it was, like a failed evaluation in the Legacy Viewer.
+pub(crate) fn parse_expression(text: &str) -> Option<f64> {
+    if let Some(value) = aurora_i18n::parse_number(text) {
+        return Some(value);
+    }
+    let value = crate::cmdline::calc::eval(text).or_else(|| {
+        // A comma separator becomes the dot LLCalc reads, unless the text
+        // only parses with it as a function's argument separator (above).
+        let separator = aurora_i18n::tr!("number-decimal-separator");
+        (separator != ".")
+            .then(|| crate::cmdline::calc::eval(&text.replace(separator, ".")))
+            .flatten()
+    })?;
+    value.is_finite().then_some(f64::from(value))
+}
+
 pub fn label(ui: &mut egui::Ui, p: &Palette, t: &str) -> egui::Response {
     ui.label(RichText::new(t).size(12.0).color(p.muted))
 }
@@ -296,7 +316,7 @@ fn spinner(
     .update_while_editing(false)
     .range(range.clone())
     .clamp_existing_to_range(false)
-    .custom_parser(aurora_i18n::parse_number)
+    .custom_parser(parse_expression)
     .max_decimals(decimals)
     .min_decimals(min_decimals.min(decimals));
     if tentative {
@@ -398,7 +418,7 @@ pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i3
             [(width - 13.0).max(16.0), height],
             egui::DragValue::new(&mut *v)
                 .update_while_editing(false)
-                .custom_parser(aurora_i18n::parse_number)
+                .custom_parser(parse_expression)
                 .speed(0.25)
                 .range(range.clone()),
         );
@@ -1414,5 +1434,19 @@ mod tests {
         }
         assert_eq!(same([1, 1, 1].into_iter()), (Some(1), false));
         assert_eq!(same([1, 2].into_iter()), (Some(1), true));
+    }
+
+    #[test]
+    fn number_fields_evaluate_expressions_like_llcalc() {
+        assert_eq!(parse_expression(" 12.5 "), Some(12.5));
+        assert_eq!(parse_expression("1.5+0.25"), Some(1.75));
+        assert_eq!(parse_expression("2*(3+1)"), Some(8.0));
+        assert!((parse_expression("10/3").unwrap() - 10.0 / 3.0).abs() < 1e-5);
+        assert!((parse_expression("pi").unwrap() - std::f64::consts::PI).abs() < 1e-5);
+        assert_eq!(parse_expression("=4-6"), Some(-2.0));
+        // A failed evaluation keeps the field's value, like evaluateFloat.
+        assert_eq!(parse_expression("1+"), None);
+        assert_eq!(parse_expression("abc"), None);
+        assert_eq!(parse_expression("1/0"), None);
     }
 }

@@ -228,6 +228,9 @@ pub struct Facts {
     /// RLVa is on for the session: Derender is greyed on our own
     /// attachments (enable_derender_object, indra/newview/llviewermenu.cpp).
     pub rlva_enabled: bool,
+    /// The Delete key runs the menu's Delete entry (#5168). Off where the
+    /// build tools' own Delete shortcut already takes the key (`app.rs`).
+    pub delete_key: bool,
     /// RLVa greys "Pay" on the avatar: @pay, or a name @shownames hides
     /// (enable_pay_avatar, indra/newview/llviewermenu.cpp).
     pub pay_blocked: bool,
@@ -736,6 +739,17 @@ pub fn show(
     };
     let mut open = true;
     let entries = entries::world_menu(&m.target, f, m.point);
+    // Not while the arrangement is edited: Delete removes a separator there.
+    if f.delete_key
+        && !customization.editing(prefs)
+        && let Some(action) = delete_key_action(ctx, &entries)
+    {
+        request(ctx, action);
+        *menu = None;
+        ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::unique(HOVERED)));
+        customization.close(ctx, prefs);
+        return *prefs != saved_before;
+    }
     let hovered = if use_pie && !customization.force_list() {
         let voice = match m.target {
             Target::Avatar { id, own: false, .. } => f.voice_volume.map(|v| (id, v)),
@@ -781,6 +795,32 @@ pub fn show(
         ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::unique(HOVERED)));
     }
     *prefs != saved_before
+}
+
+/// The Delete key while the world menu is open: the Legacy Viewer's hidden
+/// Edit menu binds "Del" to LLEditDelete (menu_edit.xml,
+/// indra/newview/llviewermenu.cpp), which deletes the menu's selection when
+/// LLSelectMgr::canDoDelete allows it. Here it runs the menu's own Delete
+/// row, so the same enable rule (one deletable root, RLVa's
+/// rlvCanDeleteOrReturn) and the same confirmations apply. A text field that
+/// has the keyboard keeps the key, as LLEditDelete prefers it.
+fn delete_key_action(ctx: &egui::Context, entries: &[entries::Entry]) -> Option<CtxAction> {
+    fn find(entries: &[entries::Entry]) -> Option<&CtxAction> {
+        entries.iter().find_map(|e| match &e.kind {
+            entries::Kind::Action(a @ CtxAction::Delete(_)) if e.enabled => Some(a),
+            entries::Kind::Submenu(sub) => find(sub),
+            _ => None,
+        })
+    }
+    // Only a text field keeps the key (LLEditDelete defers to the focused
+    // editor): a focused menu row or button must not, as egui focuses them
+    // for keyboard navigation while the menu is open.
+    if ctx.text_edit_focused() || !ctx.input(|i| i.key_pressed(egui::Key::Delete)) {
+        return None;
+    }
+    let action = find(entries)?.clone();
+    ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete))
+        .then_some(action)
 }
 
 /// Where an avatar menu of a list is opened: each place has its own
@@ -2036,6 +2076,76 @@ fn pie_hover_sound(hovered: Option<usize>, use_pie: bool, force_list: bool) -> O
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What has the keyboard focus when Delete is pressed.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Focus {
+        Nothing,
+        Text,
+        Button,
+    }
+
+    /// One frame with the Delete key pressed and `focus` focused.
+    fn delete_key_frame(entries: &[entries::Entry], focus: Focus) -> Option<CtxAction> {
+        let ctx = egui::Context::default();
+        let delete = egui::Event::Key {
+            key: egui::Key::Delete,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut got = None;
+        for events in [Vec::new(), vec![delete]] {
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            drop(ctx.run_ui(input, |ui| {
+                let mut text = String::new();
+                let field = ui.text_edit_singleline(&mut text);
+                let button = ui.button("row");
+                match focus {
+                    Focus::Text => field.request_focus(),
+                    Focus::Button => button.request_focus(),
+                    Focus::Nothing => {}
+                }
+                got = delete_key_action(ui.ctx(), entries);
+            }));
+        }
+        got
+    }
+
+    #[test]
+    fn delete_key_runs_the_object_menus_delete_only_when_it_is_enabled() {
+        let id = Uuid::from_u128(7);
+        let target = Target::Object {
+            key: ObjKey { region: 1, local_id: 10 },
+            full_id: id,
+            offset: Vec3::ZERO,
+        };
+        let mut facts = Facts::default();
+        facts.object.delete = true;
+        let entries = entries::world_menu(&target, &facts, Vec3::ZERO);
+        assert!(matches!(delete_key_frame(&entries, Focus::Nothing), Some(CtxAction::Delete(who)) if who == id));
+        // A focused menu row (keyboard navigation) does not take the key.
+        assert!(matches!(delete_key_frame(&entries, Focus::Button), Some(CtxAction::Delete(who)) if who == id));
+        // A focused text field keeps the key (LLEditDelete prefers it).
+        assert!(delete_key_frame(&entries, Focus::Text).is_none());
+        // Greyed Delete (not deletable, or RLVa's rlvCanDeleteOrReturn): nothing.
+        facts.object.delete = false;
+        let entries = entries::world_menu(&target, &facts, Vec3::ZERO);
+        assert!(delete_key_frame(&entries, Focus::Nothing).is_none());
+        // A worn attachment's menu has no Delete row.
+        let entries = entries::world_menu(
+            &Target::Attachment {
+                key: ObjKey { region: 1, local_id: 10 },
+            },
+            &facts,
+            Vec3::ZERO,
+        );
+        assert!(delete_key_frame(&entries, Focus::Nothing).is_none());
+    }
 
     #[test]
     fn dropdown_menus_do_not_play_pie_slice_sounds() {

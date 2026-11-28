@@ -14,9 +14,13 @@
 //! every face, with its default object texture (FSDefaultObjectTexture);
 //! Aurora keeps each face's texture and mapping as the region made them and
 //! sets only the values above. A new prim's faces are the defaults already,
-//! and no asset id is taken from a setting. The default texture, the item
-//! put inside new objects (FSBuildPrefs_EmbedItem) and the next owner
-//! permissions sent there are not ported yet.
+//! and no asset id is taken from a setting. The default texture and the
+//! item put inside new objects (FSBuildPrefs_EmbedItem) are not ported yet.
+//!
+//! The next owner rights of the Objects default permissions go out before
+//! the flags, in one ObjectPermissions, while the region has not taken
+//! them from AgentPreferences this session, and always on OpenSim
+//! (`BuildTool::default_object_perms`).
 
 use super::{BuildSettings, BuildTool, FLAGS_CREATE_SELECTED};
 use crate::ui::context::flags::{OBJECT_COPY, OBJECT_MODIFY, OBJECT_TRANSFER, OBJECT_YOU_OWNER};
@@ -113,6 +117,16 @@ impl BuildTool {
             o.material_dirty = true;
             o.render.needs_records = true;
             self.send_te(world, idx);
+        }
+        if let Some(rights) = self.default_object_perms {
+            self.send(BuildCmd::SetNewObjectNextOwner {
+                handle,
+                local_id,
+                modify: rights.modify,
+                copy: rights.copy,
+                // ObjectsNextOwnerTransfer: the window keeps it on without Copy
+                transfer: rights.transfer || !rights.copy,
+            });
         }
         self.send(BuildCmd::SetFlags {
             handle,

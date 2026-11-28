@@ -490,6 +490,32 @@ impl Session<'_> {
                     self.send(addr, &m, true);
                 }
             }
+            BuildCmd::SetNewObjectNextOwner {
+                local_id,
+                modify,
+                copy,
+                transfer,
+                ..
+            } => {
+                let mut m = ObjectPermissions::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.header_data.override_ = false;
+                m.object_data = [
+                    (modify, crate::build::perm::MODIFY),
+                    (copy, crate::build::perm::COPY),
+                    (transfer, crate::build::perm::TRANSFER),
+                ]
+                .into_iter()
+                .map(|(set, mask)| object_permissions::ObjectData {
+                    object_local_id: local_id,
+                    field: crate::build::perm_field::NEXT_OWNER,
+                    set: set as u8,
+                    mask,
+                })
+                .collect();
+                self.send(addr, &m, true);
+            }
             BuildCmd::SetGroup { local_ids, group_id, .. } => {
                 for chunk in local_ids.chunks(MAX_PER_PACKET) {
                     let mut m = ObjectGroup::default();
@@ -958,6 +984,7 @@ fn build_handle(c: &BuildCmd) -> Option<crate::types::RegionHandle> {
         BuildCmd::RezInventory(rez) => rez.handle,
         BuildCmd::SetPhysicsParams { handle, .. }
         | BuildCmd::SetPermissions { handle, .. }
+        | BuildCmd::SetNewObjectNextOwner { handle, .. }
         | BuildCmd::SetGroup { handle, .. }
         | BuildCmd::SetOwner { handle, .. }
         | BuildCmd::SetSaleInfo { handle, .. }

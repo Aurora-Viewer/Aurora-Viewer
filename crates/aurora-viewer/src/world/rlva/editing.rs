@@ -362,6 +362,7 @@ impl World {
                 }
             }),
             BuildCmd::SetName { handle, local_ids, .. } => local_ids.iter().all(|id| local(*handle, *id)),
+            BuildCmd::SetNewObjectNextOwner { handle, local_id, .. } => local(*handle, *local_id),
             // LLSelectMgr::enableUnlinkObjects (llselectmgr.cpp): under
             // @unsit the linkset sat on stays whole.
             BuildCmd::Delink { handle, local_ids } => local_ids

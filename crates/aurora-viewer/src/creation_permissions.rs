@@ -1,5 +1,9 @@
 //! Creation defaults follow LLFloaterPermsDefault and create_new_item
-//! (indra/newview/llfloaterperms.cpp, llviewerinventory.cpp).
+//! (indra/newview/llfloaterperms.cpp, llviewerinventory.cpp). The Objects
+//! row is the permissions of the prims the Create tool makes: posted to the
+//! region (`default_object_perm_masks`), and set on each new prim while that
+//! post has not succeeded (build/new_defaults.rs).
+use aurora_net::caps::ObjectPermMasks;
 use aurora_net::{NetCommand, build::perm, inventory::operations::NewItem, inventory::upload::Permissions};
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +53,8 @@ impl Rights {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Defaults {
+    /// ObjectsNextOwner*, ObjectsShareWithGroup, ObjectsEveryoneCopy.
+    pub objects: Rights,
     pub scripts: Rights,
     pub notecards: Rights,
     pub gestures: Rights,
@@ -60,6 +66,8 @@ pub struct Defaults {
 impl Default for Defaults {
     fn default() -> Self {
         Self {
+            // settings.xml: ObjectsNextOwnerModify and Copy off, Transfer on
+            objects: Rights::new(false, false),
             scripts: Rights::new(false, false),
             notecards: Rights::new(true, true),
             gestures: Rights::new(true, true),
@@ -71,6 +79,17 @@ impl Default for Defaults {
 }
 
 impl Defaults {
+    /// The Objects row as LLFloaterPermsDefault::updateCapCoro posts it
+    /// (LLFloaterPerms::getGroupPerms, getEveryonePerms, getNextOwnerPerms).
+    pub fn object_masks(self) -> ObjectPermMasks {
+        let rights = self.objects.permissions();
+        ObjectPermMasks {
+            group: rights.group,
+            everyone: rights.everyone,
+            next_owner: rights.next_owner,
+        }
+    }
+
     pub fn for_item(self, kind: NewItem) -> Option<Permissions> {
         Some(
             match kind {
@@ -166,6 +185,42 @@ mod tests {
         assert_eq!(rights.group, perm::COPY | perm::MODIFY | perm::MOVE);
         assert_eq!(rights.everyone, perm::COPY);
         assert_eq!(defaults.for_item(NewItem::Landmark), None);
+    }
+
+    #[test]
+    fn object_defaults_are_the_legacy_ones_and_post_their_masks() {
+        let defaults = Defaults::default();
+        // next owner: Move and Transfer; nothing for the group or everyone
+        assert_eq!(
+            defaults.object_masks(),
+            ObjectPermMasks {
+                group: 0,
+                everyone: 0,
+                next_owner: perm::MOVE | perm::TRANSFER,
+            }
+        );
+        let shared = Defaults {
+            objects: Rights {
+                modify: true,
+                copy: true,
+                transfer: false,
+                share_group: true,
+                everyone_copy: true,
+            },
+            ..defaults
+        };
+        assert_eq!(
+            shared.object_masks(),
+            ObjectPermMasks {
+                group: perm::COPY | perm::MOVE | perm::MODIFY,
+                everyone: perm::COPY,
+                next_owner: perm::MOVE | perm::MODIFY | perm::COPY,
+            }
+        );
+        // An older settings file without the row takes the defaults.
+        let old: Defaults = serde_json::from_str(r#"{"scripts":{"modify":true}}"#).unwrap();
+        assert_eq!(old.objects, defaults.objects);
+        assert!(old.scripts.modify);
     }
 
     #[test]

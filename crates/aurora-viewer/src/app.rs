@@ -4689,7 +4689,34 @@ impl App {
                     self.login_form.error = Some(error);
                 }
             }
+            NetEvent::DefaultObjectPermsSent { result } => match result {
+                Ok(()) => {
+                    self.build.default_object_perms_posted = true;
+                    // FSCommon::applyDefaultBuildPreferences: OpenSim keeps
+                    // setting them on each new prim
+                    if self.second_life() {
+                        self.build.default_object_perms = None;
+                    }
+                }
+                // LLFloaterPermsDefault::updateCapCoro: told only once a
+                // post has succeeded (sCapSent)
+                Err(reason) if self.build.default_object_perms_posted => {
+                    self.world.apply(NetEvent::Alert {
+                        message: aurora_i18n::tr!("build-default-object-permissions-failed", reason = reason),
+                    });
+                }
+                Err(_) => {}
+            },
             NetEvent::LoggedIn(l) => {
+                // LLFloaterPermsDefault::sendInitialPerms: posted once the
+                // region's capabilities are in, set on new prims until then
+                let objects = self.settings.inventory.creation_permissions;
+                self.build.default_object_perms = Some(objects.objects);
+                self.build.default_object_perms_posted = false;
+                self.send(NetCommand::SetDefaultObjectPerms {
+                    masks: objects.object_masks(),
+                    initial: true,
+                });
                 self.parcel_music
                     .enter(!self.demo && self.settings.parcel_music_accounts.contains(&l.agent_id));
                 self.session_started(l.session_id);
@@ -8973,10 +9000,13 @@ impl App {
         self.flush_build();
         // LLToolSelect::handleObjectSelection turns the avatar to what the
         // Edit tool's click selected (lltoolcomp.cpp: move, rotate, stretch;
-        // not Create, Grab or Land) (app/selection_turn.rs)
+        // not Create, Grab or Land) (app/selection_turn.rs). A press on a
+        // move, rotate or stretch handle is the manipulator's
+        // (LLToolComp*::handleMouseDown), never a selection: the object
+        // under the handle, the floor behind an attachment's arrow for
+        // instance, must not turn us (#4102).
         if let Some(idx) = target
-            && self.build.tool == crate::build::Tool::Edit
-            && !self.build.selection.is_empty()
+            && selection_turn::press_selects(self.build.tool, self.build.manip.drag.is_some(), !self.build.selection.is_empty())
             && let Some(bounds) = self.build.bounds(&self.world, Instant::now())
         {
             self.turn_to_selection(idx, bounds.center);
@@ -17206,6 +17236,7 @@ impl App {
                 options.apply(&mut self.settings.build);
                 self.settings.save();
             }
+            BarAction::DefaultPermissions => self.inventory_ui.default_permissions_open = true,
             BarAction::ToggleNameTags => {
                 self.settings.show_name_tags = !self.settings.show_name_tags;
                 self.settings.save();
@@ -21284,6 +21315,17 @@ impl App {
                 self.show_texture_library(&ctx, &p);
                 // the dual-panel layout, from the toolbar or the window's button
                 self.settings.inventory.dual_panel = self.panels.inventory_dual;
+                // LLFloaterPermsDefault::ok: changed defaults are posted again
+                let objects = self.settings.inventory.creation_permissions;
+                if objects.objects != inventory_preferences.creation_permissions.objects && self.in_world() {
+                    if self.build.default_object_perms.is_some() {
+                        self.build.default_object_perms = Some(objects.objects);
+                    }
+                    self.send(NetCommand::SetDefaultObjectPerms {
+                        masks: objects.object_masks(),
+                        initial: false,
+                    });
+                }
                 self.inventory_ui.preferences_dirty |= self.settings.inventory != inventory_preferences;
                 self.inventory_ui.preferences_dirty |= self.settings.imports != import_preferences;
                 if self.inventory_ui.preferences_dirty && !ctx.input(|input| input.pointer.any_down()) {
@@ -21356,7 +21398,7 @@ impl App {
                 self.wearable_window(&ctx, &p);
                 self.ao_window(&ctx, &p);
                 t = self.ui_parts.lap(Part::UiInventory, t);
-                let facts = self.context_facts();
+                let mut facts = self.context_facts();
                 let had_menu = self.context_menu.is_some();
                 // Capture-only style override; leave the saved preference intact.
                 let use_pie = if self.demo {
@@ -21368,6 +21410,10 @@ impl App {
                 } else {
                     self.settings.use_pie_menu
                 };
+                // The list menu is a popup, which turns the build tools'
+                // shortcuts off; over the pie menu their own Delete already
+                // deletes the selection the right-click made.
+                facts.delete_key = !(self.build.open && use_pie);
                 if ui::context::show(
                     &ctx,
                     &p,

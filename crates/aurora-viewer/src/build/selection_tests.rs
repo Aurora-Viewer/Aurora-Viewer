@@ -760,6 +760,50 @@ fn a_created_prim_takes_the_new_objects_look_once_when_ours_with_full_rights() {
 }
 
 #[test]
+fn a_created_prim_takes_the_object_next_owner_rights_only_while_the_region_lacks_them() {
+    use crate::ui::context::flags::{OBJECT_COPY, OBJECT_MODIFY, OBJECT_TRANSFER, OBJECT_YOU_OWNER};
+    use aurora_net::build::BuildCmd;
+    let full = OBJECT_YOU_OWNER | OBJECT_MODIFY | OBJECT_COPY | OBJECT_TRANSFER;
+    let (mut world, mut tool, settings) = fixture();
+    let next_owner = |tool: &BuildTool| {
+        tool.out
+            .iter()
+            .filter_map(|c| match c {
+                NetCommand::Build(BuildCmd::SetNewObjectNextOwner {
+                    modify, copy, transfer, ..
+                }) => Some((*modify, *copy, *transfer)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    // The region has them (posted this session, Second Life): nothing sent.
+    tool.expect_created(&world);
+    tool.expect_new_defaults(None);
+    arrive_created(&mut world, 99960, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert!(next_owner(&tool).is_empty());
+    // Not posted yet, or OpenSim: the Legacy defaults, no copy keeps transfer.
+    tool.out.clear();
+    tool.default_object_perms = Some(crate::creation_permissions::Defaults::default().objects);
+    tool.expect_created(&world);
+    tool.expect_new_defaults(None);
+    arrive_created(&mut world, 99961, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(next_owner(&tool), [(false, false, true)]);
+    // It goes before the flags, as applyDefaultBuildPreferences sends them.
+    let order: Vec<_> = tool
+        .out
+        .iter()
+        .filter_map(|c| match c {
+            NetCommand::Build(BuildCmd::SetNewObjectNextOwner { .. }) => Some(0),
+            NetCommand::Build(BuildCmd::SetFlags { .. }) => Some(1),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, [0, 1]);
+}
+
+#[test]
 fn preexisting_create_flags_are_never_selected_after_ownership_arrives() {
     let (mut world, mut tool, settings) = fixture();
     let idx = object(&world, 99610);

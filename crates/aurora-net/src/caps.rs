@@ -196,6 +196,26 @@ pub fn hover_height_body(value: f32) -> Option<Llsd> {
     value.is_finite().then(|| llsd_map! { "hover_height" => value.clamp(-3.0, 3.0) })
 }
 
+/// The permissions new objects take, as LLFloaterPermsDefault::updateCapCoro
+/// (indra/newview/llfloaterperms.cpp) posts them to AgentPreferences.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectPermMasks {
+    pub group: u32,
+    pub everyone: u32,
+    pub next_owner: u32,
+}
+
+/// `default_object_perm_masks` {Group, Everyone, NextOwner}, as integers.
+pub fn default_object_perms_body(masks: ObjectPermMasks) -> Llsd {
+    llsd_map! {
+        "default_object_perm_masks" => llsd_map! {
+            "Group" => masks.group,
+            "Everyone" => masks.everyone,
+            "NextOwner" => masks.next_owner,
+        }
+    }
+}
+
 #[cfg(test)]
 mod language_tests {
     use super::*;
@@ -228,6 +248,21 @@ mod language_tests {
         }
         assert!(hover_height_body(f32::NAN).is_none());
         assert!(hover_height_body(f32::INFINITY).is_none());
+    }
+
+    #[test]
+    fn default_object_permissions_are_posted_as_legacy_masks() {
+        let masks = ObjectPermMasks {
+            group: 0x0008_e000,
+            everyone: 0x0000_8000,
+            next_owner: 0x0008_2000,
+        };
+        let decoded = aurora_llsd::from_xml(&aurora_llsd::to_xml(&default_object_perms_body(masks))).unwrap();
+        let sent = &decoded["default_object_perm_masks"];
+        assert_eq!(sent["Group"].as_i32(), 0x0008_e000);
+        assert_eq!(sent["Everyone"].as_i32(), 0x0000_8000);
+        assert_eq!(sent["NextOwner"].as_i32(), 0x0008_2000);
+        assert_eq!(decoded.as_map().unwrap().len(), 1);
     }
 
     /// The Region / Estate window's capabilities: without them the lists,
