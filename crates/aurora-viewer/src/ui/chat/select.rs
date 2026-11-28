@@ -361,7 +361,23 @@ pub(crate) fn wrapping_label(
     let job = text.into_layout_job(ui.style(), egui::FontSelection::Default, ui.text_valign());
     let mut job = Arc::unwrap_or_clone(job);
     start_after_previous_widget(ui, &mut job);
-    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    let mut galley = ui.fonts_mut(|f| f.layout_job(job));
+    // epaint 0.37 can reuse the first-row indentation after a later word
+    // break, giving glyphs a negative x position. Start that run on a fresh
+    // row instead of allocating or painting the invalid layout. Keep normal
+    // word wrapping for runs whose indentation was handled correctly.
+    if galley.job.sections.first().is_some_and(|s| s.leading_space > 0.0)
+        && galley
+            .rows
+            .iter()
+            .skip(1)
+            .any(|r| r.glyphs.iter().any(|g| r.pos.x + g.pos.x < -1.0))
+    {
+        let mut job = (*galley.job).clone();
+        ui.end_row();
+        start_after_previous_widget(ui, &mut job);
+        galley = ui.fonts_mut(|f| f.layout_job(job));
+    }
     let pos = egui::pos2(ui.max_rect().left(), ui.cursor().top());
     let response = allocate_rows(ui, &galley, pos, sense);
     (pos, galley, response)
@@ -590,6 +606,55 @@ mod tests {
         (12, "[12:02] ", "Jane waves"),
         (13, "[12:03] Bob: ", "bye"),
     ];
+
+    #[test]
+    fn chat_inline_wrap_long_runs_stay_inside_the_row() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let token = "x".repeat(100);
+        let messages = [
+            " on an example object with a long name v1.46(00000000-0000-4000-8000-000000000001) ".to_owned(),
+            format!(" short words that wrap normally before {token} and after it"),
+        ];
+        for width in [180.0, 240.0, 320.0, 400.0] {
+            for fraction in [0.25, 0.5, 0.75] {
+                for text in &messages {
+                    frames.run(Vec::new(), |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add_space(220.0);
+                            let layout = egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true);
+                            ui.allocate_ui_with_layout(egui::vec2(width, 20.0), layout, |ui| {
+                                ui.set_width(width);
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                let left = ui.max_rect().left();
+                                let right = left + width;
+                                ui.allocate_exact_size(egui::vec2(width * fraction, 14.0), egui::Sense::hover());
+                                let (pos, galley, _) = wrapping_label(
+                                    ui,
+                                    egui::RichText::new(text).size(14.0).into(),
+                                    egui::TextWrapMode::Wrap,
+                                    egui::Sense::hover(),
+                                );
+                                assert!(!galley.elided);
+                                let shown: String = galley.rows.iter().flat_map(|r| r.glyphs.iter().map(|g| g.chr)).collect();
+                                let non_space = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+                                assert_eq!(non_space(&shown), non_space(text));
+                                for row in &galley.rows {
+                                    for glyph in row.glyphs.iter().filter(|g| !g.chr.is_whitespace()) {
+                                        let x = pos.x + row.pos.x + glyph.pos.x;
+                                        assert!(
+                                            x >= left - 1.0 && x + glyph.advance_width <= right + 1.0,
+                                            "width={width}, prefix={fraction}, glyph={:?}, x={x}, bounds={left}..{right}",
+                                            glyph.chr,
+                                        );
+                                    }
+                                }
+                            });
+                        });
+                    });
+                }
+            }
+        }
+    }
 
     #[test]
     fn the_ends_come_in_any_order() {
