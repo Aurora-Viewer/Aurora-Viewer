@@ -10990,6 +10990,7 @@ ui-context-sit-stand = Sit / stand
 ui-context-save-backup = Backup
 ui-context-save-collada = Collada
 ui-context-save-obj = OBJ
+ui-context-save-gltf = glTF
 ui-context-remove-from-display-exceptions = Remove from display exceptions
 
 script-color-hint = Possible color: click to open the color picker.
@@ -15719,6 +15720,9 @@ object-export-collada = Collada (.dae)
 object-export-obj = Wavefront OBJ (.obj)
 object-export-collada-files = Collada file
 object-export-obj-files = Wavefront OBJ file
+object-export-gltf = glTF binary (.glb)
+object-export-gltf-files = glTF binary file
+object-export-gltf-png = A glTF file holds its textures inside, as PNG.
 object-export-object-info = Object info
 object-export-prims = Exportable prims: { $count }/{ $total }
 object-export-textures = Exportable textures: { $count }/{ $total }
