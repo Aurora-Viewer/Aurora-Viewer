@@ -600,6 +600,13 @@ pub fn init() {
             log::error!("GPU recovery: wgpu failed dropping the lost renderer, taken: {info}");
             return;
         }
+        // egui-wgpu's interface upload on a device lost since the frame's
+        // checks: taken as the loss, the frame goes without its interface
+        // (aurora-render device_lost.rs `ui_upload_guarded`, #3844)
+        if aurora_render::in_guarded_ui_upload() {
+            log::warn!("GPU device lost during the interface upload: {info}");
+            return;
+        }
         let bt = std::backtrace::Backtrace::force_capture();
         crate::crash::panic(info, &bt);
         log::error!("panic: {info}\n{bt}");
