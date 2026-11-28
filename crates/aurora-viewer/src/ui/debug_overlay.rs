@@ -7,7 +7,7 @@ use super::hud::Projector;
 use crate::scene::{LodInfo, Scene};
 use crate::settings::DebugView;
 use crate::world::World;
-use egui::{Color32, Stroke};
+use egui::{Color32, Pos2, Stroke};
 use glam::{Mat4, Quat, Vec3};
 use std::time::Instant;
 
@@ -21,6 +21,18 @@ const LOD_REACH: f32 = 150.0;
 /// Height of a label line (points).
 const LOD_LINE: f32 = 13.0;
 const SKELETON_RANGE: f32 = 32.0;
+/// Avatar hitboxes: drawn to their own range, not the skeletons', so the
+/// box distance can be tuned (or culled by visibility) without moving the
+/// skeleton and collision-volume views. The default of the Dev Toolbox's
+/// O10 range slider (`DebugView::avatar_hitbox_range`); 0 draws nothing.
+pub(crate) const HITBOX_RANGE: f32 = 32.0;
+
+/// The range hitboxes draw to: the debug option, kept inside what the
+/// object overlay looks at (past it the scene may hold no placed data to
+/// draw the boxes from).
+fn hitbox_draw_range(range: f32) -> f32 {
+    range.clamp(0.0, RANGE)
+}
 
 const GREEN: Color32 = Color32::from_rgb(80, 220, 120);
 const RED: Color32 = Color32::from_rgb(240, 70, 70);
@@ -34,6 +46,16 @@ const GREY: Color32 = Color32::from_gray(140);
 /// `DebugRenderHitboxes` (indra/newview/app_settings/settings.xml).
 fn avatar_hitbox_frame(pos: Vec3, rot: Quat, scale: Vec3) -> (Vec3, Quat, Vec3) {
     (pos, rot, scale * 0.5)
+}
+
+/// Rotation of the Legacy Viewer's hitbox: `LLViewerObject::getRotationRegion`
+/// (indra/newview/llviewerobject.cpp, originally LGPL 2.1), the rotation the
+/// simulator reported, composed with the parent's for a seated avatar. The
+/// drawn body (`world.bodies`, FSAvatarAlign) turns toward where the avatar
+/// goes and lags behind its turns; using it here made the box chase the
+/// movement instead of holding the avatar's reported facing (#4510).
+fn hitbox_rotation(local: Quat, parent: Option<Quat>) -> Quat {
+    parent.map_or(local, |p| (p * local).normalize())
 }
 
 struct Lines<'a> {
@@ -64,6 +86,44 @@ impl Lines<'_> {
 
     fn obb(&self, pos: Vec3, rot: Quat, half: Vec3, color: Color32) {
         self.cube(|x, y, z| pos + rot * (half * Vec3::new(x, y, z)), color);
+    }
+
+    /// Oriented box, culled when fully off-screen: each of the 8 corners
+    /// projected once (today's `cube` projects every corner once per edge,
+    /// 24 times), and nothing drawn unless some corner lands on screen.
+    /// Exactly what the unculled box draws: every one of its edges then has
+    /// an end the projector refuses. Each drawn edge carries the depth of
+    /// its world ends (`world_line_at`), so the scene hides what stands in
+    /// front of it, like the Legacy Viewer's depth-tested boxes.
+    fn obb_culled(&self, ctx: &egui::Context, pos: Vec3, rot: Quat, half: Vec3, color: Color32) {
+        let corner = |x: f32, y: f32, z: f32| pos + rot * (half * Vec3::new(x, y, z));
+        let sign = |i: usize| if i == 0 { -1.0 } else { 1.0 };
+        // one projection per corner, remembered by its signs
+        let seen: [[[Option<(Pos2, f32)>; 2]; 2]; 2] = std::array::from_fn(|xi| {
+            std::array::from_fn(|yi| std::array::from_fn(|zi| self.proj.project(corner(sign(xi), sign(yi), sign(zi)))))
+        });
+        if !seen.iter().flatten().flatten().any(|pt| pt.is_some()) {
+            return;
+        }
+        let at = |x: f32, y: f32, z: f32| seen[(x > 0.0) as usize][(y > 0.0) as usize][(z > 0.0) as usize];
+        // the 12 edges of `cube`, from the remembered corners
+        let s = [-1.0f32, 1.0];
+        for &a in &s {
+            for &b in &s {
+                self.occluded_seg(ctx, corner(-1.0, a, b), at(-1.0, a, b), corner(1.0, a, b), at(1.0, a, b), color);
+                self.occluded_seg(ctx, corner(a, -1.0, b), at(a, -1.0, b), corner(a, 1.0, b), at(a, 1.0, b), color);
+                self.occluded_seg(ctx, corner(a, b, -1.0), at(a, b, -1.0), corner(a, b, 1.0), at(a, b, 1.0), color);
+            }
+        }
+    }
+
+    /// An edge of `obb_culled`: its world ends say where it stands, so the
+    /// scene hides it where it stands behind something.
+    fn occluded_seg(&self, ctx: &egui::Context, wa: Vec3, pa: Option<(Pos2, f32)>, wb: Vec3, pb: Option<(Pos2, f32)>, color: Color32) {
+        if let (Some((sa, _)), Some((sb, _))) = (pa, pb) {
+            aurora_render::world_line_at(ctx, wa, wb);
+            self.painter.line_segment([sa, sb], Stroke::new(self.width, color));
+        }
     }
 
     /// Sphere as its three great circles.
@@ -232,6 +292,51 @@ fn hidden_debug_texts(world: &World, drawn: impl Iterator<Item = (usize, Vec3, f
 }
 
 #[allow(clippy::too_many_arguments)]
+/// O10: the avatars' hitboxes (LLDrawPoolAvatar::renderAvatars, not for
+/// control avatars), in the colour of their minimap dot and 2 points wide
+/// like the Legacy Viewer's, hidden by what the scene has in front of them
+/// as its depth-tested boxes are. Painted with the world, before its end
+/// marker: the overlay's own layer draws over everything. Visual parity
+/// only: picking still tests the fixed click box (scene::picking).
+pub fn draw_hitboxes(ctx: &egui::Context, world: &World, scene: &Scene, proj: &Projector, eye: Vec3, dv: &DebugView) {
+    if !dv.avatar_hitboxes {
+        return;
+    }
+    let now = Instant::now();
+    let wide = Lines {
+        painter: super::hud::world_painter(ctx),
+        proj,
+        width: 2.0,
+    };
+    for (idx, o) in world.objects.avatars() {
+        if scene.gpu.get(idx).is_none() {
+            continue;
+        }
+        // The Legacy Viewer draws the box at the simulator's object position
+        // (`getPositionAgent`): the hover, shape and water offsets only lift
+        // the drawn body (`LLVOAvatar::updateCharacter`), never the box.
+        let Some((pp, _, _)) = Scene::object_transform_unshifted(world, idx, now) else {
+            continue;
+        };
+        if pp.distance(eye) > hitbox_draw_range(dv.avatar_hitbox_range) {
+            continue;
+        }
+        // Our own avatar turns with the agent's yaw, as the Legacy
+        // Viewer's own avatar object does. Everyone else keeps the
+        // rotation the simulator reported: `object_transform` replaces
+        // it with the drawn body's visual facing, which chases movement.
+        let rot = if o.full_id == world.agent_id && world.agent.has_local_control() {
+            world.agent.body_rotation()
+        } else {
+            let parent = world.objects.parent_of(o).and_then(|p| world.objects.get(p)).map(|p| p.rotation);
+            hitbox_rotation(o.rotation, parent)
+        };
+        let (pos, _, half) = avatar_hitbox_frame(pp, rot, o.scale);
+        wide.obb_culled(ctx, pos, rot, half, super::minimap::avatar_color(world, &o.full_id));
+    }
+    aurora_render::world_label_at(ctx, None);
+}
+
 pub fn draw(
     ctx: &egui::Context,
     world: &World,
@@ -412,31 +517,6 @@ pub fn draw(
             for (a, b) in bone_segments(&bones, poses, &rest, model) {
                 lines.seg(a, b, BONE);
             }
-        }
-    }
-
-    // O10: the avatars' hitboxes (LLDrawPoolAvatar::renderAvatars, not for
-    // control avatars), in the colour of their minimap dot and 2 points
-    // wide like the Legacy Viewer's. Visual parity only: picking still tests
-    // the fixed click box (scene::picking).
-    if dv.avatar_hitboxes {
-        let wide = Lines {
-            painter: lines.painter.clone(),
-            proj,
-            width: 2.0,
-        };
-        for (idx, o) in world.objects.avatars() {
-            if scene.gpu.get(idx).is_none() {
-                continue;
-            }
-            let Some((pp, pr, _)) = Scene::object_transform(world, idx, now, 0) else {
-                continue;
-            };
-            if pp.distance(eye) > SKELETON_RANGE {
-                continue;
-            }
-            let (pos, rot, half) = avatar_hitbox_frame(pp, pr, o.scale);
-            wide.obb(pos, rot, half, super::minimap::avatar_color(world, &o.full_id));
         }
     }
 }
@@ -620,6 +700,113 @@ mod tests {
         // the corners reach the rotated half extents, not an axis-aligned box
         let corner = pos + rot * (half * Vec3::new(1.0, 1.0, 1.0));
         assert!(corner.abs_diff_eq(Vec3::new(9.7, 4.3, 1.95), 1e-5), "{corner}");
+    }
+
+    #[test]
+    fn the_hitbox_range_option_stays_inside_what_the_scene_looks_at() {
+        assert_eq!(hitbox_draw_range(HITBOX_RANGE), HITBOX_RANGE);
+        assert_eq!(hitbox_draw_range(0.0), 0.0);
+        assert_eq!(hitbox_draw_range(-4.0), 0.0);
+        assert_eq!(hitbox_draw_range(RANGE + 1000.0), RANGE);
+    }
+
+    /// A hitbox draws its 12 edges while on screen and nothing once fully
+    /// off-screen: off to the side, or behind the camera. A box straddling
+    /// the screen's edge still draws the edges with an end on screen. Every
+    /// drawn edge carries one depth mark for the scene to hide it by.
+    #[test]
+    fn a_hitbox_draws_its_edges_only_while_on_screen() {
+        let paint = |view_proj: Mat4, pos: Vec3| {
+            let ctx = egui::Context::default();
+            let proj = Projector {
+                view_proj,
+                width: 800.0,
+                height: 600.0,
+                ppp: 1.0,
+            };
+            let output = ctx.run_ui(Default::default(), |_| {
+                let lines = Lines {
+                    painter: crate::ui::hud::world_painter(&ctx),
+                    proj: &proj,
+                    width: 2.0,
+                };
+                lines.obb_culled(&ctx, pos, Quat::IDENTITY, Vec3::ONE, RED);
+            });
+            let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+            let mut marks = 0;
+            let mut meshes = 0;
+            for p in &primitives {
+                match &p.primitive {
+                    egui::epaint::Primitive::Callback(_) => marks += 1,
+                    egui::epaint::Primitive::Mesh(_) => meshes += 1,
+                }
+            }
+            (marks, meshes)
+        };
+        // centred: every corner lands on screen, all 12 edges draw
+        assert_eq!(paint(Mat4::IDENTITY, Vec3::ZERO), (12, 12));
+        // straddling the edge: fewer edges, but still some
+        let straddling = paint(Mat4::IDENTITY, Vec3::new(1.0, 0.0, 0.0));
+        assert!((1..12).contains(&straddling.1), "{straddling:?}");
+        assert_eq!(straddling.0, straddling.1);
+        // off to the side: no corner lands on screen
+        assert_eq!(paint(Mat4::IDENTITY, Vec3::new(500.0, 0.0, 0.0)), (0, 0));
+        // behind the camera: every corner fails the w check
+        let behind = Mat4 {
+            w_axis: glam::Vec4::new(0.0, 0.0, 0.0, -1.0),
+            ..Mat4::IDENTITY
+        };
+        assert_eq!(paint(behind, Vec3::ZERO), (0, 0));
+    }
+
+    #[test]
+    fn hitbox_rotation_is_the_reported_facing_with_the_parent() {
+        let reported = Quat::from_rotation_z(0.9);
+        let parent = Quat::from_rotation_z(0.5);
+        assert!(hitbox_rotation(reported, None).abs_diff_eq(reported, 1e-6));
+        let seated = hitbox_rotation(reported, Some(parent));
+        assert!(seated.abs_diff_eq(parent * reported, 1e-6));
+        assert!(!seated.abs_diff_eq(reported, 1e-6));
+    }
+
+    /// The hitbox stays on the simulator's object position when hover height
+    /// lifts the drawn body, like the Legacy Viewer: it draws the box at
+    /// `getPositionAgent` while the hover offset only moves the render root
+    /// (`LLDrawPoolAvatar::renderAvatars`, `LLVOAvatar::updateCharacter` in
+    /// indra/newview).
+    #[test]
+    fn the_hitbox_ignores_hover_height_like_the_legacy_viewer() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = uuid::Uuid::from_u128(0xB0B0_2026_1127);
+        let mut avatar = crate::demo::action_avatar(false);
+        avatar.full_id = id;
+        let sim_z = avatar.position.z;
+        world.apply(aurora_net::NetEvent::MainRegionChanged { handle: 1 });
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![avatar],
+        });
+        world.apply(aurora_net::NetEvent::Appearance(aurora_net::AvatarAppearance {
+            avatar_id: id,
+            texture_entry: None,
+            visual_params: vec![128; 6],
+            cof_version: 1,
+            appearance_version: 1,
+            hover_height: 0.5,
+            attachments: Vec::new(),
+        }));
+        let hover = world.appearance_hover(&id);
+        assert!((hover - 0.5).abs() < 1e-6, "the fixture must hover, got {hover}");
+        let idx = world.objects.index_of_uuid(&id).expect("avatar");
+        let now = Instant::now();
+        let shifted = Scene::object_transform(&world, idx, now, 0).expect("avatar").0;
+        let raw = Scene::object_transform_unshifted(&world, idx, now).expect("avatar").0;
+        assert!((raw.z - sim_z).abs() < 1e-4, "the box sits on the sim position: {}", raw.z);
+        assert!(
+            (shifted.z - raw.z - hover).abs() < 1e-4,
+            "hover lifts the drawn body, never the box: {} vs {hover}",
+            shifted.z - raw.z
+        );
     }
 
     /// The debug texts go where the floating text goes

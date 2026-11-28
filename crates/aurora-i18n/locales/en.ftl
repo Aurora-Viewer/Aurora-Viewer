@@ -4182,6 +4182,7 @@ dev-toolbox-o7 = Inspect objects
 dev-toolbox-o8 = Avatar health
 dev-toolbox-o9 = Follow sculpts
 dev-toolbox-o10 = Avatar hitboxes
+dev-toolbox-hitbox-range = Hitbox range (m)
 dev-toolbox-n1 = Network graph
 dev-toolbox-n2 = Region summary
 dev-toolbox-p1 = Performance

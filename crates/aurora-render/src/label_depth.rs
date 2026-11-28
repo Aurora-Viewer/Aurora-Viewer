@@ -780,6 +780,55 @@ mod tests {
         assert_eq!(depths(&vertices, 2), vec![NEVER_HIDDEN; 2]);
     }
 
+    /// What the interface painted for one world line, collected: the line's
+    /// screen segment marked with its world ends, as `world_line_at` marks
+    /// a hitbox edge (a beacon, a build guide).
+    fn line(a: Vec3, b: Vec3) -> Vec<Vertex> {
+        let ctx = egui::Context::default();
+        let view = view();
+        let mut output = ctx.run_ui(Default::default(), |_| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            // the screen points of the world ends, as `line_plane` maps them
+            let at = |p: Vec3| {
+                let c = view.view_proj * p.extend(1.0);
+                pos2(400.0 * (1.0 + c.x / c.w), 300.0 * (1.0 - c.y / c.w))
+            };
+            world_line_at(&ctx, a, b);
+            painter.line_segment([at(a), at(b)], egui::Stroke::new(2.0, Color32::WHITE));
+            crate::end_world_labels(&ctx);
+        });
+        output.textures_delta.clear();
+        let mut primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+        let end = crate::ui_world::take_end(&mut primitives);
+        primitives.truncate(end);
+        let (vertices, _, _) = collected(&mut primitives);
+        vertices
+    }
+
+    /// A world line behind a wall gets depths farther than the wall at
+    /// every vertex: the scene hides it. One in front keeps nearer depths
+    /// and shows. Reverse-Z: the nearer, the larger.
+    #[test]
+    fn a_line_behind_a_wall_is_hidden_and_one_in_front_shows() {
+        // a wall 10 m out reads 0.1/10 everywhere on its plane
+        let wall = 0.1 / 10.0;
+        // the same screen segment, stood 20 m out, then 5 m out
+        let behind = line(Vec3::new(20.0, -1.0, 0.0), Vec3::new(20.0, 1.0, 0.0));
+        assert!(!behind.is_empty());
+        assert!(
+            behind.iter().all(|v| v.depth < wall),
+            "hidden: {:?}",
+            behind.iter().map(|v| v.depth).collect::<Vec<_>>()
+        );
+        let front = line(Vec3::new(5.0, -1.0, 0.0), Vec3::new(5.0, 1.0, 0.0));
+        assert!(!front.is_empty());
+        assert!(
+            front.iter().all(|v| v.depth > wall),
+            "shown: {:?}",
+            front.iter().map(|v| v.depth).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn meshes_join_a_draw_only_with_its_texture_and_clip() {
         let (clip, other) = (Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 300.0)), Rect::EVERYTHING);

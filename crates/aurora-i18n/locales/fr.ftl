@@ -4185,6 +4185,7 @@ dev-toolbox-o7 = Inspecter les objets
 dev-toolbox-o8 = Santé de l'avatar
 dev-toolbox-o9 = Suivre les sculpts
 dev-toolbox-o10 = Hitboxes des avatars
+dev-toolbox-hitbox-range = Portée des hitboxes (m)
 dev-toolbox-n1 = Graphe réseau
 dev-toolbox-n2 = Résumé de la région
 dev-toolbox-p1 = Performance

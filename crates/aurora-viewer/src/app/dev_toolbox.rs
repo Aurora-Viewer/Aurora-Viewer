@@ -225,6 +225,9 @@ impl App {
                     },
                 });
             }
+            Action::HitboxRange(range) => {
+                self.settings.debug.avatar_hitbox_range = range;
+            }
         }
     }
 
@@ -582,6 +585,7 @@ impl App {
         live.insert("O9", tr!("dev-toolbox-live-of-target").to_string());
         live.insert("O8", tr!("dev-toolbox-live-health").to_string());
         let view = &mut self.toolbox.view;
+        view.hitbox_range = self.settings.debug.avatar_hitbox_range;
         view.on = on;
         view.live = live;
         view.frozen = self.toolbox.frozen;
