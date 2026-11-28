@@ -24,7 +24,8 @@ else's work.
    other is "a busy region", "a store", "a skybox"…
 3. **Never touch another agent's work in progress.** You work in your own
    worktree (section 3). If the build fails in code you did not change, do
-   not "fix" it: report it.
+   not "fix" it: report it. The one exception is a fix your human chooses,
+   fix by fix, on someone else's pull request (section 11).
 4. **The final test of a feature or a fix is validated by a human**, before
    any PR (section 8). Only exception: a PR with no effect on the viewer
    (documentation, CI, scripts) does not need it.
@@ -623,8 +624,8 @@ change to the interface:
      "Claude permissions" choice of `aurora-tools.cmd`, which allows the
      follow-up commands once and for all: `gh pr view / list / checks /
      comment`, `gh run view / list / watch`, `gh issue list / view / edit /
-     comment / close / reopen`, `merge-pr.ps1`, `pr-captures.ps1` and
-     `issue-board.ps1`. Run
+     comment / close / reopen`, `merge-pr.ps1`, `pr-captures.ps1`,
+     `issue-board.ps1` and `review-queue.ps1`. Run
      each one alone, with no `cd`, `;` or variable around it, so that it
      matches the rule.
 10. **After the merge**: first move to the main repository, **in a separate
@@ -788,13 +789,108 @@ the review again. If a problem is beyond you (design conflict with another
 task, product choice, regression you cannot solve), **do not improvise**:
 explain it to the human and propose 2–3 solutions.
 
-Then post the review as a comment (`gh pr comment <n> --body-file …`). The
-file given to `--body-file` (like the one of the PR description) is a draft
-in `.scratch/`, never committed: the review lives in the PR comment, not in
-the repository. **Someone else's PR** is reviewed only once its description
-is complete (no `needs-description` label) and its PR CI is green: an
-outside contributor's CI waits for a maintainer's "Approve and run", so ask
-your human to approve it, and do not read the code before. When you ask the
+**Someone else's PRs come from the review queue**, which your human picks
+from (step 2 below): several maintainers review at once, and the queue and
+its claims keep them off each other's PRs. The Claude Code routine `.claude/skills/review-next`
+follows the steps below; on Linux the scripts run as `pwsh
+./scripts/<script>.ps1`. Dependabot's PRs are not in the queue: section 13
+says how they are handled.
+
+```powershell
+./scripts/review-queue.ps1 -Pending   # first: your approvals to merge, your reviews left on a decision
+./scripts/review-queue.ps1            # your queue, in order, and what is left out
+./scripts/review-queue.ps1 -Claim <n> # before reading it: assigns it to your human
+./scripts/review-queue.ps1 -Release <n>  # handing it back without a review
+```
+
+1. **What waits on your human first** (`-Pending`): the PRs they approved
+   that nobody merged (the queue leaves them out, so nobody else would),
+   and those their ⚠️ review left on a decision (a hand or grid test, a
+   product choice). Ask them once, and carry each to its end (merged,
+   re-reviewed, the decision posted) before taking anything new. An
+   approval counts for the head it names (``Reviewed head: `<sha>` ``): a
+   head pushed since, a merge of `main` included, is re-reviewed first;
+   and before its merge, an approved PR is tested again on today's `main`
+   (steps 3 to 7), since the approval says nothing of what `main` became.
+2. **The queue, and your human picks.** Its order: re-reviews (a
+   maintainer reviewed it and its author answered since), then PRs tied to
+   a crash, then fixes (the `fix` label or a `fix(area):` title), then the
+   rest not reviewed yet; in each, crash before fix before the rest, then
+   the longest waiting; a PR your human already claimed before all of
+   them. Offer them a selection from the top, in that order, and claim
+   only the PRs they choose, before reading them; never pick and claim on
+   your own.
+   - `-Claim` refuses a PR another maintainer holds: a claim (an assignee
+     whose review is not posted yet), a re-review that belongs to its
+     previous reviewer for 2 days after the author's answer, or a decision
+     their review left open. Never remove another maintainer's assignment.
+     A claim ends with the review you post; `-Release` it if you stop
+     without one. A claim shown as stale (no word from its maintainer for
+     3 days) is still theirs: tell your human, who asks them.
+   - The queue leaves out drafts, bots, `on-hold`, `waiting-for-slot`,
+     `needs-description`, the merge queue, red CI, PRs waiting on their
+     author or on a team decision, and approved ones.
+3. **Conflicts and files before any CI**: in a review worktree made by
+   `new-task.ps1` (`-Name review-<n>`), the PR's head with the latest
+   `main` merged into it, for its conflicts, and the names of the files it
+   changes, for what CI would run (`.github/`, scripts, build files); its
+   code is read once its CI is green (below). A conflict gets no CI
+   (GitHub cannot build the PR's merge): it goes to step 6 first, and
+   resolving it yourself, which reads the conflicting files before CI, is
+   only your human's choice.
+4. **CI**, then the wait for it in the same turn, without handing back
+   (below for an outside contributor's "Approve and run"); then the diff,
+   read in full. Never end a turn on "I will review it once CI is green":
+   release the claim instead.
+5. **Tested as your own task is**, in the review worktree: `check.ps1`
+   (approved runs test the merge with `main` as it was when they
+   started); the demo scenarios the PR touches and those of the
+   neighbouring features, before and after on screenshots (section 4, and
+   step 3 of your own PR's review above); and whenever the change can be seen in the
+   viewer, your human's validation (section 8, step 5: the viewer launched
+   for them in demo or normal mode, what to test, where and what they
+   should see, their answer awaited; on the grid, they log in). Never
+   skipped: a validation they cannot do yet leaves a ⚠️ verdict until it
+   is done. One they cannot do at all (another system, an OpenSim grid)
+   may be left to the QA testers, if they choose so: a ✅ that says so,
+   the PR's `TASKS.md` line 🟡 with its ⬜ QA line, and `Refs` for its
+   issue (section 9).
+6. **Whatever the author has to change**, at any step (a conflict, a test
+   broken on the merge with `main`, a finding, a failing test, the PR's
+   own `TASKS.md` line, the issue line of its description): ask your human
+   whether you fix it yourself on the author's branch (when you may push
+   to it: a branch of this repository, or a fork that allows maintainers'
+   pushes; and the fix is small and sure) or post the `## Changes
+   requested`. A fix of yours is checked with `check.ps1` on the PR merged
+   with the latest `main`, except a change to docs alone, and a conflict
+   resolved before CI (nothing of the PR runs before its CI is green, so
+   its CI and step 5 test it). It is pushed without a merge of `main`
+   unless it needs one (a conflict, a fix that only works on today's
+   `main`): as for your own PR (step 1 of your own PR's review, above), no
+   merge of `main` nobody needs. Rule 3 keeps you off others' work in
+   progress: only your human's choice, PR by PR and fix by fix, opens the author's
+   branch or description to you, and the review says what you changed.
+   In `TASKS.md`, a conflict keeps both sides as written, and only the
+   PR's own line changes, as its own question (section 6).
+7. **Post the review yourself** (below), naming the PR's head it read
+   (its `Reviewed head:` line; never the worktree's local merge). End the
+   review worktree (`end-task.ps1 -Name review-<n> -Force`, once every
+   commit you pushed is in the PR) after the merge's outcome or your
+   human's "not yet", or right after posting when there is nothing to
+   merge.
+8. **The merge** of a ✅ PR is a question your human answers (rule 5),
+   then `merge-pr.ps1`; once merged, a confirmation comment on every issue
+   it closes or names, and their Status (`issue-board.ps1`; section 15,
+   "Reply and close").
+
+The review, of your own PR or of someone else's, is posted as a comment
+(`gh pr comment <n> --body-file …`). The file given to `--body-file` (like
+the one of the PR description) is a draft in `.scratch/`, never committed:
+the review lives in the PR comment, not in the repository. **Someone
+else's PR** is reviewed only once its description is complete (no
+`needs-description` label) and its PR CI is green: an outside
+contributor's CI waits for a maintainer's "Approve and run", so ask your
+human to approve it, and do not read the code before. When you ask the
 author of someone else's PR for changes,
 open that comment with `## Changes requested`: the PR tracking of
 `aurora-tools.cmd` lists the PR as waiting on its author until a new
@@ -806,6 +902,8 @@ them):
 ## Review
 
 **Verdict: ✅ ready to merge** (or ⚠️ needs a decision / ❌ blocked)
+
+Reviewed head: `<sha>` (someone else's PR: the head you read, which an approval counts for)
 
 | Check | Result |
 |---|---|
