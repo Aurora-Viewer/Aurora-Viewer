@@ -94,6 +94,9 @@ pub fn update(
             // Down at the plaza's floor south of the arrival, 3 m away:
             // with AURORA_RAIN its puddles, with AURORA_SNOW_AFTER their ice.
             (Vec3::new(128.0, 118.0, 34.6), Vec3::new(132.0, 123.5, 32.0))
+        } else if mode.contains("deck") {
+            // Down at the low deck of the `deck` set from 5 m above it.
+            (Vec3::new(36.5, 109.5, 25.0), Vec3::new(40.0, 114.0, 20.15))
         } else if mode.contains("rain-sea") {
             // Across the lagoon from 2.5 m above it: with AURORA_RAIN, the
             // rain on open water.
@@ -275,6 +278,7 @@ pub fn update(
             && (crate::ao::water_demo::mode().is_some()
                 || mode.contains("parts-")
                 || mode.contains("waterline")
+                || mode.contains("deck")
                 || mode.contains("optics-")
                 || mode.contains("alpha-layers")
                 || mode.contains("alpha-cross"))
@@ -288,6 +292,21 @@ pub fn update(
             scale,
             box_shape,
             super::te(color, 0, false, 0.0),
+            Default::default(),
+            "",
+        ));
+    }
+    if mode.contains("deck") {
+        // An opaque deck 15 cm above region water (20 m), over the lagoon's
+        // deep part, as the low floor of a houseboat: the crests of the
+        // swell rise above it (#4565).
+        objects.push(super::prim(
+            99550,
+            Vec3::new(40.0, 114.0, 20.0),
+            Quat::IDENTITY,
+            Vec3::new(8.0, 5.0, 0.3),
+            box_shape,
+            super::te([0.55, 0.55, 0.6, 1.0], 0, false, 0.0),
             Default::default(),
             "",
         ));
