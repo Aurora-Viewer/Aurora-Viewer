@@ -25,6 +25,7 @@
 //!   faces-picker-badges-local | faces-picker-material-badges-local: applied local previews.
 //!   faces-close: close view of one selected face for material readability.
 //!   faces-complex: closed torus and disconnected mesh islands, with holes.
+//!   multi-mesh-materials: select two separate mesh roots in the Materials panel.
 //!   faces-mapping: one face on each of three textured surfaces (repeats,
 //!   offset and rotation; planar mapping; a PBR base color transform), for
 //!   the face-select pattern.
@@ -474,6 +475,24 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             240 => vec![Step::RenameSelection("Shared edit".into())],
             260 if !objects.is_empty() => vec![Step::SelectMany(vec![objects[0]])],
             270 if objects.len() >= 2 => vec![Step::SelectMany(vec![objects[1]])],
+            _ => Vec::new(),
+        };
+    }
+    if parts[0] == "multi-mesh-materials" {
+        let objects: Vec<usize> = [99620, 99622]
+            .into_iter()
+            .filter_map(|local_id| {
+                world
+                    .objects
+                    .iter()
+                    .find_map(|(idx, object)| (object.key.local_id == local_id).then_some(idx))
+            })
+            .collect();
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 if objects.len() == 2 => vec![Step::SelectMany(objects)],
+            227 => vec![Step::Focus(false)],
+            235 => vec![Step::CloseView],
             _ => Vec::new(),
         };
     }

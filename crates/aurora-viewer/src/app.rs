@@ -24327,6 +24327,7 @@ impl ApplicationHandler for App {
             }
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| {
                 v.starts_with("faces")
+                    || v.starts_with("multi-mesh-materials,")
                     || v.starts_with("shared")
                     || v.starts_with("mesh-inspector")
                     || v.starts_with("invisible-")
@@ -24336,13 +24337,17 @@ impl ApplicationHandler for App {
                 let invisible = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-invisible,"));
                 let inspector = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("mesh-inspector"));
                 let physics = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("physics"));
+                let multi_mesh_materials = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("multi-mesh-materials,"));
                 let complex = inspector
                     || physics
                     || invisible_manipulation
+                    || multi_mesh_materials
                     || std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
                 let mapping =
                     std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-mapping,") || v.starts_with("faces-texgen,"));
-                let mut events = if complex {
+                let mut events = if multi_mesh_materials {
+                    crate::demo::multi_mesh_materials_events()
+                } else if complex {
                     crate::demo::complex_face_selection_events()
                 } else if mapping {
                     crate::demo::face_mapping_events()
