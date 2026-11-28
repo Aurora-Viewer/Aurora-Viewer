@@ -1411,7 +1411,11 @@ pub fn fetch_reply(cmd: &NetCommand, inv: &Inventory, source: &FetchSource, faul
                     tree(inv, source, *owner, *parent, children, *depth, &mut budget)
                 }
             };
-            Some(vec![NetEvent::InventoryTreeFetched { request: *request, result }])
+            Some(vec![NetEvent::InventoryTreeFetched {
+                request: *request,
+                result,
+                read_scope: None,
+            }])
         }
         NetCommand::FetchInventory { folders, owner, .. } => {
             let mut contents = Vec::new();
@@ -1440,6 +1444,7 @@ pub fn fetch_reply(cmd: &NetCommand, inv: &Inventory, source: &FetchSource, faul
                     folders: failed,
                     too_big: false,
                     status: None,
+                    read_scope: None,
                 });
             }
             if !too_big.is_empty() {
@@ -1447,6 +1452,7 @@ pub fn fetch_reply(cmd: &NetCommand, inv: &Inventory, source: &FetchSource, faul
                     folders: too_big,
                     too_big: true,
                     status: Some(403),
+                    read_scope: None,
                 });
             }
             Some(events)
@@ -1733,7 +1739,7 @@ mod tests {
         };
         assert!(matches!(
             fetch_reply(&failed, &inv, &source, &mut too_big).expect("folders").as_slice(),
-            [NetEvent::InventoryFetchFailed { folders, too_big: true, status: Some(403) }] if folders == &[open[0]]
+            [NetEvent::InventoryFetchFailed { folders, too_big: true, status: Some(403), .. }] if folders == &[open[0]]
         ));
     }
 

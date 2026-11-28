@@ -5040,15 +5040,38 @@ impl World {
                 self.inventory.apply_snapshots(c, true);
                 None
             }
-            NetEvent::InventoryTreeFetched { request, result } => {
+            NetEvent::InventoryTreeFetched {
+                request,
+                mut result,
+                read_scope,
+            } => {
+                use aurora_net::inventory::ais::FetchFailure;
+                if let Err(error) = &mut result
+                    && error.kind == FetchFailure::TooBig
+                    && read_scope.is_some_and(|scope| scope.strong_count() == 0)
+                {
+                    error.kind = FetchFailure::SupersededCapability;
+                }
                 if self.inventory_background.on_reply(&mut self.inventory, request, result) {
                     self.announce_inventory_limit();
                 }
                 None
             }
-            NetEvent::InventoryFetchFailed { folders, too_big, status } => {
+            NetEvent::InventoryFetchFailed {
+                folders,
+                too_big,
+                status,
+                read_scope,
+            } => {
                 self.inventory.failed(&folders);
-                if too_big {
+                if too_big && read_scope.is_some_and(|scope| scope.strong_count() == 0) {
+                    // The old capability's 403 tells us nothing about the size
+                    // of this folder. Read it with the agent's current capability.
+                    log::debug!(target: "inventory_region_handoff", "inventory folder refusal from a superseded capability: {} folders", folders.len());
+                    for id in folders {
+                        self.inventory.retry(id);
+                    }
+                } else if too_big {
                     // A folder the server refuses even alone: record it and
                     // stop asking for it (search and refresh skip it too).
                     self.inventory_background.note_too_big(&mut self.inventory, &folders, status);
@@ -10579,6 +10602,7 @@ mod motion_tests {
             folders: vec![cof],
             too_big: false,
             status: None,
+            read_scope: None,
         });
         assert_eq!(world.inventory.queue, vec![(cof, false)]);
         world.inventory.queue.clear();
@@ -10587,6 +10611,7 @@ mod motion_tests {
             folders: vec![cof],
             too_big: false,
             status: None,
+            read_scope: None,
         });
         assert!(world.inventory.queue.is_empty());
         assert_eq!(world.inventory.folders[&cof].state, FetchState::Failed);
@@ -10600,6 +10625,48 @@ mod motion_tests {
         world.apply(NetEvent::Capabilities { handle: there, caps });
         assert_eq!(world.inventory.queue, vec![(cof, false)]);
         assert_eq!(world.inventory.folders[&cof].state, FetchState::Fetching);
+    }
+
+    #[test]
+    fn late_crossing_403_is_retried_but_a_current_403_stops_folder_reads() {
+        use inventory::{FetchState, Folder};
+        let (mut world, here) = teleport_fixture();
+        let folder = Uuid::from_u128(46);
+        world.inventory.folders.insert(
+            folder,
+            Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: folder,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Unknown,
+                library: false,
+            },
+        );
+        world.inventory.request(folder);
+        world.inventory.queue.clear();
+        let old = std::sync::Arc::new(());
+        let old_ref = std::sync::Arc::downgrade(&old);
+        world.apply(NetEvent::MainRegionChanged { handle: west_of(here) });
+        drop(old);
+        let refusal = |scope| NetEvent::InventoryFetchFailed {
+            folders: vec![folder],
+            too_big: true,
+            status: Some(403),
+            read_scope: Some(scope),
+        };
+        world.apply(refusal(old_ref));
+        assert!(!world.inventory.too_big.contains(&folder));
+        assert_eq!(world.inventory.queue, [(folder, false)]);
+        world.inventory.queue.clear();
+
+        let current = std::sync::Arc::new(());
+        world.apply(refusal(std::sync::Arc::downgrade(&current)));
+        assert!(world.inventory.too_big.contains(&folder));
+        world.inventory.retry_failed();
+        assert!(world.inventory.queue.is_empty());
     }
 
     #[test]

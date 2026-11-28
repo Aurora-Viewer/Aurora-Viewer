@@ -387,6 +387,7 @@ struct Session<'a> {
     asset_imports: asset_imports::Imports,
     inventory_previews: inventory_preview::Previews,
     inventory_reads: Option<inventory_reads::Reader>,
+    inventory_folder_scope: Arc<()>,
     script_transfers: scripts::ScriptTransfers,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
     inventory_copies: inventory_copies::Pending,
@@ -617,6 +618,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         asset_imports: Default::default(),
         inventory_previews: Default::default(),
         inventory_reads: None,
+        inventory_folder_scope: Arc::default(),
         script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
         inventory_copies: inventory_copies::Pending::default(),
@@ -826,6 +828,9 @@ impl Session<'_> {
 
     fn set_main(&mut self, addr: SocketAddr, seed: String) {
         let changed = self.main != Some(addr);
+        if changed {
+            self.inventory_folder_scope = Arc::default();
+        }
         self.main = Some(addr);
         self.set_seed(addr, seed);
         if changed {
@@ -875,6 +880,7 @@ impl Session<'_> {
             old.abort();
         }
         if self.main == Some(addr) {
+            self.inventory_folder_scope = Arc::default();
             self.sync_inventory_reader(false);
         }
         self.request_caps(addr);
@@ -1027,10 +1033,21 @@ impl Session<'_> {
                     // ModifyRegion granted only now: the handshake could not ask it
                     let modify_new = !sim.caps.contains_key("ModifyRegion") && caps.contains_key("ModifyRegion");
                     let caps = Arc::new(caps);
+                    let inventory_cap_changed = [
+                        "InventoryAPIv3",
+                        "LibraryAPIv3",
+                        "FetchInventoryDescendents2",
+                        "FetchLibDescendents2",
+                    ]
+                    .iter()
+                    .any(|name| sim.caps.get(*name) != caps.get(*name));
                     sim.caps = caps.clone();
                     let handle = sim.handle;
                     let terrain_handle = (sim.handshake_seen && modify_new).then_some(handle);
                     if self.main == Some(addr) {
+                        if inventory_cap_changed {
+                            self.inventory_folder_scope = Arc::default();
+                        }
                         self.sync_inventory_reader(true);
                     }
                     emit(self.sh, NetEvent::Capabilities { handle, caps });
@@ -1434,6 +1451,7 @@ impl Session<'_> {
         }
         if self.main == Some(addr) {
             self.main = None;
+            self.inventory_folder_scope = Arc::default();
             self.sync_inventory_reader(false);
         }
         self.sh.stats.sim_count.store(self.sims.len() as u32, Ordering::Relaxed);
@@ -3558,6 +3576,7 @@ impl Session<'_> {
     }
 
     fn fetch_inventory(&mut self, folders: Vec<uuid::Uuid>, owner: uuid::Uuid, library: bool) {
+        let scope = Arc::downgrade(&self.inventory_folder_scope);
         if !library && let Some(cap) = self.main_cap("InventoryAPIv3") {
             let http = self.sh.caps_http.clone();
             let events = self.sh.events.clone();
@@ -3571,7 +3590,9 @@ impl Session<'_> {
                         // one alone, so that only the folder the server
                         // refuses by itself is over the limit
                         // (BGFolderHttpHandler::processFailure splits a 403).
-                        Err(error) if error.kind == crate::inventory::ais::FetchFailure::TooBig && chunk.len() > 1 => {
+                        Err(error)
+                            if error.kind == crate::inventory::ais::FetchFailure::TooBig && chunk.len() > 1 && scope.strong_count() > 0 =>
+                        {
                             for id in chunk {
                                 match crate::inventory::ais::fetch_folders(&http, &cap, owner, std::slice::from_ref(id)).await {
                                     Ok(contents) => {
@@ -3583,6 +3604,7 @@ impl Session<'_> {
                                             folders: vec![*id],
                                             too_big: error.kind == crate::inventory::ais::FetchFailure::TooBig,
                                             status: error.status,
+                                            read_scope: Some(scope.clone()),
                                         });
                                     }
                                 }
@@ -3595,6 +3617,7 @@ impl Session<'_> {
                                 folders: chunk.to_vec(),
                                 too_big,
                                 status: error.status,
+                                read_scope: Some(scope.clone()),
                             });
                         }
                     }
@@ -3618,6 +3641,7 @@ impl Session<'_> {
                     folders,
                     too_big: false,
                     status: None,
+                    read_scope: None,
                 },
             );
             return;
@@ -3627,7 +3651,8 @@ impl Session<'_> {
         tokio::spawn(async move {
             // BGFolderHttpHandler::processFailure: a batch refused with 403 is
             // too large and split; only a folder refused alone is over the
-            // limit (InventoryLimitReachedAIS).
+            // limit (InventoryLimitReachedAIS). A superseded capability's
+            // refusal is handed back for retry on the current region.
             let mut batches: Vec<Vec<uuid::Uuid>> = folders.chunks(16).rev().map(<[uuid::Uuid]>::to_vec).collect();
             while let Some(chunk) = batches.pop() {
                 let body = crate::inventory::fetch_request_body(&chunk, owner);
@@ -3636,7 +3661,7 @@ impl Session<'_> {
                         let contents = crate::inventory::parse_fetch_response(&v);
                         let _ = events.send(NetEvent::InventoryContents(contents));
                     }
-                    Err(caps::CapsError::Status(403)) if chunk.len() > 1 => {
+                    Err(caps::CapsError::Status(403)) if chunk.len() > 1 && scope.strong_count() > 0 => {
                         let (first, second) = chunk.split_at(chunk.len() / 2);
                         batches.push(second.to_vec());
                         batches.push(first.to_vec());
@@ -3651,6 +3676,7 @@ impl Session<'_> {
                             too_big: status == Some(403),
                             folders: chunk,
                             status,
+                            read_scope: Some(scope.clone()),
                         });
                     }
                 }
@@ -3676,6 +3702,7 @@ impl Session<'_> {
         } else {
             "FetchInventoryDescendents2"
         });
+        let read_scope = (ais.is_some() || legacy.is_some()).then(|| Arc::downgrade(&self.inventory_folder_scope));
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
@@ -3698,7 +3725,11 @@ impl Session<'_> {
             if let Err(error) = result {
                 log::warn!("background inventory fetch of {parent} failed ({count} folders, depth {depth}): {error}");
             }
-            let _ = events.send(NetEvent::InventoryTreeFetched { request, result });
+            let _ = events.send(NetEvent::InventoryTreeFetched {
+                request,
+                result,
+                read_scope,
+            });
         });
     }
 
@@ -7213,6 +7244,7 @@ mod event_queue_tests {
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
             inventory_reads: None,
+            inventory_folder_scope: Arc::default(),
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: inventory_copies::Pending::default(),
@@ -7426,14 +7458,21 @@ mod event_queue_tests {
         };
 
         // EstablishAgentCommunication: the neighbour's seed, its first answer
+        let previous_read = Arc::downgrade(&session.inventory_folder_scope);
         session.set_seed(neighbour_addr, seed.clone());
         assert!(session.sims[&neighbour_addr].caps_requested);
         session.on_caps(neighbour_addr, &seed, Ok(child.clone()));
         assert_eq!(caps_events(&received), [(20, 2)]);
+        assert_eq!(
+            previous_read.strong_count(),
+            1,
+            "a neighbour's seed does not invalidate the main region"
+        );
 
         // the crossing gives the same seed: its capabilities stay meanwhile
         session.switch_region(20, Some(Ipv4Addr::LOCALHOST), neighbour_addr.port(), seed.clone(), (256, 256));
         assert_eq!(session.main, Some(neighbour_addr));
+        assert_eq!(previous_read.strong_count(), 0, "the old region's folder read expired");
         assert!(session.sims[&neighbour_addr].caps_again_task.is_some());
         assert_eq!(session.main_cap("ViewerAsset").as_deref(), Some("http://127.0.0.1:9/ViewerAsset"));
         assert_eq!(session.main_cap("InventoryAPIv3"), None);
@@ -7452,8 +7491,14 @@ mod event_queue_tests {
 
         // a new seed drops them until its own answer comes; the answer to
         // the old seed still on its way is ignored
+        let active_read = Arc::downgrade(&session.inventory_folder_scope);
         let new_seed = "http://127.0.0.1:9/new-seed".to_owned();
         session.set_seed(neighbour_addr, new_seed.clone());
+        assert_eq!(
+            active_read.strong_count(),
+            0,
+            "replacing the active seed invalidates its folder reads"
+        );
         assert!(session.sims[&neighbour_addr].caps.is_empty());
         assert!(session.sims[&neighbour_addr].caps_again_task.is_none());
         session.on_caps(neighbour_addr, &seed, Ok(agent.clone()));
@@ -7536,6 +7581,69 @@ mod script_dialog_tests {
         })
     }
 
+    #[tokio::test]
+    async fn a_legacy_inventory_batch_refused_after_crossing_is_not_split_on_the_old_capability() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let old_addr = server.local_addr().unwrap();
+        let mut old_sim = Sim::new(old_addr, 10);
+        old_sim.caps = Arc::new([("FetchInventoryDescendents2".into(), format!("http://{old_addr}/inventory"))].into());
+        let neighbour = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let new_addr = neighbour.local_addr().unwrap();
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let sims = [(old_addr, old_sim), (new_addr, Sim::new(new_addr, 20))].into();
+        let mut session = test_session(&sh, sock, sims, old_addr);
+        let folders = vec![Uuid::from_u128(3), Uuid::from_u128(4)];
+        session.fetch_inventory(folders.clone(), Uuid::from_u128(1), false);
+
+        let (stream, _) = tokio::time::timeout(Duration::from_secs(5), server.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut stream = BufReader::new(stream);
+        let mut request_line = String::new();
+        tokio::time::timeout(Duration::from_secs(5), stream.read_line(&mut request_line))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(request_line.starts_with("POST /inventory "));
+        session.set_main(new_addr, String::new());
+        stream
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        crate::test_http::finish(stream.into_inner());
+
+        let failed = tokio::task::spawn_blocking(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while let Ok((_, event)) = received.recv_deadline(deadline) {
+                if let NetEvent::InventoryFetchFailed {
+                    folders,
+                    too_big,
+                    status,
+                    read_scope,
+                } = event
+                {
+                    return Some((folders, too_big, status, read_scope));
+                }
+            }
+            None
+        });
+        tokio::select! {
+            next = server.accept() => panic!("the expired capability received another request: {}", next.is_ok()),
+            result = failed => {
+                let (failed_folders, too_big, status, scope) = result.unwrap().expect("failure event for the original batch");
+                assert_eq!(failed_folders, folders);
+                assert!(too_big);
+                assert_eq!(status, Some(403));
+                assert_eq!(scope.expect("source capability lifetime").strong_count(), 0);
+            }
+        }
+    }
+
     pub(in crate::session) fn test_session<'a>(
         sh: &'a Shared,
         sock: Arc<UdpSocket>,
@@ -7595,6 +7703,7 @@ mod script_dialog_tests {
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
             inventory_reads: None,
+            inventory_folder_scope: Arc::default(),
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: super::inventory_copies::Pending::default(),
