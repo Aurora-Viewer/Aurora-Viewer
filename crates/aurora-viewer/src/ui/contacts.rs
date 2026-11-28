@@ -1303,6 +1303,9 @@ fn friend_menu(
                 rights: rights_after(f.rights_given, rights::ONLINE_STATUS, !on),
             }));
         }
+        // the friend's online / offline alerts (#4955), as in Aurora's
+        // friend menu
+        context::notices_mute_check(ui, p, world, id);
     }
 }
 

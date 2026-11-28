@@ -78,6 +78,9 @@ pub struct ContactSets {
     /// and in nearby chat (notices.rs; per account, in the sets' file).
     pub notices_toast: bool,
     pub notices_chat: bool,
+    /// Friends whose online / offline alerts are muted (#4955, an Aurora
+    /// addition; notices.rs).
+    muted_notices: BTreeSet<Uuid>,
     appearances: std::collections::HashMap<Uuid, std::sync::Arc<Appearance>>,
     /// Some resident has a marker (`has_markers`), kept with `appearances`.
     markers: bool,
@@ -103,6 +106,7 @@ impl Default for ContactSets {
             // FSContactSetsNotificationToast off, ...NearbyChat on
             notices_toast: false,
             notices_chat: true,
+            muted_notices: BTreeSet::new(),
             appearances: Default::default(),
             markers: false,
             chat_sections: Vec::new(),
@@ -181,6 +185,7 @@ impl ContactSets {
                     if value.has(notices::NOTICES_CHAT) {
                         self.notices_chat = value[notices::NOTICES_CHAT].as_bool();
                     }
+                    self.read_muted_notices(&value[notices::MUTED_NOTICES]);
                 }
                 EXTRA_AVS => {
                     if let Some(m) = value.as_map() {
@@ -224,6 +229,7 @@ impl ContactSets {
         global.insert("aurora_stack_icons", self.stack_icons);
         global.insert(notices::NOTICES_TOAST, self.notices_toast);
         global.insert(notices::NOTICES_CHAT, self.notices_chat);
+        self.write_muted_notices(&mut global);
         out.insert(GLOBAL_SETTINGS, global);
         let mut extra = Llsd::new_map();
         for id in &self.extra {

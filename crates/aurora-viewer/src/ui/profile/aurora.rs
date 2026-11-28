@@ -1031,6 +1031,9 @@ fn more_menu(resp: &Response, env: &mut Env, w: &Window, f: &Facts, compact: boo
         if f.friend && menu::item(ui, p, "user-minus", aurora_i18n::tr!("ui-profile-aurora-remove-friend")) {
             act(CtxAction::RemoveFriend(id));
         }
+        // the friend's online / offline alerts (#4955), as in the friends
+        // list's menu
+        context::notices_mute_check(ui, p, world, id);
         // menu_profile_other.xml's invite_to_group, after remove_friend
         // (LLPanelProfileSecondLife::onCommitMenu → LLAvatarActions::
         // inviteToGroup, llpanelprofile.cpp): no enable callback, and never on

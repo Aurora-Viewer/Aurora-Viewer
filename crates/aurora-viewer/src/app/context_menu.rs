@@ -1178,6 +1178,7 @@ impl App {
                 self.world.profile_command(&cmd);
                 self.send(cmd);
             }
+            CtxAction::MuteNotices { friend, muted } => self.world.contact_sets.set_notices_muted(friend, muted),
             CtxAction::AddFriend(id) => self.contacts_ui.ask_friendship(id),
             CtxAction::RemoveFriend(id) => self.contacts_ui.ask_remove_friend(id),
             CtxAction::RemoveFriends(ids) => self.contacts_ui.ask_remove_friends(ids),

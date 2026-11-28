@@ -167,6 +167,8 @@ pub(super) fn show(
                 granted(ui, p, f, &name, actions);
                 ui.add_space(10.0);
                 received(ui, p, f, &name);
+                ui.add_space(10.0);
+                alerts(ui, p, world, f.id);
             }
             if id != world.agent_id {
                 ui.add_space(10.0);
@@ -417,6 +419,25 @@ fn granted(ui: &mut egui::Ui, p: &Palette, f: &Friend, name: &str, actions: &mut
             }
         });
     }
+}
+
+/// "Alerts": the friend's online / offline alerts muted or not (#4955, an
+/// Aurora addition; the same choice as the friend's menus).
+fn alerts(ui: &mut egui::Ui, p: &Palette, world: &World, friend: Uuid) {
+    section(ui, p, aurora_i18n::tr!("people-sheet-alerts"));
+    let mut muted = world.contact_sets.notices_muted(&friend);
+    line(
+        ui,
+        p,
+        "bell-minus-filled",
+        aurora_i18n::tr!("ui-context-mute-online-alerts"),
+        widgets::SWITCH_SIZE.x,
+        |ui| {
+            if widgets::switch(ui, p, &mut muted).changed() {
+                context::request(ui.ctx(), CtxAction::MuteNotices { friend, muted });
+            }
+        },
+    );
 }
 
 /// What the friend grants us: read only.

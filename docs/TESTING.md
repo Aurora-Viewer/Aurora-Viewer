@@ -7160,7 +7160,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive\|edit\|scenes` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; `scenes`: an experience's environment pushes, then its clear; also fills Me › Experiences; `edit` opens the club experience's Edit tab |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations (`lost`: the dead end a restart used to leave) |
 | `AURORA_DEMO_CONTACTS_FILTER=<query>` | Prefills the groups filter of Contacts (with `AURORA_DEMO_CONTACTS=groups`) |
-| `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat` | A contact set's own online notices and automatic responses |
+| `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat\|muted` | A contact set's own online notices and automatic responses; a friend's muted alerts |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs, the Chat Service's direct history (`service`) and saved private/group conversation restoration |
 | `AURORA_DEMO_LEGACY_LISTS=1\|run\|again\|none\|unreadable\|other-grid` | The import of a Legacy Viewer's lists in Preferences |
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
@@ -10781,7 +10781,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `AURORA_DEMO_GROUP_PROFILE=officer`, a plain member may not invite), at frame 600;
   add `AURORA_DEMO_PEOPLE=legacy` to see the classic buttons. The saved preference defaults to off
   (Preferences > Chat > Show the Contacts tab).
-- **`AURORA_DEMO_SET_NOTICES=config|config-responses|config-bottom|chat`**: at frame 60 the
+- **`AURORA_DEMO_SET_NOTICES=config|config-responses|config-bottom|chat|muted`**: at frame 60 the
   set Family (the demo friend Nova in it, in memory only) gets "Show
   notifications" and its own Do Not Disturb response, and the friends'
   global online notices (toast and nearby chat) are off for the run.
@@ -10793,6 +10793,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   offline and online, and only Nova gets the two lines; at 400 do not
   disturb comes on, at 420 Nova writes, and the log line `demo set
   notices:` gives the response sent (the set's text). Capture at 620.
+  `muted` is `chat` with Nova's online / offline alerts muted (#4955) and
+  the global notices on for the run: at 300 and 360 only the other friend
+  gets a line and a toast, no sound plays for Nova, and her set's "Show
+  notifications" does not bring them back. Open People › Friends, Nova's
+  "…" menu or her contact sheet: "Mute online / offline alerts" is on;
+  turned off, her next notices come back (kept in memory only).
     In Aurora's look, Friends has no display-options gear: search, profile
     pictures and friendship rights stay available. Contact-set lists always
     show pictures; names use the set's explicit UI-name appearance and

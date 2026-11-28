@@ -6816,9 +6816,12 @@ impl App {
         w.announce_incoming_im = self.settings.announce_incoming_im || (self.demo && crate::demo::im_announce::forced());
         w.set_script_dialog_limit(self.settings.script_dialog_limit);
         w.notifications.toasts = crate::world::notifications::ToastPrefs {
-            // AURORA_DEMO_SET_NOTICES: only the contact set's notices
-            presence: self.settings.toast_friends_online && !(self.demo && crate::demo::set_notices::active()),
-            presence_in_chat: self.settings.friends_online_in_chat && !(self.demo && crate::demo::set_notices::active()),
+            // AURORA_DEMO_SET_NOTICES: only the contact set's notices; with
+            // `muted`, every friend's but the muted one's
+            presence: (self.settings.toast_friends_online && !(self.demo && crate::demo::set_notices::active()))
+                || (self.demo && crate::demo::set_notices::muted()),
+            presence_in_chat: (self.settings.friends_online_in_chat && !(self.demo && crate::demo::set_notices::active()))
+                || (self.demo && crate::demo::set_notices::muted()),
             im: self.settings.toast_im,
             // AURORA_DEMO_TOASTS shows a group message too (off by default)
             group_im: self.settings.toast_group_im || (self.demo && crate::demo::toasts::mode().is_some()),

@@ -617,6 +617,11 @@ pub enum CtxAction {
         friend: Uuid,
         rights: i32,
     },
+    /// Mute / unmute a friend's online / offline alerts (#4955).
+    MuteNotices {
+        friend: Uuid,
+        muted: bool,
+    },
     /// Friendship: offer (with a message) / end, both confirmed first.
     AddFriend(Uuid),
     RemoveFriend(Uuid),
@@ -980,6 +985,26 @@ pub fn owns_rezzed(owner_id: Uuid, agent_id: Uuid) -> bool {
     !agent_id.is_nil() && owner_id == agent_id
 }
 
+/// "Mute online / offline alerts", a check of a friend's menus (#4955, an
+/// Aurora addition): the friends list's and the profile's. Nothing for a
+/// resident who is not a friend.
+pub fn notices_mute_check(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
+    if !world.social.is_friend(&id) {
+        return;
+    }
+    let muted = world.contact_sets.notices_muted(&id);
+    if menu::check(
+        ui,
+        p,
+        "bell-minus-filled",
+        aurora_i18n::tr!("ui-context-mute-online-alerts"),
+        muted,
+        true,
+    ) {
+        request(ui.ctx(), CtxAction::MuteNotices { friend: id, muted: !muted });
+    }
+}
+
 fn avatar_menu_reporting(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -1303,6 +1328,7 @@ fn avatar_menu_reporting(
                         rights: f.rights_given ^ 1,
                     });
                 }
+                notices_mute_check(ui, p, world, id);
             }
         }
         AvatarList::Name => {
@@ -2882,5 +2908,53 @@ mod tests {
         let f = ObjectFacts::from_flags(0, flags::HANDLE_TOUCH | flags::TAKES_MONEY, MINE, &[MINE], true, false);
         assert!(f.touch && f.pay);
         assert!(f.stand && !f.sit && !f.take);
+    }
+
+    /// "Mute online / offline alerts" (#4955): in the friends list's menu
+    /// (Aurora's People and Contacts rows, the Legacy People list) for a
+    /// friend, checked while muted, and never for someone who is not a
+    /// friend.
+    #[test]
+    fn the_friend_menu_offers_the_alerts_mute_to_friends_only() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let friend = Uuid::from_u128(0xF00D);
+        let stranger = Uuid::from_u128(0xBEEF);
+        world.social.form_friendship(friend);
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let texts_of = |world: &World, id: Uuid, draw: &dyn Fn(&mut egui::Ui, &World, Uuid)| {
+            let ctx = egui::Context::default();
+            theme.apply(&ctx, 1.0);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 1600.0))),
+                    ..Default::default()
+                },
+                |ui| draw(ui, world, id),
+            );
+            output.textures_delta.clear();
+            fn collect(shape: &egui::Shape, texts: &mut Vec<String>) {
+                match shape {
+                    egui::Shape::Text(t) => texts.push(t.galley.text().to_owned()),
+                    egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, texts)),
+                    _ => {}
+                }
+            }
+            let mut texts = Vec::new();
+            for shape in output.shapes {
+                collect(&shape.shape, &mut texts);
+            }
+            texts
+        };
+        let label = aurora_i18n::tr!("ui-context-mute-online-alerts");
+        let roster = |ui: &mut egui::Ui, w: &World, id: Uuid| avatar_roster_menu(ui, &p, w, id, AvatarList::Friend);
+        let check = |ui: &mut egui::Ui, w: &World, id: Uuid| notices_mute_check(ui, &p, w, id);
+        assert!(texts_of(&world, friend, &roster).iter().any(|t| t == label));
+        assert!(texts_of(&world, friend, &check).iter().any(|t| t == label));
+        assert!(!texts_of(&world, stranger, &roster).iter().any(|t| t == label));
+        assert!(texts_of(&world, stranger, &check).is_empty());
+        // the same entry, whatever the state: muting changes its check only
+        world.contact_sets.set_notices_muted(friend, true);
+        assert!(texts_of(&world, friend, &check).iter().any(|t| t == label));
     }
 }

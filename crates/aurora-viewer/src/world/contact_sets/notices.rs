@@ -50,6 +50,8 @@ pub struct SetResponse {
 /// (FSContactSetsNotificationToast).
 pub(super) const NOTICES_TOAST: &str = "aurora_notices_toast";
 pub(super) const NOTICES_CHAT: &str = "aurora_notices_chat";
+/// The friends whose alerts are muted, in `globalSettings`.
+pub(super) const MUTED_NOTICES: &str = "aurora_muted_notices";
 
 impl ContactSet {
     /// getAutoresponseForSet.
@@ -108,6 +110,44 @@ impl ContactSets {
             self.notices_chat = on;
             self.changed();
         }
+    }
+
+    /// `id`'s online / offline alerts are muted (#4955). An Aurora addition:
+    /// the Legacy Viewer has only the global choices and the sets' "Show
+    /// notifications". It wins over a set's notifications.
+    pub fn notices_muted(&self, id: &Uuid) -> bool {
+        self.muted_notices.contains(id)
+    }
+
+    /// "Mute online / offline alerts" of a friend's menu, contact sheet and
+    /// profile.
+    pub fn set_notices_muted(&mut self, id: Uuid, muted: bool) {
+        let changed = if muted {
+            !id.is_nil() && self.muted_notices.insert(id)
+        } else {
+            self.muted_notices.remove(&id)
+        };
+        if changed {
+            self.changed();
+        }
+    }
+
+    /// The muted friends, kept in `globalSettings` as a map of ids (like
+    /// `extraAvs`): a key at the top of the file would be read as a set by
+    /// the Legacy Viewer's importFromLLSD.
+    pub(super) fn read_muted_notices(&mut self, value: &Llsd) {
+        if let Some(m) = value.as_map() {
+            self.muted_notices
+                .extend(m.keys().filter_map(|k| Uuid::parse_str(k).ok()).filter(|id| !id.is_nil()));
+        }
+    }
+
+    pub(super) fn write_muted_notices(&self, global: &mut Llsd) {
+        let mut muted = Llsd::new_map();
+        for id in &self.muted_notices {
+            muted.insert(id.to_string(), "");
+        }
+        global.insert(MUTED_NOTICES, muted);
     }
 
     /// setAutoresponseForSet.
@@ -233,5 +273,32 @@ mod tests {
         </map></llsd>"#;
         cs.import(&aurora_llsd::from_xml(xml).expect("valid xml"));
         assert!(cs.notices_chat && !cs.notices_toast);
+        assert!(!cs.notices_muted(&id(1)), "nobody muted");
+    }
+
+    #[test]
+    fn muted_friends_round_trip_inside_the_global_settings() {
+        let mut cs = ContactSets::default();
+        cs.set_notices_muted(id(1), true);
+        cs.set_notices_muted(id(2), true);
+        cs.set_notices_muted(id(2), false);
+        cs.set_notices_muted(Uuid::nil(), true);
+        assert!(cs.notices_muted(&id(1)) && !cs.notices_muted(&id(2)));
+        let exported = cs.export();
+        assert!(exported["globalSettings"][MUTED_NOTICES].has(&id(1).to_string()));
+        assert!(!exported.has(MUTED_NOTICES), "never a set of its own for the Legacy Viewer");
+        let mut again = ContactSets::default();
+        again.import(&aurora_llsd::from_xml(&aurora_llsd::to_xml(&exported)).expect("valid xml"));
+        assert!(again.notices_muted(&id(1)) && !again.notices_muted(&id(2)) && !again.notices_muted(&Uuid::nil()));
+        assert!(again.set_names().is_empty(), "the list is not read as a set");
+    }
+
+    #[test]
+    fn a_change_of_the_mute_bumps_the_generation_once() {
+        let mut cs = ContactSets::default();
+        let g = cs.generation;
+        cs.set_notices_muted(id(1), true);
+        cs.set_notices_muted(id(1), true);
+        assert_eq!(cs.generation, g + 1);
     }
 }

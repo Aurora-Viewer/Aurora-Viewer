@@ -1795,6 +1795,9 @@ fn overflow_menu(
         if menu::item(ui, p, "ban", block) {
             actions.push(ProfileAction::ToggleBlock(id));
         }
+        // the friend's online / offline alerts (#4955), as in the Aurora
+        // profile's menu
+        super::context::notices_mute_check(ui, p, world, id);
         // separator_group_bans, then the ban and its lifting in all our
         // groups (Profile.EnableItem: canBanFromAnyGroup)
         if crate::world::group_ban_all::can_ban_anywhere(&world.groups.groups, id, world.agent_id) {
