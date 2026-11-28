@@ -60,10 +60,18 @@ scripts, as they are:
   GitHub (`gh pr view`, the queue's notes).
   - git: `git -C <W> …`.
   - What has to build or run there (`check.ps1`, the viewer): Linux and
-    macOS `pwsh -NoProfile -WorkingDirectory <W> -File ./scripts/check.ps1`
+    macOS `pwsh -NoProfile -WorkingDirectory <W> -File <W>/scripts/check.ps1`
     (or `-Command "…"`); Windows `Push-Location <W>`, the command,
     `Pop-Location`. Never from the main repository (AGENTS.md section 3):
-    `check.ps1` checks the repository it is started in.
+    `check.ps1` checks the repository it is started in. The script's path
+    is `<W>`'s, in full: pwsh finds `-File` from the folder your shell is
+    in, not from `-WorkingDirectory`, so `./scripts/check.ps1` runs the
+    main repository's copy, whose own checks (scripts, the agents' hook,
+    the queue's rules) then test `main` and not the PR.
+  - The viewer's log, one per window title and rewritten at each launch:
+    Linux `~/.local/share/auroraviewer/logs/aurora-demo-test-<title>.log`,
+    Windows `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\` (AGENTS.md
+    section 4).
 
 ## Three rules all the way through
 
@@ -327,7 +335,7 @@ the PR merged with the latest `main`, in the review worktree.
 **check.ps1**:
 
 ```
-pwsh -NoProfile -WorkingDirectory <W> -File ./scripts/check.ps1
+pwsh -NoProfile -WorkingDirectory <W> -File <W>/scripts/check.ps1
 ```
 
 Once CI is green and the diff read, never before. It runs what the CI runs
@@ -336,7 +344,8 @@ build of the PC (AGENTS.md section 5, `AURORA_BUILD_SLOTS`): one review's
 `check.ps1` at a time. Run it in the background if your tool would cut it
 short, and read its result before going on: the demo's checkouts below
 change the worktree it builds, so they wait for it. A failure is a finding
-of step 6.
+of step 6, `main`'s own tests included: a guard test merged since the PR
+was written can fail on its code.
 
 **The demo, yours** (AGENTS.md section 4, and the non-regression of section
 11 step 3): the demo scenarios the PR touches **and** those of the
@@ -364,7 +373,16 @@ docs/TESTING.md "Automated test windows on Windows".)
   an `AURORA_*` variable or a command-line argument (docs/TESTING.md, the
   README); a change no scenario reaches that way is shown to your human
   below. Check that the scenario really reaches the change (its code,
-  docs/TESTING.md) before counting on it.
+  docs/TESTING.md) before counting on it, and check in the viewer's log
+  the settings it depends on (AGENTS.md section 4): a shadow feature, for
+  example, needs the shadows on (`AURORA_SHADOWS`), which the log's
+  shadow lines show.
+- **A change that shows no effect is a finding**, not a capture to take
+  again: when "before" and "after" (or the feature off and on) draw the
+  same image, capture it at the PR's own head too, without the merge of
+  `main`, to tell the merge from the PR (an older head is fetched by its
+  full sha: `git -C <W> fetch origin <sha>`, the short one from `gh api
+  repos/<repo>/commits/<short> --jq .sha`), then show your human (below).
 - A change to the interface is also checked by eye against a
   neighbouring window (AGENTS.md section 7): backgrounds, buttons, radii,
   icons aligned with the text.
@@ -381,7 +399,11 @@ so.
   mode depending on what has to be tested: `pwsh -NoProfile
   -WorkingDirectory <W> -Command "cargo run -p aurora-viewer -- --title
   'Test review-<n>'"`, with `AURORA_DEMO=1` and the scenario for a demo.
-  Wait for its window before you ask.
+  Wait for its window before you ask: its log's "renderer ready" line,
+  not a process list. A feature with an on and off (an option, a
+  variable) is easiest to judge in two viewers side by side, each with
+  its own title (`Test review-<n> off`, `… on`) and the variable set for
+  that launch only. Close them once your human has answered.
 - Tell them precisely what to test, where (demo, or the grid when only the
   grid shows it: network, teleports, voice, other residents, real assets)
   and what they should see, in your message before the question, in
@@ -507,7 +529,10 @@ a merged PR of the worktree's own branch, which a review never has, so it
 takes `-Force`; first check that nothing you made is lost:
 `git -C <W> status --porcelain` empty, and each commit you chose to push
 is in the PR's head (`git -C <W> fetch origin pull/<n>/head`, then `git -C
-<W> merge-base --is-ancestor <commit> FETCH_HEAD` for each). Then:
+<W> merge-base --is-ancestor <commit> FETCH_HEAD` for each), and that
+the worktree is on its branch (`git -C <W> switch chore/review-<n>` after
+a capture at a detached commit): on a detached head `end-task.ps1` reads
+the branch as `HEAD` and leaves `chore/review-<n>` behind. Then:
 
 ```
 pwsh ./scripts/end-task.ps1 -Name review-<n> -Force
