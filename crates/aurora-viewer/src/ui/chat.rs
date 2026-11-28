@@ -4279,7 +4279,10 @@ pub fn show(
     open: &mut bool,
 ) -> Vec<ConvAction> {
     let enlarged = st.previews.enlarged();
-    st.previews.lightbox_keys(ctx);
+    // outside, the window's own keys close the picture (in its body, below)
+    if !super::widgets::floater_outside(ctx, egui::Id::unique("conversations")) {
+        st.previews.lightbox_keys(ctx);
+    }
     st.reorder.begin(ctx, world);
     // what the thumbnails' menus asked, drawn with the bars before
     let mut actions = std::mem::take(&mut st.thumbnails.actions);
@@ -4416,6 +4419,14 @@ pub fn show(
     let image_bounds = floater.show(ctx, p, open, |ui| {
         let focus_before = focus_before_body(ui);
         let bounds = ui.available_rect_before_wrap().intersect(ui.clip_rect());
+        // In its window outside the viewer's, the enlarged picture is drawn
+        // and closed there: drawn by the viewer's pass, it showed in the
+        // viewer's window (behind a game in gaming mode) while the body
+        // below stayed disabled, grey and deaf (#5034).
+        let outside = ui.ctx().viewport_id() != egui::ViewportId::ROOT;
+        if outside {
+            st.previews.lightbox_keys(ui.ctx());
+        }
         if enlarged {
             ui.disable();
         }
@@ -4438,7 +4449,10 @@ pub fn show(
             if !st.contacts && !minimized {
                 press_focuses_field(ui, focus_before, egui::Id::unique(("conv_input", st.selected)));
             }
-            return bounds;
+            if outside {
+                st.previews.lightbox(ui.ctx(), p, Some(bounds));
+            }
+            return (bounds, outside);
         }
         let h = (ui.available_height() - 6.0).max(140.0);
         ui.horizontal_top(|ui| {
@@ -4588,10 +4602,17 @@ pub fn show(
         if !st.contacts && !minimized {
             press_focuses_field(ui, focus_before, egui::Id::unique(("conv_input", st.selected)));
         }
-        bounds
+        if outside {
+            st.previews.lightbox(ui.ctx(), p, Some(bounds));
+        }
+        (bounds, outside)
     });
     docking::target(ctx, *open && !minimized && image_bounds.is_some());
-    st.previews.lightbox(ctx, p, image_bounds.filter(|_| *open));
+    // (drawn outside above; closed when the window was not drawn)
+    if !image_bounds.is_some_and(|(_, outside)| outside) {
+        st.previews
+            .lightbox(ctx, p, image_bounds.map(|(bounds, _)| bounds).filter(|_| *open));
+    }
     if tear_off {
         actions.push(ConvAction::Contacts(super::contacts::ContactsAction::ToggleTornOff));
     }

@@ -391,3 +391,78 @@ fn hover_actions_copy_pixels_and_open_an_independent_image_window() {
             .is_none()
     );
 }
+
+/// Conversations in its window outside the viewer's (#5034): drawn in that
+/// window's pass, as `chat::show` now draws it, the enlarged picture shows
+/// there and takes that window's click and Escape, though the
+/// "conversations" layer it joins inside does not exist there.
+#[test]
+fn an_enlarged_picture_outside_is_drawn_and_closed_in_that_window() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let ctx = Context::default();
+    ctx.set_embed_viewports(false);
+    let p = crate::theme::Theme::default().palette();
+    let outside = egui::ViewportId::from_hash_of("test outside conversations");
+    let bounds = Rect::from_min_size(Pos2::new(10.0, 40.0), Vec2::new(480.0, 300.0));
+    // the shapes the window outside drew, and its events at the next pass
+    let drawn = Rc::new(RefCell::new(0usize));
+    let events: Rc<RefCell<Vec<egui::Event>>> = Rc::default();
+    let (for_pass, events_for_pass) = (drawn.clone(), events.clone());
+    Context::set_immediate_viewport_renderer(move |ctx, viewport| {
+        let egui::ImmediateViewport {
+            ids, mut viewport_ui_cb, ..
+        } = viewport;
+        let info = egui::ViewportInfo {
+            parent: Some(ids.parent),
+            ..Default::default()
+        };
+        let input = egui::RawInput {
+            viewport_id: ids.this,
+            viewports: std::iter::once((ids.this, info)).collect(),
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(520.0, 400.0))),
+            events: std::mem::take(&mut *events_for_pass.borrow_mut()),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| viewport_ui_cb(ui));
+        out.textures_delta.clear();
+        *for_pass.borrow_mut() = out.shapes.len();
+    });
+    let mut pv = Previews {
+        demo_zoom: None,
+        ..Default::default()
+    };
+    pv.lightbox = Some(Lightbox::new(&ctx, "https://i.imgur.com/test.png".to_owned(), shown(&ctx)));
+    let frame = |pv: &mut Previews| {
+        let _ = run_pass(&ctx, input(vec![]), |ctx| {
+            ctx.show_viewport_immediate(outside, egui::ViewportBuilder::default(), |ui, _| {
+                // the window's body, as Conversations draws it outside
+                ui.label("the conversation");
+                pv.lightbox_keys(ui.ctx());
+                pv.lightbox(ui.ctx(), &p, Some(bounds));
+            });
+        });
+    };
+    frame(&mut pv);
+    frame(&mut pv);
+    assert!(*drawn.borrow() > 3, "the picture is drawn in the window outside");
+    // a click on the dim margin, beside the picture of this wide window:
+    // its layer must take the window's pointer
+    let margin = Pos2::new(bounds.left() + 20.0, bounds.center().y);
+    for event in [egui::Event::PointerMoved(margin), pointer(margin, true), pointer(margin, false)] {
+        events.borrow_mut().push(event);
+        frame(&mut pv);
+    }
+    assert!(!pv.enlarged(), "a click on the margin outside closes it");
+    pv.lightbox = Some(Lightbox::new(&ctx, "https://i.imgur.com/test.png".to_owned(), shown(&ctx)));
+    frame(&mut pv);
+    events.borrow_mut().push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    frame(&mut pv);
+    assert!(!pv.enlarged(), "Escape in the window outside closes it");
+}
