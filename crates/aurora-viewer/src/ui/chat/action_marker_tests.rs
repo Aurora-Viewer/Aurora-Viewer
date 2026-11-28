@@ -440,3 +440,81 @@ fn a_piece_wrapped_whole_onto_the_next_row_leaves_the_link_before_it_clickable()
         assert!(!stolen, "{next:?} does not take the first link's pointer");
     }
 }
+
+#[test]
+fn chat_inline_wrap_agent_and_place_links_stay_inside_the_message() {
+    fn check_text(shape: &egui::Shape, left: f32, right: f32, case: &str, count: &mut usize) {
+        match shape {
+            egui::Shape::Text(t) => {
+                for row in &t.galley.rows {
+                    for glyph in row.glyphs.iter().filter(|g| !g.chr.is_whitespace()) {
+                        *count += 1;
+                        let x = t.pos.x + row.pos.x + glyph.pos.x;
+                        assert!(
+                            x >= left - 1.0 && x + glyph.advance_width <= right + 1.0,
+                            "{case}: {:?} in {:?} at {x}, bounds {left}..{right}",
+                            glyph.chr,
+                            t.galley.text(),
+                        );
+                    }
+                }
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| check_text(s, left, right, case, count)),
+            _ => {}
+        }
+    }
+    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let id = crate::demo::DEMO_LOUP;
+    world.social.names.insert(id, "Resident".into());
+    world.map.ratings.learn("Demo Region", aurora_net::search::SIM_ACCESS_MATURE);
+    let theme = crate::theme::Theme::default();
+    let p = theme.palette();
+    let mut emoji = crate::ui::emoji::Emoji::load();
+    let messages = ["v1.46(00000000-0000-4000-8000-000000000001)".to_owned(), "x".repeat(100)];
+    for font in [crate::ui::fonts::INTER, crate::ui::fonts::NOTO, crate::ui::fonts::ROBOTO] {
+        let ctx = egui::Context::default();
+        theme.apply(&ctx, 1.0);
+        crate::ui::fonts::apply(&ctx, font);
+        for pixels in [1.0, 1.5] {
+            ctx.set_pixels_per_point(pixels);
+            for width in [180.0, 240.0, 320.0, 400.0] {
+                for token in &messages {
+                    let text = format!(
+                        "Object reports that secondlife:///app/agent/{id}/about is using an example object with a long name {token} \
+                         secondlife:///app/region/Demo%20Region/1/2/3 finished."
+                    );
+                    let mut left = 0.0;
+                    let mut out = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            ui.horizontal_top(|ui| {
+                                ui.add_space(220.0);
+                                ui.vertical(|ui| {
+                                    ui.set_width(width);
+                                    left = ui.max_rect().left();
+                                    select::row(ui, 1, None, true, |ui| {
+                                        chat_text(ui, &p, &mut emoji, &world, &mut HashSet::new(), &text, 14.0, p.ink, false);
+                                    });
+                                });
+                            });
+                        },
+                    );
+                    out.textures_delta.clear();
+                    let rows = select::take_drawn();
+                    let shown = &rows.last().expect("the transcript row").text;
+                    assert!(shown.contains(token.as_str()), "the full identifier is retained for copying");
+                    assert!(shown.contains("Demo Region (1,2,3)"));
+                    let case = format!("font={font}, pixels={pixels}, width={width}");
+                    let mut count = 0;
+                    for shape in &out.shapes {
+                        check_text(&shape.shape, left, left + width, &case, &mut count);
+                    }
+                    assert!(count > token.len(), "{case}: message and links are painted");
+                }
+            }
+        }
+    }
+}
