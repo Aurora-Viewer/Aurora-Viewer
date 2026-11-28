@@ -34,6 +34,8 @@ impl App {
         self.current_window = Arc::downgrade(&window);
         crate::window_hold::install(&window);
         crate::slurl_handoff::window_ready(&window);
+        // kept with the option off too: turning it on starts from this mode
+        crate::system_theme::window_theme(window.theme());
         Ok(window)
     }
 

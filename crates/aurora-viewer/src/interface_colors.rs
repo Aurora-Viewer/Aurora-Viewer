@@ -21,7 +21,8 @@
 //! text and muted text read 4.5:1 against the panel (WCAG AA), the dim
 //! text and the accent 3:1 (non-text); the page says when it happened.
 //! `on_accent` is the skin's (white) while it reads at least as well on
-//! the new accent as on the skin's own, else the skin's navy.
+//! the new accent as on the skin's own, else the skin's navy. The lighter
+//! accents read 4.5:1 on a chosen background, as they colour text.
 //!
 //! The state colours (danger, success, warn, amber, rose) and the links'
 //! teal keep their hue but move in lightness, like the text, to read 4.5:1
@@ -138,15 +139,20 @@ pub fn on_panel(c: Color32) -> Color32 {
     if let Some((_, out)) = seen.iter().find(|(k, _)| *k == c) {
         return *out;
     }
-    let [r, g, b, a] = c.to_srgba_unmultiplied();
-    let moved = readable(Color32::from_rgb(r, g, b), *ground, TEXT);
-    let out = Color32::from_rgba_unmultiplied(moved.r(), moved.g(), moved.b(), a);
+    let out = on_ground(c, *ground);
     // a handful of colours: the chat's settings and the contact sets'
     if seen.len() > 64 {
         seen.clear();
     }
     seen.push((c, out));
     out
+}
+
+/// `on_panel`'s rule on a given background, its alpha kept.
+pub fn on_ground(c: Color32, ground: Color32) -> Color32 {
+    let [r, g, b, a] = c.to_srgba_unmultiplied();
+    let moved = readable(Color32::from_rgb(r, g, b), ground, TEXT);
+    Color32::from_rgba_unmultiplied(moved.r(), moved.g(), moved.b(), a)
 }
 
 /// What the readability rules would move for `colors` over the skin.
@@ -210,6 +216,19 @@ pub fn derive(skin: Palette, colors: &InterfaceColors) -> (Palette, Adjusted) {
                 *out = Turn::of(skin.violet, of).on(p.violet);
             }
             p.on_accent = on_accent(&skin, p.violet);
+        }
+    }
+    // the lighter accents colour text and icons (a count, a selected row,
+    // initials): on another panel they read like the states above
+    if p.panel != skin.panel {
+        for c in [&mut p.violet_pale, &mut p.indigo_light] {
+            *c = readable(*c, p.panel, TEXT);
+        }
+        // the light accent is also the hovered accent face, under `on_accent`:
+        // on a mid-grey panel, where the two pull apart, that face comes first
+        let moved = readable(p.violet_light, p.panel, TEXT);
+        if contrast(moved, p.on_accent) >= UI {
+            p.violet_light = moved;
         }
     }
     (p, adjusted)
