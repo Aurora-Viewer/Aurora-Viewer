@@ -1898,3 +1898,79 @@ fn a_typed_time_sits_between_its_two_stops() {
     assert!((place(15.0) - 0.3).abs() < 1e-5, "15 s: half way from 10 s to 20 s");
     assert_eq!(place(600.0), 1.0, "past 2 min: at the end");
 }
+
+/// A move saved and read back keeps its place once "Set saved" shows (the
+/// first of six moved to the fifth place).
+#[test]
+fn a_moved_entry_keeps_its_place_after_its_save() {
+    let mut f = Fixture::new();
+    f.inv = Inventory::default();
+    f.account.selected = crate::ao::demo::seed_interface(&mut f.inv, Uuid::from_u128(1), "interface");
+    f.catalog = Default::default();
+    f.catalog.refresh(&mut f.inv);
+    f.state.open_slots[0] = Some(State::Standing);
+    f.state.state = State::Standing;
+    f.settle();
+    let names = |f: &Fixture| -> Vec<String> {
+        f.catalog.selected(f.account.selected).expect("set").states[&State::Standing]
+            .steps
+            .iter()
+            .map(|s| s.name.clone())
+            .collect()
+    };
+    eprintln!("DEBUG before {:?}", names(&f));
+    let row = |f: &mut Fixture, name: &str| {
+        let mut rects = Vec::new();
+        for shape in f.draw(Vec::new()).1 {
+            text_rects(&shape.shape, name, &mut rects);
+        }
+        rects.iter().copied().min_by(|a, b| a.left().total_cmp(&b.left())).expect(name)
+    };
+    let from = row(&mut f, "Aurora Stand A").center();
+    let to = row(&mut f, "Aurora Stand E").center() + egui::vec2(0.0, 4.0);
+    let press = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let mut out = Vec::new();
+    out.extend(f.draw(vec![egui::Event::PointerMoved(from), press(from, true)]).0);
+    for k in 1..=10 {
+        let at = from + (to - from) * (k as f32 / 10.0);
+        out.extend(f.draw(vec![egui::Event::PointerMoved(at)]).0);
+    }
+    out.extend(f.draw(vec![press(to, false)]).0);
+    let edits: Vec<_> = out
+        .iter()
+        .filter_map(|a| match a {
+            Action::Edit(change, None) => Some(change.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(edits.len(), 1, "one edit");
+    f.state.pending = Some(Pending {
+        request: Uuid::from_u128(9),
+        refresh: Vec::new(),
+        select: None,
+        editor: None,
+    });
+    for _ in 0..10 {
+        let more = f.draw(Vec::new()).0;
+        assert!(more.is_empty(), "nothing else sent while it saves");
+    }
+    crate::world::inventory::actions::demo_mutate(&mut f.inv, Uuid::from_u128(1), edits[0].clone()).expect("ack");
+    f.catalog.invalidate();
+    f.catalog.refresh(&mut f.inv);
+    f.state.pending = None;
+    f.state.note_saved();
+    eprintln!("DEBUG saved {:?}", names(&f));
+    for _ in 0..10 {
+        let more = f.draw(Vec::new()).0;
+        assert!(more.is_empty(), "nothing sent after the save: {}", more.len());
+    }
+    assert_eq!(names(&f)[4], "Aurora Stand A", "saved in the fifth place: {:?}", names(&f));
+    let shown_a = row(&mut f, "Aurora Stand A").top();
+    let shown_e = row(&mut f, "Aurora Stand E").top();
+    assert!(shown_a > shown_e, "shown in its new place after the save");
+}

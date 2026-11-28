@@ -32,9 +32,12 @@ use egui::{RichText, Vec2};
 /// The floater id of the mini window.
 pub const WINDOW: &str = "ao_mini";
 /// One icon button of the strip.
-const BUTTON: Vec2 = Vec2::new(34.0, 38.0);
+const BUTTON: Vec2 = Vec2::new(30.0, 30.0);
 /// The strip's width; its height follows its line.
-const WIDTH: f32 = 640.0;
+const WIDTH: f32 = 540.0;
+/// The alpha of its glass: lighter than a window's, the world blurred
+/// behind it (`Floater::glass`).
+const GLASS: u8 = 150;
 
 #[allow(clippy::too_many_arguments)]
 pub fn show(
@@ -63,11 +66,12 @@ pub fn show(
         WINDOW,
         aurora_i18n::tr!("ao-mini-title"),
         egui::pos2(260.0, 420.0),
-        Vec2::new(WIDTH, 50.0),
+        Vec2::new(WIDTH, 40.0),
     )
     .headless()
+    .glass(GLASS)
     .fixed()
-    .margin(egui::Margin::same(6))
+    .margin(egui::Margin::same(5))
     .show(ctx, p, &mut open, |ui| {
         strip(ui, p, catalog, inv, runtime, account, prefs, manager_open, busy, &mut out);
     });
@@ -97,10 +101,12 @@ fn strip(
     let message_id = egui::Id::unique(("ao_mini_set", "message"));
     let ready = quick::swimming_guard(catalog, account, prefs);
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        widgets::glyph(ui, "grip-vertical", p.muted_dim, 14.0);
-        let buttons = 8.0 * BUTTON.x + 8.0 * ui.spacing().item_spacing.x;
-        let width = (ui.available_width() - buttons).max(120.0);
+        ui.spacing_mut().item_spacing.x = 3.0;
+        widgets::glyph(ui, "grip-vertical", p.muted_dim, 13.0);
+        // (from the strip's own width: a window not laid out yet offers the
+        // whole screen)
+        let buttons = 8.0 * BUTTON.x + 12.0 * ui.spacing().item_spacing.x + 4.0;
+        let width = (WIDTH - 10.0 - 13.0 - buttons).max(120.0);
         now_playing(ui, p, catalog, runtime, account, busy, manager_open, width, out);
         let tip = aurora_i18n::text(if account.enabled { "ao-turn-off" } else { "ao-turn-on" });
         if toggle_button(ui, p, "power", tip, account.enabled, true).clicked() {
@@ -112,7 +118,7 @@ fn strip(
             out.push(Action::Preferences);
         }
         let set = catalog.selected(account.selected);
-        quick::cycle_buttons(ui, p, set, inv, runtime, account.enabled, busy, BUTTON, out);
+        quick::cycle_buttons(ui, p, set, inv, runtime, account.enabled, busy, BUTTON, true, out);
         let sits = set.is_some_and(|s| s.sits);
         if toggle_button(ui, p, "armchair", aurora_i18n::tr!("ao-sits"), sits, !busy && set.is_some()).clicked()
             && let Some(set) = set
@@ -138,10 +144,7 @@ fn strip(
         }
         // Opens (or expands) the full AO window; the mini window stays
         // open, unlike FloaterAO::onClickMore (see the module comment).
-        if widgets::action_button(ui, p, "settings-filled", "", widgets::ActionKind::Flat, BUTTON)
-            .on_hover_text(aurora_i18n::tr!("ao-quick-manager"))
-            .clicked()
-        {
+        if toggle_button(ui, p, "settings-filled", aurora_i18n::tr!("ao-quick-manager"), false, true).clicked() {
             widgets::open_floater(ui.ctx(), "ao", manager_open);
         }
     });
@@ -154,14 +157,9 @@ fn strip(
     }
 }
 
-/// An icon button lit while `on`, its name in its tooltip.
+/// An icon button of the strip: bare on its glass, lit while `on`.
 fn toggle_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool, enabled: bool) -> egui::Response {
-    let kind = if on {
-        widgets::ActionKind::Primary
-    } else {
-        widgets::ActionKind::Flat
-    };
-    widgets::action_button_if(ui, p, icon, "", kind, BUTTON, enabled).on_hover_text(tip)
+    quick::icon_toggle(ui, p, icon, tip, on, enabled, BUTTON, true)
 }
 
 /// The set and the state on a small line, the animation playing below; a
@@ -181,16 +179,21 @@ fn now_playing(
     let set = catalog.selected(account.selected);
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, BUTTON.y), egui::Sense::click());
     let radius = ui.visuals().widgets.inactive.corner_radius;
-    ui.painter()
-        .rect_filled(rect, radius, if response.hovered() { p.raised } else { p.field });
+    // a pane of the glass, lit under the pointer
+    let pane = if response.hovered() {
+        p.raised.gamma_multiply(0.75)
+    } else {
+        p.field.gamma_multiply(0.45)
+    };
+    ui.painter().rect_filled(rect, radius, pane);
     let inner = rect.shrink2(Vec2::new(10.0, 0.0));
     let playing = quick::now_playing(set, runtime);
     let state = playing.map_or(runtime.current.unwrap_or(State::Standing), |(s, _)| s);
     let live = account.enabled && !runtime.paused && playing.is_some();
-    let top = inner.top() + 11.0;
+    let top = inner.top() + 8.0;
     ui.painter()
         .circle_filled(egui::pos2(inner.left() + 3.0, top), 3.0, if live { p.teal } else { p.muted_dim });
-    let small = egui::FontId::new(10.5, super::super::fonts::semibold(ui.ctx()));
+    let small = egui::FontId::new(9.5, super::super::fonts::semibold(ui.ctx()));
     let set_name = set.map_or_else(|| aurora_i18n::tr!("ao-no-set").to_owned(), |s| s.name.clone());
     let set_galley = widgets::elided_galley(
         ui,
@@ -224,9 +227,9 @@ fn now_playing(
     widgets::paint_elided(
         ui,
         &name,
-        egui::pos2(inner.left(), inner.bottom() - 12.0),
+        egui::pos2(inner.left(), inner.bottom() - 8.5),
         inner.width(),
-        egui::FontId::new(13.5, super::super::fonts::semibold(ui.ctx())),
+        egui::FontId::new(12.5, super::super::fonts::semibold(ui.ctx())),
         p.ink,
     );
     let response = response.on_hover_text(aurora_i18n::tr!("ao-mini-sets-tip"));

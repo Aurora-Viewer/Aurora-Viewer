@@ -36,7 +36,53 @@ pub(super) fn now_playing<'a>(set: Option<&'a Set>, runtime: &Runtime) -> Option
     config.steps.get(index).map(|step| (state, step.name.as_str()))
 }
 
-/// Previous, auto cycle, next, after the set selector, each button of `size`.
+/// An icon button lit while `on`: the theme's faces (`bare` false: the
+/// toolbar panel), or bare on the glass with a face under the pointer and
+/// the accent's face while on (the mini strip). Its name in its tooltip.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn icon_toggle(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    tip: &str,
+    on: bool,
+    enabled: bool,
+    size: Vec2,
+    bare: bool,
+) -> egui::Response {
+    if !bare {
+        let kind = if on {
+            widgets::ActionKind::Primary
+        } else {
+            widgets::ActionKind::Flat
+        };
+        return widgets::action_button_if(ui, p, icon, "", kind, size, enabled).on_hover_text(tip);
+    }
+    let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
+    let (rect, response) = ui.allocate_exact_size(size, sense);
+    let hot = response.hovered() && enabled;
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    if on {
+        ui.painter().rect_filled(rect, radius, if hot { p.violet_light } else { p.violet });
+    } else if hot {
+        ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.7));
+    }
+    let ink = if !enabled {
+        p.muted_dim
+    } else if on {
+        p.on_accent
+    } else if hot {
+        p.ink
+    } else {
+        p.muted
+    };
+    widgets::paint_glyph(ui.painter(), icon, rect.center(), 15.0, ink);
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, tip));
+    response.on_hover_text(tip)
+}
+
+/// Previous, auto cycle, next, after the set selector, each button of `size`
+/// (`bare`: as `icon_toggle` draws them).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn cycle_buttons(
     ui: &mut egui::Ui,
@@ -47,6 +93,7 @@ pub(super) fn cycle_buttons(
     enabled: bool,
     busy: bool,
     size: Vec2,
+    bare: bool,
     out: &mut Vec<Action>,
 ) {
     let state = target(runtime);
@@ -57,9 +104,7 @@ pub(super) fn cycle_buttons(
     // without auto cycle.
     let step = enabled && steps > 1;
     let mut stepped = |ui: &mut egui::Ui, icon: &str, tip: String, forward: bool| {
-        if widgets::action_button_if(ui, p, icon, "", widgets::ActionKind::Flat, size, step)
-            .on_hover_text(tip)
-            .clicked()
+        if icon_toggle(ui, p, icon, &tip, false, step, size, bare).clicked()
             && let Some(set) = set
         {
             runtime.step(set, state, forward);
@@ -82,14 +127,7 @@ pub(super) fn cycle_buttons(
     } else {
         aurora_i18n::tr!("ao-quick-cycle-entry", state = label)
     };
-    let kind = if on {
-        widgets::ActionKind::Primary
-    } else {
-        widgets::ActionKind::Flat
-    };
-    if widgets::action_button_if(ui, p, "repeat", "", kind, size, !busy && config.is_some())
-        .on_hover_text(tip)
-        .clicked()
+    if icon_toggle(ui, p, "repeat", &tip, on, !busy && config.is_some(), size, bare).clicked()
         && let Some(config) = config
     {
         let mut config = config.clone();
@@ -146,7 +184,7 @@ pub(super) fn body(
         });
         let set = catalog.selected(account.selected);
         let size = Vec2::new(30.0, ui.spacing().interact_size.y);
-        cycle_buttons(ui, p, set, inv, runtime, account.enabled, busy, size, out);
+        cycle_buttons(ui, p, set, inv, runtime, account.enabled, busy, size, false, out);
     });
     if super::enabled(ui, p, runtime, account) {
         out.push(Action::Preferences);

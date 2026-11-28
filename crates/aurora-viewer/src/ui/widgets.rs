@@ -822,6 +822,10 @@ pub struct Floater<'a> {
     /// No title bar: its close cross in a small box against its right edge
     /// (see `headless`).
     pub headless: bool,
+    /// The alpha of its glass's tint, in place of the theme's: a lighter
+    /// glass that shows more of the blurred world behind (the mini AO
+    /// strip). Kept solid when the theme's windows are.
+    pub glass_alpha: Option<u8>,
     /// Its body's margins in place of the floater's own (`margin`).
     pub margin: Option<egui::Margin>,
     /// A window without a title bar shows no close cross, and Ctrl+W passes
@@ -869,6 +873,7 @@ impl<'a> Floater<'a> {
             aspect: None,
             order: egui::Order::Middle,
             headless: false,
+            glass_alpha: None,
             margin: None,
             closable: true,
             cascade: None,
@@ -1026,6 +1031,12 @@ impl<'a> Floater<'a> {
         self
     }
 
+    /// A lighter glass (`glass_alpha`).
+    pub fn glass(mut self, alpha: u8) -> Self {
+        self.glass_alpha = Some(alpha);
+        self
+    }
+
     /// Its body's margins, in place of the floater's own: a small window
     /// without a title bar laid out to the pixel (the Classic style's small
     /// camera window).
@@ -1129,9 +1140,12 @@ impl<'a> Floater<'a> {
         }
         let opacity = super::surface_opacity::window(ctx, self.id, self.chat);
         let shadow = ctx.global_style().visuals.window_shadow;
+        // (a lighter glass only over glass windows: a solid theme stays solid)
+        let alpha = self.glass_alpha.filter(|_| p.panel_alpha < 255).unwrap_or(p.panel_alpha);
+        let glass_palette = Palette { panel_alpha: alpha, ..*p };
         let fill = super::surface_opacity::frame_fill(
-            p,
-            Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
+            &glass_palette,
+            Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), alpha),
             opacity,
         );
         let frame = egui::Frame::new()
@@ -1688,7 +1702,7 @@ impl<'a> Floater<'a> {
                     &painter.with_clip_rect(response.response.rect),
                     slot,
                     response.response.rect,
-                    p,
+                    &glass_palette,
                     radius,
                     opacity,
                 );

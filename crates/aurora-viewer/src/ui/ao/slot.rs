@@ -29,9 +29,10 @@ const ROW_GAP: f32 = 5.0;
 const TURNS_LINE: f32 = 22.0;
 /// The track of stops under it, with their names.
 const TRACK_H: f32 = 30.0;
-/// How long a dropped order is shown after its save, waiting for the
-/// inventory to bring it back (a failed save then shows the saved one).
-const HELD_FOR: std::time::Duration = std::time::Duration::from_secs(3);
+/// How long a dropped order is shown after its save ends, waiting for the
+/// inventory to bring it back (a refetch of a stale read-back included); a
+/// failed save then shows the saved order.
+const HELD_FOR: std::time::Duration = std::time::Duration::from_secs(8);
 const ORDER_H: f32 = 26.0;
 /// The tabs over a slot's lists: their height, inner padding and gap.
 const TAB_H: f32 = 30.0;
@@ -208,7 +209,7 @@ pub(super) fn stop_place_for_tests(seconds: f32) -> f32 {
 /// A stop's name under the track.
 fn stop_label(i: usize) -> String {
     match STOPS[i] {
-        s if s <= 0.0 => aurora_i18n::tr!("ao-each-time").to_owned(),
+        s if s <= 0.0 => aurora_i18n::tr!("ao-stop-auto").to_owned(),
         s if s >= 60.0 => aurora_i18n::tr!("ao-stop-minutes", count = (s / 60.0) as i64),
         s => aurora_i18n::tr!("ao-stop-seconds", count = s as i64),
     }
@@ -383,12 +384,22 @@ impl Editor<'_> {
                 .iter()
                 .any(|m| m.set == held.set && m.state == held.state && m.list == list);
         let same_entries = held.keys.len() == ids.len() && held.keys.iter().all(|k| ids.contains(k));
-        let done = held.keys.as_slice() == ids || !same_entries || (!waiting && held.at.elapsed() > HELD_FOR);
-        if done {
+        let matched = held.keys.as_slice() == ids;
+        // (counted from the save's end: a stale read-back is fetched again,
+        // the new order coming a moment after "Set saved")
+        let expired = !waiting && held.at.elapsed() > HELD_FOR;
+        if matched || !same_entries || expired {
+            if expired && !matched && same_entries {
+                log::info!("AO: a moved entry's order did not come back from the inventory; showing the saved order");
+            }
             self.state.held_order = None;
             return saved;
         }
-        held.keys.iter().filter_map(|k| ids.iter().position(|id| id == k)).collect()
+        let keys = held.keys.clone();
+        if waiting && let Some(held) = self.state.held_order.as_mut() {
+            held.at = std::time::Instant::now();
+        }
+        keys.iter().filter_map(|k| ids.iter().position(|id| id == k)).collect()
     }
 
     /// Plays that entry of a list (`owner`: its folder) in the world; the
