@@ -9502,6 +9502,12 @@ failure. Grid validation and any paid upload are performed by the human.
   visible. Hidden, blurred, loading, failed and disabled previews keep their link.
   `AURORA_DEMO_CONV_PREVIEWS=links` shows URL-only GIF/video messages and an image
   with a caption; `links:gif`, `links:image` or `links:video` keeps one of them.
+- **`AURORA_DEMO_CONV_PREVIEWS=hosted:<provider>`** with `AURORA_DEMO=1`
+  and `AURORA_DEMO_CONV=aurora` opens a public sample in a simulated conversation.
+  Use `streamable`, `vimeo`, `imgur`, `giphy`, or `tenor`. These demos request
+  real provider metadata and require an internet connection. Use
+  `AURORA_DEMO_SOUND=1` for audio. Click Play on Streamable, Vimeo or Imgur to
+  start the embedded player. GIPHY and Tenor cards should animate.
 - **`AURORA_DEMO_PREVIEW_ZOOM=1|gif|zoom|pan|window|copy|links`**: with `AURORA_DEMO_CONV`
   and `AURORA_DEMO_CONV_PREVIEWS=1`, enlarge the first loaded still picture
   (`1`), or animated picture (`gif`); `zoom` starts at twice its fitted size,

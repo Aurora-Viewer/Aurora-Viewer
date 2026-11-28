@@ -59,7 +59,9 @@ pub(super) fn message<'l>(
     line_of: impl Fn(u64) -> Option<&'l ChatLine>,
     selected_text: impl Fn(u64) -> Option<String>,
 ) {
+    let inline_popup = response.ctx.data(|data| data.get_temp::<Open>(id)).map(|menu| menu.popup);
     if response.secondary_clicked()
+        && !inline_popup.is_some_and(|popup| popup != id && egui::Popup::is_id_open(&response.ctx, popup))
         && let Some((seq, line)) = response
             .interact_pointer_pos()
             .and_then(|pos| drawn.iter().find(|row| row.rect.contains(pos)))
@@ -87,8 +89,11 @@ thread_local! {
 /// Link/preview menus keep their existing actions; their containing message
 /// still owns the reading pause and highlight.
 pub(super) fn inline(response: &Response) {
-    let popup = egui::Popup::default_response_id(response);
-    if egui::Popup::is_id_open(&response.ctx, popup) {
+    inline_popup(&response.ctx, egui::Popup::default_response_id(response));
+}
+
+pub(super) fn inline_popup(ctx: &egui::Context, popup: Id) {
+    if egui::Popup::is_id_open(ctx, popup) {
         INLINE.set(Some(popup));
     }
 }

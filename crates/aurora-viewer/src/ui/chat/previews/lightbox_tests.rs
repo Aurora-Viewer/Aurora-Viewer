@@ -1,5 +1,5 @@
 use super::*;
-use crate::ui::chat::previews::{Entry, Previews, card};
+use crate::ui::chat::previews::{Action, Entry, Previews, card, picture};
 use std::time::Duration;
 
 fn shown(ctx: &Context) -> Shown {
@@ -32,6 +32,106 @@ fn fitted_picture_keeps_its_ratio_on_resize_and_zoom_keeps_the_anchor() {
     assert_eq!(view.zoom, 0.1);
     let resized = Rect::from_min_size(Pos2::ZERO, Vec2::new(240.0, 600.0));
     assert_eq!(View::fitted().rect(source, resized).size(), Vec2::new(240.0, 180.0));
+}
+
+#[test]
+fn zooming_out_recenters_a_panned_image_and_drag_cannot_hide_it() {
+    let canvas = Rect::from_min_size(Pos2::ZERO, Vec2::new(600.0, 400.0));
+    let source = Vec2::new(1120.0, 584.0);
+    let mut view = View::fitted();
+    view.zoom_at(6.0, Vec2::ZERO);
+    view.offset = Vec2::splat(100_000.0);
+    view.keep_in_canvas(source, canvas);
+    assert!(view.rect(source, canvas).contains_rect(canvas));
+    view.zoom_at(1.0 / 6.0, Vec2::new(100.0, 50.0));
+    view.keep_in_canvas(source, canvas);
+    let fitted = view.rect(source, canvas);
+    assert_eq!(fitted.center(), canvas.center());
+    assert!(canvas.expand(0.01).contains_rect(fitted));
+}
+
+#[test]
+fn a_reddit_poster_click_opens_the_post_and_a_regular_picture_still_enlarges() {
+    for opens_post in [false, true] {
+        let ctx = Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let image = shown(&ctx);
+        let frame = |events| {
+            let mut result = None;
+            let _ = run_ui(&ctx, input(events), |ui| {
+                let out = picture(ui, &p, &image, "https://www.reddit.com/comments/demo01/", 240.0, false, opens_post);
+                result = Some((out.resp.rect.center(), out.action));
+            });
+            result.unwrap()
+        };
+        let (target, _) = frame(vec![]);
+        frame(vec![egui::Event::PointerMoved(target)]);
+        frame(vec![pointer(target, true)]);
+        let (_, action) = frame(vec![pointer(target, false)]);
+        assert!(matches!(
+            (opens_post, action),
+            (true, Some(Action::Open)) | (false, Some(Action::Enlarge))
+        ));
+    }
+}
+
+#[test]
+fn reddit_photo_dispatches_its_original_permalink_to_the_system_browser() {
+    let ctx = Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let url = "https://www.reddit.com/r/pics/comments/1u58ant/photo_of_my_friends_cousins_door/";
+    let mut pv = Previews {
+        demo: true,
+        ..Previews::default()
+    };
+    pv.cache.insert(
+        url.to_owned(),
+        crate::ui::chat::previews::Cached {
+            entry: Entry::Post(
+                lp::PostInfo {
+                    title: "A photo".into(),
+                    channel: "r/pics".into(),
+                    summary: String::new(),
+                },
+                Some(shown(&ctx)),
+            ),
+            used: 0,
+        },
+    );
+    pv.revealed.insert(7);
+    let target = lp::target(url).unwrap();
+    let mut frame = |events| {
+        let _ = run_ui(&ctx, input(events), |ui| card(ui, &p, &mut pv, 7, url, &target, lp::Start::Load));
+    };
+    let at = Pos2::new(90.0, 120.0);
+    frame(vec![]);
+    frame(vec![egui::Event::PointerMoved(at)]);
+    frame(vec![pointer(at, true)]);
+    frame(vec![pointer(at, false)]);
+    assert!(matches!(&crate::ui::context::take_requests(&ctx)[..],
+        [crate::ui::context::CtxAction::OpenUrlExternal(link)] if link == url));
+    assert!(!pv.enlarged());
+}
+
+#[test]
+fn zoomed_image_can_be_closed_from_the_fixed_corner_button() {
+    let ctx = Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let bounds = Rect::from_min_size(Pos2::new(50.0, 60.0), Vec2::new(600.0, 420.0));
+    let mut pv = Previews::default();
+    let mut image = Lightbox::new(&ctx, "https://i.redd.it/example.png".into(), shown(&ctx));
+    image.view.zoom = 8.0;
+    image.view.offset = Vec2::splat(10_000.0);
+    pv.lightbox = Some(image);
+    let target = Pos2::new(bounds.right() - 22.0, bounds.top() + 18.0);
+    let mut frame = |events| {
+        let _ = run_pass(&ctx, input(events), |ctx| pv.lightbox(ctx, &p, Some(bounds)));
+    };
+    frame(vec![]);
+    frame(vec![egui::Event::PointerMoved(target)]);
+    frame(vec![pointer(target, true)]);
+    frame(vec![pointer(target, false)]);
+    assert!(!pv.enlarged());
 }
 
 fn input(events: Vec<egui::Event>) -> egui::RawInput {
@@ -242,6 +342,113 @@ fn close_accelerator_dismisses_the_image_before_its_conversation() {
 }
 
 #[test]
+fn hosted_video_rearms_after_autoplay_is_enabled() {
+    let ctx = Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let url = "https://streamable.com/Demo42";
+    let (target, start) = lp::decide(&lp::Settings::default(), lp::Place::Im, lp::Sender::Resident, url).unwrap();
+    let lp::Target::Clip(clip) = &target else {
+        panic!("a hosted video should resolve to a clip");
+    };
+    let mut pv = Previews::default();
+    pv.settings.autoplay_video = false;
+    pv.cache.insert(
+        url.into(),
+        crate::ui::chat::previews::Cached {
+            entry: Entry::Video {
+                title: "Hosted video".into(),
+                channel: String::new(),
+                thumbnail: None,
+                aspect: 16.0 / 9.0,
+                clip: Some(clip.clone()),
+            },
+            used: 0,
+        },
+    );
+    let mut rect = Rect::NOTHING;
+    let _ = run_ui(&ctx, input(vec![]), |ui| {
+        card(ui, &p, &mut pv, 7, url, &target, start);
+        rect = ui.min_rect();
+    });
+    assert!(!pv.playing());
+    let play = Pos2::new(rect.center().x, rect.top() + 50.0);
+    for pressed in [true, false] {
+        let _ = run_ui(&ctx, input(vec![egui::Event::PointerMoved(play), pointer(play, pressed)]), |ui| {
+            card(ui, &p, &mut pv, 7, url, &target, start);
+        });
+    }
+    assert!(pv.playing.as_ref().is_some_and(|v| !v.muted));
+    pv.playing = None;
+    pv.settings.autoplay_video = true;
+    let _ = run_ui(&ctx, input(vec![]), |ui| card(ui, &p, &mut pv, 7, url, &target, start));
+    assert!(pv.playing.as_ref().is_some_and(|v| !v.muted && v.automatic));
+    pv.playing = None;
+    let _ = run_ui(&ctx, input(vec![]), |ui| card(ui, &p, &mut pv, 8, url, &target, lp::Start::Ask));
+    assert!(!pv.playing());
+    let _ = run_ui(&ctx, input(vec![]), |ui| card(ui, &p, &mut pv, 8, url, &target, start));
+    assert!(pv.playing.as_ref().is_some_and(|v| !v.muted && v.automatic && !v.window));
+}
+
+#[test]
+fn autoplay_keeps_its_card_size_between_the_start_and_stop_scroll_boundaries() {
+    let ctx = Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let url = "https://i.imgur.com/example.mp4";
+    let (target, start) = lp::decide(&lp::Settings::default(), lp::Place::Im, lp::Sender::Resident, url).unwrap();
+    let lp::Target::Clip(clip) = &target else {
+        panic!("a direct video should resolve to a clip");
+    };
+    let mut pv = Previews {
+        web: Some(crate::ui::chat::previews::WebEnv {
+            paths: None,
+            browser: aurora_media::BrowserSettings::default(),
+            volume: 1.0,
+        }),
+        ..Default::default()
+    };
+    pv.cache.insert(
+        url.into(),
+        crate::ui::chat::previews::Cached {
+            entry: Entry::Video {
+                title: "Direct video".into(),
+                channel: String::new(),
+                thumbnail: None,
+                aspect: 16.0 / 9.0,
+                clip: Some(clip.clone()),
+            },
+            used: 0,
+        },
+    );
+    let draw = |pv: &mut Previews, shown_height: f32| {
+        let mut size = Vec2::ZERO;
+        let _ = run_ui(&ctx, input(vec![]), |ui| {
+            let viewport = Rect::from_min_size(ui.cursor().min, Vec2::new(800.0, shown_height));
+            ui.set_clip_rect(ui.clip_rect().intersect(viewport));
+            card(ui, &p, pv, 7, url, &target, start);
+            size = ui.min_rect().size();
+            pv.player_window(ui.ctx(), &p);
+        });
+        size
+    };
+    let poster = draw(&mut pv, 70.0);
+    assert!(!pv.playing());
+    let _ = draw(&mut pv, 130.0);
+    assert!(pv.playing());
+    for _ in 0..5 {
+        assert_eq!(draw(&mut pv, 70.0), poster);
+        assert!(pv.playing(), "a partially visible video should not lose its player");
+    }
+    for _ in 0..5 {
+        draw(&mut pv, 8.0);
+    }
+    assert!(!pv.playing());
+    draw(&mut pv, 70.0);
+    assert!(!pv.playing(), "the video should wait until most of it is visible again");
+    draw(&mut pv, 130.0);
+    assert!(pv.playing());
+}
+
+#[test]
 fn video_hover_actions_copy_the_original_url_and_use_the_browser_confirmation_path() {
     let ctx = Context::default();
     let p = crate::theme::Theme::default().palette();
@@ -251,6 +458,7 @@ fn video_hover_actions_copy_the_original_url_and_use_the_browser_confirmation_pa
         demo_zoom: None,
         ..Default::default()
     };
+    pv.settings.autoplay_video = false;
     pv.cache.insert(
         url.into(),
         crate::ui::chat::previews::Cached {

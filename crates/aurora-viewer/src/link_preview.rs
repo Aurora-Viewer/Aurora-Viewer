@@ -30,6 +30,7 @@ use crate::link_trust::Trust;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
+mod hosted;
 mod services;
 pub use services::{Service, blurred_until_clicked};
 
@@ -103,8 +104,12 @@ pub struct Settings {
     /// The pictures of group chats and conferences are blurred until
     /// clicked.
     pub blur_groups: bool,
+    /// Show opt-in, click-to-play cards for recognized adult media sites.
+    pub adult_previews: bool,
     pub load: Load,
     pub player: Player,
+    /// Play eligible video cards as they come into view.
+    pub autoplay_video: bool,
     pub size: Size,
     /// Sites whose links get no preview (a link's menu adds them).
     pub hidden_sites: Vec<String>,
@@ -128,8 +133,10 @@ impl Default for Settings {
             groups: true,
             nearby: false,
             blur_groups: true,
+            adult_previews: false,
             load: Load::default(),
             player: Player::default(),
+            autoplay_video: true,
             size: Size::default(),
             hidden_sites: Vec::new(),
             picture_sites: Vec::new(),
@@ -206,51 +213,156 @@ pub enum Target {
     Page(Service),
 }
 
-/// A video file the media plugins' browser plays in a video card (#983):
-/// an `.mp4` or `.webm` link, an Imgur `.gifv` (its `.mp4`), a Gyazo video
-/// capture. Only from the trusted sites of `link_trust.rs`: the browser,
+/// A direct file or a hosted video the media plugins' browser plays in a
+/// video card. Only from the trusted sites of `link_trust.rs`: the browser,
 /// unlike the preview downloads, sends a site whatever it sends.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Clip {
-    /// The file's https address.
-    pub file: String,
+pub struct Clip(ClipSource);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ClipSource {
+    File(String),
+    Reddit(String),
+    Hosted(hosted::Hosted),
 }
 
 impl Clip {
-    /// The clip a link names: an https video file on a trusted site, without
-    /// credentials or port; an Imgur `.gifv` page leads to its `.mp4`.
+    /// Recognize an HTTPS video link on a trusted site, without credentials
+    /// or a non-default port. Imgur GIFV links use their MP4 rendition.
     pub fn of(url: &str) -> Option<Clip> {
         let mut parsed = reqwest::Url::parse(url).ok()?;
         if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() || parsed.port().is_some() {
             return None;
         }
+        if let Some(video) = hosted::Hosted::of(&parsed) {
+            return (video.adult()
+                || (crate::link_trust::classify(url) == Trust::Trusted && crate::link_trust::classify(&video.page()) == Trust::Trusted))
+                .then_some(Self(ClipSource::Hosted(video)));
+        }
+        if parsed.host_str() == Some("v.redd.it") {
+            let mut segments = parsed.path().trim_matches('/').split('/');
+            let id = segments.next()?;
+            let rendition = segments.next();
+            let valid_rendition = rendition.is_none_or(|name| {
+                matches!(name, "HLSPlaylist.m3u8" | "DASHPlaylist.mpd")
+                    || name
+                        .strip_prefix("DASH_")
+                        .and_then(|name| name.strip_suffix(".mp4"))
+                        .is_some_and(|height| (2..=4).contains(&height.len()) && height.bytes().all(|b| b.is_ascii_digit()))
+            });
+            return ((6..=20).contains(&id.len())
+                && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                && valid_rendition
+                && segments.next().is_none()
+                && crate::link_trust::classify(url) == Trust::Trusted)
+                .then(|| Self(ClipSource::Reddit(id.to_owned())));
+        }
         let path = parsed.path().to_lowercase();
-        if path.ends_with(".gifv") && host(url).as_deref() == Some("i.imgur.com") {
+        if path.ends_with(".gifv") && matches!(parsed.host_str(), Some("imgur.com" | "www.imgur.com" | "i.imgur.com")) {
             let mp4 = format!("{}.mp4", &parsed.path()[..parsed.path().len() - ".gifv".len()]);
+            let id = &mp4[1..mp4.len() - ".mp4".len()];
+            if !(5..=8).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+                return None;
+            }
+            parsed.set_host(Some("i.imgur.com")).ok()?;
             parsed.set_path(&mp4);
             parsed.set_query(None);
-        } else if !(path.ends_with(".mp4") || path.ends_with(".webm")) {
+        } else if !(path.ends_with(".mp4")
+            || path.ends_with(".webm")
+            || services::snapchat_video_source(&parsed)
+            || services::reddit_gif_video_source(&parsed))
+        {
             return None;
         }
         parsed.set_fragment(None);
         let file = String::from(parsed);
-        (crate::link_trust::classify(&file) == Trust::Trusted).then_some(Clip { file })
+        (crate::link_trust::classify(&file) == Trust::Trusted).then_some(Self(ClipSource::File(file)))
+    }
+
+    /// The media response of a configured site can supply the file type.
+    fn configured_file(url: &str) -> Option<Self> {
+        let parsed = reqwest::Url::parse(url).ok()?;
+        let (_, services::Step::Head(source)) = services::site_page(&parsed)? else {
+            return None;
+        };
+        (parsed.password().is_none() && !waits_for_click(&source) && crate::link_trust::classify(&source) == Trust::Trusted)
+            .then_some(Self(ClipSource::File(source)))
+    }
+
+    fn source(&self) -> std::borrow::Cow<'_, str> {
+        match &self.0 {
+            ClipSource::File(file) => std::borrow::Cow::Borrowed(file),
+            ClipSource::Reddit(id) => std::borrow::Cow::Owned(format!("https://v.redd.it/{id}")),
+            ClipSource::Hosted(video) => std::borrow::Cow::Owned(video.page()),
+        }
+    }
+
+    /// The directly playable file, available for a resident-requested save.
+    pub fn fallback_title(&self) -> String {
+        reqwest::Url::parse(self.source().as_ref())
+            .ok()
+            .and_then(|url| {
+                let segment = url.path_segments()?.rfind(|segment| !segment.is_empty())?;
+                Some(segment.chars().take(100).collect())
+            })
+            .filter(|title: &String| !title.is_empty())
+            .unwrap_or_else(|| aurora_i18n::tr!("ui-chat-preview-video").to_owned())
+    }
+
+    pub fn download_url(&self) -> Option<&str> {
+        match &self.0 {
+            ClipSource::File(url) => Some(url),
+            _ => None,
+        }
+    }
+
+    pub fn native_video(&self) -> bool {
+        matches!(self.0, ClipSource::Reddit(_))
+    }
+
+    pub fn requires_player_click(&self) -> bool {
+        matches!(&self.0, ClipSource::Hosted(video) if video.requires_player_click())
+    }
+
+    pub fn minimum_width(&self) -> f32 {
+        match &self.0 {
+            ClipSource::Hosted(video) => video.minimum_width(),
+            ClipSource::File(_) | ClipSource::Reddit(_) => 0.0,
+        }
+    }
+
+    pub fn hosted(&self) -> bool {
+        matches!(self.0, ClipSource::Hosted(_))
     }
 
     /// The page the browser opens to play it, a page of our own served on
     /// this machine (`clip_page`), which reports the clip's shape under
     /// `key`; the file alone when that page cannot be served.
     pub fn player_page(&self, options: &PlayerOptions, key: u64) -> String {
+        if self.native_video() {
+            return self.player();
+        }
         match player_server() {
             Some(port) => {
                 let base = format!("http://127.0.0.1:{port}/clip");
                 let volume = options.volume.min(100).to_string();
                 let key = key.to_string();
-                reqwest::Url::parse_with_params(&base, [("k", key.as_str()), ("vol", volume.as_str()), ("src", self.file.as_str())])
-                    .map(String::from)
-                    .unwrap_or_else(|_| self.file.clone())
+                reqwest::Url::parse_with_params(
+                    &base,
+                    [("k", key.as_str()), ("vol", volume.as_str()), ("src", self.source().as_ref())],
+                )
+                .map(String::from)
+                .unwrap_or_else(|_| self.player())
             }
-            None => self.file.clone(),
+            None => self.player(),
+        }
+    }
+
+    fn player(&self) -> String {
+        match &self.0 {
+            ClipSource::File(file) => file.clone(),
+            ClipSource::Reddit(id) => format!("https://v.redd.it/{id}/HLSPlaylist.m3u8"),
+            ClipSource::Hosted(video) => video.player(),
         }
     }
 }
@@ -268,10 +380,61 @@ fn attribute_text(s: &str) -> String {
 /// browser's own controls. It sends no referrer, starts at the volume kept
 /// and reports the changes made with its slider (`/volume`, as YouTube's
 /// player does, #848), and reports the clip's shape once known
-/// (`/aspect`): a link names no size. A browser that refuses to start a
-/// clip with sound starts it muted.
+/// (`/aspect`): a link names no size. The built-in controls handle playback.
 fn clip_page(clip: &Clip, volume: u8, key: u64) -> String {
-    let src = attribute_text(&clip.file);
+    let src = attribute_text(&clip.player());
+    if clip.hosted() {
+        // The viewer controls the final audio level through its media plugin.
+        // Some embeds mute themselves independently when playback starts.
+        let audio = match &clip.0 {
+            ClipSource::Hosted(hosted::Hosted::Streamable(_)) => {
+                r#"<script>(function(){
+                var origin='https://streamable.com', ready=false, played=false;
+                window.addEventListener('message',function(e){
+                    var frame=document.querySelector('iframe'), data;
+                    if(!frame||e.origin!==origin||e.source!==frame.contentWindow)return;
+                    try{data=JSON.parse(e.data);}catch(_){return;}
+                    if(!data||data.context!=='player.js')return;
+                    function send(method,value){
+                        frame.contentWindow.postMessage(JSON.stringify({
+                            context:'player.js',version:'0.1.0',method:method,value:value,listener:'aurora-first-play'
+                        }),origin);
+                    }
+                    if(data.event==='ready'&&!ready&&data.value&&Array.isArray(data.value.methods)&&data.value.methods.includes('unmute')){
+                        ready=true;
+                        send('addEventListener','play');
+                        send('unmute');
+                    }else if(ready&&!played&&data.event==='play'&&data.listener==='aurora-first-play'){
+                        played=true;
+                        send('removeEventListener','play');
+                        send('unmute');
+                    }
+                });
+            })();</script>"#
+            }
+            ClipSource::Hosted(hosted::Hosted::TikTok { .. }) => {
+                r#"<script>(function(){
+                var origin='https://www.tiktok.com', played=false;
+                window.addEventListener('message',function(e){
+                    var frame=document.querySelector('iframe'), data=e.data;
+                    if(played||!frame||e.origin!==origin||e.source!==frame.contentWindow||!data||data['x-tiktok-player']!==true)return;
+                    if(data.type==='onStateChange'&&data.value===1){
+                        played=true;
+                        frame.contentWindow.postMessage({type:'unMute','x-tiktok-player':true},origin);
+                    }
+                });
+            })();</script>"#
+            }
+            _ => "",
+        };
+        return format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\">\
+             <meta name=\"referrer\" content=\"strict-origin-when-cross-origin\">\
+             <style>html,body{{margin:0;height:100%;background:#000;overflow:hidden}}\
+             iframe{{display:block;border:0;width:100%;height:100%}}</style></head><body>\
+             {audio}<iframe src=\"{src}\" allow=\"autoplay; fullscreen; encrypted-media\" allowfullscreen></iframe></body></html>"
+        );
+    }
     let volume = volume.min(100);
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
@@ -284,7 +447,7 @@ fn clip_page(clip: &Clip, volume: u8, key: u64) -> String {
          new Image().src='/aspect?k={key}&w='+v.videoWidth+'&h='+v.videoHeight;}});\
          v.addEventListener('volumechange',function(){{var n=Math.round(v.volume*100);\
          if(n!==l){{l=n;new Image().src='/volume?v='+n;}}}});\
-         var p=v.play();if(p&&p.catch)p.catch(function(){{v.muted=true;v.play();}});}})();</script>\
+         }})();</script>\
          </body></html>"
     )
 }
@@ -300,7 +463,9 @@ fn clip_answer(request: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(&format!("http://127.0.0.1{path}")).ok()?;
     let param = |name: &str| parsed.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned());
     let src = param("src")?;
-    let clip = Clip::of(&src).filter(|c| c.file == src)?;
+    let clip = Clip::of(&src)
+        .or_else(|| Clip::configured_file(&src))
+        .filter(|c| !c.native_video() && c.source() == src.as_str())?;
     let key = param("k").and_then(|v| v.parse::<u64>().ok())?;
     let volume = param("vol").and_then(|v| v.parse::<u8>().ok()).unwrap_or(100);
     Some(clip_page(&clip, volume, key))
@@ -709,7 +874,8 @@ pub fn decide(s: &Settings, place: Place, from: Sender, url: &str) -> Option<(Ta
     }
     let target = target(url)?;
     let host = host(url)?;
-    if s.hidden_sites.iter().any(|d| in_domain(&host, d)) {
+    let adult = services::adult_media_site(&host);
+    if (adult && !s.adult_previews) || s.hidden_sites.iter().any(|d| in_domain(&host, d)) {
         return None;
     }
     let start = match crate::link_trust::classify(url) {
@@ -719,8 +885,39 @@ pub fn decide(s: &Settings, place: Place, from: Sender, url: &str) -> Option<(Ta
         _ => Start::Ask,
     };
     // only a preview about to load by itself is looked at further
-    let by_itself = start == Start::Load && from == Sender::Resident && !waits_for_click(url);
+    let by_itself = start == Start::Load && from == Sender::Resident && !waits_for_click(url) && !adult;
     Some((target, if by_itself { Start::Load } else { Start::Ask }))
+}
+
+#[test]
+fn adult_site_media_waits_for_an_explicit_preview_click() {
+    let settings = Settings {
+        load: Load::All,
+        adult_previews: true,
+        ..Settings::default()
+    };
+    for url in [
+        "https://www.redgifs.com/watch/example",
+        "https://media.redgifs.com/example.gif",
+        "https://cdn.phncdn.com/example.jpg",
+        "https://www.redgifs.com/ifr/example",
+        "https://www.pornhub.com/embed/phabcdef",
+        "https://www.xvideos.com/embedframe/123456",
+        "https://www.pornhub.com/view_video.php?viewkey=phabcdef",
+        "https://www.xvideos.com/video.example/title",
+        "https://onlyfans.com/123456789/example",
+    ] {
+        assert!(decide(&Settings::default(), Place::Im, Sender::Resident, url).is_none(), "{url}");
+        assert!(blurred_until_clicked(url));
+        assert!(
+            matches!(decide(&settings, Place::Im, Sender::Resident, url), Some((_, Start::Ask))),
+            "{url}"
+        );
+    }
+}
+
+pub fn adult_link(url: &str) -> bool {
+    host(url).is_some_and(|host| services::adult_media_site(&host))
 }
 
 /// A picture decoded for its card.
@@ -746,13 +943,22 @@ pub struct VideoInfo {
 /// What a clip's card shows before it plays.
 pub struct ClipInfo {
     pub clip: Clip,
+    pub title: String,
+    pub channel: String,
     /// The picture its service gives (Gyazo); a file alone has none.
     pub thumbnail: Option<Picture>,
     /// Width over height, when known before it plays.
     pub aspect: Option<f32>,
 }
 
+pub struct PostInfo {
+    pub title: String,
+    pub channel: String,
+    pub summary: String,
+}
+
 pub enum Content {
+    Post(PostInfo, Option<(Picture, String)>),
     Picture(Picture),
     Video(VideoInfo),
     Clip(ClipInfo),
@@ -795,12 +1001,20 @@ pub fn client(trusted_only: bool) -> Option<reqwest::Client> {
 }
 
 fn configure(trusted_only: bool, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    configure_requests(trusted_only, false, builder)
+}
+
+fn configure_requests(trusted_only: bool, https_only: bool, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     let policy = reqwest::redirect::Policy::custom(move |attempt| {
         let to = attempt.url().as_str();
         let off_trusted = trusted_only && crate::link_trust::classify(to) != Trust::Trusted;
         // a redirect never leads a preview to a region (`waits_for_click`):
         // only a link the user clicked may name one
-        if attempt.previous().len() >= MAX_REDIRECTS || off_trusted || waits_for_click(to) || crate::link_trust::leads_to_local_network(to)
+        if attempt.previous().len() >= MAX_REDIRECTS
+            || off_trusted
+            || (https_only && attempt.url().scheme() != "https")
+            || waits_for_click(to)
+            || crate::link_trust::leads_to_local_network(to)
         {
             attempt.stop()
         } else {
@@ -815,6 +1029,48 @@ fn configure(trusted_only: bool, builder: reqwest::ClientBuilder) -> reqwest::Cl
             .retry(reqwest::retry::never())
             .redirect(policy),
     )
+}
+
+/// Save a direct video without using the browser's cookies or keeping the file in memory.
+pub async fn save_video(url: &str, path: &std::path::Path) -> anyhow::Result<()> {
+    use std::io::Write;
+    const LIMIT: u64 = 512 * 1024 * 1024;
+    let clip = Clip::of(url)
+        .or_else(|| Clip::configured_file(url))
+        .ok_or_else(|| anyhow::anyhow!("unrecognized video link"))?;
+    let direct = clip.download_url().ok_or_else(|| anyhow::anyhow!("not a direct video file"))?;
+    let client = aurora_proxy::http_client(|builder| configure_requests(true, true, builder))?;
+    let mut response = client
+        .get(direct)
+        .timeout(Duration::from_secs(600))
+        .send()
+        .await?
+        .error_for_status()?;
+    let media_type = response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok());
+    anyhow::ensure!(
+        response.status() == reqwest::StatusCode::OK
+            && media_type.is_some_and(|value| matches!(value.split(';').next().unwrap_or("").trim(), "video/mp4" | "video/webm"))
+            && response.content_length().is_none_or(|size| (1..=LIMIT).contains(&size)),
+        "unsupported or oversized video response"
+    );
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+    let result = async {
+        let mut written = 0_u64;
+        while let Some(chunk) = response.chunk().await? {
+            written += chunk.len() as u64;
+            anyhow::ensure!(written <= LIMIT, "video exceeds the download limit");
+            file.write_all(&chunk)?;
+        }
+        anyhow::ensure!(written > 0, "empty video response");
+        file.sync_all()?;
+        Ok(())
+    }
+    .await;
+    drop(file);
+    if result.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    result
 }
 
 /// The `PublicOnly` resolver, when the names are resolved here: behind a
@@ -904,6 +1160,9 @@ async fn fetch_picture_sized(client: &reqwest::Client, url: &str, side: u32) -> 
     if !(kind.starts_with("image/") || kind.is_empty() || kind.starts_with("application/octet-stream")) {
         return Err(Failure::NotPicture);
     }
+    if url.starts_with("https://share.redd.it/preview/post/") && reddit_default_share_image(&body) {
+        return Err(Failure::Unavailable);
+    }
     tokio::task::spawn_blocking(move || {
         if side == MAX_SIDE {
             decode(&body)
@@ -913,6 +1172,18 @@ async fn fetch_picture_sized(client: &reqwest::Client, url: &str, side: u32) -> 
     })
     .await
     .unwrap_or(Err(Failure::NotPicture))
+}
+
+/// Reddit currently returns this exact branding image when no post-specific
+/// poster is available. Other sharing images still go through the decoder.
+fn reddit_default_share_image(bytes: &[u8]) -> bool {
+    use sha2::{Digest, Sha256};
+    bytes.len() == 54_014
+        && Sha256::digest(bytes)[..]
+            == [
+                0x70, 0xcf, 0xf6, 0x67, 0x8c, 0xc4, 0x6e, 0x8c, 0xe8, 0x95, 0x2f, 0x45, 0x87, 0x12, 0x85, 0xdf, 0xf8, 0xad, 0xbd, 0x10,
+                0x7c, 0x0f, 0xc1, 0xca, 0x77, 0x2e, 0x83, 0xec, 0xbc, 0x0a, 0x85, 0x17,
+            ]
 }
 
 /// The most of a page or a feed read for the picture it names: the tags
@@ -974,7 +1245,10 @@ async fn text_head(client: &reqwest::Client, url: &str, accept: &str, end: &str)
 /// sites.
 pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool) -> Result<Content, Failure> {
     use services::Step;
-    let (service, step) = services::recognize(url).ok_or(Failure::NotPicture)?;
+    let (mut service, mut step) = services::recognize(url).ok_or(Failure::NotPicture)?;
+    if let Step::PublisherLink(url) = &step {
+        (service, step) = resolve_publisher_link(url, trusted_only).await.ok_or(Failure::Unavailable)?;
+    }
     let mut sensitive = false;
     let source = match step {
         Step::Direct(source) => Some(source),
@@ -985,33 +1259,106 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
                 .map(|(body, _)| body);
             // a Gyazo video capture plays in a video card (#983)
             if let Some(found) = body.as_deref().and_then(|body| services::clip_from_oembed(service, url, body)) {
-                return Ok(Content::Clip(fetch_clip(client, found).await));
+                return Ok(Content::Clip(fetch_found_clip(client, found).await));
             }
             body.and_then(|body| services::from_oembed(service, &body))
         }
-        Step::Head(page) => text_head(client, &page, "text/html", "</head>")
-            .await
-            .0
-            .ok()
-            .and_then(|html| services::from_head(service, &html)),
-        Step::Post(endpoint) => download(client, &endpoint, "application/json", HEAD_BYTES as u64)
-            .await
-            .ok()
-            .and_then(|(body, _)| services::from_post(service, &body))
-            .map(|(source, marked)| {
+        Step::Head(page) => {
+            if service == Service::Site
+                && let Some(media) = configured_direct_media(client, &page).await
+            {
+                return Ok(media);
+            }
+            let html = text_head(client, &page, "text/html", "</head>").await.0?;
+            if let Some(found) = services::clip_from_head(service, &page, &html) {
+                return Ok(Content::Clip(fetch_found_clip(client, found).await));
+            }
+            services::from_head(service, &html)
+        }
+        Step::PublisherLink(_) => return Err(Failure::Unavailable),
+        Step::Publisher(page) => {
+            if let Some(endpoint) = services::dailymotion_oembed(&page)
+                && let Ok((body, _)) = download(client, endpoint.as_str(), "application/json", 64 * 1024).await
+                && let Some((post, poster)) = services::from_dailymotion_oembed(&page, &body)
+            {
+                let picture = match poster {
+                    Some(source) => post_picture(client, source).await,
+                    None => None,
+                };
+                return Ok(Content::Post(post, picture));
+            }
+            let html = text_head(client, &page, "text/html", "</head>").await.0?;
+            if let Some(found) = services::arte_clip(&page, &html)
+                .or_else(|| services::snapchat_clip(&page, &html))
+                .or_else(|| services::adult_clip(&page, &html))
+            {
+                return Ok(Content::Clip(fetch_found_clip(client, found).await));
+            }
+            let title = services::metadata(&html, &["og:title", "twitter:title"]).ok_or(Failure::Unavailable)?;
+            let channel = services::metadata(&html, &["author", "og:site_name"])
+                .or_else(|| host(&page))
+                .unwrap_or_default();
+            let summary = services::metadata(&html, &["og:description", "twitter:description"]).unwrap_or_default();
+            let picture = match services::publisher_poster(&page, &html) {
+                Some(source) => post_picture(client, source).await,
+                None => None,
+            };
+            return Ok(Content::Post(PostInfo { title, channel, summary }, picture));
+        }
+        Step::Post(endpoint) => {
+            let body = download(client, &endpoint, "application/json", HEAD_BYTES as u64)
+                .await
+                .ok()
+                .map(|(body, _)| body);
+            if let Some(found) = body.as_deref().and_then(|body| services::clip_from_post(service, body)) {
+                return Ok(Content::Clip(fetch_found_clip(client, found).await));
+            }
+            body.and_then(|body| services::from_post(service, &body)).map(|(source, marked)| {
                 sensitive = marked;
                 source
-            }),
-        Step::Feed(feed) => {
+            })
+        }
+        Step::Feed { feed, page, share_image } => {
+            if let Some(preview) = reddit_embed_preview(client, &page).await {
+                return Ok(preview);
+            }
             let now = std::time::Instant::now();
-            if REDDIT_PAUSE.lock().ok().and_then(|p| *p).is_some_and(|until| now < until) {
-                return Err(Failure::Unavailable);
+            let paused = REDDIT_PAUSE.lock().ok().and_then(|p| *p).is_some_and(|until| now < until);
+            if !paused {
+                let (answer, pause) = text_head(client, &feed, "application/atom+xml", "</entry>").await;
+                if let (Some(pause), Ok(mut until)) = (pause, REDDIT_PAUSE.lock()) {
+                    *until = Some(now + pause);
+                }
+                if let Ok(xml) = answer {
+                    if let Some(found) = services::clip_from_feed(&xml) {
+                        return Ok(Content::Clip(fetch_found_clip(client, found).await));
+                    }
+                    if let Some(post) = services::reddit_feed(&xml) {
+                        let picture = reddit_post_picture(client, &page, &share_image, Some(&xml)).await;
+                        return Ok(Content::Post(post, picture));
+                    }
+                }
             }
-            let (answer, pause) = text_head(client, &feed, "application/atom+xml", "</entry>").await;
-            if let (Some(pause), Ok(mut until)) = (pause, REDDIT_PAUSE.lock()) {
-                *until = Some(now + pause);
+            {
+                let endpoint = reqwest::Url::parse_with_params("https://www.reddit.com/oembed", [("url", page.as_str())])
+                    .map_err(|_| Failure::Unavailable)?;
+                if let Some(data) = download(client, endpoint.as_str(), "application/json", 64 * 1024)
+                    .await
+                    .ok()
+                    .and_then(|(body, _)| serde_json::from_slice::<serde_json::Value>(&body).ok())
+                    && let Some(title) = data["title"].as_str().filter(|title| !title.trim().is_empty())
+                {
+                    return Ok(Content::Post(
+                        PostInfo {
+                            title: title.chars().take(200).collect(),
+                            channel: reddit_permalink_channel(&page, data["author_name"].as_str()),
+                            summary: String::new(),
+                        },
+                        reddit_post_picture(client, &page, &share_image, None).await,
+                    ));
+                }
             }
-            answer.ok().and_then(|xml| services::from_feed(&xml))
+            None
         }
     };
     let Some(source) = source else {
@@ -1032,10 +1379,151 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
     })
 }
 
+async fn resolve_publisher_link(url: &str, trusted_only: bool) -> Option<(Service, services::Step)> {
+    let original = reqwest::Url::parse(url).ok()?;
+    let client =
+        aurora_proxy::http_client(|builder| configure_requests(trusted_only, true, builder).redirect(reqwest::redirect::Policy::none()))
+            .ok()?;
+    let answer = client.get(url).send().await.ok()?;
+    if !answer.status().is_redirection() {
+        return None;
+    }
+    let location = answer.headers().get(reqwest::header::LOCATION)?.to_str().ok()?;
+    services::publisher_short_destination(&original, original.join(location).ok()?)
+}
+
+async fn configured_direct_media(client: &reqwest::Client, page: &str) -> Option<Content> {
+    let original = reqwest::Url::parse(page).ok()?;
+    let answer = client.head(page).send().await.ok()?.error_for_status().ok()?;
+    if answer.url().origin() != original.origin() {
+        return None;
+    }
+    let kind = answer.headers().get(reqwest::header::CONTENT_TYPE)?.to_str().ok()?;
+    match kind.split(';').next()?.trim().to_ascii_lowercase().as_str() {
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" => {
+            let picture = fetch_picture(client, page).await.ok()?;
+            Some(Content::Page {
+                picture,
+                source: page.to_owned(),
+                sensitive: false,
+            })
+        }
+        "video/mp4" | "video/webm" => {
+            let clip = Clip::configured_file(page)?;
+            Some(Content::Clip(fetch_clip(client, &clip).await))
+        }
+        _ => None,
+    }
+}
+
+async fn reddit_embed_preview(client: &reqwest::Client, page: &str) -> Option<Content> {
+    let embed = page.replacen("https://www.reddit.com/", "https://embed.reddit.com/", 1);
+    let (body, _) = download(client, &embed, "text/html", 768 * 1024).await.ok()?;
+    let entry = services::reddit_embed(page, std::str::from_utf8(&body).ok()?)?;
+    if let Some(source) = entry.media
+        && let Some(picture) = post_picture(client, source).await
+    {
+        return Some(Content::Post(entry.post, Some(picture)));
+    }
+    let picture = match entry.poster {
+        Some(source) => post_picture(client, source).await,
+        None => None,
+    };
+    if let Some(clip) = entry.clip {
+        let aspect = if clip.native_video() {
+            stream_aspect(client, &clip).await
+        } else {
+            picture
+                .as_ref()
+                .and_then(|(p, _)| aspect(f64::from(p.size[0]), f64::from(p.size[1])))
+        };
+        if !clip.native_video() || aspect.is_some() {
+            return Some(Content::Clip(ClipInfo {
+                clip,
+                title: entry.post.title,
+                channel: entry.post.channel,
+                thumbnail: picture.map(|(picture, _)| picture),
+                aspect,
+            }));
+        }
+    }
+    picture.map(|picture| Content::Post(entry.post, Some(picture)))
+}
+
+async fn reddit_post_picture(client: &reqwest::Client, page: &str, share_image: &str, feed: Option<&str>) -> Option<(Picture, String)> {
+    // Prefer the original Reddit animation, then the official share card.
+    let sources = feed
+        .and_then(services::reddit_animation)
+        .into_iter()
+        .chain([share_image.to_owned()])
+        .chain(feed.and_then(services::from_feed));
+    for source in sources {
+        if let Some(picture) = post_picture(client, source).await {
+            return Some(picture);
+        }
+    }
+
+    // Some posts only publish a real poster on their public permalink.
+    let head = text_head(client, page, "text/html", "</head>").await.0.ok()?;
+    post_picture(client, services::from_head(Service::Reddit, &head)?).await
+}
+
+async fn post_picture(client: &reqwest::Client, source: String) -> Option<(Picture, String)> {
+    Some((fetch_picture(client, &source).await.ok()?, source))
+}
+
+fn reddit_permalink_channel(page: &str, author: Option<&str>) -> String {
+    if let Ok(page) = reqwest::Url::parse(page)
+        && let Some(mut parts) = page.path_segments()
+        && parts.next() == Some("r")
+        && let Some(community) = parts.next()
+        && !community.is_empty()
+        && community.len() <= 80
+        && community.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    {
+        return format!("r/{community}");
+    }
+    author.unwrap_or_default().chars().take(80).collect()
+}
+
+#[test]
+fn youku_requires_the_application_id_supplied_by_the_publisher() {
+    let url = "https://player.youku.com/embed/XNjMzNzY4MjYxNg%3D%3D?client_id=example123&extra=1";
+    let clip = Clip::of(url).unwrap();
+    assert!(clip.requires_player_click());
+    assert_eq!(
+        clip.player(),
+        "https://player.youku.com/embed/XNjMzNzY4MjYxNg==?client_id=example123"
+    );
+    assert!(Clip::of(url.split('?').next().unwrap()).is_none());
+    assert!(Clip::of(&url.replace("player.youku.com", "player.youku.com.example.org")).is_none());
+}
+
+#[test]
+fn dailymotion_needs_explicit_player_and_video_ids_for_inline_playback() {
+    let embed = "https://geo.dailymotion.com/player/x8lr5.html?video=x84sh87";
+    assert!(matches!(target(embed), Some(Target::Clip(clip)) if clip.player() == embed && clip.requires_player_click()));
+    assert!(matches!(target("https://www.dailymotion.com/video/x84sh87"), Some(Target::Page(_))));
+    assert!(target("https://geo.dailymotion.com/player.html?video=x84sh87").is_none());
+    assert!(target("https://geo.dailymotion.com.invalid.example/player/x8lr5.html?video=x84sh87").is_none());
+}
+
+#[test]
+fn reddit_preview_byline_uses_the_community_of_the_permalink() {
+    assert_eq!(
+        reddit_permalink_channel("https://www.reddit.com/r/funnyvideos/comments/15byye8/example/", Some("example")),
+        "r/funnyvideos"
+    );
+    assert_eq!(
+        reddit_permalink_channel("https://www.reddit.com/comments/15byye8/", Some("example")),
+        "example"
+    );
+}
+
 /// A clip a service's page leads to, with its thumbnail: the first of its
 /// addresses that gives a picture. Its shape comes from the service, else
 /// from the thumbnail.
-async fn fetch_clip(client: &reqwest::Client, found: services::FoundClip) -> ClipInfo {
+async fn fetch_found_clip(client: &reqwest::Client, found: services::FoundClip) -> ClipInfo {
     let mut thumbnail = None;
     for poster in &found.posters {
         if let Ok(picture) = fetch_picture(client, poster).await {
@@ -1043,15 +1531,82 @@ async fn fetch_clip(client: &reqwest::Client, found: services::FoundClip) -> Cli
             break;
         }
     }
+    let stream_shape = if found.clip.native_video() {
+        stream_aspect(client, &found.clip).await
+    } else {
+        None
+    };
     let aspect = found
         .size
         .and_then(|(w, h)| aspect(w, h))
+        .or(stream_shape)
         .or_else(|| thumbnail.as_ref().and_then(|t| aspect(f64::from(t.size[0]), f64::from(t.size[1]))));
     ClipInfo {
         clip: found.clip,
+        title: found.title,
+        channel: found.channel,
         thumbnail,
         aspect,
     }
+}
+
+async fn stream_aspect(client: &reqwest::Client, clip: &Clip) -> Option<f32> {
+    let (body, _) = download(client, &clip.player(), "application/vnd.apple.mpegurl", 64 * 1024)
+        .await
+        .ok()?;
+    std::str::from_utf8(&body).ok()?.lines().find_map(|line| {
+        let dimensions = line
+            .strip_prefix("#EXT-X-STREAM-INF:")?
+            .split(',')
+            .find_map(|part| part.strip_prefix("RESOLUTION="))?;
+        let (width, height) = dimensions.split_once('x')?;
+        aspect(width.parse().ok()?, height.parse().ok()?)
+    })
+}
+
+pub async fn fetch_clip(client: &reqwest::Client, clip: &Clip) -> ClipInfo {
+    let mut info = ClipInfo {
+        clip: clip.clone(),
+        title: String::new(),
+        channel: String::new(),
+        thumbnail: None,
+        aspect: None,
+    };
+    if clip.native_video() {
+        info.aspect = stream_aspect(client, clip).await;
+        return info;
+    }
+    let ClipSource::Hosted(video) = &clip.0 else {
+        return info;
+    };
+    info.aspect = video.aspect();
+    let Some(endpoint) = video.oembed() else {
+        let page = video.page();
+        if let Ok(html) = text_head(client, &page, "text/html", "</head>").await.0 {
+            info.title = services::metadata(&html, &["og:title", "twitter:title"]).unwrap_or_default();
+            info.channel = services::metadata(&html, &["author", "video:actor"]).unwrap_or_default();
+            if let Some(poster) = services::metadata(&html, &["og:image", "twitter:image"]).and_then(|url| video.poster(&url)) {
+                info.thumbnail = fetch_picture(client, &poster).await.ok();
+            }
+        }
+        return info;
+    };
+    if let Some(data) = download(client, &endpoint, "application/json", 64 * 1024)
+        .await
+        .ok()
+        .and_then(|(bytes, _)| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .filter(|data| data["type"].as_str() == Some("video"))
+    {
+        info.title = data["title"].as_str().unwrap_or_default().chars().take(200).collect();
+        info.channel = data["author_name"].as_str().unwrap_or_default().chars().take(80).collect();
+        info.aspect = info
+            .aspect
+            .or_else(|| data["width"].as_f64().zip(data["height"].as_f64()).and_then(|(w, h)| aspect(w, h)));
+        if let Some(poster) = data["thumbnail_url"].as_str().and_then(|url| video.poster(url)) {
+            info.thumbnail = fetch_picture(client, &poster).await.ok();
+        }
+    }
+    info
 }
 
 /// Title, channel and picture of a video.
@@ -1235,6 +1790,8 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
         // a file names no shape; its page reports it once it plays
         Target::Clip(clip) => Ok(Content::Clip(ClipInfo {
             clip: clip.clone(),
+            title: String::new(),
+            channel: String::new(),
             thumbnail: None,
             aspect: None,
         })),
@@ -1244,9 +1801,14 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
         // Gyazo's video capture to its clip
         Target::Page(_) if let Some(found) = services::demo_clip(url) => Ok(Content::Clip(ClipInfo {
             clip: found.clip,
+            title: found.title,
+            channel: found.channel,
             thumbnail: Some(demo_still(640, 360, 1)),
             aspect: Some(16.0 / 9.0),
         })),
+        Target::Page(Service::Reddit) if let Some((post, source)) = services::demo_reddit_post(url) => {
+            Ok(Content::Post(post, source.map(|url| (demo_still(640, 480, 0), url))))
+        }
         Target::Page(service) => {
             let (source, sensitive) = services::demo_source(url).ok_or(Failure::Unavailable)?;
             let picture = match service {
@@ -1254,6 +1816,7 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
                 Service::Imgur => demo_still(480, 600, 1),
                 Service::Lightshot | Service::X => demo_still(640, 400, 1),
                 Service::Flickr | Service::Reddit | Service::Site => demo_still(640, 480, 0),
+                Service::Giphy | Service::Tenor => demo_gif(),
             };
             Ok(Content::Page {
                 picture,
@@ -1362,7 +1925,97 @@ mod tests {
     }
 
     fn clip(file: &str) -> Option<Target> {
-        Some(Target::Clip(Clip { file: file.into() }))
+        Some(Target::Clip(Clip(ClipSource::File(file.into()))))
+    }
+
+    #[test]
+    fn reddit_video_uses_the_combined_stream_instead_of_a_silent_rendition() {
+        let url = "https://v.redd.it/5o5cu4n0upeb1";
+        let clip = Clip::of(url).expect("Reddit video");
+        assert_eq!(Clip::of(&format!("{url}/DASH_1080.mp4?source=fallback")), Some(clip.clone()));
+        assert_eq!(clip.player_page(&PlayerOptions::default(), 0), format!("{url}/HLSPlaylist.m3u8"));
+        assert!(blurred_until_clicked(url));
+        assert!(Clip::of(&format!("{url}/DASH_AUDIO_128.mp4")).is_none());
+        assert!(Clip::of("https://v.redd.it.evil.example/5o5cu4n0upeb1").is_none());
+    }
+
+    #[test]
+    fn regional_video_players_use_provider_owned_urls() {
+        let cases = [
+            (
+                "https://www.tiktok.com/@scout2015/video/6718335390845095173?tracking=keep-out",
+                "https://www.tiktok.com/player/v1/6718335390845095173?autoplay=1&force_muted=0&rel=0",
+            ),
+            (
+                "https://www.bilibili.com/video/BV1B7411m7LV/?p=2&tracking=keep-out",
+                "https://player.bilibili.com/player.html?bvid=BV1B7411m7LV&p=2&autoplay=1&muted=0",
+            ),
+            (
+                "https://www.twitch.tv/example/clip/IncredulousAbstemiousFennelImGlitch",
+                "https://clips.twitch.tv/embed?clip=IncredulousAbstemiousFennelImGlitch&parent=127.0.0.1&autoplay=true&muted=false",
+            ),
+            (
+                "https://framatube.org/w/9c9de5e8-0a1e-484a-b099-e80766180a6d",
+                "https://framatube.org/videos/embed/9c9de5e8-0a1e-484a-b099-e80766180a6d?autoplay=1&muted=0&p2p=0",
+            ),
+            (
+                "https://instagram.com/reel/DfF3eqGSKKc/?igsh=tracking",
+                "https://www.instagram.com/reel/DfF3eqGSKKc/embed/",
+            ),
+            (
+                "https://m.facebook.com/reel/1557618349384047/",
+                "https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2Freel%2F1557618349384047%2F&autoplay=false",
+            ),
+            (
+                "https://www.twitch.tv/videos/123456",
+                "https://player.twitch.tv/?video=v123456&parent=127.0.0.1&autoplay=true&muted=false",
+            ),
+        ];
+        for (url, player) in cases {
+            let (Target::Clip(clip), Start::Load) = decide(&Settings::default(), Place::Im, Sender::Resident, url).unwrap() else {
+                panic!("expected a playable video for {url}");
+            };
+            assert_eq!(clip.player(), player);
+            assert_eq!(Clip::of(clip.source().as_ref()), Some(clip));
+        }
+        for url in [
+            "http://www.tiktok.com/@scout2015/video/6718335390845095173",
+            "https://www.tiktok.com/@name/photo/6718335390845095173",
+            "https://www.tiktok.com.evil.example/@name/video/6718335390845095173",
+            "https://www.bilibili.com/video/not-a-video",
+            "https://www.twitch.tv/directory",
+            "https://clips.twitch.tv/IncredulousAbstemiousFennelImGlitch%26parent=example.com",
+        ] {
+            assert!(Clip::of(url).is_none(), "{url}");
+        }
+    }
+
+    #[test]
+    fn hosted_clip_uses_provider_player_and_keeps_vimeo_privacy_hash() {
+        let streamable = Clip::of("https://streamable.com/e/Demo42?loop=0").unwrap();
+        assert_eq!(streamable.source(), "https://streamable.com/Demo42");
+        assert_eq!(streamable.player(), "https://streamable.com/e/Demo42?autoplay=1");
+        let streamable_page = clip_page(&streamable, 100, 42);
+        assert!(streamable_page.contains("send('unmute')"));
+        assert!(streamable_page.contains("e.origin!==origin||e.source!==frame.contentWindow"));
+
+        let vimeo = Clip::of("https://vimeo.com/123456789/deadbeef42").unwrap();
+        assert_eq!(
+            Clip::of("https://player.vimeo.com/video/123456789?h=deadbeef42"),
+            Some(vimeo.clone())
+        );
+        let page = clip_answer("GET /clip?k=42&src=https%3A%2F%2Fvimeo.com%2F123456789%2Fdeadbeef42 HTTP/1.1").unwrap();
+        assert!(page.contains("https://player.vimeo.com/video/123456789?h=deadbeef42&amp;autoplay=1&amp;muted=0"));
+        assert!(page.contains("allow=\"autoplay; fullscreen; encrypted-media\""));
+        for url in [
+            "https://streamable.com/pricing",
+            "https://streamable.com:444/Demo42",
+            "https://streamable.com@elsewhere.example/Demo42",
+            "https://notvimeo.com/123456789",
+            "https://vimeo.com/123456789/%22%3E",
+        ] {
+            assert_eq!(target(url), None, "{url}");
+        }
     }
 
     /// A video file is a clip on a trusted site only, over https, without
@@ -1407,7 +2060,7 @@ mod tests {
     fn a_gyazo_video_capture_leads_to_its_clip() {
         let page = "https://gyazo.com/9F8E7D6C5B4A39281706F5E4D3C2B1A0";
         let found = services::clip_from_oembed(Service::Gyazo, page, include_bytes!("link_preview/fixtures/gyazo_video.json")).unwrap();
-        assert_eq!(found.clip.file, "https://i.gyazo.com/9f8e7d6c5b4a39281706f5e4d3c2b1a0.mp4");
+        assert_eq!(found.clip.source(), "https://i.gyazo.com/9f8e7d6c5b4a39281706f5e4d3c2b1a0.mp4");
         assert_eq!(found.posters.len(), 2);
         assert!(found.posters[0].starts_with("https://thumb.gyazo.com/thumb/640_w/"));
         assert!(found.posters[1].starts_with("https://thumb.gyazo.com/thumb/116_w/"));
@@ -1424,7 +2077,7 @@ mod tests {
         assert_eq!(found.size, Some((640.0, 360.0)));
         assert!(matches!(
             demo(&Target::Page(Service::Gyazo), page),
-            Ok(Content::Clip(c)) if c.clip.file.ends_with("9f8e7d6c5b4a39281706f5e4d3c2b1a0.mp4") && c.thumbnail.is_some()
+            Ok(Content::Clip(c)) if c.clip.source().ends_with("9f8e7d6c5b4a39281706f5e4d3c2b1a0.mp4") && c.thumbnail.is_some()
         ));
     }
 
@@ -1820,7 +2473,7 @@ mod tests {
                 .contains("l=100;")
         );
         // the address the card opens leads to the same page
-        let clip = Clip { file: file.into() };
+        let clip = Clip(ClipSource::File(file.into()));
         let opened = clip.player_page(&PlayerOptions::default(), 7);
         let path = opened
             .split_once("127.0.0.1:")

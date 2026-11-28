@@ -8,6 +8,60 @@ fn step(url: &str) -> Option<Step> {
     recognize(url).map(|(_, s)| s)
 }
 
+#[test]
+fn imgur_single_posts_prefer_video_but_albums_keep_the_cover() {
+    let html = r#"
+        <meta property="og:image" content="https://i.imgur.com/DemoAb1.jpg?fbplay">
+        <meta property="og:video" content="https://i.imgur.com/DemoAb1.gif">
+        <meta property="og:video:width" content="640">
+        <meta property="og:video:height" content="360">
+        <meta name="twitter:player" content="https://i.imgur.com/DemoAb1.gifv?twitter">
+        <meta name="twitter:player:stream" content="https://i.imgur.com/DemoAb1.mp4">
+    "#;
+    let single = "https://imgur.com/DemoAb1";
+    let found = clip_from_head(Service::Imgur, single, html).unwrap();
+    assert_eq!(found.clip.source(), "https://i.imgur.com/DemoAb1.mp4");
+    assert_eq!(found.size, Some((640.0, 360.0)));
+    assert_eq!(found.posters, ["https://i.imgur.com/DemoAb1.jpg"]);
+    assert!(clip_from_head(Service::Imgur, "https://imgur.com/a/DemoAb1", html).is_none());
+    assert!(clip_from_head(Service::Imgur, single, &html.replace("i.imgur.com", "example.org")).is_none());
+    assert!(
+        clip_from_head(
+            Service::Imgur,
+            single,
+            r#"<meta property="og:image" content="https://i.imgur.com/DemoAb1.gif">"#
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn animated_share_pages_require_a_provider_media_rendition() {
+    for (page, provider, source) in [
+        (
+            "https://giphy.com/gifs/happy-dance-DemoGif123",
+            Service::Giphy,
+            "https://media4.giphy.com/media/DemoGif123/giphy.webp",
+        ),
+        (
+            "https://tenor.com/view/happy-dance-gif-123456",
+            Service::Tenor,
+            "https://media1.tenor.com/m/demo/dance.gif",
+        ),
+    ] {
+        assert_eq!(service(page), Some(provider));
+        let html = format!(
+            r#"
+            <meta property="og:image" content="https://images.example.org/static.jpg">
+            <meta property="og:image" content="{source}">
+        "#
+        );
+        assert_eq!(from_head(provider, &html).as_deref(), Some(source));
+        assert!(!picture_host_ok(provider, "https://media1.tenor.com.evil.example/clip.gif"));
+        assert!(!picture_host_ok(provider, &source.replace("https://", "https://:password@")));
+    }
+}
+
 /// Every form of each service's page links, and the links that are not a
 /// picture's page.
 #[test]
@@ -54,7 +108,7 @@ fn each_service_s_page_links_are_recognized() {
     for url in ["https://prnt.sc/demo42", "https://prntscr.com/Demo42"] {
         assert_eq!(step(url), Some(Step::Head("https://prnt.sc/demo42".into())), "{url}");
     }
-    let feed = Some(Step::Feed("https://www.reddit.com/comments/demo01/.rss?limit=1".into()));
+    let expected_feed = "https://www.reddit.com/comments/demo01/.rss?limit=1";
     for url in [
         "https://www.reddit.com/r/AuroraDemo/comments/demo01/a_new_build/",
         "https://old.reddit.com/r/AuroraDemo/comments/demo01/a_new_build/?utm_source=share",
@@ -63,7 +117,21 @@ fn each_service_s_page_links_are_recognized() {
         "https://reddit.com/comments/demo01",
         "https://redd.it/demo01",
     ] {
-        assert_eq!(step(url), feed, "{url}");
+        let path = Url::parse(url).unwrap();
+        let path = if path.host_str() == Some("redd.it") {
+            "/comments/demo01/"
+        } else {
+            path.path()
+        };
+        assert_eq!(
+            step(url),
+            Some(Step::Feed {
+                feed: expected_feed.into(),
+                page: format!("https://www.reddit.com{path}"),
+                share_image: "https://share.redd.it/preview/post/demo01?format=webp".into(),
+            }),
+            "{url}",
+        );
     }
     // Reddit's picture viewer names its picture: no request
     assert_eq!(

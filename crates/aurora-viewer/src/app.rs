@@ -21030,6 +21030,10 @@ impl App {
                     self.settings.link_previews.hidden_sites.push(site);
                     self.settings.save();
                 }
+                if let Some(autoplay) = self.chat_ui.previews.autoplay_change.take() {
+                    self.settings.link_previews.autoplay_video = autoplay;
+                    self.settings.save();
+                }
                 // the player's own volume slider moved: the next video
                 // starts there (#848); saved with the settings, like the
                 // volumes of Sound and voice

@@ -6,8 +6,9 @@
 //! Each page leads to its picture by the cleanest way its service offers:
 //! * Gyazo and Flickr: their oEmbed endpoints (documented, no key); a Gyazo
 //!   video capture leads to its file instead, played in a video card (#983);
-//! * Imgur and Lightshot: the page's `og:image`, read from the first part of
-//!   the page only (Imgur's API needs a registered key, Lightshot has none);
+//! * Imgur and Lightshot: the page's `og:image`, with video metadata preferred
+//!   on an Imgur single post. GIPHY and Tenor use animated image renditions
+//!   on their own CDNs. Only the page head is read and no API key is needed;
 //! * Reddit: the post's Atom feed, its first entry's `media:thumbnail`
 //!   (Reddit's JSON answers 403 to clients without an account, its post
 //!   pages a script challenge; the feed is public). A `reddit.com/media`
@@ -40,6 +41,8 @@ pub enum Service {
     Gyazo,
     Flickr,
     Imgur,
+    Giphy,
+    Tenor,
     Lightshot,
     Reddit,
     Bluesky,
@@ -70,7 +73,7 @@ fn on_site(host: &str) -> bool {
 
 /// A page of one of the user's picture sites: https, not the site's root,
 /// read for its `og:image`.
-fn site_page(parsed: &Url) -> Option<(Service, Step)> {
+pub(super) fn site_page(parsed: &Url) -> Option<(Service, Step)> {
     let host = parsed.host_str()?.trim_end_matches('.').to_lowercase();
     if parsed.scheme() != "https" || !parsed.username().is_empty() || segments(parsed).is_empty() || !on_site(&host) {
         return None;
@@ -89,8 +92,12 @@ pub(super) enum Step {
     OEmbed(String),
     /// The page itself, its `og:image`.
     Head(String),
+    /// Public sharing metadata from a recognized video publisher.
+    Publisher(String),
+    /// A publisher's mobile share URL with a public HTTP redirect.
+    PublisherLink(String),
     /// Reddit's Atom feed of a post.
-    Feed(String),
+    Feed { feed: String, page: String, share_image: String },
     /// A Bluesky or X post as JSON (`from_post`).
     Post(String),
 }
@@ -225,6 +232,9 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
     }
     let host = bare_host(&parsed)?;
     let segs = segments(&parsed);
+    if let Some(url) = publisher_short_link(parsed.clone()) {
+        return Some((Service::Site, Step::PublisherLink(url)));
+    }
     let with = |base: &str, pairs: &[(&str, &str)]| Url::parse_with_params(base, pairs).ok().map(String::from);
     match host.as_str() {
         "gyazo.com" => {
@@ -261,6 +271,26 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
             };
             Some((Service::Imgur, Step::Head(page)))
         }
+        "giphy.com" => {
+            let ["gifs" | "stickers", slug] = segs.as_slice() else {
+                return None;
+            };
+            let id = slug.rsplit('-').next()?;
+            if !alnum(id, 6, 32) || slug.len() > 240 {
+                return None;
+            }
+            Some((Service::Giphy, Step::Head(format!("https://giphy.com/{}/{slug}", segs[0]))))
+        }
+        "tenor.com" => {
+            let ["view", slug] = segs.as_slice() else {
+                return None;
+            };
+            let (_, id) = slug.rsplit_once('-')?;
+            if !(1..=16).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_digit()) || slug.len() > 240 {
+                return None;
+            }
+            Some((Service::Tenor, Step::Head(format!("https://tenor.com/view/{slug}"))))
+        }
         "prnt.sc" | "prntscr.com" => {
             let id = segs.first().filter(|id| segs.len() == 1 && alnum(id, 5, 12))?;
             Some((Service::Lightshot, Step::Head(format!("https://prnt.sc/{}", id.to_lowercase()))))
@@ -277,9 +307,18 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
                 _ => return None,
             };
             reddit_id(id).then(|| {
+                let page = if host == "redd.it" {
+                    format!("https://www.reddit.com/comments/{id}/")
+                } else {
+                    format!("https://www.reddit.com{}", parsed.path())
+                };
                 (
                     Service::Reddit,
-                    Step::Feed(format!("https://www.reddit.com/comments/{id}/.rss?limit=1")),
+                    Step::Feed {
+                        feed: format!("https://www.reddit.com/comments/{id}/.rss?limit=1"),
+                        page,
+                        share_image: format!("https://share.redd.it/preview/post/{id}?format=webp"),
+                    },
                 )
             })
         }
@@ -320,8 +359,490 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
                 )),
             ))
         }
-        _ => site_page(&parsed),
+        _ => publisher_page(&parsed).or_else(|| site_page(&parsed)),
     }
+}
+
+#[test]
+fn publisher_shares_use_public_pages_and_publisher_images() {
+    for url in [
+        "https://www.snapchat.com/spotlight/1234aBcDe",
+        "https://www.dailymotion.com/video/x84sh87",
+        "https://www.arte.tv/en/videos/123456-000-A/example/",
+        "https://www.bbc.co.uk/iplayer/episode/m001jjq0/example",
+        "https://www.bbc.co.uk/programmes/m001jjq0",
+        "https://www.ardmediathek.de/video/Y3JpZDovL3RhZ2Vzc2NoYXUuZGUvN2Y0NzZkMDgtNzlhNC00Njk5LWExY2QtYmZhNGEwN2I1ODgxLVNFTkRVTkdTVklERU8",
+        "https://tver.jp/episodes/ep12345",
+        "https://www.nicovideo.jp/watch/sm9",
+        "https://tv.naver.com/v/12345678",
+        "https://chzzk.naver.com/video/12345",
+        "https://vod.sooplive.co.kr/player/12345",
+        "https://vod.sooplive.com/player/12345",
+        "https://tv.kakao.com/channel/123/cliplink/456",
+        "https://www.douyin.com/video/12345678",
+        "https://www.kuaishou.com/short-video/Abc_123",
+        "https://www.xiaohongshu.com/explore/123abc",
+        "https://v.qq.com/x/cover/series123/video456.html",
+        "https://www.iqiyi.com/v_example.html",
+        "https://v.youku.com/v_show/id_XYZ=.html",
+        "https://www.mgtv.com/b/123456/7890123.html",
+    ] {
+        let input = format!("{url}?tracking=example#fragment");
+        assert!(
+            matches!(recognize(&input), Some((Service::Site, Step::Publisher(page))) if page == url),
+            "{url}"
+        );
+    }
+    for url in [
+        "https://www.dailymotion.com/",
+        "https://dailymotion.com.example.org/video/x84sh87",
+        "https://www.dailymotion.com/video/x84sh87%2Fextra",
+        "http://www.nicovideo.jp/watch/sm9",
+    ] {
+        assert!(!matches!(recognize(url), Some((_, Step::Publisher(_)))), "{url}");
+    }
+    let html = r#"<meta property="og:image" content="https://dmcdn.net.example.org/bad"><meta name="twitter:image" content="https://s1.dmcdn.net/good">"#;
+    assert_eq!(
+        publisher_poster("https://www.dailymotion.com/video/x84sh87", html).as_deref(),
+        Some("https://s1.dmcdn.net/good"),
+    );
+}
+
+const VIEWER_CONFIRMATION_DOMAINS: &[&str] = &[
+    "pornhub.com",
+    "phncdn.com",
+    "xvideos.com",
+    "xvideos-cdn.com",
+    "xvideos-cdn.net",
+    "onlyfans.com",
+    "ofstatic.com",
+    "redgifs.com",
+];
+
+pub(super) fn adult_media_site(host: &str) -> bool {
+    VIEWER_CONFIRMATION_DOMAINS.iter().any(|domain| super::in_domain(host, domain))
+}
+
+/// A public post may publish its own player as sharing metadata.
+pub(super) fn adult_clip(page: &str, html: &str) -> Option<FoundClip> {
+    let page_url = Url::parse(page).ok()?;
+    let domain = bare_host(&page_url)?;
+    if !matches!(domain.as_str(), "redgifs.com" | "pornhub.com" | "xvideos.com") {
+        return None;
+    }
+    let player = metadata(html, &["og:video:secure_url", "og:video", "twitter:player"])?;
+    let player_url = page_url.join(&player).ok()?;
+    if bare_host(&player_url)? != domain {
+        return None;
+    }
+    let player_path = segments(&player_url);
+    let player_id = player_path.get(1)?;
+    let page_path = segments(&page_url);
+    let same_item = match domain.as_str() {
+        "redgifs.com" => page_path.get(1) == Some(player_id),
+        "pornhub.com" => page_url.query_pairs().any(|(key, value)| key == "viewkey" && value == *player_id),
+        _ => page_path
+            .first()
+            .and_then(|part| part.strip_prefix("video"))
+            .is_some_and(|id| id.starts_with('.') || id == *player_id),
+    };
+    let clip = super::Clip::of(player_url.as_str())?;
+    if !same_item || !clip.hosted() || !clip.requires_player_click() {
+        return None;
+    }
+    Some(FoundClip {
+        clip,
+        title: metadata(html, &["og:title", "twitter:title"]).unwrap_or_default(),
+        channel: metadata(html, &["author"]).unwrap_or_default(),
+        posters: publisher_poster(page, html).into_iter().collect(),
+        size: metadata(html, &["og:video:width"])
+            .and_then(|s| s.parse().ok())
+            .zip(metadata(html, &["og:video:height"]).and_then(|s| s.parse().ok())),
+    })
+}
+
+#[test]
+fn an_adult_card_only_accepts_a_player_from_the_same_publisher() {
+    let page = "https://www.redgifs.com/watch/example";
+    let html = r#"<meta property="og:video" content="https://www.redgifs.com/ifr/example">"#;
+    let clip = adult_clip(page, html).unwrap().clip;
+    assert!(clip.requires_player_click());
+    assert!(adult_clip(page, &html.replace("www.redgifs.com", "www.xvideos.com")).is_none());
+    assert!(adult_clip(page, &html.replace("/ifr/example", "/ifr/other")).is_none());
+    assert!(adult_clip("https://onlyfans.com/123/example", html).is_none());
+}
+
+#[test]
+fn adult_media_pages_keep_only_the_parameters_needed_to_share_the_item() {
+    let cases = [
+        (
+            "https://www.pornhub.com/view_video.php?opaque=example&viewkey=phabcdef#fragment",
+            "https://www.pornhub.com/view_video.php?viewkey=phabcdef",
+        ),
+        (
+            "https://www.xvideos.com/video.example/title?tracking=example",
+            "https://www.xvideos.com/video.example/title",
+        ),
+        (
+            "https://onlyfans.com/123456789/example?tracking=example",
+            "https://onlyfans.com/123456789/example",
+        ),
+        (
+            "https://www.redgifs.com/watch/sample?tracking=example",
+            "https://www.redgifs.com/watch/sample",
+        ),
+    ];
+    for (url, expected) in cases {
+        assert!(matches!(recognize(url), Some((Service::Site, Step::Publisher(page))) if page == expected));
+    }
+    assert!(matches!(
+        recognize("https://www.redgifs.com/ifr/sample?tracking=1"),
+        Some((Service::Site, Step::Publisher(page))) if page == "https://www.redgifs.com/watch/sample"
+    ));
+    assert!(matches!(
+        recognize("https://www.pornhub.com/embed/phabcdef?viewkey=ignored"),
+        Some((Service::Site, Step::Publisher(page))) if page == "https://www.pornhub.com/view_video.php?viewkey=phabcdef"
+    ));
+    assert!(matches!(
+        recognize("https://www.xvideos.com/embedframe/123456?tracking=1"),
+        Some((Service::Site, Step::Publisher(page))) if page == "https://www.xvideos.com/video123456"
+    ));
+    assert!(!adult_media_site("redgifs.com.example.org"));
+    assert!(adult_media_site("media.redgifs.com"));
+    assert!(recognize("https://onlyfans.com/example").is_none());
+}
+
+#[test]
+fn mainland_mobile_links_map_to_the_public_watch_page() {
+    let cases = [
+        (
+            "https://www.iesdouyin.com/share/video/12345678/?tracking=1",
+            "https://www.douyin.com/video/12345678",
+        ),
+        (
+            "https://m.v.qq.com/x/m/play?vid=v3308e31l25&tracking=1",
+            "https://v.qq.com/x/page/v3308e31l25.html",
+        ),
+        (
+            "https://v.youku.com/video?vid=XNjMzNzY4MjYxNg%3D%3D&tracking=1",
+            "https://v.youku.com/v_show/id_XNjMzNzY4MjYxNg==.html",
+        ),
+    ];
+    for (url, expected) in cases {
+        assert!(
+            matches!(recognize(url), Some((Service::Site, Step::Publisher(page))) if page == expected),
+            "{url}"
+        );
+    }
+}
+
+fn publisher_short_link(mut url: Url) -> Option<String> {
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+        return None;
+    }
+    let parts = segments(&url);
+    let token = match (url.host_str()?, parts.as_slice()) {
+        ("v.douyin.com" | "v.kuaishou.com", [token]) | ("xhslink.com", ["a" | "o" | "m", token]) => *token,
+        _ => return None,
+    };
+    if !alnum(token, 4, 48) {
+        return None;
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    Some(url.into())
+}
+
+/// Interpret only the Location header of a recognized publisher shortener.
+pub(super) fn publisher_short_destination(source: &Url, destination: Url) -> Option<(Service, Step)> {
+    if destination.scheme() != "https"
+        || !destination.username().is_empty()
+        || destination.password().is_some()
+        || destination.port().is_some()
+    {
+        return None;
+    }
+    let host = bare_host(&destination)?;
+    match source.host_str()? {
+        "v.douyin.com" if matches!(host.as_str(), "douyin.com" | "iesdouyin.com") => publisher_page(&destination),
+        "v.kuaishou.com" if host == "kuaishou.com" => publisher_page(&destination),
+        "v.kuaishou.com" if host.ends_with(".m.chenzhongtech.com") => {
+            let parts = segments(&destination);
+            let ["fw", "photo", id] = parts.as_slice() else {
+                return None;
+            };
+            if !alnum(id, 4, 32) {
+                return None;
+            }
+            publisher_page(&Url::parse(&format!("https://www.kuaishou.com/short-video/{id}")).ok()?)
+        }
+        "xhslink.com" if host == "xiaohongshu.com" => publisher_page(&destination),
+        _ => None,
+    }
+}
+
+#[test]
+fn publisher_short_links_only_resolve_to_their_own_video_pages() {
+    let source = "https://v.kuaishou.com/FvG1It";
+    assert!(matches!(recognize(source), Some((Service::Site, Step::PublisherLink(_)))));
+    let source = Url::parse(source).unwrap();
+    let resolve = |url| publisher_short_destination(&source, Url::parse(url).unwrap());
+    assert!(matches!(resolve("https://kph1tf76.m.chenzhongtech.com/fw/photo/3xkvz73v5ya5ayc"),
+        Some((Service::Site, Step::Publisher(page))) if page == "https://www.kuaishou.com/short-video/3xkvz73v5ya5ayc"));
+    assert!(resolve("https://www.kuaishou.com.example.org/short-video/3xkvz73v5ya5ayc").is_none());
+    assert!(resolve("https://www.kuaishou.com/").is_none());
+}
+
+fn naver_clip_page(url: &Url) -> Option<String> {
+    if url.path() != "/contents" {
+        return None;
+    }
+    let query = |name: &str| url.query_pairs().find(|(key, _)| key == name).map(|(_, value)| value);
+    let seed = query("seedMediaId")?;
+    if !(24..=80).contains(&seed.len()) || !seed.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let context = query("recId").filter(|value| value.len() <= 512)?;
+    let data: serde_json::Value = serde_json::from_str(&context).ok()?;
+    let profile = data["targetProfileId"].as_str()?;
+    if !(1..=80).contains(&profile.len()) || !profile.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')) {
+        return None;
+    }
+    let context = serde_json::json!({ "targetProfileId": profile, "open": true }).to_string();
+    Url::parse_with_params(
+        "https://clip.naver.com/contents",
+        [
+            ("recType", "CLIP_PC"),
+            ("recId", &context),
+            ("mediaType", "ALL"),
+            ("serviceType", "CLIP"),
+            ("seedMediaId", &seed),
+            ("seedMediaType", "SHORT_FORM"),
+        ],
+    )
+    .ok()
+    .map(String::from)
+}
+
+#[test]
+fn naver_clip_keeps_only_the_item_id_and_profile_context() {
+    let raw = "https://clip.naver.com/contents?seedMediaId=11D069478E37849F788A539917A6A68D3809&recId=%7B%22targetProfileId%22%3A%22example-id%22%2C%22extra%22%3A%22ignore%22%7D&tracking=remove";
+    let (_, Step::Publisher(page)) = recognize(raw).unwrap() else {
+        panic!("expected a Naver Clip page")
+    };
+    assert!(page.contains("seedMediaId=11D069478E37849F788A539917A6A68D3809"));
+    assert!(page.contains("targetProfileId"));
+    assert!(!page.contains("tracking") && !page.contains("extra"));
+    assert!(recognize("https://clip.naver.com/@example-id").is_none());
+}
+
+fn publisher_page(url: &Url) -> Option<(Service, Step)> {
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+        return None;
+    }
+    let host = bare_host(url)?;
+    if host == "clip.naver.com" {
+        return Some((Service::Site, Step::Publisher(naver_clip_page(url)?)));
+    }
+    let parts = segments(url);
+    let slug = |id: &str| (1..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'='));
+    let digits = |id: &str| (1..=24).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit());
+    let html_id = |id: &str| id.strip_suffix(".html").is_some_and(slug);
+    let video_id = url.query_pairs().find(|(key, _)| key == "vid").map(|(_, value)| value);
+    let viewkey = url.query_pairs().find(|(key, _)| key == "viewkey").map(|(_, value)| value);
+    let safe = match (host.as_str(), parts.as_slice()) {
+        ("pornhub.com", ["view_video.php"]) => viewkey.as_deref().is_some_and(slug),
+        ("xvideos.com", ["embedframe", id]) => digits(id),
+        ("xvideos.com", [video, ..]) => video.strip_prefix("video.").is_some_and(slug) || video.strip_prefix("video").is_some_and(digits),
+        ("onlyfans.com", [post, creator]) => digits(post) && slug(creator),
+        ("redgifs.com", ["watch" | "ifr", id]) => slug(id),
+        ("pornhub.com", ["embed", id]) => alnum(id, 5, 48),
+        ("snapchat.com", ["spotlight", id] | [_, "spotlight", id]) => {
+            (8..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+        }
+        ("dailymotion.com", ["video", id]) | ("dai.ly", [id]) => id.starts_with('x') && alnum(id, 2, 24),
+        ("arte.tv", [lang, "videos", id, ..]) => {
+            lang.len() == 2
+                && id.rsplit_once('-').is_some_and(|(body, variant)| {
+                    variant.len() == 1
+                        && variant.bytes().all(|b| b.is_ascii_uppercase())
+                        && body
+                            .split_once('-')
+                            .is_some_and(|(programme, part)| digits(programme) && digits(part))
+                })
+        }
+        ("bbc.com" | "bbc.co.uk", ["iplayer", "episode", id, ..] | ["programmes", id]) => slug(id),
+        ("ardmediathek.de", ["video", id] | ["video", _, _, _, id]) => {
+            (30..=256).contains(&id.len())
+                && id.starts_with("Y3JpZDovL")
+                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        }
+        ("tver.jp", ["episodes", id]) => slug(id),
+        ("nicovideo.jp" | "sp.nicovideo.jp", ["watch", id]) | ("nico.ms", [id]) => {
+            ["sm", "so", "nm"].iter().any(|prefix| id.strip_prefix(prefix).is_some_and(digits))
+        }
+        ("tv.naver.com", ["v", id]) | ("chzzk.naver.com", ["video", id]) => digits(id),
+        ("vod.sooplive.co.kr" | "vod.sooplive.com", ["player", id]) => digits(id),
+        ("tv.kakao.com", ["channel", channel, "cliplink", id]) => digits(channel) && digits(id),
+        ("douyin.com", ["video", id]) | ("iesdouyin.com", ["share", "video", id]) => digits(id),
+        ("kuaishou.com", ["short-video", id]) => slug(id),
+        ("xiaohongshu.com", ["explore", id] | ["discovery", "item", id]) => slug(id),
+        ("v.qq.com", ["x", "cover", id]) => slug(id) || html_id(id),
+        ("v.qq.com", ["x", "cover", series, id]) => slug(series) && html_id(id),
+        ("v.qq.com", ["x", "page", id]) => html_id(id),
+        ("v.qq.com", ["x", "m", "play"]) => video_id.as_deref().is_some_and(|id| alnum(id, 5, 24)),
+        ("iqiyi.com", [id]) => id.strip_prefix("v_").is_some_and(html_id),
+        ("v.youku.com", ["v_show", id]) => id.strip_prefix("id_").is_some_and(html_id),
+        ("v.youku.com", ["video"]) => video_id.as_deref().is_some_and(slug),
+        ("mgtv.com", ["b", series, id]) => digits(series) && html_id(id),
+        _ => false,
+    };
+    if !safe {
+        return None;
+    }
+    let mut page = match (host.as_str(), parts.as_slice()) {
+        ("dai.ly", [id]) => Url::parse(&format!("https://www.dailymotion.com/video/{id}")).ok()?,
+        ("redgifs.com", ["ifr", id]) => Url::parse(&format!("https://www.redgifs.com/watch/{id}")).ok()?,
+        ("pornhub.com", ["embed", id]) => Url::parse(&format!("https://www.pornhub.com/view_video.php?viewkey={id}")).ok()?,
+        ("xvideos.com", ["embedframe", id]) => Url::parse(&format!("https://www.xvideos.com/video{id}")).ok()?,
+        ("nico.ms", [id]) | ("sp.nicovideo.jp", ["watch", id]) => Url::parse(&format!("https://www.nicovideo.jp/watch/{id}")).ok()?,
+        ("iesdouyin.com", ["share", "video", id]) => Url::parse(&format!("https://www.douyin.com/video/{id}")).ok()?,
+        ("v.qq.com", ["x", "m", "play"]) => Url::parse(&format!("https://v.qq.com/x/page/{}.html", video_id?)).ok()?,
+        ("v.youku.com", ["video"]) => Url::parse(&format!("https://v.youku.com/v_show/id_{}.html", video_id?)).ok()?,
+        _ => url.clone(),
+    };
+    if !matches!((host.as_str(), parts.as_slice()), ("pornhub.com", ["embed", _])) {
+        page.set_query(None);
+    }
+    page.set_fragment(None);
+    if host == "pornhub.com"
+        && parts.as_slice() == ["view_video.php"]
+        && let Some(key) = viewkey
+    {
+        page.query_pairs_mut().append_pair("viewkey", &key);
+    }
+    if host == "xiaohongshu.com" {
+        for (key, value) in url
+            .query_pairs()
+            .filter(|(key, value)| matches!(key.as_ref(), "xsec_token" | "xsec_source") && slug(value))
+        {
+            page.query_pairs_mut().append_pair(&key, &value);
+        }
+    }
+    Some((Service::Site, Step::Publisher(page.into())))
+}
+
+/// Use an ARTE player only when the programme advertises its own embed URL.
+pub(super) fn arte_clip(page: &str, html: &str) -> Option<FoundClip> {
+    let page_url = Url::parse(page).ok()?;
+    if bare_host(&page_url).as_deref() != Some("arte.tv") {
+        return None;
+    }
+    let parts = segments(&page_url);
+    let [language, "videos", id, ..] = parts.as_slice() else {
+        return None;
+    };
+    let embed = metadata(html, &["og:video:secure_url", "og:video", "twitter:player"])?;
+    if embed != format!("https://www.arte.tv/embeds/{language}/{id}") {
+        return None;
+    }
+    let clip = super::Clip::of(&embed)?;
+    let width = metadata(html, &["og:video:width"]).and_then(|s| s.parse().ok());
+    let height = metadata(html, &["og:video:height"]).and_then(|s| s.parse().ok());
+    Some(FoundClip {
+        clip,
+        title: metadata(html, &["og:title", "twitter:title"])?,
+        channel: "ARTE".into(),
+        posters: publisher_poster(page, html).into_iter().collect(),
+        size: width.zip(height),
+    })
+}
+
+#[test]
+fn arte_plays_only_the_embed_advertised_for_that_programme() {
+    let page = "https://www.arte.tv/en/videos/135503-000-A/episode/";
+    let html = r#"<meta property="og:video" content="https://www.arte.tv/embeds/en/135503-000-A">
+        <meta property="og:title" content="An episode">"#;
+    assert_eq!(arte_clip(page, html).unwrap().title, "An episode");
+    assert!(arte_clip(page, &html.replace("/embeds/en/", "/embeds/fr/")).is_none());
+    assert!(arte_clip(page, &html.replace("www.arte.tv", "example.org")).is_none());
+}
+
+/// A public poster at the publisher or one of its own media hosts.
+pub(super) fn publisher_poster(page: &str, html: &str) -> Option<String> {
+    let page = Url::parse(page).ok()?;
+    let owner = bare_host(&page)?;
+    let allowed: &[&str] = match owner.as_str() {
+        "pornhub.com" => &["phncdn.com"],
+        "xvideos.com" => &["xvideos-cdn.com", "xvideos-cdn.net"],
+        "onlyfans.com" => &["ofstatic.com"],
+        "redgifs.com" => &["redgifs.com"],
+        "snapchat.com" => &["sc-cdn.net", "snapcdn.com"],
+        "dailymotion.com" => &["dmcdn.net"],
+        "bbc.com" | "bbc.co.uk" => &["bbci.co.uk"],
+        "ardmediathek.de" => &["ardmediathek.de"],
+        "tver.jp" => &["tver.jp", "tver-static.com"],
+        "nicovideo.jp" => &["nimg.jp", "nicovideo.jp"],
+        "tv.naver.com" | "chzzk.naver.com" | "clip.naver.com" => &["pstatic.net"],
+        "vod.sooplive.co.kr" | "vod.sooplive.com" => &["sooplive.co.kr", "sooplive.com", "afreecatv.com"],
+        "tv.kakao.com" => &["kakaocdn.net"],
+        "douyin.com" => &["douyinpic.com", "pstatp.com"],
+        "kuaishou.com" => &["kwaicdn.com", "gifshow.com"],
+        "xiaohongshu.com" => &["xhscdn.com"],
+        "v.qq.com" => &["qpic.cn", "gtimg.cn"],
+        "iqiyi.com" => &["qiyi.com", "iqiyipic.com"],
+        "v.youku.com" => &["ykimg.com"],
+        "mgtv.com" => &["mgtv.com", "hunantv.com"],
+        _ => &[],
+    };
+    head_meta(html).find_map(|(key, value)| {
+        matches!(key.to_ascii_lowercase().as_str(), "og:image" | "og:image:url" | "twitter:image")
+            .then(|| publisher_image(&page, &owner, allowed, &unescape(value)))
+            .flatten()
+    })
+}
+
+fn publisher_image(page: &Url, owner: &str, allowed: &[&str], value: &str) -> Option<String> {
+    if value.len() > 2048 {
+        return None;
+    }
+    let url = page.join(value).ok()?;
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+        return None;
+    }
+    let host = url.host_str()?;
+    (bare_host(&url).as_deref() == Some(owner)
+        || allowed
+            .iter()
+            .any(|domain| host == *domain || host.strip_suffix(domain).is_some_and(|prefix| prefix.ends_with('.'))))
+    .then(|| url.into())
+}
+
+pub(super) fn dailymotion_oembed(page: &str) -> Option<Url> {
+    let parsed = Url::parse(page).ok()?;
+    (bare_host(&parsed).as_deref() == Some("dailymotion.com")).then_some(())?;
+    Url::parse_with_params("https://www.dailymotion.com/services/oembed", [("url", page)]).ok()
+}
+
+pub(super) fn from_dailymotion_oembed(page: &str, body: &[u8]) -> Option<(super::PostInfo, Option<String>)> {
+    let parsed = Url::parse(page).ok()?;
+    let data: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let title: String = data["title"].as_str()?.trim().chars().take(200).collect();
+    if title.is_empty() {
+        return None;
+    }
+    let channel = data["author_name"].as_str().unwrap_or("Dailymotion").chars().take(80).collect();
+    let poster = data["thumbnail_url"]
+        .as_str()
+        .and_then(|url| publisher_image(&parsed, "dailymotion.com", &["dmcdn.net"], url));
+    Some((
+        super::PostInfo {
+            title,
+            channel,
+            summary: String::new(),
+        },
+        poster,
+    ))
 }
 
 /// The servers each service keeps its pictures on.
@@ -331,6 +852,7 @@ fn picture_hosts(service: Service) -> &'static [&'static str] {
         Service::Gyazo => &["i.gyazo.com", "thumb.gyazo.com"],
         Service::Flickr => &["staticflickr.com"],
         Service::Imgur => &["i.imgur.com"],
+        Service::Giphy | Service::Tenor => &[],
         // Lightshot's former screenshots are kept on Imgur
         Service::Lightshot => &["image.prntscr.com", "img.prnt.sc", "i.imgur.com"],
         Service::Reddit => &["i.redd.it", "preview.redd.it", "external-preview.redd.it"],
@@ -352,8 +874,18 @@ pub(super) fn picture_host_ok(service: Service, url: &str) -> bool {
     let Some(host) = parsed.host_str().map(|h| h.trim_end_matches('.').to_lowercase()) else {
         return false;
     };
-    if parsed.scheme() != "https" || !parsed.username().is_empty() {
+    if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
         return false;
+    }
+    if matches!(service, Service::Giphy | Service::Tenor) {
+        let domain = if service == Service::Giphy { ".giphy.com" } else { ".tenor.com" };
+        return parsed.port().is_none()
+            && host.strip_suffix(domain).is_some_and(|h| {
+                h.strip_prefix("media").is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit())) || (service == Service::Tenor && h == "c")
+            })
+            && [".gif", ".webp"]
+                .iter()
+                .any(|ext| parsed.path().to_ascii_lowercase().ends_with(ext));
     }
     if service == Service::Site {
         return on_site(&host);
@@ -392,9 +924,11 @@ pub(super) fn from_oembed(service: Service, body: &[u8]) -> Option<String> {
     picture_host_ok(service, &url).then_some(url)
 }
 
-/// The clip of a Gyazo video capture, from its page's oEmbed answer.
+/// A clip identified by its provider's metadata.
 pub(super) struct FoundClip {
     pub clip: super::Clip,
+    pub title: String,
+    pub channel: String,
     /// Its thumbnail's addresses, the larger first.
     pub posters: Vec<String>,
     /// Its size in pixels, when the answer gives it.
@@ -436,7 +970,13 @@ pub(super) fn clip_from_oembed(service: Service, page: &str, body: &[u8]) -> Opt
         None => Vec::new(),
     };
     let size = v["width"].as_f64().zip(v["height"].as_f64());
-    Some(FoundClip { clip, posters, size })
+    Some(FoundClip {
+        clip,
+        title: String::new(),
+        channel: String::new(),
+        posters,
+        size,
+    })
 }
 
 /// HTML's character references the services put in an attribute.
@@ -477,21 +1017,43 @@ fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     None
 }
 
+pub(super) fn metadata(html: &str, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        let (_, value) = head_meta(html).find(|(name, _)| name.eq_ignore_ascii_case(key))?;
+        let value: String = unescape(value)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(200)
+            .collect();
+        (!value.is_empty()).then_some(value)
+    })
+}
+
+fn head_meta(html: &str) -> impl Iterator<Item = (&str, &str)> {
+    html.split('<')
+        .skip(1)
+        .take_while(|tag| {
+            !tag.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("/head")) && !tag.get(..4).is_some_and(|s| s.eq_ignore_ascii_case("body"))
+        })
+        .filter_map(|tag| {
+            let tag = tag.split('>').next().unwrap_or("");
+            let is_meta =
+                tag.get(..4).is_some_and(|t| t.eq_ignore_ascii_case("meta")) && tag[4..].starts_with(|c: char| c.is_ascii_whitespace());
+            is_meta.then_some(())?;
+            Some((
+                attribute(tag, "property").or_else(|| attribute(tag, "name"))?,
+                attribute(tag, "content")?,
+            ))
+        })
+}
+
 /// The picture a page announces for itself: its `og:image`, or
 /// `twitter:image` when it has none.
 pub(super) fn from_head(service: Service, html: &str) -> Option<String> {
     let mut twitter = None;
-    for tag in html.split('<').skip(1) {
-        let tag = tag.split('>').next().unwrap_or("");
-        let is_meta =
-            tag.get(..4).is_some_and(|t| t.eq_ignore_ascii_case("meta")) && tag[4..].starts_with(|c: char| c.is_ascii_whitespace());
-        if !is_meta {
-            continue;
-        }
-        let key = attribute(tag, "property").or_else(|| attribute(tag, "name")).unwrap_or("");
-        let Some(content) = attribute(tag, "content") else {
-            continue;
-        };
+    for (key, content) in head_meta(html) {
         let url = cleaned(service, unescape(content));
         if !picture_host_ok(service, &url) || (service == Service::Site && site_icon(&url)) {
             continue;
@@ -504,6 +1066,416 @@ pub(super) fn from_head(service: Service, html: &str) -> Option<String> {
         }
     }
     twitter
+}
+
+#[test]
+fn reddit_permalink_can_supply_its_own_poster() {
+    let page = r#"<meta property="og:image" content="https://external-preview.redd.it/post.png?width=640&amp;format=pjpg">"#;
+    assert_eq!(
+        from_head(Service::Reddit, page).as_deref(),
+        Some("https://external-preview.redd.it/post.png?width=640&format=pjpg")
+    );
+    assert!(from_head(Service::Reddit, &page.replace("external-preview.redd.it", "other.example")).is_none());
+}
+
+/// The Spotlight webpage publishes a signed, public MP4 and its dimensions.
+pub(super) fn snapchat_clip(page: &str, html: &str) -> Option<FoundClip> {
+    let page_url = Url::parse(page).ok()?;
+    if bare_host(&page_url).as_deref() != Some("snapchat.com")
+        || !matches!(segments(&page_url).as_slice(), ["spotlight", _] | [_, "spotlight", _])
+        || metadata(html, &["og:video:type", "twitter:player:stream:content_type"]).as_deref() != Some("video/mp4")
+    {
+        return None;
+    }
+    let clip = head_meta(html).find_map(|(key, value)| {
+        if !matches!(
+            key.to_ascii_lowercase().as_str(),
+            "og:video:secure_url" | "og:video" | "twitter:player:stream"
+        ) || value.len() > 4096
+        {
+            return None;
+        }
+        let url = Url::parse(&unescape(value)).ok()?;
+        if !snapchat_video_source(&url) {
+            return None;
+        }
+        super::Clip::of(url.as_str())
+    })?;
+    Some(FoundClip {
+        clip,
+        title: metadata(html, &["og:title", "twitter:title"])?,
+        channel: metadata(html, &["author", "twitter:creator"]).unwrap_or_default(),
+        posters: publisher_poster(page, html).into_iter().collect(),
+        size: metadata(html, &["og:video:width"])
+            .and_then(|s| s.parse().ok())
+            .zip(metadata(html, &["og:video:height"]).and_then(|s| s.parse().ok())),
+    })
+}
+
+pub(super) fn snapchat_video_source(url: &Url) -> bool {
+    url.host_str() == Some("bolt-gcdn.sc-cdn.net")
+        && url.path().strip_prefix("/bp/").is_some_and(|path| {
+            (1..=128).contains(&path.len())
+                && path.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+                && path != "."
+                && path != ".."
+        })
+}
+
+#[test]
+fn snapchat_uses_the_public_mp4_and_its_publisher_dimensions() {
+    let page = "https://www.snapchat.com/@example/spotlight/Example_12";
+    let html = r#"<meta property="og:title" content="An example">
+      <meta property="og:video" content="https://bolt-gcdn.sc-cdn.net/bp/Clip.27.ID?token=abc&amp;v=2">
+      <meta property="og:video:type" content="video/mp4">
+      <meta property="og:video:width" content="540">
+      <meta property="og:video:height" content="960">"#;
+    let result = snapchat_clip(page, html).unwrap();
+    assert_eq!(
+        result.clip.download_url(),
+        Some("https://bolt-gcdn.sc-cdn.net/bp/Clip.27.ID?token=abc&v=2")
+    );
+    assert_eq!(result.size, Some((540.0, 960.0)));
+    assert!(snapchat_clip(page, &html.replace("sc-cdn.net", "sc-cdn.net.example.org")).is_none());
+    assert!(snapchat_clip(page, &html.replace("video/mp4", "text/html")).is_none());
+}
+
+/// Imgur share pages advertise a cover and, for animated posts, a stream.
+/// Keep galleries and albums as cover cards even when their first item moves.
+pub(super) fn clip_from_head(service: Service, page: &str, html: &str) -> Option<FoundClip> {
+    if service == Service::Site {
+        return declared_video(page, html);
+    }
+    if service != Service::Imgur {
+        return None;
+    }
+    let page = Url::parse(page).ok()?;
+    let parts = segments(&page);
+    let [id] = parts.as_slice() else {
+        return None;
+    };
+    let mut width = None;
+    let mut height = None;
+    let mut stream = None;
+    let mut video = None;
+    for (key, value) in head_meta(html) {
+        match key.to_ascii_lowercase().as_str() {
+            "og:video:width" => width = value.parse().ok(),
+            "og:video:height" => height = value.parse().ok(),
+            "twitter:player:stream" | "og:video" | "og:video:url" | "og:video:secure_url" | "twitter:player" => {
+                let value = unescape(value);
+                let parsed = Url::parse(&value).ok();
+                let Some(clip) = parsed
+                    .filter(|url| {
+                        url.host_str() == Some("i.imgur.com")
+                            && url
+                                .path()
+                                .strip_prefix('/')
+                                .and_then(|path| path.rsplit_once('.'))
+                                .is_some_and(|(stem, _)| stem == *id)
+                    })
+                    .and_then(|_| super::Clip::of(&value))
+                else {
+                    continue;
+                };
+                if key.eq_ignore_ascii_case("twitter:player:stream") {
+                    stream.get_or_insert(clip);
+                } else {
+                    video.get_or_insert(clip);
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(FoundClip {
+        clip: stream.or(video)?,
+        title: metadata(html, &["og:title"]).unwrap_or_default(),
+        channel: metadata(html, &["author"]).unwrap_or_default(),
+        posters: from_head(service, html).into_iter().collect(),
+        size: width.zip(height),
+    })
+}
+
+/// A configured site can name a direct video in its sharing metadata.
+fn declared_video(page: &str, html: &str) -> Option<FoundClip> {
+    let page = Url::parse(page).ok()?;
+    let clip = head_meta(html).find_map(|(name, value)| {
+        if !matches!(
+            name.to_ascii_lowercase().as_str(),
+            "og:video:secure_url" | "og:video:url" | "og:video" | "twitter:player:stream"
+        ) || value.len() > 2048
+        {
+            return None;
+        }
+        let media = page.join(&unescape(value)).ok()?;
+        if media.origin() != page.origin() {
+            return None;
+        }
+        let clip = super::Clip::of(media.as_str())?;
+        clip.download_url().is_some().then_some(clip)
+    })?;
+    let width = metadata(html, &["og:video:width"]).and_then(|s| s.parse().ok());
+    let height = metadata(html, &["og:video:height"]).and_then(|s| s.parse().ok());
+    Some(FoundClip {
+        clip,
+        title: metadata(html, &["og:title", "twitter:title"]).unwrap_or_default(),
+        channel: metadata(html, &["author"]).unwrap_or_default(),
+        posters: from_head(Service::Site, html).into_iter().collect(),
+        size: width.zip(height),
+    })
+}
+
+#[test]
+fn configured_pages_promote_same_origin_direct_media_only() {
+    let page = "https://i.imgur.com/shares/example";
+    let html = r#"<meta property="og:video" content="https://streamable.com/e/Demo42">
+        <meta property="og:video:secure_url" content="/sample.mp4">
+        <meta property="og:title" content="A vertical video">
+        <meta property="og:video:width" content="360">
+        <meta property="og:video:height" content="640">"#;
+    let result = declared_video(page, html).unwrap();
+    assert_eq!(result.clip.download_url(), Some("https://i.imgur.com/sample.mp4"));
+    assert_eq!(result.title, "A vertical video");
+    assert_eq!(result.size, Some((360.0, 640.0)));
+    let cross_site = r#"<meta property="og:video" content="https://video.twimg.com/example.mp4">"#;
+    assert!(declared_video(page, cross_site).is_none());
+}
+
+/// The native media and attribution advertised by Reddit's public post embed.
+pub(super) struct RedditEmbed {
+    pub post: super::PostInfo,
+    pub media: Option<String>,
+    pub poster: Option<String>,
+    pub clip: Option<super::Clip>,
+}
+
+pub(super) fn reddit_embed(page: &str, html: &str) -> Option<RedditEmbed> {
+    let page = Url::parse(page).ok()?;
+    let parts = segments(&page);
+    let index = parts.iter().position(|part| *part == "comments")?;
+    let id = parts.get(index + 1)?;
+    let (_, body) = html.split_once("<shreddit-screenview-data ")?;
+    let (tag, body) = body.split_once('>')?;
+    let data: serde_json::Value = serde_json::from_str(&unescape(attribute(&format!(" {tag}"), "data")?)).ok()?;
+    let media = &data["post"];
+    if media["id"].as_str()? != format!("t3_{id}") || media["nsfw"].as_bool()? {
+        return None;
+    }
+
+    let (_, title) = body.split_once(r#"<a id="embed-title""#)?;
+    let anchor = title.split_once("</a>")?.0;
+    let (_, title) = anchor.split_once("<h1")?.1.split_once('>')?;
+    let title: String = unescape(title.split_once("</h1>")?.0).trim().chars().take(200).collect();
+    if title.is_empty() {
+        return None;
+    }
+    let channel = data["subreddit"]["name"]
+        .as_str()
+        .filter(|name| (1..=80).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+        .map_or_else(String::new, |name| format!("r/{name}"));
+    let source = media["url"].as_str().unwrap_or_default();
+    let kind = media["type"].as_str().unwrap_or_default();
+    let clip = match kind {
+        "video" => super::Clip::of(source).filter(super::Clip::native_video),
+        "gif" => reddit_gif_rendition(body, source),
+        _ => None,
+    };
+    let media = (matches!(kind, "image" | "gif") && picture_host_ok(Service::Reddit, source)).then(|| source.to_owned());
+    let poster = body
+        .split("<img ")
+        .skip(1)
+        .filter_map(|img| img.split_once('>'))
+        .find_map(|(img, _)| {
+            let tag = format!(" {img}");
+            if !matches!(attribute(&tag, "alt"), Some("Media error" | "media poster")) {
+                return None;
+            }
+            let source = unescape(attribute(&tag, "src")?);
+            picture_host_ok(Service::Reddit, &source).then_some(source)
+        });
+    Some(RedditEmbed {
+        post: super::PostInfo {
+            title,
+            channel,
+            summary: String::new(),
+        },
+        media,
+        poster,
+        clip,
+    })
+}
+
+/// The public embed can publish a smaller MP4 for the original Reddit GIF.
+fn reddit_gif_rendition(html: &str, original: &str) -> Option<super::Clip> {
+    let original = Url::parse(original).ok()?;
+    if original.host_str()? != "i.redd.it" || !original.path().ends_with(".gif") {
+        return None;
+    }
+    html.split('<').filter_map(|part| part.split_once('>')).find_map(|(tag, _)| {
+        if !tag.starts_with("shreddit-player ") && !tag.starts_with("video ") && !tag.starts_with("source ") {
+            return None;
+        }
+        let source = Url::parse(&unescape(attribute(tag, "src")?)).ok()?;
+        if source.path() != original.path() || !reddit_gif_video_source(&source) {
+            return None;
+        }
+        super::Clip::of(source.as_str())
+    })
+}
+
+pub(super) fn reddit_gif_video_source(url: &Url) -> bool {
+    matches!(url.host_str(), Some("preview.redd.it" | "cf.preview.redd.it"))
+        && url
+            .path()
+            .strip_prefix('/')
+            .and_then(|path| path.strip_suffix(".gif"))
+            .is_some_and(|id| alnum(id, 6, 48))
+        && url.query_pairs().any(|(key, value)| key == "format" && value == "mp4")
+}
+
+#[test]
+fn reddit_gif_uses_only_a_published_rendition_of_the_same_file() {
+    let original = "https://i.redd.it/example123.gif";
+    let html = r#"<shreddit-player src="https://cf.preview.redd.it/example123.gif?format=mp4&amp;s=public"></shreddit-player>"#;
+    let clip = reddit_gif_rendition(html, original).unwrap();
+    assert_eq!(
+        clip.download_url(),
+        Some("https://cf.preview.redd.it/example123.gif?format=mp4&s=public")
+    );
+    assert!(reddit_gif_rendition(html, "https://i.redd.it/unrelated.gif").is_none());
+    assert!(reddit_gif_rendition(&html.replace("preview.redd.it", "preview.redd.it.example.com"), original).is_none());
+}
+
+#[test]
+fn reddit_embed_reads_media_only_for_the_requested_non_sensitive_post() {
+    let page = "https://www.reddit.com/r/demo/comments/demo01/example/";
+    let html = r#"<shreddit-screenview-data data="{&quot;post&quot;:{&quot;id&quot;:&quot;t3_demo01&quot;,&quot;type&quot;:&quot;gif&quot;,&quot;url&quot;:&quot;https://i.redd.it/example.gif&quot;,&quot;nsfw&quot;:false},&quot;subreddit&quot;:{&quot;name&quot;:&quot;demo&quot;}}"></shreddit-screenview-data>
+      <a id="embed-title"><h1>Example &amp; title</h1></a>
+      <img alt="Media error" src="https://external-preview.redd.it/example.jpg">"#;
+    let result = reddit_embed(page, html).unwrap();
+    assert_eq!(result.post.title, "Example & title");
+    assert_eq!(result.post.channel, "r/demo");
+    assert_eq!(result.media.as_deref(), Some("https://i.redd.it/example.gif"));
+    assert_eq!(result.poster.as_deref(), Some("https://external-preview.redd.it/example.jpg"));
+    assert!(reddit_embed(&page.replace("demo01", "demo02"), html).is_none());
+    assert!(reddit_embed(page, &html.replace("false", "true")).is_none());
+    assert!(
+        reddit_embed(page, &html.replace("i.redd.it", "other.example"))
+            .unwrap()
+            .media
+            .is_none()
+    );
+    let video = html
+        .replace("&quot;gif&quot;", "&quot;video&quot;")
+        .replace("i.redd.it/example.gif", "v.redd.it/5o5cu4n0upeb1");
+    assert!(reddit_embed(page, &video).unwrap().clip.is_some());
+}
+
+pub(super) fn reddit_feed(xml: &str) -> Option<super::PostInfo> {
+    let entry = xml.split("<entry").nth(1)?.split("</entry>").next()?;
+    let field = |name: &str| {
+        let value = entry
+            .split_once(&format!("<{name}"))?
+            .1
+            .split_once('>')?
+            .1
+            .split_once(&format!("</{name}>"))?
+            .0;
+        Some(unescape(value))
+    };
+    let title: String = field("title")?.trim().chars().take(200).collect();
+    if title.is_empty() {
+        return None;
+    }
+    let text = field("content").unwrap_or_default();
+    let summary = text
+        .split("<!-- SC_ON -->")
+        .nth(1)
+        .and_then(|body| body.split("<!-- SC_OFF -->").next())
+        .map_or_else(String::new, |body| {
+            body.split('<')
+                .flat_map(|part| part.split_once('>').map(|(_, text)| text))
+                .flat_map(str::split_whitespace)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(280)
+                .collect()
+        });
+    let community = entry
+        .split_once("<category")
+        .and_then(|(_, tag)| tag.split_once('>'))
+        .and_then(|(tag, _)| attribute(tag, "term"))
+        .map(|term| format!("r/{}", unescape(term)));
+    let channel = [
+        community,
+        field("name"),
+        field("published").map(|date| date.chars().take(10).collect()),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(" · ");
+    Some(super::PostInfo { title, channel, summary })
+}
+
+#[test]
+fn reddit_feed_keeps_the_post_title_byline_and_plain_text() {
+    let xml = r#"<feed><entry><title>Example title</title><author><name>/u/example</name></author>
+        <category term="demo"/><published>2026-03-01T15:51:00Z</published>
+        <content type="html">&lt;!-- SC_ON --&gt;&lt;p&gt;A short &lt;b&gt;summary&lt;/b&gt;.&lt;/p&gt;
+        &lt;!-- SC_OFF --&gt;</content></entry></feed>"#;
+    let post = reddit_feed(xml).unwrap();
+    assert_eq!(post.title, "Example title");
+    assert_eq!(post.channel, "r/demo · /u/example · 2026-03-01");
+    assert_eq!(post.summary, "A short summary .");
+}
+
+/// The first entry may link to the Reddit-hosted video, separately from its poster.
+pub(super) fn clip_from_feed(xml: &str) -> Option<FoundClip> {
+    let entry = xml.split("<entry").nth(1)?.split("</entry>").next()?;
+    let content = unescape(entry.split("<content").nth(1)?.split("</content>").next()?);
+    let url = content.split_once("href=\"https://v.redd.it/")?.1.split('"').next()?;
+    let clip = super::Clip::of(&format!("https://v.redd.it/{url}")).filter(super::Clip::native_video)?;
+    let post = reddit_feed(xml)?;
+    Some(FoundClip {
+        clip,
+        title: post.title,
+        channel: post.channel,
+        posters: from_feed(xml).into_iter().collect(),
+        size: None,
+    })
+}
+
+/// A GIF or animated WebP linked from the post itself. Reddit can publish a
+/// still `media:thumbnail` for these, so try the original image first.
+pub(super) fn reddit_animation(xml: &str) -> Option<String> {
+    let entry = xml.split("<entry").nth(1)?.split("</entry>").next()?;
+    let html = unescape(entry.split("<content").nth(1)?.split("</content>").next()?);
+    html.split('<').find_map(|tag| {
+        let tag = tag.split_once('>')?.0.strip_prefix('a')?;
+        if !tag.starts_with(|c: char| c.is_ascii_whitespace()) {
+            return None;
+        }
+        let url = Url::parse(&unescape(attribute(tag, "href")?)).ok()?;
+        let path = url.path().to_ascii_lowercase();
+        (url.host_str() == Some("i.redd.it")
+            && (path.ends_with(".gif") || path.ends_with(".webp"))
+            && picture_host_ok(Service::Reddit, url.as_str()))
+        .then(|| url.into())
+    })
+}
+
+#[test]
+fn reddit_prefers_its_animated_image_to_the_still_thumbnail() {
+    let xml = concat!(
+        r#"<feed><entry><media:thumbnail url="https://preview.redd.it/still.jpg"/>"#,
+        r#"<content type="html">&lt;a href=&quot;https://i.redd.it.example.org/untrusted.gif&quot;&gt;other&lt;/a&gt;"#,
+        r#"&lt;a href=&quot;https://i.redd.it/example.gif&quot;&gt;image&lt;/a&gt;</content></entry></feed>"#,
+    );
+    assert_eq!(reddit_animation(xml).as_deref(), Some("https://i.redd.it/example.gif"));
+    assert_eq!(from_feed(xml).as_deref(), Some("https://preview.redd.it/still.jpg"));
 }
 
 /// The picture of a Reddit post's feed: its entry's `media:thumbnail`
@@ -529,6 +1501,76 @@ const BLUESKY_SENSITIVE: &[&str] = &[
     "!warn",
     "!hide",
 ];
+
+/// Select a public MP4 rendition from X's post metadata. Sensitive posts
+/// keep the existing blurred picture and browser path.
+pub(super) fn clip_from_post(service: Service, body: &[u8]) -> Option<FoundClip> {
+    if service != Service::X {
+        return None;
+    }
+    let post: serde_json::Value = serde_json::from_slice(body).ok()?;
+    if post["possibly_sensitive"].as_bool() != Some(false) {
+        return None;
+    }
+    let detail = &post["mediaDetails"][0];
+    let variants = detail["video_info"]["variants"]
+        .as_array()
+        .or_else(|| post["video"]["variants"].as_array())?;
+    let clip = variants
+        .iter()
+        .filter_map(|variant| {
+            let url = variant["url"].as_str().or_else(|| variant["src"].as_str())?;
+            let media = Url::parse(url).ok()?;
+            if media.host_str()? != "video.twimg.com" || !media.path().ends_with(".mp4") {
+                return None;
+            }
+            Some((variant["bitrate"].as_u64().unwrap_or(0), super::Clip::of(url)?))
+        })
+        .min_by_key(|(bitrate, _)| bitrate.abs_diff(1_200_000))?
+        .1;
+    let poster = detail["media_url_https"].as_str().or_else(|| post["video"]["poster"].as_str());
+    let size = &detail["original_info"];
+    Some(FoundClip {
+        clip,
+        title: post["text"]
+            .as_str()
+            .unwrap_or_default()
+            .split(" https://t.co/")
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(160)
+            .collect(),
+        channel: post["user"]["name"].as_str().unwrap_or_default().chars().take(80).collect(),
+        posters: poster
+            .filter(|url| picture_host_ok(service, url))
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        size: size["width"].as_f64().zip(size["height"].as_f64()),
+    })
+}
+
+#[test]
+fn x_clips_require_a_public_mp4_on_the_official_video_host() {
+    let mut post = serde_json::json!({
+        "possibly_sensitive": false,
+        "video": {
+            "poster": "https://pbs.twimg.com/media/Preview.jpg",
+            "variants": [
+                {"src": "https://other.example/video.mp4"},
+                {"src": "https://video.twimg.com/test/master.m3u8"},
+                {"src": "https://video.twimg.com/test/clip.mp4"}
+            ]
+        }
+    });
+    let body = serde_json::to_vec(&post).unwrap();
+    let clip = clip_from_post(Service::X, &body).expect("public MP4 rendition");
+    assert_eq!(clip.clip.source(), "https://video.twimg.com/test/clip.mp4");
+    assert_eq!(clip.posters, ["https://pbs.twimg.com/media/Preview.jpg"]);
+    post["possibly_sensitive"] = true.into();
+    assert!(clip_from_post(Service::X, &serde_json::to_vec(&post).unwrap()).is_none());
+}
 
 /// The picture of a post's JSON answer and whether its network marks it
 /// sensitive: its first picture, or its video's thumbnail. A text post has
@@ -580,9 +1622,10 @@ pub fn blurred_until_clicked(url: &str) -> bool {
         return false;
     };
     bare_host(&parsed).is_some_and(|host| {
-        ["reddit.com", "redd.it", "redditmedia.com"]
-            .iter()
-            .any(|d| host == *d || host.strip_suffix(d).is_some_and(|sub| sub.ends_with('.')))
+        adult_media_site(&host)
+            || ["reddit.com", "redd.it", "redditmedia.com"]
+                .iter()
+                .any(|d| host == *d || host.strip_suffix(d).is_some_and(|sub| sub.ends_with('.')))
     })
 }
 
@@ -630,7 +1673,8 @@ pub(super) fn demo_source(url: &str) -> Option<(String, bool)> {
             },
         )),
         Step::Head(_) => plain(from_head(service, IMGUR_ALBUM)),
-        Step::Feed(_) => plain(from_feed(if url.contains("demo02") { REDDIT_TEXT } else { REDDIT_POST })),
+        Step::Publisher(_) | Step::PublisherLink(_) => None,
+        Step::Feed { .. } => plain(from_feed(if url.contains("demo02") { REDDIT_TEXT } else { REDDIT_POST })),
         Step::Post(_) if service == Service::X => from_post(service, X_POST.as_bytes()),
         Step::Post(_) => from_post(
             service,
@@ -639,11 +1683,19 @@ pub(super) fn demo_source(url: &str) -> Option<(String, bool)> {
     }
 }
 
+pub(super) fn demo_reddit_post(url: &str) -> Option<(super::PostInfo, Option<String>)> {
+    let (_, Step::Feed { .. }) = recognize(url)? else {
+        return None;
+    };
+    let xml = if url.contains("demo02") { REDDIT_TEXT } else { REDDIT_POST };
+    Some((reddit_feed(xml)?, from_feed(xml)))
+}
+
 /// Demo mode: the clip of a Gyazo link to the video capture of the saved
 /// answer (`9f8e7d6c…`).
 pub(super) fn demo_clip(url: &str) -> Option<FoundClip> {
     clip_from_oembed(recognize(url)?.0, url, GYAZO_VIDEO.as_bytes())
-        .filter(|found| found.clip.file.contains("9f8e7d6c5b4a39281706f5e4d3c2b1a0"))
+        .filter(|found| found.clip.source().contains("9f8e7d6c5b4a39281706f5e4d3c2b1a0"))
 }
 
 #[cfg(test)]

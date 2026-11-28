@@ -41,10 +41,10 @@ const MAX_CARDS: usize = 3;
 const MAX_ENTRIES: usize = 48;
 /// Downloads at once.
 const MAX_IN_FLIGHT: usize = 4;
-/// A video's card is wider than a picture's by this.
-const VIDEO_EXTRA: f32 = 20.0;
-/// Width of a video playing in its card, against the card's.
-const PLAYING_SCALE: f32 = 1.375;
+/// Start a video once most of its picture is visible. Keep it playing
+/// through small shifts at the edge of the scroll area.
+const AUTOPLAY_START_VISIBLE: f32 = 0.5;
+const AUTOPLAY_KEEP_VISIBLE: f32 = 0.15;
 const BUTTON: f32 = 26.0;
 const PLAY: f32 = 56.0;
 /// The player window's default width, and the height of its title bar
@@ -131,6 +131,7 @@ impl Shown {
 }
 
 enum Entry {
+    Post(lp::PostInfo, Option<Shown>),
     /// Asked for, waiting for a download slot.
     Queued,
     Loading,
@@ -141,7 +142,7 @@ enum Entry {
         thumbnail: Option<Shown>,
         /// Width over height of the video.
         aspect: f32,
-        /// A video file, not a YouTube video.
+        /// A direct clip or hosted video. YouTube has its own player.
         clip: Option<lp::Clip>,
     },
     Failed(Failure),
@@ -160,10 +161,17 @@ struct Playing {
     title: String,
     web: WebView,
     window: bool,
+    /// Last pass and whether the originating card fits the embedded player.
+    inline_target: Option<(u64, bool)>,
+    muted: bool,
+    automatic: bool,
+    native_video: bool,
     /// The pass its card last drew it in.
     drawn: u64,
     /// Width over height of the video: the card and the window keep it.
     aspect: f32,
+    /// Minimum width of the provider's player, when it imposes one.
+    minimum_width: f32,
     /// The window was given the video's shape since this video started
     /// playing in it.
     fitted: bool,
@@ -186,10 +194,10 @@ impl WebEnv {
     /// Draw the player. The plugin's browser starts muted
     /// (MediaPluginCEF::mCurVolume), so it gets the volume every frame: the
     /// plugin sends it only when it changes.
-    fn show(&self, web: &mut WebView, ui: &mut egui::Ui, p: &Palette, size: Vec2) {
-        web.show(ui, p, self.paths.as_ref(), &self.browser, None, size);
-        if let Some(plugin) = web.plugin_mut() {
-            plugin.set_volume(self.volume);
+    fn show(&self, player: &mut Playing, ui: &mut egui::Ui, p: &Palette, size: Vec2) {
+        player.web.show(ui, p, self.paths.as_ref(), &self.browser, None, size);
+        if let Some(plugin) = player.web.plugin_mut() {
+            plugin.set_volume(if player.muted { 0.0 } else { self.volume });
         }
     }
 }
@@ -209,6 +217,8 @@ pub struct Previews {
     /// A site whose previews the resident hid from a card's menu, for the
     /// app to add to the settings.
     pub hide_site: Option<String>,
+    /// The persisted autoplay preference changed from a card's menu.
+    pub autoplay_change: Option<bool>,
     /// `AURORA_DEMO_PREVIEW_PLAY=card|window`: the first video card drawn
     /// plays there by itself.
     pub demo_play: Option<lp::Player>,
@@ -227,6 +237,8 @@ pub struct Previews {
     hidden: HashSet<u64>,
     /// Blurred pictures clicked.
     revealed: HashSet<u64>,
+    /// A card explicitly stopped while it remains visible.
+    stopped: Option<(u64, u64)>,
     playing: Option<Playing>,
     lightbox: Option<Lightbox>,
     image_window: Option<Lightbox>,
@@ -243,6 +255,7 @@ impl Default for Previews {
             demo: false,
             web: None,
             hide_site: None,
+            autoplay_change: None,
             demo_play: None,
             open_settings: false,
             cache: HashMap::new(),
@@ -255,6 +268,7 @@ impl Default for Previews {
             asked: HashSet::new(),
             hidden: HashSet::new(),
             revealed: HashSet::new(),
+            stopped: None,
             playing: None,
             lightbox: None,
             image_window: None,
@@ -321,7 +335,7 @@ impl Previews {
         if let Some(player) = &mut self.playing
             && let Some(plugin) = player.web.plugin_mut()
         {
-            plugin.set_volume_immediate(volume);
+            plugin.set_volume_immediate(if player.muted { 0.0 } else { volume });
         }
     }
 
@@ -336,12 +350,12 @@ impl Previews {
     /// Before the conversation's editor and shortcuts receive keys.
     pub(super) fn lightbox_keys(&mut self, ctx: &egui::Context) {
         let owner = egui::Id::unique("conversations");
+        let lightbox = owner.with("image_enlargement");
         if self.enlarged()
             && ctx.memory(|m| m.top_modal_layer()).is_none()
             && (crate::ui::close_key::take(ctx, egui::Id::unique("conversations"))
-                || (ctx
-                    .top_layer_id()
-                    .is_none_or(|layer| layer.id == owner || layer.id == owner.with("image_enlargement"))
+                || ((ctx.top_layer_id().is_none_or(|layer| layer.id == owner || layer.id == lightbox)
+                    || ctx.memory(|m| m.has_focus(lightbox.with("canvas"))))
                     && ctx.input_mut(|i| {
                         i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) || i.consume_key(egui::Modifiers::COMMAND, egui::Key::W)
                     })))
@@ -371,7 +385,7 @@ impl Previews {
 
     fn enlarge(&mut self, ctx: &egui::Context, url: &str, trusted_only: bool, window: bool) {
         let Some(Cached {
-            entry: Entry::Picture(shown),
+            entry: Entry::Picture(shown) | Entry::Post(_, Some(shown)),
             ..
         }) = self.cache.get(url)
         else {
@@ -411,6 +425,13 @@ impl Previews {
             self.in_flight = self.in_flight.saturating_sub(1);
             let entry = match result {
                 Ok(Content::Picture(p)) => Entry::Picture(Shown::new(ctx, &url, p)),
+                Ok(Content::Post(post, picture)) => Entry::Post(
+                    post,
+                    picture.map(|(picture, source)| Shown {
+                        source: Some(source),
+                        ..Shown::new(ctx, &url, picture)
+                    }),
+                ),
                 Ok(Content::Page {
                     picture,
                     source,
@@ -428,8 +449,8 @@ impl Previews {
                     clip: None,
                 },
                 Ok(Content::Clip(c)) => Entry::Video {
-                    title: String::new(),
-                    channel: String::new(),
+                    title: c.title,
+                    channel: c.channel,
                     thumbnail: c.thumbnail.map(|p| Shown::new(ctx, &url, p)),
                     aspect: c.aspect.unwrap_or(DEFAULT_ASPECT),
                     clip: Some(c.clip),
@@ -539,11 +560,7 @@ impl Previews {
                 Target::Picture => lp::fetch_picture(&client, &url).await.map(Content::Picture),
                 Target::Video(v) => lp::fetch_video(&client, v).await.map(Content::Video),
                 // nothing reaches the site before it plays
-                Target::Clip(clip) => Ok(Content::Clip(lp::ClipInfo {
-                    clip: clip.clone(),
-                    thumbnail: None,
-                    aspect: None,
-                })),
+                Target::Clip(clip) => Ok(Content::Clip(lp::fetch_clip(&client, clip).await)),
                 Target::Page(_) => lp::fetch_page(&client, &url, trusted_only).await,
             };
             let _ = tx.send((url, result));
@@ -560,16 +577,10 @@ impl Previews {
         if line.origin != Origin::Live {
             return 0.0;
         }
-        let w = self.settings.size.width();
-        links(text)
+        let has_preview = links(text)
             .iter()
-            .filter_map(|url| lp::decide(&self.settings, self.place, sender(line), url).map(|(target, _)| (url, target)))
-            .map(|(url, target)| match target {
-                // a Gyazo page may lead to a video capture
-                Target::Picture | Target::Page(_) if !matches!(self.cache.get(url).map(|c| &c.entry), Some(Entry::Video { .. })) => w,
-                _ => w + VIDEO_EXTRA,
-            })
-            .fold(0.0, f32::max)
+            .any(|url| lp::decide(&self.settings, self.place, sender(line), url).is_some());
+        if has_preview { self.settings.size.width() } else { 0.0 }
     }
 
     /// A video of the viewer's own choosing may play in the player window:
@@ -598,8 +609,13 @@ impl Previews {
             title: title.to_owned(),
             web,
             window: true,
+            inline_target: None,
+            muted: false,
+            automatic: false,
+            native_video: false,
             drawn: 0,
             aspect: DEFAULT_ASPECT,
+            minimum_width: 0.0,
             fitted: false,
             chrome: Vec2::new(0.0, TITLE_BAR),
         });
@@ -626,8 +642,14 @@ impl Previews {
             self.image_window = None;
         }
         let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
-        if self.playing.as_ref().is_some_and(|v| !v.window && pass > v.drawn + 2) {
+        if self.playing.as_ref().is_some_and(|v| {
+            (!self.settings.adult_previews && lp::adult_link(&v.link))
+                || (!v.window && (pass > v.drawn + 2 || (v.automatic && !self.settings.autoplay_video)))
+        }) {
             self.playing = None;
+        }
+        if self.stopped.is_some_and(|(_, seen)| pass.saturating_sub(seen) > 2) {
+            self.stopped = None;
         }
         let Some(v) = self.playing.as_mut().filter(|v| v.window) else {
             return;
@@ -641,21 +663,45 @@ impl Previews {
             v.title.clone()
         };
         let mut open = true;
-        let (mut browser, mut copy_link, mut settings) = (false, false, false);
+        let (mut browser, mut copy_link, mut settings, mut toggle_sound, mut dock) = (false, false, false, false, false);
         let work = crate::ui::layout::work_area(ctx);
-        let default = window_size(WINDOW_WIDTH, v.chrome, v.aspect, work.height() * 0.8);
+        let minimum = Vec2::new(v.minimum_width, v.minimum_width / v.aspect) + v.chrome;
+        let default = window_size(WINDOW_WIDTH, v.chrome, v.aspect, work.height() * 0.8).max(minimum);
         let pos = work.center() - default * 0.5;
-        let body = crate::ui::widgets::Floater::new(PLAYER_WINDOW, title, pos, default)
+        let browser_tip = link_tip(&v.link, false);
+        let copy_tip = link_tip(&v.link, true);
+        let mut floater = crate::ui::widgets::Floater::new(PLAYER_WINDOW, title, pos, default);
+        if crate::outside::native(ctx, egui::Id::unique(PLAYER_WINDOW))
+            && v.inline_target.is_some_and(|(seen, fits)| fits && pass.saturating_sub(seen) <= 2)
+        {
+            floater = floater.action("messages-filled", aurora_i18n::tr!("ui-chat-preview-dock"), &mut dock);
+        }
+        if v.native_video {
+            floater = floater.action(
+                if v.muted { "volume-off" } else { "volume" },
+                sound_action(v.muted),
+                &mut toggle_sound,
+            );
+        }
+        floater = floater
             .action("settings-filled", aurora_i18n::tr!("ui-chat-preview-settings"), &mut settings)
-            .action("external-link-filled", &link_tip(&v.link, false), &mut browser)
-            .action("link-filled", &link_tip(&v.link, true), &mut copy_link)
+            .action("external-link-filled", &browser_tip, &mut browser)
+            .action("link-filled", &copy_tip, &mut copy_link)
             .flush_body()
-            .keep_aspect(v.aspect, v.chrome)
-            .show(ctx, p, &mut open, |ui| {
-                let size = ui.available_size().max(Vec2::splat(64.0));
-                web.show(&mut v.web, ui, p, size);
-                size
-            });
+            .keep_aspect(v.aspect, v.chrome);
+        floater.min_size = floater.min_size.max(minimum);
+        let body = floater.show(ctx, p, &mut open, |ui| {
+            let mut size = ui.available_size();
+            if v.native_video {
+                size.y -= ui.spacing().interact_size.y;
+            }
+            let size = size.max(Vec2::splat(64.0));
+            web.show(v, ui, p, size);
+            if v.native_video {
+                native_video_control(ui, &mut v.web);
+            }
+            size
+        });
         // the window keeps the video's shape (#848): its edges hold it at
         // every frame of a drag (#941); outside a drag its height follows
         // its width when another video starts in it, or when the title
@@ -682,11 +728,18 @@ impl Previews {
             } else {
                 (outer.width().max(160.0), work.height() * 0.8)
             };
-            let want = window_size(width, v.chrome, v.aspect, max_height);
+            let want = window_size(width, v.chrome, v.aspect, max_height).max(minimum);
             if (want - outer.size()).abs().max_elem() > 1.5 {
                 crate::ui::widgets::size_floater(ctx, PLAYER_WINDOW, want);
             }
             v.fitted = true;
+        }
+        if dock {
+            continue_in_chat(v, ctx, pass);
+        }
+        if toggle_sound {
+            v.muted = !v.muted;
+            v.automatic = false;
         }
         if browser {
             super::open_web_link(ctx, &v.link);
@@ -698,6 +751,7 @@ impl Previews {
             self.open_settings = true;
         }
         if !open {
+            self.stopped = Some((v.key, pass));
             self.playing = None;
         }
     }
@@ -754,6 +808,9 @@ pub(super) fn text<'a>(pv: Option<&Previews>, line: &ChatLine, text: &'a str, wi
             let Some((_, start)) = lp::decide(&pv.settings, pv.place, sender(line), url) else {
                 return false;
             };
+            if lp::blurred_until_clicked(url) {
+                return false;
+            }
             let k = key(line, url);
             if pv.hidden.contains(&k) || (start == Start::Ask && !pv.asked.contains(&k)) {
                 return false;
@@ -817,7 +874,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
         return;
     }
     if start == Start::Ask && !pv.asked.contains(&k) {
-        if ask_card(ui, p, url, target, width + VIDEO_EXTRA) {
+        if ask_card(ui, p, url, target, width) {
             pv.asked.insert(k);
         }
         return;
@@ -838,11 +895,10 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
     let resp = match (&cached.entry, target) {
         (Entry::Queued | Entry::Loading, Target::Picture | Target::Page(_)) => placeholder(ui, p, Vec2::new(width, (width * 0.75).round())),
         (Entry::Queued | Entry::Loading, Target::Video(_) | Target::Clip(_)) => {
-            let w = width + VIDEO_EXTRA;
-            placeholder(ui, p, Vec2::new(w, (w * 9.0 / 16.0).round()))
+            placeholder(ui, p, Vec2::new(width, (width * 9.0 / 16.0).round()))
         }
         (Entry::Picture(shown), _) => {
-            let out = picture(ui, p, shown, url, width, blur);
+            let out = picture(ui, p, shown, url, width, blur, false);
             if !blur && pv.demo && pv.demo_zoom.as_deref() == Some("links") {
                 let button = BUTTON.min((out.resp.rect.width() - 32.0) / 5.0);
                 note_link_hover(
@@ -887,18 +943,77 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
             }
             out.resp
         }
-        // a YouTube video, a clip, or the clip a Gyazo page leads to
+        (Entry::Post(post, image), _) => {
+            let mut reveal = false;
+            let reddit = matches!(target, Target::Page(lp::Service::Reddit));
+            let mut reddit_picture = None;
+            let frame = egui::Frame::new()
+                .fill(p.raised)
+                .corner_radius(ui.visuals().window_corner_radius)
+                .inner_margin(10)
+                .show(ui, |ui| {
+                    ui.set_max_width(width);
+                    if reddit {
+                        if !post.channel.is_empty() {
+                            ui.label(RichText::new(&post.channel).size(11.5).color(p.muted));
+                        }
+                        if ui.link(RichText::new(&post.title).strong()).clicked() {
+                            open_reddit_post(ui.ctx(), url);
+                        }
+                    } else {
+                        ui.label(RichText::new(&post.title).strong().color(p.ink));
+                        if !post.channel.is_empty() {
+                            ui.label(RichText::new(&post.channel).size(11.5).color(p.muted));
+                        }
+                    }
+                    if !post.summary.is_empty() {
+                        if pv.place == Place::Group && pv.settings.blur_groups && !pv.revealed.contains(&k) {
+                            reveal |= ui.small_button(aurora_i18n::tr!("ui-chat-preview-show")).clicked();
+                        } else {
+                            ui.label(RichText::new(&post.summary).color(p.ink));
+                        }
+                    }
+                    if !reddit && crate::ui::widgets::icon_button(ui, p, "external-link-filled", &link_tip(url, false), true) {
+                        super::open_web_link(ui.ctx(), url);
+                    }
+                    if reddit && let Some(image) = image {
+                        reddit_picture = Some(picture(ui, p, image, url, width, blur, !image.animated()));
+                    }
+                });
+            if let Some(image) = image {
+                let out = reddit_picture.unwrap_or_else(|| picture(ui, p, image, url, width, blur, false));
+                match out.action {
+                    Some(Action::Reveal) => reveal = true,
+                    Some(Action::Copy) => clipboard::request(ui.ctx(), &image.copy),
+                    Some(Action::CopyLink) => ui.ctx().copy_text(url.to_owned()),
+                    Some(Action::Open) if reddit => open_reddit_post(ui.ctx(), url),
+                    Some(Action::Open) => super::open_web_link(ui.ctx(), url),
+                    Some(Action::Enlarge) => enlarge = true,
+                    Some(Action::Window) => window = true,
+                    Some(Action::Hide) => {
+                        pv.hidden.insert(k);
+                    }
+                    None => {}
+                }
+                if reveal {
+                    pv.revealed.insert(k);
+                }
+                out.resp
+            } else {
+                if reveal {
+                    pv.revealed.insert(k);
+                }
+                frame.response
+            }
+        }
+        // A hosted video, a direct clip, or a clip found on a service page.
         (Entry::Video { .. }, _) => {
-            let video = match target {
-                Target::Video(video) => Some(video.clone()),
-                _ => None,
-            };
-            video_card(ui, p, pv, k, url, video.as_ref(), width + VIDEO_EXTRA);
+            video_card(ui, p, pv, k, url, target, width, start == Start::Load && !blur);
             return;
         }
         (Entry::Failed(Failure::TooLarge(size)), _) => {
             let size = *size;
-            too_large(ui, p, url, size, width + VIDEO_EXTRA);
+            too_large(ui, p, url, size, width);
             return;
         }
         // not a picture, unavailable: the link stays a link
@@ -907,7 +1022,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
     if enlarge || window {
         pv.enlarge(ui.ctx(), url, trusted_only, window);
     }
-    card_menu(&resp, p, pv, k, url);
+    card_menu(&resp, p, pv, k, url, false, false);
 }
 
 /// Exercise the actual hovered Copy button, including platform clipboard delivery.
@@ -1009,7 +1124,7 @@ fn paint_icon(painter: &egui::Painter, icon: &str, rect: egui::Rect, color: Colo
     super::thread::paint_icon(painter, icon, rect, color);
 }
 
-/// A square button over a picture; true when clicked.
+/// A square button over media; true when clicked.
 fn overlay_button(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, tip: &str) -> bool {
     let resp = ui.interact(
         rect,
@@ -1025,12 +1140,13 @@ fn overlay_button(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, 
         egui::Rect::from_center_size(rect.center(), Vec2::splat(15.0)),
         p.ink,
     );
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
     resp.on_hover_text(tip).clicked()
 }
 
 /// A picture's card: the picture (or its blur), the GIF mark, and the
 /// buttons while hovered.
-fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, url: &str, width: f32, blur: bool) -> PictureOut {
+fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, url: &str, width: f32, blur: bool, opens_post: bool) -> PictureOut {
     let size = shown.fit(width);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let radius = ui.visuals().window_corner_radius;
@@ -1095,6 +1211,9 @@ fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, url: &str, width: f32,
             ("external-link-filled", link_tip(url, false), Action::Open),
             ("link-filled", link_tip(url, true), Action::CopyLink),
         ] {
+            if opens_post && matches!(act, Action::Window) {
+                continue;
+            }
             let b = egui::Rect::from_min_size(egui::pos2(x, y), Vec2::splat(button));
             if overlay_button(ui, p, b, icon, &tip) {
                 action = Some(act);
@@ -1103,12 +1222,20 @@ fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, url: &str, width: f32,
         }
     }
     if action.is_none() && resp.clicked() {
-        action = Some(Action::Enlarge);
+        action = Some(if opens_post { Action::Open } else { Action::Enlarge });
     }
-    let resp = resp
-        .on_hover_cursor(egui::CursorIcon::ZoomIn)
-        .on_hover_text(aurora_i18n::tr!("ui-chat-preview-enlarge"));
+    let resp = if opens_post {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(link_tip(url, false))
+    } else {
+        resp.on_hover_cursor(egui::CursorIcon::ZoomIn)
+            .on_hover_text(aurora_i18n::tr!("ui-chat-preview-enlarge"))
+    };
     PictureOut { resp, action }
+}
+
+fn open_reddit_post(ctx: &egui::Context, url: &str) {
+    crate::ui::context::request(ctx, crate::ui::context::CtxAction::OpenUrlExternal(url.to_owned()));
 }
 
 fn link_tip(url: &str, copy: bool) -> String {
@@ -1226,8 +1353,12 @@ fn too_large(ui: &mut egui::Ui, p: &Palette, url: &str, size: Option<u64>, width
 /// A YouTube video (`video`) or a clip: its picture with the play button,
 /// its title and channel (a clip: its site); playing, the player in place of
 /// the picture with its buttons under it.
-fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, video: Option<&lp::Video>, width: f32) {
+fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, target: &Target, width: f32, allow_autoplay: bool) {
     let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
+    let video = match target {
+        Target::Video(video) => Some(video),
+        _ => None,
+    };
     let Some(Cached {
         entry: Entry::Video {
             title,
@@ -1243,40 +1374,55 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
     };
     let aspect = *aspect;
     let clip = clip.clone();
+    let minimum_width = clip.as_ref().map_or(0.0, lp::Clip::minimum_width);
+    let provider_click = clip.as_ref().is_some_and(lp::Clip::requires_player_click);
+    let native_video = clip.as_ref().is_some_and(lp::Clip::native_video);
+    let download = clip.as_ref().and_then(lp::Clip::download_url);
+    let save_id = egui::Id::unique(("save_chat_video", k));
     if clip.is_none() && video.is_none() {
         return;
     }
     let title = if title.is_empty() {
-        if clip.is_some() {
-            aurora_i18n::tr!("ui-chat-preview-clip")
+        if let Some(clip) = &clip {
+            clip.fallback_title()
         } else {
-            aurora_i18n::tr!("ui-chat-preview-video")
+            aurora_i18n::tr!("ui-chat-preview-video").to_owned()
         }
-        .to_owned()
     } else {
         title.clone()
     };
     let channel = match (&clip, channel.is_empty()) {
-        (Some(_), _) => lp::host(url).unwrap_or_default(),
+        (Some(_), true) => lp::host(url).unwrap_or_default(),
+        (Some(_), false) => format!("{channel} · {}", lp::host(url).unwrap_or_default()),
         (None, true) => "YouTube".to_owned(),
         (None, false) => format!("{channel} · YouTube"),
     };
     let here = pv.playing.as_ref().filter(|v| v.key == k).map(|v| v.window);
-    let width = if here == Some(false) {
-        (width * PLAYING_SCALE).min(ui.available_width().max(width))
-    } else {
-        width
-    };
+    // Provider minimums apply only while using that provider in the chat.
+    // A clip coming into view must not resize its own card by starting.
+    let playing_width = width.max(minimum_width).min(ui.available_width().max(width));
+    let fits_inline = video_size(playing_width, aspect).x >= minimum_width;
+    let width = if here == Some(false) { playing_width } else { width };
     // the video in its own shape; the card no narrower than its text needs
     let size = video_size(width, aspect);
-    let card_width = size.x.max(MIN_VIDEO_CARD.min(width));
+    let reddit_post = matches!(target, Target::Page(lp::Service::Reddit));
+    let card_width = if reddit_post {
+        width
+    } else {
+        size.x.max(MIN_VIDEO_CARD.min(width))
+    };
     // the player's buttons show while the pointer is over the card (#848)
     let hover_id = ui.scope_id().with(("video_card_hover", k));
     let last = ui.ctx().data(|d| d.get_temp::<egui::Rect>(hover_id));
     let over = last.is_some_and(|r| ui.rect_contains_pointer(r));
     let shown = ui.ctx().animate_bool(hover_id, over);
+    let blur_poster = lp::blurred_until_clicked(url)
+        || (pv.place == Place::Group
+            && pv.settings.blur_groups
+            && (clip.as_ref().is_some_and(lp::Clip::hosted) || matches!(target, Target::Page(lp::Service::Imgur))));
     let mut play = false;
-    let (mut detach, mut stop, mut settings) = (false, false, false);
+    let mut visible = false;
+    let (mut detach, mut stop, mut settings, mut dock) = (false, false, false, false);
     let resp = egui::Frame::new()
         .fill(p.raised)
         .corner_radius(ui.visuals().window_corner_radius)
@@ -1285,6 +1431,13 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             ui.spacing_mut().item_spacing.y = 0.0;
             let (row, _) = ui.allocate_exact_size(Vec2::new(card_width, size.y), egui::Sense::hover());
             let area = egui::Rect::from_center_size(row.center(), size);
+            let visible_area = area.intersect(ui.clip_rect());
+            let visible_fraction = if visible_area.is_positive() {
+                visible_area.area() / area.area()
+            } else {
+                0.0
+            };
+            visible = visible_fraction > AUTOPLAY_START_VISIBLE;
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(area)
@@ -1292,8 +1445,10 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             );
             match (here, pv.playing.as_mut(), pv.web.as_ref()) {
                 (Some(false), Some(v), Some(web)) => {
-                    v.drawn = pass;
-                    web.show(&mut v.web, &mut child, p, size);
+                    if visible_fraction > AUTOPLAY_KEEP_VISIBLE || !v.automatic {
+                        v.drawn = pass;
+                    }
+                    web.show(v, &mut child, p, size);
                 }
                 _ => {
                     let ui = &mut child;
@@ -1307,7 +1462,8 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                                 sw: 0,
                                 se: 0,
                             };
-                            egui::Image::new(&t.frames[0].0)
+                            let texture = if blur_poster { &t.blurred } else { &t.frames[0].0 };
+                            egui::Image::new(texture)
                                 .uv(thumbnail_uv(t.size, aspect))
                                 .corner_radius(corners)
                                 .paint_at(ui, rect);
@@ -1354,13 +1510,29 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                         );
                         if resp
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .on_hover_text(aurora_i18n::tr!("ui-chat-preview-play"))
+                            .on_hover_text(if provider_click {
+                                aurora_i18n::tr!("ui-chat-preview-load-player")
+                            } else {
+                                aurora_i18n::tr!("ui-chat-preview-play")
+                            })
                             .clicked()
                         {
                             play = true;
                         }
                     }
                 }
+            }
+            if here == Some(false)
+                && let Some(v) = &mut pv.playing
+                && v.native_video
+            {
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    native_video_control(ui, &mut v.web);
+                    if crate::ui::widgets::icon_button(ui, p, if v.muted { "volume-off" } else { "volume" }, sound_action(v.muted), true) {
+                        v.muted = !v.muted;
+                    }
+                });
             }
             egui::Frame::new()
                 .inner_margin(egui::Margin {
@@ -1373,11 +1545,28 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                     ui.horizontal(|ui| {
                         // room kept for the buttons while it plays here, so
                         // the title does not move when they appear
-                        let buttons = if here == Some(false) { 5.0 } else { 2.0 } * (20.0 + 6.0);
+                        let buttons = (match here {
+                            Some(false) => 5.0,
+                            Some(true) if fits_inline && visible => 3.0,
+                            _ => 2.0,
+                        } + if download.is_some() { 1.0 } else { 0.0 })
+                            * (20.0 + 6.0);
                         ui.vertical(|ui| {
                             ui.set_width((ui.available_width() - buttons).max(60.0));
                             ui.spacing_mut().item_spacing.y = 2.0;
-                            ui.add(egui::Label::new(RichText::new(&title).size(13.5).strong().color(p.ink)).truncate());
+                            let title = RichText::new(&title).size(13.5).strong();
+                            if reddit_post {
+                                let text = title.color(ui.visuals().hyperlink_color);
+                                if ui
+                                    .add(egui::Label::new(text).wrap().sense(egui::Sense::click()))
+                                    .on_hover_text(link_tip(url, false))
+                                    .clicked()
+                                {
+                                    open_reddit_post(ui.ctx(), url);
+                                }
+                            } else {
+                                ui.add(egui::Label::new(title.color(p.ink)).truncate());
+                            }
                             ui.add(egui::Label::new(RichText::new(&channel).size(11.5).color(p.muted)).truncate());
                         });
                         if shown > 0.01 {
@@ -1388,6 +1577,32 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                                 }
                                 if crate::ui::widgets::icon_button(ui, p, "link-filled", &link_tip(url, true), true) {
                                     ui.ctx().copy_text(url.to_owned());
+                                }
+                                if let Some(source) = download {
+                                    let (saving, saved) = ui.ctx().data(|data| {
+                                        (
+                                            data.get_temp::<bool>(save_id.with("saving")) == Some(true),
+                                            data.get_temp::<bool>(save_id),
+                                        )
+                                    });
+                                    let tip = match (saving, saved) {
+                                        (true, _) => aurora_i18n::tr!("ui-chat-preview-saving-video"),
+                                        (_, Some(true)) => aurora_i18n::tr!("ui-chat-preview-video-saved"),
+                                        (_, Some(false)) => aurora_i18n::tr!("ui-chat-preview-video-save-failed"),
+                                        _ => aurora_i18n::tr!("ui-chat-preview-save-video"),
+                                    };
+                                    if crate::ui::widgets::icon_button(ui, p, "download-filled", tip, !saving) {
+                                        save_video(ui.ctx().clone(), save_id, source.to_owned());
+                                    }
+                                }
+                                if here == Some(true) && fits_inline && visible {
+                                    dock = crate::ui::widgets::icon_button(
+                                        ui,
+                                        p,
+                                        "messages-filled",
+                                        aurora_i18n::tr!("ui-chat-preview-dock"),
+                                        true,
+                                    );
                                 }
                                 if here != Some(false) {
                                     return;
@@ -1423,8 +1638,46 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
     if pv.demo && pv.demo_zoom.as_deref() == Some("links") {
         note_link_hover(ui, resp.rect, egui::pos2(resp.rect.right() - 18.0, resp.rect.bottom() - 26.0));
     }
-    let demo = pv.playing.is_none().then(|| pv.demo_play.take()).flatten();
-    if play || demo.is_some() {
+    if visible && let Some(v) = pv.playing.as_mut().filter(|v| v.key == k) {
+        v.inline_target = Some((pass, fits_inline));
+        if !fits_inline && !v.window {
+            v.window = true;
+            v.fitted = false;
+        }
+    }
+    let stopped = pv
+        .stopped
+        .filter(|(key, seen)| *key == k && pass.saturating_sub(*seen) <= 2)
+        .is_some();
+    if stopped && visible {
+        pv.stopped = Some((k, pass));
+    }
+    let demo = (pv.playing.is_none() && !lp::adult_link(url))
+        .then(|| pv.demo_play.take())
+        .flatten();
+    let automatic = !play
+        && demo.is_none()
+        && allow_autoplay
+        && visible
+        && pv.settings.autoplay_video
+        && pv.settings.player == lp::Player::InCard
+        && minimum_width == 0.0
+        && !provider_click
+        && !native_video
+        && pv.playing.is_none()
+        && !stopped
+        && video.is_none()
+        && crate::link_trust::classify(url) == crate::link_trust::Trust::Trusted;
+    let needs_browser = play && minimum_width > 0.0 && {
+        let work = crate::ui::layout::work_area(ui.ctx());
+        minimum_width > work.width() || minimum_width / aspect + TITLE_BAR > work.height()
+    };
+    if needs_browser {
+        super::open_web_link(ui.ctx(), url);
+    } else if play || demo.is_some() || automatic {
+        if stopped {
+            pv.stopped = None;
+        }
         let mut options = pv.settings.player_options(aurora_i18n::language());
         // AURORA_DEMO_VIDEO_VOLUME=<0-100>: the level a video starts at,
         // as if kept from an earlier one
@@ -1438,30 +1691,126 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             web: {
                 let mut web = WebView::default();
                 match (&clip, video) {
-                    (Some(clip), _) => web.navigate(&clip.player_page(&options, k)),
+                    (Some(clip), _) => {
+                        let page = clip.player_page(&options, k);
+                        if native_video {
+                            web.navigate_video(&page);
+                        } else {
+                            web.navigate(&page);
+                        }
+                    }
                     (None, Some(video)) => web.navigate(&video.player_page(&options)),
                     (None, None) => {}
                 }
                 web
             },
-            window: demo.unwrap_or(pv.settings.player) == lp::Player::Window,
+            window: minimum_width > 0.0 || demo.unwrap_or(pv.settings.player) == lp::Player::Window,
+            inline_target: Some((pass, fits_inline)),
+            muted: false,
+            automatic,
+            native_video,
             drawn: pass,
             aspect,
+            minimum_width,
             fitted: false,
             chrome: Vec2::new(0.0, TITLE_BAR),
         });
+        ui.ctx().request_repaint();
+    }
+    if dock && let Some(v) = pv.playing.as_mut().filter(|v| v.key == k) {
+        continue_in_chat(v, ui.ctx(), pass);
     }
     if detach && let Some(v) = pv.playing.as_mut() {
         v.window = true;
+        v.automatic = false;
         v.fitted = false;
     }
     if stop {
+        pv.stopped = Some((k, pass));
         pv.playing = None;
     }
     if settings {
         pv.open_settings = true;
     }
-    card_menu(&resp, p, pv, k, url);
+    let right_click = ui.rect_contains_pointer(resp.rect) && ui.input(|input| input.pointer.secondary_clicked());
+    card_menu(&resp, p, pv, k, url, true, right_click);
+}
+
+fn continue_in_chat(player: &mut Playing, ctx: &egui::Context, pass: u64) {
+    let window = egui::Id::unique(PLAYER_WINDOW);
+    if crate::outside::wanted(ctx, window) {
+        crate::outside::want(ctx, window, false);
+    }
+    player.window = false;
+    player.drawn = pass;
+    ctx.request_repaint();
+}
+
+fn native_video_control(ui: &mut egui::Ui, web: &mut WebView) {
+    if let Some(plugin) = web.plugin_mut() {
+        let playing = plugin.status() == aurora_media::MediaStatus::Playing;
+        let label = if playing {
+            aurora_i18n::tr!("ui-chat-preview-pause")
+        } else {
+            aurora_i18n::tr!("ui-chat-preview-play")
+        };
+        if ui.small_button(label).clicked() {
+            if playing {
+                plugin.pause();
+            } else {
+                plugin.start(1.0);
+            }
+        }
+    }
+}
+
+fn save_video(ctx: egui::Context, id: egui::Id, url: String) {
+    ctx.data_mut(|data| {
+        data.remove::<bool>(id);
+        data.insert_temp(id.with("saving"), true);
+    });
+    std::thread::spawn(move || {
+        let name = reqwest::Url::parse(&url)
+            .ok()
+            .and_then(|url| {
+                let name = url.path_segments()?.next_back()?;
+                (!name.is_empty()
+                    && name.len() <= 100
+                    && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')))
+                .then(|| name.to_owned())
+            })
+            .unwrap_or_else(|| "video.mp4".to_owned());
+        let result = rfd::FileDialog::new()
+            .set_title(aurora_i18n::tr!("ui-chat-preview-save-video"))
+            .set_file_name(name)
+            .save_file()
+            .map(|path| {
+                let result = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(anyhow::Error::from)
+                    .and_then(|runtime| runtime.block_on(lp::save_video(&url, &path)));
+                if let Err(error) = &result {
+                    log::warn!("chat video could not be saved: {error}");
+                }
+                result.is_ok()
+            });
+        ctx.data_mut(|data| {
+            data.remove::<bool>(id.with("saving"));
+            if let Some(saved) = result {
+                data.insert_temp(id, saved);
+            }
+        });
+        ctx.request_repaint();
+    });
+}
+
+fn sound_action(muted: bool) -> &'static str {
+    if muted {
+        aurora_i18n::tr!("ui-chat-preview-unmute")
+    } else {
+        aurora_i18n::tr!("ui-chat-preview-mute")
+    }
 }
 
 /// `AURORA_DEMO_VIDEO_VOLUME=<0-100>` (demo only): the player's starting level.
@@ -1478,14 +1827,58 @@ fn demo_video_volume() -> Option<u8> {
 
 /// Right click on a card: open, copy the link, hide this preview, hide the
 /// previews of its site.
-fn card_menu(resp: &egui::Response, p: &Palette, pv: &mut Previews, k: u64, url: &str) {
+fn card_menu(resp: &egui::Response, p: &Palette, pv: &mut Previews, k: u64, url: &str, video: bool, right_click: bool) {
     let site = lp::host(url).unwrap_or_default();
-    crate::ui::menu::context_menu(resp, p, |ui| {
+    let direct = pv
+        .cache
+        .get(url)
+        .and_then(|cached| match &cached.entry {
+            Entry::Video { clip: Some(clip), .. } => clip.download_url(),
+            _ => None,
+        })
+        .map(str::to_owned);
+    let status_id = egui::Id::unique(("save_chat_video", k));
+    crate::ui::menu::context_menu_also(resp, p, right_click, |ui| {
         if crate::ui::menu::item(ui, p, "external-link-filled", aurora_i18n::tr!("ui-chat-preview-open")) {
             super::open_web_link(ui.ctx(), url);
         }
         if crate::ui::menu::item(ui, p, "copy-filled", aurora_i18n::tr!("ui-chat-preview-copy-link")) {
             ui.ctx().copy_text(url.to_owned());
+        }
+        if let Some(url) = &direct {
+            let status = ui.ctx().data(|data| data.get_temp::<bool>(status_id));
+            let saving = ui.ctx().data(|data| data.get_temp::<bool>(status_id.with("saving"))) == Some(true);
+            if saving {
+                ui.label(aurora_i18n::tr!("ui-chat-preview-saving-video"));
+            } else {
+                if let Some(saved) = status {
+                    ui.label(if saved {
+                        aurora_i18n::tr!("ui-chat-preview-video-saved")
+                    } else {
+                        aurora_i18n::tr!("ui-chat-preview-save-failed")
+                    });
+                }
+                if crate::ui::menu::item(ui, p, "download-filled", aurora_i18n::tr!("ui-chat-preview-save-video")) {
+                    save_video(ui.ctx().clone(), status_id, url.clone());
+                }
+            }
+        }
+        if video {
+            if crate::ui::menu::check(
+                ui,
+                p,
+                "player-play-filled",
+                aurora_i18n::tr!("ui-chat-preview-autoplay"),
+                pv.settings.autoplay_video,
+                true,
+            ) {
+                pv.settings.autoplay_video = !pv.settings.autoplay_video;
+                pv.stopped = None;
+                pv.autoplay_change = Some(pv.settings.autoplay_video);
+            }
+            if crate::ui::menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-chat-preview-settings")) {
+                pv.open_settings = true;
+            }
         }
         crate::ui::menu::separator(ui, p);
         if crate::ui::menu::item(ui, p, "eye-off", aurora_i18n::tr!("ui-chat-preview-hide")) {
@@ -1502,7 +1895,7 @@ fn card_menu(resp: &egui::Response, p: &Palette, pv: &mut Previews, k: u64, url:
             pv.hide_site = Some(site.clone());
         }
     });
-    super::line_menu::inline(resp);
+    super::line_menu::inline_popup(&resp.ctx, resp.id.with("context_menu"));
 }
 
 #[cfg(test)]

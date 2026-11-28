@@ -115,6 +115,7 @@ pub struct WebView {
     /// Page to show (loaded once the plugin runs).
     url: String,
     nav_pending: bool,
+    native_video: bool,
     size: (i32, i32),
     failed: Option<String>,
     /// The page has the keyboard (clicked; a click elsewhere releases it).
@@ -222,6 +223,12 @@ impl WebView {
             self.url = url.to_owned();
             self.nav_pending = true;
         }
+    }
+
+    /// Load a validated stream in the platform's time-based media plugin.
+    pub fn navigate_video(&mut self, url: &str) {
+        self.native_video = true;
+        self.navigate(url);
     }
 
     /// Stop the browser (window closed).
@@ -340,11 +347,16 @@ impl WebView {
                 },
                 None => Ok(None),
             };
+            let plugin = if self.native_video {
+                aurora_media::plugin_for_mime("video/mp4")
+            } else {
+                "media_plugin_cef"
+            };
             let launched = match (&private, paths) {
                 (Err(e), _) => Some(Err(std::io::Error::new(e.kind(), e.to_string()))),
                 (Ok(settings), Some(paths)) => Some(MediaPlugin::launch(
                     paths,
-                    "media_plugin_cef",
+                    plugin,
                     px.0,
                     px.1,
                     settings.as_ref().unwrap_or(browser),
@@ -406,6 +418,9 @@ impl WebView {
         }
         if std::mem::take(&mut self.nav_pending) {
             p.load_uri(&self.url);
+            if self.native_video {
+                p.start(1.0);
+            }
             self.nav_started = Some(Instant::now());
             self.load_secs = None;
             self.location = self.url.clone();

@@ -1329,7 +1329,7 @@ pub fn snooze_message(agent: Uuid) -> Option<NetEvent> {
 /// the real sites; otherwise the demo makes them (`link_preview::demo`).
 pub fn previews_offline() -> bool {
     static NET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    !*NET.get_or_init(|| std::env::var("AURORA_DEMO_CONV_PREVIEWS").is_ok_and(|v| v == "net"))
+    !*NET.get_or_init(|| std::env::var("AURORA_DEMO_CONV_PREVIEWS").is_ok_and(|v| v == "net" || v.starts_with("hosted:")))
 }
 
 /// AURORA_DEMO_CONV_PREVIEWS=services: the made-up Nextcloud of the demo's
@@ -1796,6 +1796,50 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             "https://www.youtube.com/watch?v=jNQXAC9IVRw&t=5s",
                         ),
                     ]
+                } else if let Some(provider) = mode.strip_prefix("hosted:") {
+                    let url = match provider {
+                        "streamable" => "https://streamable.com/hn8hq",
+                        "vimeo" => "https://vimeo.com/1084537",
+                        "imgur" => "https://imgur.com/KDM0UfE",
+                        "imgur-photo" => "https://i.imgur.com/KDM0UfE.jpg?fbplay",
+                        "imgur-missing" => "https://i.imgur.com/zzq6vRx483Z.jpg",
+                        "snapchat" => {
+                            "https://www.snapchat.com/@valentina340712/spotlight/W7_EDlXWTBiXAEEniNoMPwAAYZ2pqYWh2YWdoAaHbME46AaHbME4MAAAAAA"
+                        }
+                        "giphy" => "https://giphy.com/gifs/dance-happy-cute-l0HU3vwj7M52g35Be",
+                        "tenor" => "https://tenor.com/view/happy-dance-dan%C3%A7ando-gif-25925999",
+                        "tiktok" => "https://www.tiktok.com/@scout2015/video/6718335390845095173",
+                        "douyin" => "https://v.douyin.com/zPECWR4R9EI/",
+                        "kuaishou" => "https://v.kuaishou.com/FvG1It",
+                        "bilibili" => "https://www.bilibili.com/video/BV1B7411m7LV/",
+                        "framatube" => "https://framatube.org/w/9c9de5e8-0a1e-484a-b099-e80766180a6d",
+                        "twitch" => "https://clips.twitch.tv/IncredulousAbstemiousFennelImGlitch",
+                        "twitch-live" => "https://www.twitch.tv/lofigirl",
+                        "kick" => "https://kick.com/chessbrah",
+                        "reddit-photo" => "https://www.reddit.com/r/pics/comments/1u58ant/photo_of_my_friends_cousins_door/",
+                        "reddit-gif" => {
+                            "https://www.reddit.com/r/spaceporn/comments/1v9hwzg/spacex_shares_hd_video_of_the_starship_flight_13/"
+                        }
+                        "reddit-post" => {
+                            "https://www.reddit.com/r/funnyvideos/comments/15byye8/turning_delay_into_play_these_guys_know_how_to/"
+                        }
+                        "dailymotion" => "https://geo.dailymotion.com/player/x8lr5.html?video=x84sh87",
+                        "arte" => "https://www.arte.tv/en/videos/135503-000-A/the-polish-silicon-valley/",
+                        "ard" => {
+                            "https://www.ardmediathek.de/video/Y3JpZDovL3RhZ2Vzc2NoYXUuZGUvN2Y0NzZkMDgtNzlhNC00Njk5LWExY2QtYmZhNGEwN2I1ODgxLVNFTkRVTkdTVklERU8"
+                        }
+                        "niconico" => "https://www.nicovideo.jp/watch/sm8628149",
+                        "naver-clip" => {
+                            "https://clip.naver.com/contents?recType=CLIP_PC&recId=%7B%22targetProfileId%22%3A%22pVCXiYAaDLKBBOO3ZZN-%22%2C%22open%22%3Atrue%7D&mediaType=ALL&serviceType=CLIP&seedMediaId=11D069478E37849F788A539917A6A68D3809&seedMediaType=SHORT_FORM"
+                        }
+                        "x" => "https://x.com/NASA/status/2042791040516845925",
+                        "youtube" => "https://youtu.be/jNQXAC9IVRw",
+                        "instagram" => "https://www.instagram.com/reel/DfF3eqGSKKc/",
+                        "facebook" => "https://www.facebook.com/reel/1557618349384047/",
+                        "reddit" => "https://v.redd.it/5o5cu4n0upeb1",
+                        _ => return Vec::new(),
+                    };
+                    vec![line(ago(1), name, friend, ChatKind::Im, url)]
                 } else if let Some(only) = mode.strip_prefix("links") {
                     let only = only.trim_start_matches(':');
                     [
